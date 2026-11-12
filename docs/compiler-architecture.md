@@ -145,7 +145,7 @@ disposable fact state. Only carried facts are copied between rounds. The
 construction graph's control flow, loans, roots, and carrier slots do not depend
 on the carried facts; the events, diagnostics, and summary outputs that do are
 recorded as event operations
-([provenance_event.odin](src/provenance_event.odin)) and materialized again,
+([provenance_event.odin](../src/provenance_event.odin)) and materialized again,
 interleaved with one more replay, once the facts settle. Superseded diagnostics
 are discarded, so each diagnostic appears once.
 
@@ -171,12 +171,12 @@ checked AST + settled lifecycle annotations
 
 | File | Input it owns |
 | --- | --- |
-| [provenance_input.odin](src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical places (`Prov_Place`). |
-| [provenance_form.odin](src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
-| [provenance_transfer.odin](src/provenance_transfer.odin), [provenance_transfer_facts.odin](src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
-| [provenance_call.odin](src/provenance_call.odin) | Checked call inputs: parameter modes, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. What a compiler-known procedure does with its receiver (`prov_receiver_contract`), and what an argument is to its call (`prov_argument_kind`). |
-| [provenance_effect.odin](src/provenance_effect.odin) | Fact operations, their replay, and freezing. |
-| [provenance_event.odin](src/provenance_event.odin) | Event operations and their materialization. |
+| [provenance_input.odin](../src/provenance_input.odin) | `Prov_Input`: body-local `Storage_Id` and `Value_Id` tables, zero meaning unresolved storage or no value; canonical places (`Prov_Place`). |
+| [provenance_form.odin](../src/provenance_form.odin) | Each value's checked form (`Prov_Form`), with its operands, a call's argument and pack values, and the call a user operator stands for, all as values. |
+| [provenance_transfer.odin](../src/provenance_transfer.odin), [provenance_transfer_facts.odin](../src/provenance_transfer_facts.odin) | Typed transfers (constructors, owner views, payload extraction, widening, copies and moves) and how they apply to targets and regions. |
+| [provenance_call.odin](../src/provenance_call.odin) | Checked call inputs: parameter modes, a lending call's captured receiver, and the evaluated callee of a call through a procedure value, as `call_through_value` in `check_calls.odin` classifies it. What a compiler-known procedure does with its receiver (`prov_receiver_contract`), and what an argument is to its call (`prov_argument_kind`). |
+| [provenance_effect.odin](../src/provenance_effect.odin) | Fact operations, their replay, and freezing. |
+| [provenance_event.odin](../src/provenance_event.odin) | Event operations and their materialization. |
 
 A value is keyed by its node, its representation (`Prov_Repr`: type, view,
 erasure, widening, and composite backing), and its `Defer_Expansion`. The value
@@ -253,14 +253,14 @@ after them. A copy names its checked lifecycle operation, and custom copy
 hooks, including hooks nested in generated copies, substitute their current
 result summaries.
 
-[provenance_normalization_test.odin](src/provenance_normalization_test.odin)
+[provenance_normalization_test.odin](../src/provenance_normalization_test.odin)
 inspects the input by semantic property: shared storage identity, transfer
 modes, evaluation order, recorded forms, and replay after a summary grows. It
 deliberately avoids IDs, map order, and graph dumps. The `provenance_*` runtime
 and rejection cases in `tests/` are the behavioral controls. For a change to
 this boundary, also compare diagnostics over the test, example, tutorial,
 bench, and package inputs with the parent commit's compiler, each run from its
-own checkout. The [profiling probe](bench/provenance_profile/main.odin) reports
+own checkout. The [profiling probe](../bench/provenance_profile/main.odin) reports
 body builds, fact replays, normalization, replay, and materialization time, and
 the largest sampled build arena:
 
@@ -278,7 +278,7 @@ records.
 | --- | --- |
 | Batch inputs | Process-owned source buffers and diagnostics; one syntax arena per parsed file. |
 | Semantic arena | Stores, interned data, specializations, cloned syntax, and frozen constants. Incremental inputs, syntax, and diagnostics also live here for checkpointing. |
-| Analysis arena | Disposable ownership/provenance graphs, reclaimed after analysis. It and the two provenance replay arenas beside it are `Scratch_Arena`s ([scratch_arena.odin](src/scratch_arena.odin)): each reserves one large range, so the reset after each body keeps its pages instead of returning them to the system, chains further ranges for a body that outgrows it and releases them at the next reset, and takes no lock, since only the thread checking the compilation allocates there. |
+| Analysis arena | Disposable ownership/provenance graphs, reclaimed after analysis. It and the two provenance replay arenas beside it are `Scratch_Arena`s ([scratch_arena.odin](../src/scratch_arena.odin)): each reserves one large range, so the reset after each body keeps its pages instead of returning them to the system, chains further ranges for a body that outgrows it and releases them at the next reset, and takes no lock, since only the thread checking the compilation allocates there. |
 | CTFE scratch | Bounded frames and mutable values; escaping constants are frozen into semantic storage. |
 | Emission arena | LLVM text, temporary maps, layout probes, and toolchain scratch; released with the compilation. |
 | Session arenas | Copied configuration, scratch, queries, and statistics; see [sessions](#reusable-batch-sessions). |
@@ -1223,7 +1223,7 @@ Preserve these lowering rules:
    keep layout in `layout.odin` and foreign classification in `abi.odin`.
 5. Prefer `base/` or `core/` implementations over new compiler/runtime
    primitives when the language can express them. Add a focused regression and
-   run the relevant checks below. Follow [AGENTS.md](AGENTS.md) for accompanying
+   run the relevant checks below. Follow [AGENTS.md](../AGENTS.md) for accompanying
    documents and changelog entries.
 
 For backend failures, trace the assertion back to the missing annotation or
@@ -1496,7 +1496,7 @@ including after destroying and reinitializing a session.
 | `query_signatures` | Procedure/group signatures: the written text and parameter names. A generic template's is its written syntax. |
 | `query_diagnostics` | Captured severity, code, message, labels, locations, and notes. Snapshot before emission to capture checking diagnostics; later emission cannot alter that view. |
 
-See [queries.odin](src/queries.odin) for full signatures. Except for reference
+See [queries.odin](../src/queries.odin) for full signatures. Except for reference
 arrays, returned strings/slices are borrowed, read-only, and expire on
 [invalidation](#invalidation-rules); snapshot tokens do not retain compilations.
 
@@ -1712,7 +1712,7 @@ sources must have a recorded binding, so an inactive `when` branch or an
 interface slot stops it. The new name may not capture or be captured, as
 `query_visible` and each binding's `scope` show, and a field or member rename
 is checked at every selector against the members `query_selector_operand`
-records. [rename.odin](lsp/rename.odin) states each
+records. [rename.odin](../lsp/rename.odin) states each
 refusal beside the check that makes it.
 
 Formatting and documentation call the procedures behind `-fmt` and `-api`

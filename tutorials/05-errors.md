@@ -175,7 +175,7 @@ error[L0612]: this call produces `Result(int, Parse_Error)`, which must be used 
 
 `_ = strconv.parse_int("42");` discards it on purpose.
 
-[design.md "Error handling"](../design.md#error-handling) describes the rest,
+[design.md "Error handling"](../docs/design.md#error-handling) describes the rest,
 including your own fallible unions and `map_error`, which changes the error type
 of a `Result` you keep rather than return.
 
@@ -291,7 +291,7 @@ A panic cannot be caught. With the default `-panic=unwind` build, the panicking
 thread runs pending `defer` statements and drops live local owners before the
 program stops. `-panic=abort` skips cleanup. A second panic during unwinding
 also stops immediately, skipping the cleanup still pending; see
-[design.md "Panic strategy"](../design.md#panic-strategy).
+[design.md "Panic strategy"](../docs/design.md#panic-strategy).
 
 Use a `Result` for anything that can go wrong in a correct program, such as a
 missing file or bad input, and keep panics for mistakes in the program itself.

@@ -101,7 +101,7 @@ C API permits NULL: `.none` is NULL, and `.some(value)` is the non-null address.
 in a foreign signature. The pointer `Option` forms in the table are an
 exception: they have the same representation as a C pointer. Pass C a pointer
 and a length, a `cstring_view`, or a plain record of C-compatible fields; see
-[design.md "Foreign-ABI-safe types"](../design.md#foreign-abi-safe-types).
+[design.md "Foreign-ABI-safe types"](../docs/design.md#foreign-abi-safe-types).
 
 ## Nullable C results
 
@@ -198,7 +198,7 @@ lokec squares.loke
 144
 ```
 
-A `.lib` library file works the same way. [design.md "Foreign system"](../design.md#foreign-system)
+A `.lib` library file works the same way. [design.md "Foreign system"](../docs/design.md#foreign-system)
 has the full rules, including exporting Loke procedures for C to call.
 
 The [borrowing lesson](08-borrowing-and-lifetimes.md) explains the checked

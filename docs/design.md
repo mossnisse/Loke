@@ -6,7 +6,7 @@ design rationale, [open-questions.md](open-questions.md) records open questions
 and unresolved findings, and [known-gaps.md](known-gaps.md) records where the
 current compiler does not yet implement what is written here.
 
-For a guided introduction, use the [tutorials](tutorials/README.md). Within this
+For a guided introduction, use the [tutorials](../tutorials/README.md). Within this
 reference, [Type conversion](#type-conversion), [Value semantics and the
 ownership rule](#value-semantics-and-the-ownership-rule), and [Borrows and
 lifetimes](#borrows-and-lifetimes) define rules shared by the individual
@@ -125,7 +125,7 @@ target 4 5
 1 8 8
 ```
 
-This is [examples/tour.loke](examples/tour.loke); the test suite compiles it and
+This is [examples/tour.loke](../examples/tour.loke); the test suite compiles it and
 checks the block above still matches it. The other programs there each exercise
 one part of the language in more depth.
 

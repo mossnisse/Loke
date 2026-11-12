@@ -18,7 +18,7 @@ limitations.
 
 [provenance-normalization-before.json](provenance-normalization-before.json)
 was captured on 2026-10-25 for the first stage of the migration to
-[normalized provenance input](../../compiler-architecture.md#normalized-provenance-input).
+[normalized provenance input](../../docs/compiler-architecture.md#normalized-provenance-input).
 The compiler and LSP were built from commit
 `81d478b0823daf46499e597fdac8a018c0c3ca3c`; the additional
 [provenance workload](../provenance.loke) is part of stage 1 and its source hash

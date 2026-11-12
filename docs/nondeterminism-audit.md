@@ -20,8 +20,8 @@ thread by `proc2` before it returns are visible to `proc3`; work it starts on
 another thread still follows the synchronization rules. This is required by
 [Evaluation order](design.md#evaluation-order),
 implemented by the source-ordered operand loop in
-[emit_bound_call](src/emit_llvm_calls.odin), and exercised by
-[m7_argument_order.loke](tests/run/m7_argument_order.loke). It is not a choice
+[emit_bound_call](../src/emit_llvm_calls.odin), and exercised by
+[m7_argument_order.loke](../tests/run/m7_argument_order.loke). It is not a choice
 left to LLVM or the host C calling convention.
 
 The rule also covers named arguments in **written** order, even if their names
@@ -35,8 +35,8 @@ once before its right operand. `&&`, `||`, `or_else`, and conditional expression
 evaluate only selected operands. A complete expression destroys its temporaries
 in reverse completed-initialization order. These are all specified in
 [Evaluation order](design.md#evaluation-order); the assignment and call lowering
-in [emit_llvm_stmt.odin](src/emit_llvm_stmt.odin) and
-[emit_llvm_calls.odin](src/emit_llvm_calls.odin) follow that schedule.
+in [emit_llvm_stmt.odin](../src/emit_llvm_stmt.odin) and
+[emit_llvm_calls.odin](../src/emit_llvm_calls.odin) follow that schedule.
 
 ## Classification
 
@@ -56,7 +56,7 @@ choice does not turn an unspecified result into a language guarantee.
 
 | Area | Contract and consequence | Evidence |
 | --- | --- | --- |
-| Map iteration | Order can differ even for an unmodified map, so a loop with side effects can change output order. Collect and sort keys when order matters. Compile-time execution rejects map traversal. The runtime seeds each table from an atomic counter and its address and scans occupied slots. | [Maps](design.md#maps), [Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation), [container.c](runtime/container.c), [emit_llvm_iteration.odin](src/emit_llvm_iteration.odin) |
+| Map iteration | Order can differ even for an unmodified map, so a loop with side effects can change output order. Collect and sort keys when order matters. Compile-time execution rejects map traversal. The runtime seeds each table from an atomic counter and its address and scans occupied slots. | [Maps](design.md#maps), [Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation), [container.c](../runtime/container.c), [emit_llvm_iteration.odin](../src/emit_llvm_iteration.odin) |
 | Sorting and search | Sorts are not stable: equal-comparing elements can change relative order. An invalid comparator still yields a permutation and terminates, but order is unspecified. Binary search of an unsorted slice yields an unspecified index. The comparator's invocation schedule is not promised; do not use its side effects as an ordered log. | [Sorting slices](standard-library.md#sorting-slices), [Slice queries and copies](standard-library.md#slice-queries-and-copies) |
 | Partitioning and selection | Neither is stable: elements equivalent to the selected one, and elements on one side of a partition, can end up in any order, which may change between versions. `partition` calls its predicate exactly once per element, in an unspecified order. An invalid comparator still yields a permutation and terminates, but order is unspecified. | [Partitioning and selection](standard-library.md#partitioning-and-selection) |
 | Priority queues and heaps | Equal elements come out of a `Priority_Queue` in an unspecified order that may change between versions, and its layout is unspecified. An invalid comparator leaves the order unspecified but every element present once. The comparator's invocation schedule is not promised. | [Heaps](standard-library.md#heaps), [Priority queues](standard-library.md#priority-queues) |
@@ -133,9 +133,9 @@ conversions panic. Floating division by zero follows IEEE-754. See
 
 The backend guards LLVM division, remainder, shift, overflow, and
 float-to-integer operations before their otherwise poison-producing cases; see
-[emit_llvm_expr.odin](src/emit_llvm_expr.odin),
-[emit_llvm_simd.odin](src/emit_llvm_simd.odin), and
-[emit_llvm_convert.odin](src/emit_llvm_convert.odin). That is a source review, not a
+[emit_llvm_expr.odin](../src/emit_llvm_expr.odin),
+[emit_llvm_simd.odin](../src/emit_llvm_simd.odin), and
+[emit_llvm_convert.odin](../src/emit_llvm_convert.odin). That is a source review, not a
 proof that every generated path is free of backend bugs.
 
 ## Compiler and build reproducibility
@@ -144,7 +144,7 @@ Source files are sorted before package preparation, import edges are followed
 in source order, and emission uses deterministic dependency order. The compiler
 architecture describes one module in that order; see
 [Driver and phase order](compiler-architecture.md#driver-and-phase-order) and
-[packages.odin](src/packages.odin). Required compile-time procedure evaluation
+[packages.odin](../src/packages.odin). Required compile-time procedure evaluation
 rejects runtime randomness, clocks, files, threads, and map traversal, so a
 constant cannot silently inherit those values. Target and project build
 constants are explicit inputs. See

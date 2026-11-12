@@ -155,7 +155,7 @@ not. The [Errors lesson](05-errors.md#panics) explains the distinction.
 A record with a drop hook must say how it is copied: `@(move_only)`, as here, a
 `hook(copy)`, or `@(fieldwise_copy)` when copying each field is right.
 Custom copy hooks are only needed for resources that have a meaningful,
-independent clone. [design.md "Lifecycle hooks and resource types"](../design.md#lifecycle-hooks-and-resource-types)
+independent clone. [design.md "Lifecycle hooks and resource types"](../docs/design.md#lifecycle-hooks-and-resource-types)
 specifies their allocator and failure contracts. A unique handle normally
 stays move-only.
 

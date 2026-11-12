@@ -121,7 +121,7 @@ policy must agree with the runtime contract. An `Allocator` is a provider
 handle, not a pointer that can be fabricated from an arbitrary record.
 
 Use the built-in providers unless those requirements call for different
-machinery. [design.md "Build-selected providers"](../design.md#build-selected-providers)
+machinery. [design.md "Build-selected providers"](../docs/design.md#build-selected-providers)
 specifies selection and initialization; implementing a new runtime allocator
 also requires the C and unchecked-code knowledge from the preceding lesson.
 

@@ -48,9 +48,9 @@ Each lesson introduces a concrete use, shows a complete program and its output,
 and explains the rules that make it work. Rejected examples show the limits.
 
 The pages leave the full rules to the language
-specification, [design.md](../design.md), which they link to section by
+specification, [design.md](../docs/design.md), which they link to section by
 section. The library is described in
-[standard-library.md](../standard-library.md).
+[standard-library.md](../docs/standard-library.md).
 
 ## How the examples are checked
 

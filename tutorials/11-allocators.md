@@ -166,7 +166,7 @@ String-producing library procedures take an allocator argument instead.
 Copying an `Allocator` handle selects the same provider; it neither copies
 the region nor keeps it alive beyond its owner.
 
-[design.md "Allocators"](../design.md#allocators) gives the allocation and
+[design.md "Allocators"](../docs/design.md#allocators) gives the allocation and
 region rules. [Allocator providers](14-allocator-providers.md) later selects
 the default for a complete application.
 

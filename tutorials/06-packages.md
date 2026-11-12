@@ -166,7 +166,7 @@ A few more rules keep that promise:
 - For the same reason, `a, b := value` can take apart only a record from your
   own package.
 - A package that means its field order, as `x`, `y`, `z` of a vector, says so
-  with [`@(positional)`](../design.md#positional) on the struct, and then both
+  with [`@(positional)`](../docs/design.md#positional) on the struct, and then both
   are allowed everywhere.
 - A method is public when marked `@(public)`, like any other declaration.
 
@@ -174,6 +174,6 @@ A few more rules keep that promise:
 public unless it is marked `@(private)`. It suits a package whose whole purpose
 is to be used by others.
 
-[design.md "Packages"](../design.md#packages) has the full rules.
+[design.md "Packages"](../docs/design.md#packages) has the full rules.
 
 Next: [A command-line tool](07-a-command-line-tool.md).

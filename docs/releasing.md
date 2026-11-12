@@ -4,7 +4,7 @@
 
 `LOKE_VERSION` identifies a `MAJOR.MINOR.PATCH` release and the
 [language specification](design.md) at its tag. Record spec changes in
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](../CHANGELOG.md).
 
 Choose the version by the change to the language, library APIs, or command line:
 
@@ -21,7 +21,7 @@ These rules apply to every release:
 
 - Keep `lokec.exe`, `loke-lsp.exe`, `base/`, `core/`, and `runtime/` from the
   same release. Do not mix compiled objects from different compiler releases.
-- The [VS Code extension](editors/vscode/README.md) ships in the bundle but is
+- The [VS Code extension](../editors/vscode/README.md) ships in the bundle but is
   not versioned with it: its `package.json` version stays `0.1.0`, which its
   install commands name.
 - The platform C ABI is preserved. Generated code, layout that design.md leaves
@@ -43,14 +43,14 @@ These rules apply to every release:
 
 Only the latest release is supported; fixes ship as patches, with no backports.
 The required Odin version is recorded in three places that change together:
-[Building from source](readme.md#building-from-source), the Odin install step
-of [ci.yml](.github/workflows/ci.yml), and the same step of
-[release.yml](.github/workflows/release.yml).
+[Building from source](../readme.md#building-from-source), the Odin install step
+of [ci.yml](../.github/workflows/ci.yml), and the same step of
+[release.yml](../.github/workflows/release.yml).
 
 ## Upgrade notes
 
 Every compatibility-breaking commit adds an entry under **Unreleased → Breaking
-changes** in [CHANGELOG.md](CHANGELOG.md). Explain what stopped working and how
+changes** in [CHANGELOG.md](../CHANGELOG.md). Explain what stopped working and how
 to update affected code, with a before/after example when needed. These entries
 become the release's upgrade notes.
 
@@ -61,18 +61,18 @@ become the release's upgrade notes.
    checks that text and refuses anything else. Run
    `.\test-all.ps1 -Exhaustive` locally, about 25 minutes, which CI does not.
    Choose `X.Y.Z` using the [version policy](#version-policy).
-2. Rename **Unreleased** in [CHANGELOG.md](CHANGELOG.md) to
+2. Rename **Unreleased** in [CHANGELOG.md](../CHANGELOG.md) to
    `[X.Y.Z] - YYYY-MM-DD`, add an empty **Unreleased** above it, and check the
    upgrade notes.
-3. Update `LOKE_VERSION_STRING` in [src/build_config.odin](src/build_config.odin)
+3. Update `LOKE_VERSION_STRING` in [src/build_config.odin](../src/build_config.odin)
    and the `static_assert(LOKE_VERSION == ...)` in
-   [src/front_end_test.odin](src/front_end_test.odin) to `X.Y.Z`.
+   [src/front_end_test.odin](../src/front_end_test.odin) to `X.Y.Z`.
 4. Commit, push to `main`, and wait for CI. Its Performance summary compares
    the run with the latest release's `perf.json`. Slowdowns do not fail CI, so
    explain or fix any it shows before tagging.
 5. Tag the tested commit with `git tag -a vX.Y.Z -m "Loke X.Y.Z"`, then
    `git push origin vX.Y.Z`.
-6. Wait for the [Release workflow](.github/workflows/release.yml), then check
+6. Wait for the [Release workflow](../.github/workflows/release.yml), then check
    the published notes, zip, and `perf.json` used as the next release's baseline.
    The workflow refuses binaries whose `-version` shows a
    [build stamp](compiler-guide.md#inspecting-a-compilation): only a clean

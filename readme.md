@@ -11,11 +11,11 @@ memory allocation and C interoperability.
 - `Option` and `Result` represent absence and failure as values.
 
 Loke does not provide complete memory safety; see
-[what is not checked](design.md#what-is-not-checked). The compiler, `lokec`, is
+[what is not checked](docs/design.md#what-is-not-checked). The compiler, `lokec`, is
 written in Odin and currently supports **Windows x64**. Releases are
 **pre-1.0** and minor releases may break compatibility; see the
-[version policy](releasing.md#version-policy) and [changelog](CHANGELOG.md).
-Current implementation limits are in [known gaps](known-gaps.md).
+[version policy](docs/releasing.md#version-policy) and [changelog](CHANGELOG.md).
+Current implementation limits are in [known gaps](docs/known-gaps.md).
 
 ## Getting started
 
@@ -28,7 +28,7 @@ and adding the compiler to `PATH`.
 Keep `lokec.exe`, `base/`, `core/`, and `runtime/` together. The compiler finds
 these directories beside its executable, so you can invoke it from any working
 directory. The bundle also includes `loke-lsp.exe`, the
-[language server](compiler-guide.md#language-server) for editors, and the
+[language server](docs/compiler-guide.md#language-server) for editors, and the
 [VS Code extension](editors/vscode/README.md) that starts it. In
 PowerShell, check the installation:
 
@@ -38,7 +38,7 @@ lokec -print-toolchain
 ```
 
 The toolchain report should end with `ready=yes`. Otherwise, see
-[Toolchain troubleshooting](compiler-guide.md#toolchain-troubleshooting).
+[Toolchain troubleshooting](docs/compiler-guide.md#toolchain-troubleshooting).
 
 ## A first program
 
@@ -69,7 +69,7 @@ The answer is 42
 `lokec` writes an executable; run that executable to start the program.
 Use `-o <path>` to choose its output path, `-opt=speed` to optimize, and `-g`
 for debug information. A file input builds that file and its imports; a
-[directory input](compiler-guide.md#inputs-and-output-paths) builds all `.loke`
+[directory input](docs/compiler-guide.md#inputs-and-output-paths) builds all `.loke`
 files directly inside it as one package. `lokec -h` lists the options.
 
 Continue with the [tutorials](tutorials/README.md), or explore the
@@ -103,7 +103,7 @@ odin build src -out:lokec.exe (.\build-stamp.ps1)
 
 When building other projects against a development tree, pin a Loke commit and
 check it against `lokec -version`, as
-[Inspecting a compilation](compiler-guide.md#inspecting-a-compilation)
+[Inspecting a compilation](docs/compiler-guide.md#inspecting-a-compilation)
 describes.
 
 ## Documentation
@@ -111,11 +111,11 @@ describes.
 | To learn about | Read |
 | --- | --- |
 | Using the language | [Tutorials](tutorials/README.md) and [examples](examples/README.md) |
-| Compiler options, projects, and C-host builds | [Compiler guide](compiler-guide.md) |
-| Standard-library packages and APIs | [Standard library](standard-library.md) |
-| Language rules and syntax | [Design](design.md) and [grammar](grammar.md), both normative |
-| Design rationale and differences from Odin | [Comments](comments.md) |
-| Open questions and planned work | [Open questions](open-questions.md) and [future plans](future-plans.md) |
+| Compiler options, projects, and C-host builds | [Compiler guide](docs/compiler-guide.md) |
+| Standard-library packages and APIs | [Standard library](docs/standard-library.md) |
+| Language rules and syntax | [Design](docs/design.md) and [grammar](docs/grammar.md), both normative |
+| Design rationale and differences from Odin | [Comments](docs/comments.md) |
+| Open questions and planned work | [Open questions](docs/open-questions.md) and [future plans](docs/future-plans.md) |
 
 The library covers text, containers, files and paths, processes, threads,
 synchronization, time, random numbers, JSON, logging, terminal input, math, and
@@ -126,15 +126,15 @@ the interface catalogue in `base:interfaces`; import them like any other.
 ## Compiler development
 
 Read [AGENTS.md](AGENTS.md) for contributor conventions and
-[Compiler architecture](compiler-architecture.md) for the implementation.
+[Compiler architecture](docs/compiler-architecture.md) for the implementation.
 Run the quick gate from the repository root:
 
 ```powershell
 .\test-all.ps1
 ```
 
-CI runs the full gate. [Testing and verification](compiler-architecture.md#testing-and-verification)
-describes individual suites and optional tools; [Releasing](releasing.md)
+CI runs the full gate. [Testing and verification](docs/compiler-architecture.md#testing-and-verification)
+describes individual suites and optional tools; [Releasing](docs/releasing.md)
 covers the release process.
 
 ## License

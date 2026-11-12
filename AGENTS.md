@@ -2,24 +2,27 @@
 
 Loke is a programming language; `lokec` is its compiler, written in Odin.
 [readme.md](readme.md) covers getting started;
-[compiler-guide.md](compiler-guide.md) covers the command line. Keep this file
+[compiler-guide.md](docs/compiler-guide.md) covers the command line. Keep this file
 short: link to detailed guidance rather than repeat it.
 
 ## Which document decides
 
 | Question | Authority |
 | --- | --- |
-| What the language means | [design.md](design.md) (normative) |
-| What parses | [grammar.md](grammar.md) (normative) |
-| How to use the compiler | [compiler-guide.md](compiler-guide.md) |
-| Why a choice was made, differences from Odin | [comments.md](comments.md) |
-| Open questions and unresolved findings | [open-questions.md](open-questions.md) |
-| How the compiler is built, and how to change it | [compiler-architecture.md](compiler-architecture.md) |
-| Where the compiler disagrees with the spec | [known-gaps.md](known-gaps.md) |
-| Standard library design and APIs | [standard-library.md](standard-library.md) |
-| Later work | [future-plans.md](future-plans.md) |
+| What the language means | [design.md](docs/design.md) (normative) |
+| What parses | [grammar.md](docs/grammar.md) (normative) |
+| How to use the compiler | [compiler-guide.md](docs/compiler-guide.md) |
+| Why a choice was made, differences from Odin | [comments.md](docs/comments.md) |
+| Open questions and unresolved findings | [open-questions.md](docs/open-questions.md) |
+| How the compiler is built, and how to change it | [compiler-architecture.md](docs/compiler-architecture.md) |
+| Where the compiler disagrees with the spec | [known-gaps.md](docs/known-gaps.md) |
+| Standard library design and APIs | [standard-library.md](docs/standard-library.md) |
+| Later work | [future-plans.md](docs/future-plans.md) |
 | What each release changed | [CHANGELOG.md](CHANGELOG.md) |
-| What a version promises, and how to release | [releasing.md](releasing.md) |
+| What a version promises, and how to release | [releasing.md](docs/releasing.md) |
+
+All but `readme.md` and `CHANGELOG.md` live in [docs/](docs/); this file and
+source comments name them without the folder.
 
 When the compiler and `design.md` or `grammar.md` disagree, the spec wins unless
 the spec is being deliberately changed. Record an unfixed divergence in
@@ -37,7 +40,7 @@ bug.
   not in normative text.
 - A user-visible change adds a line under **Unreleased** in `CHANGELOG.md` in
   the same commit, and a breaking one also adds an upgrade note there
-  (see [Upgrade notes](releasing.md#upgrade-notes)).
+  (see [Upgrade notes](docs/releasing.md#upgrade-notes)).
 - Findings from a review or audit end up in the repository: fixed ones in the
   commit message, open ones in `known-gaps.md` or `open-questions.md`. Add a
   regression test for a behavior fix; validate editorial fixes with relevant
@@ -46,7 +49,7 @@ bug.
 - To use a bundled package, read its `api.loki`; read its source only to
   change it. After changing a package's public API or doc comments, run
   `lokec <dir> -api` and commit the regenerated file
-  (see [Interface files](compiler-guide.md#interface-files)).
+  (see [Interface files](docs/compiler-guide.md#interface-files)).
 
 ## Testing
 
@@ -62,6 +65,6 @@ bug.
   CI failure. CI runs `-Full -RequireTools` on pushes to `main` and pull requests.
 - Wait for tools and test suites to finish; do not poll them.
 
-See [Testing and verification](compiler-architecture.md#testing-and-verification)
+See [Testing and verification](docs/compiler-architecture.md#testing-and-verification)
 for commands, individual test selection, and troubleshooting. For performance
 changes, measure before and after with `perf.ps1` as described there.

@@ -45,7 +45,7 @@ second argument remains seeded. `legacy` calls `_set_FMA3_enable(0)` before
 measurement. Other runs leave the UCRT's default selection in place. Neither
 option changes the reproducible algorithms. `LOKE_DISPATCH_CPU=x86-64`
 makes a baseline build run its plain copies of
-[dispatched procedures](../../compiler-guide.md#cpu-levels) on a processor that has
+[dispatched procedures](../../docs/compiler-guide.md#cpu-levels) on a processor that has
 `x86-64-v3`.
 
 Input ranges are [-10, 10) for exp; [0.5, 2) for logarithms; [-700, 700) for
@@ -115,7 +115,7 @@ UCRT's legacy path, exp is 5.74 versus 18.63 ns, sin 13.69 versus 39.10, and
 pow 21.20 versus 60.33.
 
 What remains of the `f64` gap is in the double-`f64` kernels' arithmetic;
-the [experiments of 2026-10-30](../../comments.md#standard-library-api-choices)
+the [experiments of 2026-10-30](../../docs/comments.md#standard-library-api-choices)
 found that neither branch removal in the trigonometric kernels nor folding
 the logarithm constants' splits recovers much of it.
 
@@ -169,7 +169,7 @@ The distribution and dependency model matter. On the ordered grid, asin is
 5.54 versus 64.23 ns (11.59 times), compared with 7.02 times on seeded inputs.
 With dependent inputs, exp is 15.67 versus 35.32 ns (2.25 times), compared
 with 4.50 times for independent calls. The earlier measurements in
-[open questions](../../open-questions.md#deterministic-math-functions) are broadly
+[open questions](../../docs/open-questions.md#deterministic-math-functions) are broadly
 consistent with these results, but their original timing programs were not
 found among the tracked files, so their exact loops cannot be audited here.
 

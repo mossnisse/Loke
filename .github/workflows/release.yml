@@ -30,7 +30,7 @@ jobs:
       - name: Release gate
         run: |
           # The section runs to the next level-two heading or the end of the file.
-          $gaps = [regex]::Match((Get-Content -Raw known-gaps.md), '(?ms)^## Gaps[ \t]*\r?$(.*?)(?=^## |\z)')
+          $gaps = [regex]::Match((Get-Content -Raw docs/known-gaps.md), '(?ms)^## Gaps[ \t]*\r?$(.*?)(?=^## |\z)')
           if (-not $gaps.Success) { throw "known-gaps.md has no ## Gaps section" }
           if ($gaps.Groups[1].Value.Trim() -ne 'None.') { throw "known-gaps.md lists open gaps; a release needs none" }
           $version = [regex]::Match((Get-Content -Raw src/build_config.odin), 'LOKE_VERSION_STRING :: "([^"]+)"').Groups[1].Value
@@ -67,7 +67,7 @@ jobs:
           New-Item -ItemType Directory $stage | Out-Null
           Copy-Item lokec.exe, loke-lsp.exe, LICENSE $stage
           Get-ChildItem -File *.md | Copy-Item -Destination $stage
-          Copy-Item base, core, editors, runtime, examples, tutorials $stage -Recurse
+          Copy-Item base, core, docs, editors, runtime, examples, tutorials $stage -Recurse
           # A compile cache lokec rebuilds on demand, never shipped.
           Remove-Item "$stage\runtime\prebuilt" -Recurse -Force -ErrorAction SilentlyContinue
           Compress-Archive $stage "$name.zip"

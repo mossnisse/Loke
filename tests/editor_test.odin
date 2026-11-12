@@ -25,7 +25,7 @@ editor_grammar_follows_the_specification :: proc(t: ^testing.T) {
 	name_words := make(map[string]bool, context.temp_allocator)
 	for entry in ([]string{"types", "builtins", "constants"}) { pattern_words(object_member(repository, entry), &name_words) }
 
-	grammar_md, _ := os.read_entire_file("grammar.md", context.temp_allocator)
+	grammar_md, _ := os.read_entire_file("docs/grammar.md", context.temp_allocator)
 	keywords := section(string(grammar_md), "Keywords")
 	reserved := make(map[string]bool, context.temp_allocator)
 	contextual := make(map[string]bool, context.temp_allocator)
@@ -43,7 +43,7 @@ editor_grammar_follows_the_specification :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, len(reserved) > 30 && len(contextual) > 5, "grammar.md \"Keywords\" did not list the keywords")
 
-	design_md, _ := os.read_entire_file("design.md", context.temp_allocator)
+	design_md, _ := os.read_entire_file("docs/design.md", context.temp_allocator)
 	predeclared := make(map[string]bool, context.temp_allocator)
 	for name in ([]string{"true", "false", "nil"}) { predeclared[name] = true }
 	for line in strings.split_lines(section(string(design_md), "Predeclared names"), context.temp_allocator) {

@@ -5,7 +5,7 @@ for the language, its standard library, and the compiler's internals.
 [design.md](design.md) defines the language, [grammar.md](grammar.md) its syntax,
 and [open-questions.md](open-questions.md) the unresolved choices. API contracts
 belong in [standard-library.md](standard-library.md); release history is in
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](../CHANGELOG.md).
 
 | Topic | Start here |
 | --- | --- |
@@ -362,7 +362,7 @@ variable until `settle` has stored done or poisoned. An unbounded spin cost
 each waiter a processor for as long as arbitrary user code ran, and on a
 machine with more threads than processors the waiters took time from the
 thread they were waiting for. A contention benchmark,
-[bench/once_contention.loke](bench/once_contention.loke), runs 24 threads on
+[bench/once_contention.loke](../bench/once_contention.loke), runs 24 threads on
 6 logical processors through 16 `Once` and 16 `Lazy` setups of about 6 ms
 each. On an idle machine, with the spin it took a median 1.28 s of CPU time
 and 221 ms elapsed; with the wait it takes 0.17 s and 183 ms, about what one
@@ -2879,7 +2879,7 @@ and `core:math/repro`'s fixed-point slow paths are such functions: inlined, each
 made every call of its public function pay its frame, 968 bytes for `exp`, and
 the saves and restores of the callee-saved registers it uses. Marked, `hypot`
 went from 17.9 to 13.4 ns a call and `pow` from 58.4 to 55.2, with every result
-unchanged, measured with [bench/math_compare](bench/math_compare/README.md).
+unchanged, measured with [bench/math_compare](../bench/math_compare/README.md).
 `core:math/geometry`'s predicates had the same shape: LLVM inlined each exact
 path into its filter, its one caller, and the `f64` `orient2d` filter then
 cost 1265 against the inliner's threshold of 225, so no caller inlined it.
@@ -2904,7 +2904,7 @@ with it, so a call to it is as unlikely through the dispatch as without one.
 
 ## Formatting
 
-`lokec -fmt` ([src/formatter.odin](src/formatter.odin)) settles the layout
+`lokec -fmt` ([src/formatter.odin](../src/formatter.odin)) settles the layout
 `core/` already used, and changes whitespace only. The rules:
 
 - **Line breaks are the author's.** It never joins or splits a line, and a run
@@ -2935,11 +2935,11 @@ keeping the author's breaks leaves nothing for a tree printer to decide, and a
 token stream cannot lose or reorder syntax. The parser still runs, so a file
 that does not parse is refused, and each result is lexed again and must hold
 the input's tokens exactly, or the formatter reports an internal error instead
-of writing. [tests/corpus_test.odin](tests/corpus_test.odin) keeps `core/` and
+of writing. [tests/corpus_test.odin](../tests/corpus_test.odin) keeps `core/` and
 `base/` formatted and formats every program corpus to a layout that formats to
 itself.
 
-`-migrate` ([src/migrate.odin](src/migrate.odin)) is the one tool that changes
+`-migrate` ([src/migrate.odin](../src/migrate.odin)) is the one tool that changes
 tokens, and a separate flag for that reason: a formatter that only moves whitespace
 is safe to run on save, which an editor does through the same code. It rewrites
 what an earlier release accepted and leaves every other byte alone, so it does not
@@ -3267,7 +3267,7 @@ boundaries and API shapes follow a few common choices:
   canonical serialization with explicit byte order, an explicit rule for
   signed zeros, which `==` equates but later arithmetic does not, and a
   specified tie rule for SIMD extrema of equal signed-zero lanes, as
-  [examples/lockstep.loke](examples/lockstep.loke) shows. NaN results of
+  [examples/lockstep.loke](../examples/lockstep.loke) shows. NaN results of
   `core:math/repro` are canonical, but other arithmetic NaNs are not; a
   program that inspects or serializes NaNs canonicalizes them first.
 - **Two `f64` experiments did not pay.** On 2026-10-30, specializing `log2`
@@ -4006,7 +4006,7 @@ feature bits, all of it to review again for each new level.
 The level names arrived in Clang 18 (`27da15381cbe`, "[X86]
 `__builtin_cpu_supports`: support x86-64{,-v2,-v3,-v4}", August 2023); Clang
 17's compiler-rt has no level bits, and its Clang rejects the strings. So
-Clang 18 is the stated minimum ([readme.md](readme.md#getting-started)). The
+Clang 18 is the stated minimum ([readme.md](../readme.md#getting-started)). The
 alternative, keeping the manual version as a fallback for older Clang, would
 keep all of it for toolchains nothing tests, and a toolchain older than the
 minimum fails while compiling the runtime instead of misjudging a processor.
@@ -4232,7 +4232,7 @@ tens of megabytes. The summary worklist instead skips a visit when no summary
 the body reads has grown since its last one, which leaves about three builds
 per body: one collecting global writes, one discovering summaries, and one
 reporting diagnostics. The profiling records under
-[Provenance normalization](bench/baselines/README.md#provenance-normalization)
+[Provenance normalization](../bench/baselines/README.md#provenance-normalization)
 distinguish normalization, fact replay, and event materialization cost.
 
 ### A store's links come from where it lands
@@ -4262,7 +4262,7 @@ fixture; another, a conflict after a swap, only in a reproduction in known-gaps.
 which no input of a 1,388-input comparison with the old compiler covered. So the
 comparison is not enough here, and a later change should first extend the verdicts
 worked out by hand in
-[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin).
+[carrier_store_matrix_test.odin](../tests/carrier_store_matrix_test.odin).
 
 What a call leaves of a `stored` argument was the next to move, linked the same way
 (`prov_link_retained`) and for the same reason. The callee's body says nothing to the
@@ -4271,7 +4271,7 @@ argument that is its own destination needs its own event: the walk's old link ra
 after every destination and so covered it. Without that event `keep_self(n); h :=
 n^.next; n^.v = 1; h^.v = 2;` is accepted, and neither a fixture nor the comparison
 with the old compiler notices, while
-[carrier_store_matrix_test.odin](tests/carrier_store_matrix_test.odin) does. Landing
+[carrier_store_matrix_test.odin](../tests/carrier_store_matrix_test.odin) does. Landing
 stops a loaded argument conflicting with itself. An over-rejection of the old rule is
 left, as it comes from what a call's landing joins rather than from the links
 (known-gaps.md, "A carrier a call may have left stays after its place is replaced").

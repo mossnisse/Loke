@@ -44,7 +44,7 @@ lokec -print-toolchain
 The first prints the version. The second prints where Clang and the Microsoft
 tools are, and ends with `ready=yes` when a program can be built. If it ends
 with `ready=no`, one of the two was not found;
-[Toolchain troubleshooting](../compiler-guide.md#toolchain-troubleshooting) in the
+[Toolchain troubleshooting](../docs/compiler-guide.md#toolchain-troubleshooting) in the
 compiler guide says where lokec looks for each.
 
 You can also build the compiler from source instead; the

@@ -147,7 +147,7 @@ shows the other common failure: appending to an array while a view into it is
 still in use. Use that view before the append, or copy the data that must
 survive it.
 
-[design.md "Borrows and lifetimes"](../design.md#borrows-and-lifetimes)
+[design.md "Borrows and lifetimes"](../docs/design.md#borrows-and-lifetimes)
 describes the full rules, including APIs that retain a borrow in another owner.
 The longer [aliasing example](../examples/aliasing.loke) shows such an API.
 

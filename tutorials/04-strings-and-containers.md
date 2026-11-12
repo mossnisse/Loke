@@ -84,7 +84,7 @@ step 1, step 2, step 3
   `String_Builder` is faster: `append` adds to it and `finish` returns the
   string.
 - The `core:strings` package has the searching, splitting, and trimming
-  procedures. [standard-library.md](../standard-library.md#corestrings) lists
+  procedures. [standard-library.md](../docs/standard-library.md#corestrings) lists
   them.
 
 A view of a string has its own type, `string_view`. A procedure that only reads
@@ -268,7 +268,7 @@ A copy costs time and memory in proportion to the container, and nothing on the
 line shows it, so Loke skips it where it can. When the variable you copy from
 is never read again, as `second` is not after `third := second;`, the assignment
 hands the container over instead of copying it.
-[design.md "Last-use transfer"](../design.md#last-use-transfer) has the exact
+[design.md "Last-use transfer"](../docs/design.md#last-use-transfer) has the exact
 rule. A copy that remains is reported: compiling this program warns that the
 binding `second := first` clones `first`, which may allocate, and writing
 `first.clone()` instead says the copy is intended. The compiler also warns when
@@ -376,7 +376,7 @@ variables, which would point at memory that is gone.
 
 The rules are the same everywhere, and short: assignment copies unless the
 source is not used again, `move` hands a value over, and a view may not outlive
-or conflict with what it views. [design.md "Borrows and lifetimes"](../design.md#borrows-and-lifetimes)
+or conflict with what it views. [design.md "Borrows and lifetimes"](../docs/design.md#borrows-and-lifetimes)
 has the full version.
 
 Next: [Errors](05-errors.md).

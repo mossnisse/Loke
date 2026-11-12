@@ -3,7 +3,7 @@
 User-visible changes to the language, the compiler, and the standard library.
 Each release's section is its GitHub release notes. A change lands under
 **Unreleased**, and a break also gets an upgrade note under **Breaking
-changes**. [releasing.md](releasing.md) has the version policy and the release
+changes**. [releasing.md](docs/releasing.md) has the version policy and the release
 checklist.
 
 ## [Unreleased]
@@ -12,7 +12,7 @@ checklist.
 
 - An allocator that a parameter received inside a record or an `Option`, by value or `inout`, names
   its argument's region, as one passed alone or behind a pointer does
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
   It was a region of unknown provenance, which the escape checks accept: with
   `Maker :: struct { allocator: Allocator }`, a `build(maker: inout Maker)` returning an owner made
   `via maker.allocator` let its caller return storage of a local arena, and send an owner built with
@@ -27,23 +27,23 @@ checklist.
   both were with `next()` called by hand. Upgrade by cloning the element with an allocator that
   outlives the loop's storage.
 - A call through a `dyn proc` view gives the callable the regions of the handles and owners it
-  captured ([Allocators and tasks](design.md#allocators-and-tasks)): a view made by a conversion
+  captured ([Allocators and tasks](docs/design.md#allocators-and-tasks)): a view made by a conversion
   views what it was converted from. The view was in no region, so two tasks calling through
   `(dyn proc(n: i32) -> int)(build)`, with `build` capturing a record that holds an arena's
   allocator, both allocated from that arena unchecked. This is now `L0732`, and where a captured
   `Allocator` alone was already rejected the report names the arena. A callable that captured the
   default allocator is no longer rejected. Upgrade by giving each task an arena of its own.
 - A task holds, until the join, the borrows found through the storage it is lent or given, at any
-  depth ([Task borrows and the join](design.md#task-borrows-and-the-join), rationale under
-  ["Tasks that borrow, joined by their block"](comments.md#tasks-that-borrow-joined-by-their-block)). A spawn held only its arguments'
+  depth ([Task borrows and the join](docs/design.md#task-borrows-and-the-join), rationale under
+  ["Tasks that borrow, joined by their block"](docs/comments.md#tasks-that-borrow-joined-by-their-block)). A spawn held only its arguments'
   own loans, so with `h := Holder{view = data[:]}` the parent could write `data` after
   `spawn read(&h)` while the task read it through `h.view`, a data race the compiler accepted; the
   same held for an element of a lent container and a field of a moved record. Such a write is now
   `L0511` or `L0512`, as it is when the view itself is the argument. Upgrade by writing before the
   spawn or after the block, or by giving the task a copy of what it reads.
 - A returned construction transfers the owned locals it is built from
-  ([Returned constructions](design.md#returned-constructions), rationale under
-  ["Returned constructions"](comments.md#returned-constructions)). `return list;` moved a managed
+  ([Returned constructions](docs/design.md#returned-constructions), rationale under
+  ["Returned constructions"](docs/comments.md#returned-constructions)). `return list;` moved a managed
   local or `move` parameter, while `return .ok(list);`, `return .err(list);`,
   `return Pair{list, 1};`, and `return a if flag else b;` cloned it with warning `L0507`, and were
   `L0503` for a move-only value. The payload of a variant construction, an element of a composite
@@ -55,20 +55,20 @@ checklist.
   arena, is `L0592`. Upgrade by writing `.clone()` on the operand where the copy was meant. A local
   named twice in the returned value, a field of a local, a borrowed parameter, and an argument of a
   call are copied as before.
-- A union's storage is the compiler's choice ([Representation](design.md#representation),
-  rationale under ["Union layout is the compiler's"](comments.md#union-layout-is-the-compilers)).
+- A union's storage is the compiler's choice ([Representation](docs/design.md#representation),
+  rationale under ["Union layout is the compiler's"](docs/comments.md#union-layout-is-the-compilers)).
   design.md specified the payload region, the tag's width and position, and its values, while
-  [releasing.md](releasing.md#version-policy) said such layout may change in any release. The
+  [releasing.md](docs/releasing.md#version-policy) said such layout may change in any release. The
   specification now promises three things: a size and alignment that are constants of a release
   and target, an all-zero designated zero, and the null niche that makes `Option(^T)` one address.
   The compiler's layout is unchanged and is described under
-  [Union layout](compiler-architecture.md#union-layout). Upgrade by removing what depends on the
+  [Union layout](docs/compiler-architecture.md#union-layout). Upgrade by removing what depends on the
   rest: a `static_assert` on the size of a union other than a null-niche one, and unchecked code
   that reads a tag or builds a union from bytes. Read a variant with `switch`, and build one with
   its constructor.
 - A procedure value that already has a type converts to or from a
-  [distinct procedure type](design.md#distinct-types) only where the conversion is written
-  (rationale under ["Distinct types"](comments.md#distinct-types)). With
+  [distinct procedure type](docs/design.md#distinct-types) only where the conversion is written
+  (rationale under ["Distinct types"](docs/comments.md#distinct-types)). With
   `Handler :: distinct proc(n: int) -> int`, a variable `f: proc(n: int) -> int`, and `h: Handler`,
   each of `h = f`, `f = h`, and passing either where the other type is expected compiled; they are
   now `L0310`, with a note naming the conversion. A named procedure or a procedure literal still
@@ -78,13 +78,13 @@ checklist.
   `(proc(n: int) -> int)(h)` or through an alias for that type; `lokec -migrate` does not rewrite
   these.
 - A struct field no longer promotes its own fields: `using` before a field's name is removed
-  ([Structs](design.md#structs), rationale under
-  ["Promoted struct fields"](comments.md#promoted-struct-fields)). With `using position: Vec3`,
+  ([Structs](docs/design.md#structs), rationale under
+  ["Promoted struct fields"](docs/comments.md#promoted-struct-fields)). With `using position: Vec3`,
   `entity.x` selected `entity.position.x`. The field is now `L0241`, and once `using` is deleted a
   selector that relied on it is `L0363`. Upgrade by deleting `using` and writing the field's name in
   each selector the compiler reports, as `entity.position.x`; `lokec -migrate` does not rewrite
   these. `using` is an ordinary identifier, so a field may still be named `using`.
-- No [variadic pack](design.md#variadic-parameters) outlives its call, as a `..^T` pack's lent
+- No [variadic pack](docs/design.md#variadic-parameters) outlives its call, as a `..^T` pack's lent
   values already did not. `give :: proc(values: ..int) -> []int { return values; }` compiled and
   left the caller a view of the ended pack; it is now `L0644` at the parameter, and keeping the
   pack, or a borrow of an element in it, in storage that outlives the call is `L0646` at any escape
@@ -93,37 +93,37 @@ checklist.
   bounded by the escape level. Upgrade by taking a slice, `values: []int`, where the result or the
   kept storage is meant to view the caller's values.
 - A slice read out of a place, as `halves.left` or `p^.rest`, is suspended while what
-  [`split_at_mut`](standard-library.md#splitting-a-mutable-slice) or
-  [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice) made of it is in use, as a named
+  [`split_at_mut`](docs/standard-library.md#splitting-a-mutable-slice) or
+  [`chunks_mut`](docs/standard-library.md#chunks-of-a-mutable-slice) made of it is in use, as a named
   slice is. `inner := halves.left.split_at_mut(1); halves.left[0] = 5; inner.left[0] = 1;`
   compiled, and so did keeping a chunk of `halves.left.chunks_mut(n)` past a write through
   `halves.left`, which left two mutable views of the same elements. These are now `L0641`. Upgrade
   by finishing with the halves or chunks before using the slice they were taken from.
 - An `Allocator` read from a global is a region of unknown provenance wherever it is used
-  ([Allocators and tasks](design.md#allocators-and-tasks)). An owner built `via` one counted as
+  ([Allocators and tasks](docs/design.md#allocators-and-tasks)). An owner built `via` one counted as
   the default provider's, so two tasks of a `parallel` block that each built or grew such an owner
   compiled, and could use one arena at once. They are now `L0732`. Upgrade by passing each task an
   allocator of its own, or by building with the default provider.
-- A [tree input](compiler-guide.md#trees) skips a directory whose name begins with `_`,
+- A [tree input](docs/compiler-guide.md#trees) skips a directory whose name begins with `_`,
   as it skips one beginning with `.`, so a project can keep packages meant not to compile there and
   still test its whole tree. A package under such a directory was tested and is now passed over.
   Upgrade by renaming the directory, or by naming it as an input of its own.
 - An unfixed integer constant compared with an unfixed floating constant is compared exactly
-  ([Comparison operators](design.md#comparison-operators)). One within the float range was rounded
+  ([Comparison operators](docs/design.md#comparison-operators)). One within the float range was rounded
   to `f64` first, so `(1 << 53) + 1 == 9007199254740992.0` was `true`; it is now `false`, as a
   comparison of an integer past the float range already was exact. Upgrade by writing the float, or
   converting the integer with `f64(...)`, where the rounded comparison was meant.
 - A generic record's `hook(copy)` decides how it is copied only in the block of its `hook(drop)`
   or in one over every instance, such as `impl Cell($T)`
-  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)). A copy hook
+  ([Lifecycle hooks and resource types](docs/design.md#lifecycle-hooks-and-resource-types)). A copy hook
   written only in `impl Cell(int)` beside a drop hook in `impl Cell($T)` compiled, and gave
   `Cell(string)` the generated copy with no attribute saying so. It is now `L0747`. Upgrade by
   adding a `hook(copy)` to the drop hook's block or a general one, bounded with `where` if some
   instances cannot copy; the specialized hook still overrides it for `Cell(int)`. Where no
   instance needs its own copy, remove the specialized hook and write `@(move_only)` or
   `@(fieldwise_copy)` instead, since either beside a `hook(copy)` is an error.
-- [`@(require_results)`](design.md#require_results) and
-  [`@(deprecated)`](design.md#deprecatedstring) bind a generic procedure's declaration, so they hold
+- [`@(require_results)`](docs/design.md#require_results) and
+  [`@(deprecated)`](docs/design.md#deprecatedstring) bind a generic procedure's declaration, so they hold
   for every instance: a bare call of a generic `@(require_results)` procedure, free or a method, is
   now `L0612`, and a result bound and never read is `L0698`, as for any other procedure. Both
   compiled. A deprecated generic procedure or operator, a deprecated method, a deprecated member
@@ -131,7 +131,7 @@ checklist.
   at each use; only a plain named call and a non-generic operator did. Upgrade by using the result
   or discarding it with `_ = ...`.
 - A cursor stepped through itself, as `cur := head; cur = cur^.next;`, is a copy of the `next` it
-  came from ([Weakening and reborrows](design.md#weakening-and-reborrows)), however it was given its
+  came from ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)), however it was given its
   new value: by name, through `p := &mut cur` as `p^ = p^^.next`, or in a record's field. A second
   copy of that `next`, as `other := head^.next`, while the cursor was live compiled and left two
   mutable paths to one node. These are now `L0641`. Reading below the cursor, as
@@ -141,7 +141,7 @@ checklist.
   what it lends is `L0511`, as it is written as statements or as a call's arguments. `Views{&mut d, &d}`
   compiled, and growing `d` through the first left the second reading freed storage. Upgrade by
   reading what you need first, as `count := d.len(); Measured{&mut d, count}`.
-- A parameter's [allocator region](design.md#allocator-regions-and-region-provenance) at a call covers
+- A parameter's [allocator region](docs/design.md#allocator-regions-and-region-provenance) at a call covers
   what the carriers its argument holds lead to, however many loads below. A `make` from
   `handles^.second^.allocator` with `handles: ^Handles`, or an `inout` record whose carriers a call
   copied a handle between, had no region the caller could see, so a reset while the result was live
@@ -151,7 +151,7 @@ checklist.
   copies do: a clone that may allocate whatever its size, and any other past the copy-cost threshold.
   Upgrade by writing the `foreach` directly over the adapter call, which copies nothing.
 - A foreign import whose path names nothing, `""`, `"system:"`, or `"system:.lib"`, is now `L0756`
-  in every build mode ([Foreign system](design.md#foreign-system)). It compiled and linked nothing.
+  in every build mode ([Foreign system](docs/design.md#foreign-system)). It compiled and linked nothing.
   Upgrade by deleting the import: a foreign block needs none when another input of the link already
   defines what it declares.
 - An allocator read through a carrier that a record parameter holds is one the analysis cannot name,
@@ -161,86 +161,86 @@ checklist.
   passing the `Allocator` as a parameter of its own.
 - A value read through a carrier a call returned is in what that carrier views, which the callee's
   result dependencies say it takes of each argument
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
   Where the argument was a parameter, as `same(holder)^.text` or `get(reader)^.text`, or the call was
   through a procedure value, the read was in no region, so a caller's reset while a copy lived on
   compiled and read freed memory. So did a read through a record built around a read-only pointer
   parameter, as `reader := Reader{holder}; reader.holder^.text`, whether in the body or in a callee
   it is passed to. These are now `L0537`. Upgrade by ending the copy's use before the reset.
-- A value [`unsafe.take`](design.md#uninitialized-capacity) reads out keeps the
-  [allocator regions](design.md#allocator-regions-and-region-provenance) it was in, as one `exchange`
+- A value [`unsafe.take`](docs/design.md#uninitialized-capacity) reads out keeps the
+  [allocator regions](docs/design.md#allocator-regions-and-region-provenance) it was in, as one `exchange`
   reads out does. It had none the analysis could name, so returning such a value from an arena of the
   frame, or storing it in the caller's storage or a global, compiled and read freed memory. These are
   now `L0592` and `L0536`. Upgrade by keeping the arena alive for as long as the value. In the other
   direction, `Small_Array.pop` and `remove` of an owning element, and any such `unsafe.take`, no longer
   report `L0537` against an unrelated arena that ends first.
 - A procedure with a `$` parameter before a runtime one keeps its [result
-  contract](design.md#procedure-result-contracts). `pick($T: type, view: []int) -> []int` lost the
+  contract](docs/design.md#procedure-result-contracts). `pick($T: type, view: []int) -> []int` lost the
   borrow on its result, so dropping or writing the owner while the result was live compiled and read
   freed storage. The same mistake hid what such a body stores in or returns from its arguments, and
   which allocator region its result is in. These are now `L0511`, `L0512`, `L0513`, `L0537`, `L0536`,
   or `L0646`, as they are with the `$` parameter written last. Upgrade by ending the result's use
   first, or by writing `@(escape=stored)` on a parameter the body keeps.
 - A `foreach` over the iteration protocol counts as the calls it makes: `iter`, `next` at each step,
-  and the iterator's drop ([Global write effects](design.md#global-write-effects)). So a `next` that
+  and the iterator's drop ([Global write effects](docs/design.md#global-write-effects)). So a `next` that
   writes or reads a global under a live mutable pointer of it is now `L0512` or `L0511`, and a procedure
   with such a loop has those effects. It compiled and aliased the global. Upgrade by ending the
   pointer's use before the loop, or by not touching the global from the iterator.
-- A load through a pointer to a field reads that field ([Places and overlap](design.md#places-and-overlap)).
+- A load through a pointer to a field reads that field ([Places and overlap](docs/design.md#places-and-overlap)).
   After `h := &mut r^.b`, `x := h^.to` holds what `r^.b.to` holds, so a program that stored a carrier
   there and went on using it beside `x` is now `L0641`. It compiled, as the load read the first field
   instead, and held two mutable paths to one place. Upgrade by finishing with one before using the other.
 - What a callee draws from a provider reached through a viewed record's carrier is in that provider's
-  region ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)),
+  region ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)),
   whether or not the record also owns one. So `build(holders[:])` over a `Holder` with a `^mut mem.Arena`
   field is now `L0537` if that arena ends while the result lives. It compiled and read freed memory.
   Upgrade by keeping the arena alive for as long as the result.
 - A result drawn from a provider received in a variadic pack, or through a slice of pointers to
   providers, is in the region of the arenas it was given
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)),
-  and a task using one reserves it ([Allocators and tasks](design.md#allocators-and-tasks)). So
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)),
+  and a task using one reserves it ([Allocators and tasks](docs/design.md#allocators-and-tasks)). So
   `build(&mut arena)` over `build :: proc(arenas: ..^mut mem.Arena)` is now `L0537` if `arena` ends
   while the result lives, and the task is `L0732` beside a use of that arena's allocator. Both
   compiled and read freed memory. Upgrade by keeping the arena alive for as long as the result, and
   by giving the task an arena of its own.
 - A pointer a call returned reaches what the call's result dependencies say, as
-  [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)
+  [Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)
   requires, where it named nothing. Two unsound programs are now rejected. An owner stored through
   such a pointer, or a user `operator([])`'s, is held against a reset of its region (`L0537`), and an
   owner built by a provider reached through one, whether `held.get()` stored in a local or
   `pick(&mut arena)`, ends with that provider (`L0592`). Both compiled and read freed memory. Upgrade
   by keeping the region alive for as long as the owner is used.
 - `delegate` sees what it forwards wherever that is written
-  ([Delegating operators](design.md#delegating-operators)), so an overload of the distinct type
+  ([Delegating operators](docs/design.md#delegating-operators)), so an overload of the distinct type
   declared after the block is now the redeclaration `L0420`, as one written ahead of it already was.
   Upgrade by removing the `delegate` of that operator or the overload.
 - What is wrong with a declaration is reported wherever the first question about it came from. A
   declaration first reached from a speculative check, such as a generic parameter's type, kept its
   answer and lost its report, so it compiled, or stopped with the internal `L0405`. A `$` parameter's
   own type is also checked where it is declared rather than at the first instance
-  ([Generics](design.md#generics)), so a generic nothing instantiates may now report `L0306`. Upgrade
+  ([Generics](docs/design.md#generics)), so a generic nothing instantiates may now report `L0306`. Upgrade
   by fixing the reported declaration.
 - A distinct slice or pointer with a `format` of its own is lent while it is printed, as that `format`
-  may write through it ([Weakening and reborrows](design.md#weakening-and-reborrows)). So
+  may write through it ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). So
   `fmt.println(d, d)` over such a type is now `L0641`, where it compiled. Upgrade by printing it in two
   statements.
 - A task using a provider through a pointer it received reserves that provider
-  ([Allocators and tasks](design.md#allocators-and-tasks)), so using its allocator in the parent or
+  ([Allocators and tasks](docs/design.md#allocators-and-tasks)), so using its allocator in the parent or
   another task before the join is now `L0732`. Upgrade by giving the task an arena of its own.
 - A generic union whose `@(zero=)` payload has no zero is `L0423` when a record names the instance in
   its own fields, as it is elsewhere
-  ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)). Upgrade by designating a payload
+  ([Zero values and `@(zero=)`](docs/design.md#zero-values-and-zero)). Upgrade by designating a payload
   with a zero.
 - A generic block's member takes only the attributes its kind allows, so `@(require_results)` on one
   naming a constant is `L0607`, as it is in any other block
-  ([Attributes](design.md#attributes)). Upgrade by removing the attribute.
+  ([Attributes](docs/design.md#attributes)). Upgrade by removing the attribute.
 - `or_else break` and `or_else continue` in a static `foreach` body are `L0455`, as any `break` or
   `continue` that would target the expansion is
-  ([Static `foreach` expansion](design.md#static-foreach-expansion)). Over a value with no elements the
+  ([Static `foreach` expansion](docs/design.md#static-foreach-expansion)). Over a value with no elements the
   body compiled; with elements the exit was `L0368`, even in a runtime loop. Upgrade by testing the
   value and handling the failure in the body, or by moving the loop into it.
 - A foreign block's rules are checked where they were let through
-  ([Foreign system](design.md#foreign-system)). A global written `x: T = ---;` is `L0625`, as the
+  ([Foreign system](docs/design.md#foreign-system)). A global written `x: T = ---;` is `L0625`, as the
   grammar says a foreign variable has no initializer; `a, b: i32 = ---, 1;` compiled and dropped the
   `1`. `@(link_name="")` is `L0608`; it compiled and emitted a symbol with no name.
   `@(c_vararg) a, b: ..` is `L0627`; it compiled with `b` unbound. A
@@ -249,7 +249,7 @@ checklist.
   removing the `= ---`, the empty attribute or the extra name, and by writing a convention the
   compiler accepts.
 - Attributes on `impl` members and foreign declarations are checked as the
-  [attribute categories](design.md#attribute-categories) say, with `L0607`. On a member of a
+  [attribute categories](docs/design.md#attribute-categories) say, with `L0607`. On a member of a
   body-local `impl`, `@(public)`, `@(private)`, `@(export)` and `@(link_name)` are rejected as on any
   local; they compiled and did nothing. `@(export)` on a foreign declaration is rejected; it compiled
   and emitted nothing. A member of a generic `impl` now has its attributes checked as any other
@@ -263,78 +263,78 @@ checklist.
   `impl G($T) { x: int = 0; }`, is now `L0406`, as in any other block. It compiled and the member
   was dropped. Upgrade by removing the member, or moving the field to the record.
 - `string.from_runes` now takes one value argument, by position or named `runes`, as `string.from_utf8`
-  takes one by position or named `bytes` ([string type conversions](design.md#string-type-conversions)).
+  takes one by position or named `bytes` ([string type conversions](docs/design.md#string-type-conversions)).
   Any other name, a spread and `inout` were accepted and ignored, and are now `L0561`. Upgrade by
   passing the slice by position.
 - A static `foreach` binding and the names of an expanded case now take the checks of any local
-  ([Variable declarations](design.md#variable-declarations)). `x := 7; foreach ($x in 0..<2)` and
+  ([Variable declarations](docs/design.md#variable-declarations)). `x := 7; foreach ($x in 0..<2)` and
   `variant := 7; ... case $variant(p):` are `L0305`, also over an empty iterable; `foreach ($a, $a
   in R)` and `case $s(s):` over a payloadless variant are `L0304`. They compiled, and the last name
   bound won. Upgrade by renaming the binding.
 - A static `foreach` over a record binds as the runtime form does
-  ([Destructuring](design.md#destructuring)). Over another package's nominal record, `$a, $b` is now
+  ([Destructuring](docs/design.md#destructuring)). Over another package's nominal record, `$a, $b` is now
   `L0708`; it compiled and relied on a field order that package may change. A padding field no
   longer counts, so over `struct { a: int, _: [4]u8, b: int }`, `$a, $b` now compiles, and each name
   takes the field it names. Upgrade by binding the whole value and selecting its fields by name.
 - `break` or `continue` in a `defer` inside a static `foreach` body is `L0455` however many elements
-  the iterable has ([Static `foreach` expansion](design.md#static-foreach-expansion)). Over an empty
+  the iterable has ([Static `foreach` expansion](docs/design.md#static-foreach-expansion)). Over an empty
   iterable it compiled, and otherwise it was `L0368`, "only valid inside a loop", even inside one.
   Upgrade by deleting it, since a deferred statement cannot leave its construct.
 
 - A file-scope `when` now waits for a branch that may shadow a predeclared name it reads, directly or
-  through a declaration ([when statement](design.md#when-statement)). A condition that read a
+  through a declaration ([when statement](docs/design.md#when-statement)). A condition that read a
   predeclared `string` and took one branch, while another `when` declared `string`, now reads that
   declaration and may take the other. One whose own branch declares the name is now `L0389`, where it
   compiled and read the predeclared name. Upgrade by renaming the declaration in the branch.
 - A `distinct` type that declares one half of `==` and `hash` is now `L0586` as a part of a map key,
-  as it already was as the key itself ([Maps](design.md#maps)). With `D :: distinct S` declaring a
+  as it already was as the key itself ([Maps](docs/design.md#maps)). With `D :: distinct S` declaring a
   coarser `==`, `map[Holder]int` over `struct { d: D }` paired it with `S.hash`, and two keys that
   compared equal could both be stored; a lone `hash` on `D` was silently ignored. Upgrade by declaring
   both on `D`, or neither.
 - `typeid_of(T).hash(seed)`, alone or within a record or array, is now `L0341` in compile-time
-  evaluation ([`type` and `typeid`](design.md#type-and-typeid)). It folded to the nil `typeid`'s hash,
+  evaluation ([`type` and `typeid`](docs/design.md#type-and-typeid)). It folded to the nil `typeid`'s hash,
   which no run of the program computes. Upgrade by hashing at run time.
 - A move-only field or element of a temporary, as a `spawn` argument or receiver, is now `L0728`
-  ([Spawn statements](design.md#spawn-statements)). It compiled, and the task read storage the
+  ([Spawn statements](docs/design.md#spawn-statements)). It compiled, and the task read storage the
   parent had already dropped. Upgrade by binding the temporary to a local declared before the
   block, and lending that.
 - A managed place as the replacement of `exchange` is now `L0501`
-  ([Exchange](design.md#exchange)). `exchange(inout a, b)` on a `[dynamic]int` stored `b`'s bits
+  ([Exchange](docs/design.md#exchange)). `exchange(inout a, b)` on a `[dynamic]int` stored `b`'s bits
   unmoved, so both owned one allocation and the program corrupted its heap. Upgrade by writing
   `move(b)`, or `b.clone()` to keep it, as a part such as `h.items` must.
 - A map's `find_or_insert`, `try_insert` and `remove`, a `sort` or `reverse_sort`, and a `switch` on
   a value now count the code of the program they run
-  ([Inferred effects](design.md#inferred-effects)). With `p := &mut counter` still in use, a
+  ([Inferred effects](docs/design.md#inferred-effects)). With `p := &mut counter` still in use, a
   `hook(drop)` of the map's element or key, an `operator(<)` of the sorted element, or an
   `operator(==)` of the switched type that writes `counter` is now `L0512`; each compiled, and a hook
   clearing a global left a live view dangling. Upgrade by ending the borrow before the operation.
 - Every task of a `parallel` block now reserves what a `thread_local` owner's `hook(drop)` uses when
-  its thread exits ([Globals while tasks run](design.md#globals-while-tasks-run)). A hook that
+  its thread exits ([Globals while tasks run](docs/design.md#globals-while-tasks-run)). A hook that
   allocates through an `Allocator` read from a global makes a block of two tasks `L0732`, where it
   compiled and both could use that region at once. Upgrade by having the hook use its owner's
   allocator, or by giving each task what it needs rather than a `thread_local` owner.
 - An instance of a generic operator is held to the operator's shape
-  ([Operator declarations](design.md#operator-declarations)), so `operator(==) proc(a, b: V($T)) -> int`
+  ([Operator declarations](docs/design.md#operator-declarations)), so `operator(==) proc(a, b: V($T)) -> int`
   is now `L0416` where an instance is made. It compiled, and `a == b` was an `int`. Upgrade by giving
   the operator the result its symbol takes.
 - `delegate` of a symbol is now `L0420` when a block of the distinct type declares an overload of it
   with the type in any operand position, not only the first
-  ([Delegating operators](design.md#delegating-operators)).
+  ([Delegating operators](docs/design.md#delegating-operators)).
   `impl W { delegate(*); r :: operator(*) proc(s: f64, w: W) -> W { ... } }` compiled. Upgrade by
   writing every overload of that symbol by hand.
 - A `slot` whose written `self` type is not the interface's subject is `L0442`
-  ([Interface bodies](design.md#interface-bodies)). `slot f: proc(self: int) -> int;` in
+  ([Interface bodies](docs/design.md#interface-bodies)). `slot f: proc(self: int) -> int;` in
   `interface($T: type)` compiled and was never met. Upgrade by writing the subject, or no type.
 - A slot written with a calling convention is met only by a method with that convention
-  ([Interface bodies](design.md#interface-bodies)). `slot f: proc "c" (self) -> int;` was met by a
+  ([Interface bodies](docs/design.md#interface-bodies)). `slot f: proc "c" (self) -> int;` was met by a
   Loke method and not by a `proc "c"` one. Upgrade by removing the convention from the slot, or by
   giving the method the one the slot names.
 - `dyn I` over a slot written `proc(self, other: Self)` is now `L0463`
-  ([Dyn compatibility](design.md#dyn-compatibility)), as `proc(self: Self, other: Self)` already was.
+  ([Dyn compatibility](docs/design.md#dyn-compatibility)), as `proc(self: Self, other: Self)` already was.
   It compiled and misread `other` at run time. Upgrade by taking the other value through a `dyn I`
   view or a concrete type, or by keeping the interface static-only. A slot with no parameters no
   longer crashes the compiler when viewed: it is `L0442` and `L0463`.
-- The parser now rejects four shapes [grammar.md](grammar.md) never admitted. A capture clause with
+- The parser now rejects four shapes [grammar.md](docs/grammar.md) never admitted. A capture clause with
   no body, `T :: proc() capture(y);`, is `L0259`: it compiled and dropped the clause, so `y` need not
   have existed; write a procedure type with no clause. `-> !` on a procedure type in result position,
   `f :: proc() -> proc() -> ! { ... }`, is `L0257`, as it is elsewhere: calls through it never
@@ -342,85 +342,85 @@ checklist.
   drop the parentheses for mutable slicing. Attributes on an empty statement, `@(x) ;` in a body, are
   `L0206`, as at file scope: they applied to nothing, so remove them.
 - An extension `operator([]=)` no longer takes a store that built-in indexing answers
-  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)):
+  ([Operator lookup and overload resolution](docs/design.md#operator-lookup-and-overload-resolution)):
   with `impl [3]int { set :: operator([]=) ... }`, `a[0] = 1` now writes the element, as a read
   already ignored an extension `operator([])`. Upgrade by calling the procedure by name.
 - `@(export)` on a member of a generic `impl` block is now `L0438`
-  ([`@(export)`](design.md#export)). It compiled and exported nothing. Upgrade by removing it, or by
+  ([`@(export)`](docs/design.md#export)). It compiled and exported nothing. Upgrade by removing it, or by
   exporting an ordinary procedure that calls the member.
 - A slice or field of a user unary, `operator([])` or `operator([:])` result is now `L0513` when
   used after its statement, as one of a binary operator's already was
-  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+  ([Temporaries and procedure boundaries](docs/design.md#temporaries-and-procedure-boundaries)).
   `first((-m)[:])` compiled and read the temporary after it was dropped. Upgrade by binding the
   result to a local first.
 - A carrier bound by destructuring, as `out, n := holder`, now reaches what the field's carrier
   points at, so an owner stored through it counts against a later reset or a local region, as
   through `out := holder.output` (`L0536`, `L0537`,
-  [Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  [Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
   It compiled and left the owner dangling. Upgrade by keeping the allocator's region alive as long
   as the destination.
 - Comparing records at compile time when a part has no compile-time comparison, such as a
   `typeid_of` against a forged `typeid`, is now `L0341`, as comparing those parts alone is
-  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)). It folded to
+  ([Compile-time procedure evaluation](docs/design.md#compile-time-procedure-evaluation)). It folded to
   "different". Another part that differs still answers it. Upgrade by comparing at run time.
 - A map's `iter_mut` is now a mutable borrow of the map, as a dynamic array's is
-  ([By-reference iteration](design.md#by-reference-iteration)), so reading the map while an
+  ([By-reference iteration](docs/design.md#by-reference-iteration)), so reading the map while an
   entry is still in use, or taking a second iterator, is now `L0511`. It compiled, though the
   loan was meant to be exclusive. Upgrade by finishing with the entry before using the map
   again.
 - A task whose call passes one callback to several arguments, as in
   `both :: proc(f: proc(out: ^mut ^int), a, b: ^mut ^int) { f(a); f(b); }`, is now `L0730` when
   the callback leaves a borrow of `thread_local` storage in either
-  ([Borrows crossing between tasks](design.md#borrows-crossing-between-tasks)). Only the first
+  ([Borrows crossing between tasks](docs/design.md#borrows-crossing-between-tasks)). Only the first
   argument used to be checked, and a procedure value that may be either of two only as the
   first. Upgrade by not returning that borrow across the task.
 - An unfixed integer too large for a float no longer meets an unfixed float
-  ([Number literals](design.md#number-literals)): `(1 << 2000) + 1.5` is now `L0352`. It compiled,
+  ([Number literals](docs/design.md#number-literals)): `(1 << 2000) + 1.5` is now `L0352`. It compiled,
   reading the integer as `0`. A comparison, as in `(1 << 2000) > 1.5`, still orders the exact values.
   Upgrade by writing a value a float can hold.
 - A distinct type converts only as written in more places
-  ([Distinct types](design.md#distinct-types)): `r: rawptr = P(&n)` with `P :: distinct ^int` is now
+  ([Distinct types](docs/design.md#distinct-types)): `r: rawptr = P(&n)` with `P :: distinct ^int` is now
   `L0310`, and `S("a") + view` and `S("a") == T("b")` with distinct strings are `L0354`. `a && b` on
   a `distinct bool` is `L0318`, as `!a` was `L0317`. `d: D = 1 << n` with `D :: distinct int` is
   `L0310`, as `D(1) << n` was `L0318`. Upgrade by writing the conversion.
 - A constant zero divisor lane of an integer vector is now `L0319`
-  ([Lane-wise operators](design.md#lane-wise-operators)), in `v / 0`, `v % Z` and `v /= 0`, as a
+  ([Lane-wise operators](docs/design.md#lane-wise-operators)), in `v / 0`, `v % Z` and `v /= 0`, as a
   scalar's is. They compiled and panicked at run time. Upgrade by removing the division.
 - `-C` and `~C` on a constant vector are now constants ([Lane-wise
-  operators](design.md#lane-wise-operators)), so `v << -C` with a positive `C` is `L0356` and
+  operators](docs/design.md#lane-wise-operators)), so `v << -C` with a positive `C` is `L0356` and
   `-C` overflowing a lane is `L0397`. They compiled and panicked at run time. Upgrade by removing
   the negative count.
 - `Simd(inout f32, 4)` and `Range(inout int)` in value position, as in `size_of`, are now `L0681` and
   `L0689`. They compiled and ignored the mode. Upgrade by removing it.
 - Only a scalar of the lane type splats, constant or not
-  ([SIMD vectors](design.md#simd-vectors)): `v: Simd(f32, 4) = N` with `N : i64 : 3`, and
+  ([SIMD vectors](docs/design.md#simd-vectors)): `v: Simd(f32, 4) = N` with `N : i64 : 3`, and
   `f32_vector + i32(1)`, are now `L0310`. They compiled, converting the constant. Upgrade by writing
   the lane type, `f32(N)`.
 - An array literal's key must have an integer or rune type, as an index does
-  ([Fixed arrays](design.md#fixed-arrays)): `[2]int{C.B = 1}` with an enum `C` is now `L0362`.
+  ([Fixed arrays](docs/design.md#fixed-arrays)): `[2]int{C.B = 1}` with an enum `C` is now `L0362`.
   Upgrade by writing `int(C.B)`.
-- A constant zero divisor of a rune is `L0319` ([Integer operators](design.md#integer-operators)):
+- A constant zero divisor of a rune is `L0319` ([Integer operators](docs/design.md#integer-operators)):
   `r % 0` and `r /= 0` compiled and panicked at run time.
 - A map named only inside a `Box`, as in `p: Box(map[f64]int)`, now has its key checked: a key
-  that cannot be hashed is `L0586` where the map type is named ([Maps](design.md#maps)). It
+  that cannot be hashed is `L0586` where the map type is named ([Maps](docs/design.md#maps)). It
   compiled. Upgrade by keying the map by a hashable type.
 - A destructuring assignment to a destination that would view or splat its field, such as
   `v, n = record` with a `string` field and a `string_view` `v`, is now `L0310`
-  ([Destructuring](design.md#destructuring)). It compiled, and wrote the field's bytes past the
+  ([Destructuring](docs/design.md#destructuring)). It compiled, and wrote the field's bytes past the
   destination. Upgrade by assigning that field by name.
 - A provider received through a `move` parameter is now a region of the procedure, as a local one
   is: returning what it backs is `L0592`, and ending it while something it backs is live is `L0537`
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
   Replacing a provider through a `&mut` loop element or case binding also ends its region, as through
   a pointer, and `return` is `L0537` when a panic in it would end a region under an older owner,
   however its value is evaluated. These compiled, and read freed memory. Upgrade by ending the owner
   first.
 - A `defer` or `errdefer` reading a local that is dead where a later statement may panic is now
-  `L0500`, as it is at an exit ([defer statement](design.md#defer-statement)). It compiled, and read
+  `L0500`, as it is at an exit ([defer statement](docs/design.md#defer-statement)). It compiled, and read
   a moved or unset value during the unwind. Upgrade by giving the local its value before the
   `defer`.
 - `source_location(<entity>)` takes a variable or a procedure, as
-  [its section](design.md#source_location-or-source_locationentity) says; naming a type, a
+  [its section](docs/design.md#source_location-or-source_locationentity) says; naming a type, a
   constant, a package, or a built-in is now `L0573`. Upgrade by naming a variable or a procedure.
 - A `make` length, capacity, or reservation is an `int`, so a distinct integer is now `L0579`.
   Upgrade by converting it: `make([dynamic]int, int(count))`.
@@ -429,11 +429,11 @@ checklist.
 - `-define` of an integer that names no variant of a `build_config`'s enum default is now `L0388`,
   rather than making a value that is no member of the enum. Upgrade by passing a variant's value.
 - `f16` at a foreign boundary, directly or as a record's field, is now `L0619`: the Win64 C ABI
-  does not classify it ([Foreign-ABI-safe types](design.md#foreign-abi-safe-types)). Upgrade by
+  does not classify it ([Foreign-ABI-safe types](docs/design.md#foreign-abi-safe-types)). Upgrade by
   passing an `f32`, or by passing a `^f16`.
 - A struct's or union's attributes are now written on its declaration, and `move_only` is
   the attribute `@(move_only)`, no longer a reserved word
-  ([Attributes](design.md#attributes)). Attributes in the type, and `move_only struct`, are
+  ([Attributes](docs/design.md#attributes)). Attributes in the type, and `move_only struct`, are
   now `L0750`. Upgrade by running `lokec <file or directory> -migrate`:
 
   ```
@@ -455,56 +455,56 @@ checklist.
   ending the owner first, or by giving the hook a value `self`.
 - A declared `Iterator` or `Mut_Iterator` that disagrees with `iter` or `iter_mut`, or a declared
   `Item` that disagrees with `next`, is now `L0694` whether or not anything looks it up, and in
-  whatever order the members are declared ([Iteration protocol](design.md#iteration-protocol)).
+  whatever order the members are declared ([Iteration protocol](docs/design.md#iteration-protocol)).
   Upgrade by correcting the declaration or removing it.
 - A generic procedure ending with `---` is now `L0630`, as a plain one is. It compiled while uncalled.
   Upgrade by giving it a body or removing it.
 - `box(d, pick(&mut d))`, whose allocator operand writes the managed place being boxed, is now
-  `L0511`, as the same two operands of a call are ([Evaluation order](design.md#evaluation-order)).
+  `L0511`, as the same two operands of a call are ([Evaluation order](docs/design.md#evaluation-order)).
   It compiled, and cloned freed memory. Upgrade by evaluating the allocator first.
 - `sync.Atomic(T)` of a union that only has `Option`'s shape is now `L0662`
-  ([`core:sync`](standard-library.md#coresync)). Upgrade by using `Option(^T)`.
+  ([`core:sync`](docs/standard-library.md#coresync)). Upgrade by using `Option(^T)`.
 - `@(required)` with `@(initialized)` on one field is now `L0691`, and `@(require_results)` on an
   interface is `L0607`. Neither had any effect. Upgrade by deleting the attribute.
 - `lokec` takes at most one of the options that select what a run does, such as `-fmt`, `-doc` and
   `-dump-ast`, and a second is a usage error. Before, the first in an internal order won silently.
 - `string` -> `string_view` no longer applies to a distinct type on either side, as the
-  [conversion list](design.md#implicit-type-conversions) says and as `distinct [3]int` -> `[]int`
+  [conversion list](docs/design.md#implicit-type-conversions) says and as `distinct [3]int` -> `[]int`
   already did not. `s: string_view = Name("abc")` with `Name :: distinct string` is now `L0310`.
   Upgrade by writing the conversion: `string_view(string(name))`.
 
 - A `union` or `enum` is now written only as the value of a constant declaration, as a
-  `struct` already was ([Unions](design.md#unions),
-  [Enumerations](design.md#enumerations)). `f :: proc(k: enum { A, B })`, `field: union { a:
+  `struct` already was ([Unions](docs/design.md#unions),
+  [Enumerations](docs/design.md#enumerations)). `f :: proc(k: enum { A, B })`, `field: union { a:
   int, none }`, `[size_of(enum { A, B })]u8`, and `distinct enum { A }` are now `L0717`.
   `-migrate` cannot rewrite these, since each needs a name. Upgrade by declaring the type,
-  or with an [anonymous union](design.md#anonymous-unions) `(a: int | none:)` for a union
+  or with an [anonymous union](docs/design.md#anonymous-unions) `(a: int | none:)` for a union
   whose identity need not be nominal. A generic argument no longer reaches the
-  [success shorthand](design.md#success-returns) through an inline definition, because
+  [success shorthand](docs/design.md#success-returns) through an inline definition, because
   there is none.
 - A read-only copy of a carrier that comes to hold a reborrow of a mutable one later in a loop
   is now a reborrow of it too ([Weakening and
-  reborrows](design.md#weakening-and-reborrows)). This compiled, and read `x` through `y` while
+  reborrows](docs/design.md#weakening-and-reborrows)). This compiled, and read `x` through `y` while
   it wrote `x` on the second time round, and is now `L0641`, as are the same with a field, a
   record, a view, a literal, a call's result, a spawned argument, or a load through a pointer:
   `r: ^int = other; for (i := 0; i < 2; i += 1) { y := r; x^ = 1; z := y^; r = x; }`.
   Upgrade by ending the use of the copy before the write.
 - An `assert` or `panic` report now holds what each argument prints until it has printed
-  the last ([Built-in procedures](design.md#built-in-procedures)), so a later argument
+  the last ([Built-in procedures](docs/design.md#built-in-procedures)), so a later argument
   cannot write it. `assert(false, "m", p, grow(p))` with `p: ^mut Node` compiled when `Node`
   held a borrow, and printed the changed value, and so did the same with a slice of such
   records and with `bump(p^.value)` or `bump(&mut x)` writing what `p` reaches. Each is now
   `L0641` or `L0511`. Upgrade by evaluating the argument into a local first.
 - A copy now holds what its source holds across the reads of its `hook(copy)`, and a copy
   last-use transfer makes a move counts as the
-  [global effects](design.md#global-write-effects) say.
+  [global effects](docs/design.md#global-write-effects) say.
   `t := Tagged{&mut counter}; u := t;` compiled though the hook read `counter` while handed
   a mutable pointer to it, and a `u := t;` that was `t`'s last use added no read to the
   procedure's effect. Each is now `L0511`. Upgrade by ending the use of the borrow before
   the copy, or with `move(t)`, which runs no hook.
 - A call given a read-only carrier now uses the mutable carriers stored behind it, as a
   callee may write through them
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
   `y: ^int = l^.a; write(l); z := y^;` with `write :: proc(p: ^Pair) { p^.a^ = 1; }` compiled
   with a live read-only copy of what the call writes, whatever the call's body did, and so
   did the same with a read-only view, a record holding one, or an indirect call. A method
@@ -523,14 +523,14 @@ checklist.
   or `find_or_insert` alike. Each is now `L0641`. Upgrade by ending the use of the copy
   before using what it copies.
 - Passing a record by value now uses what its carriers point to, as passing the carrier
-  does ([Weakening and reborrows](design.md#weakening-and-reborrows)). `copy :=
+  does ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). `copy :=
   holder.links[0].to; take(holder); copy^ = 1;` compiled with two live mutable paths to
   one place, whatever `take` did with them, and so did the same through a nested record,
   a union, a method taking `self: Holder`, an indirect call, or a moved record. Each is now
   `L0641`. Upgrade by ending the use of the copy before the call.
 - A read-only argument to a task now keeps what it borrows through a mutable carrier
   read-only borrowed until the join, and a carrier loaded out of a field is lent as one
-  passed by name is ([Task borrows and the join](design.md#task-borrows-and-the-join)).
+  passed by name is ([Task borrows and the join](docs/design.md#task-borrows-and-the-join)).
   `parallel { spawn read(carrier); carrier^ = 1; }` compiled with a data race, as did
   a read-only copy of the carrier, a view, or a record holding one, and
   `parallel { spawn write(link^.to); spawn write(link^.to); }` compiled with two tasks
@@ -538,41 +538,41 @@ checklist.
   giving the task what it writes alone.
 - A record stored through a view parameter, and a carrier stored through a pointer to
   a local that holds one, now copy what they hold as a carrier stored alone does
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). After
   `links[0] = Link{carrier}; held := links[0].to;`, using `carrier` and `held` compiled
   with two live mutable carriers to one place, and so did `links[0] = links[1];` before
   a call given `links`, and `pointer^ = carrier; held := pointer^;`. Each is now
   `L0641`. Upgrade by ending the use of one before the other, or by replacing the
   place that holds the copy.
 - A repeated array element's copy hook now counts its reads after the initializer
-  is evaluated ([Fixed arrays](design.md#fixed-arrays),
-  [Global write effects](design.md#global-write-effects)), with what the initializer
+  is evaluated ([Fixed arrays](docs/design.md#fixed-arrays),
+  [Global write effects](docs/design.md#global-write-effects)), with what the initializer
   and earlier elements hold in use. `[2]Tagged{0..=1 = Tagged{&mut counter}}` with
   `Tagged`'s hook reading `counter` compiled. It is now `L0511`. Upgrade by building
   the elements one at a time, or by not borrowing what the hook reads.
 - A place destructure now counts the reads of the copy hooks of the fields it clones
-  ([Destructuring](design.md#destructuring),
-  [Global write effects](design.md#global-write-effects)), not those of the containing
+  ([Destructuring](docs/design.md#destructuring),
+  [Global write effects](docs/design.md#global-write-effects)), not those of the containing
   record's hook, which never runs. `tag, _ := pair` with `tag`'s hook reading `counter`
   compiled while `p := &mut counter` was in use, whatever `pair`'s own hook read. It
   is now `L0511`. Upgrade by destructuring before taking the borrow, or by ending the
   borrow first. A discarded field no longer counts, so `_, text := pair` is accepted
   there, where it was `L0511` when the discarded field's hook read the global.
-- A [parametric alias](design.md#parametric-aliases)'s body may not hold a
+- A [parametric alias](docs/design.md#parametric-aliases)'s body may not hold a
   `distinct` type at any depth. `Alias :: Option(distinct $T);` compiled and denoted
   an `Option` of a new type that no other spelling names; it is now `L0744`, as
   `Alias :: distinct Option($T);` already was. Upgrade by declaring the distinct type
   by name, or a generic `struct` or `union` for a new type in each application.
 - An alias selected from a type declared in a generic body now counts as what it
-  names ([One result](design.md#one-result),
-  [Success returns](design.md#success-returns)), as a bare one does. With
+  names ([One result](docs/design.md#one-result),
+  [Success returns](docs/design.md#success-returns)), as a bare one does. With
   `impl Local { Outcome :: Result(T, int); Payload :: T; }`, `-> Local.Outcome`
   with `return;` compiled and is now `L0326`, reaching its end is `L0365`, and
   `-> Result(Local.Payload, int)` with `return x;` is `L0310`. Upgrade by writing
   `return .ok;` or `return .ok(x);`. `Local.Outcome` for `Result(Unit, T)` keeps
   its bare return.
 - A question about a record's lifecycle no longer loses a hook written after it
-  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)).
+  ([Lifecycle hooks and resource types](docs/design.md#lifecycle-hooks-and-resource-types)).
   A generic record's `where T == int` on a `hook(copy)` after
   `helper :: proc(self) where is_copyable(G(T))` left `G(string)` with a copy and a
   `helper`. It now has neither, so `b := a;` is `L0503` and `a.helper()` is `L0363`.
@@ -583,12 +583,12 @@ checklist.
   constant declared after the record is `L0488` once the record has been used. Upgrade
   by declaring the constant first, or by moving the use after the block.
 - An `assert` or `panic` report now holds a mutable pointer to plain data until it has
-  printed ([Built-in procedures](design.md#built-in-procedures)). After
+  printed ([Built-in procedures](docs/design.md#built-in-procedures)). After
   `p := &mut x;`, `assert(ok, "stop", p, write_through(p))` compiled, and printed what
   the later argument left. It is now `L0641`, as `fmt.println(p, write_through(p))`
   already was. Upgrade by calling it first: `done := write_through(p);`.
 - An `inout` receiver reached through a pointer or slice is now a borrow of that
-  place ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
+  place ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). After
   `p := &mut m; entry := p^.find_or_insert(3, 7);`, `p^.clear()` before a read of
   `entry` compiled and read the cleared map. It is now `L0641`, as is any use of `p`
   that reaches the place while `entry` is in use, and the same goes for a
@@ -599,7 +599,7 @@ checklist.
   hands back now also keeps the loans the element held.
 - What is stored through a `&mut` binding of a user's iterator now reaches the
   storage the iterator may lend from
-  ([By-reference iteration](design.md#by-reference-iteration)). With a source holding
+  ([By-reference iteration](docs/design.md#by-reference-iteration)). With a source holding
   `values: []mut Ro`, `foreach (&mut list in source) { list.head = &c; }` left the
   array behind `values` not knowing of the borrow, so `node := lists[0].head;
   c.value = 5; _ = node^.value;` compiled. It is now `L0511`. Upgrade by ending the
@@ -607,7 +607,7 @@ checklist.
   itself, which was never where it went, so `c.value = 5; again := source.values;`
   compiles, where it was rejected.
 - A call can no longer be left both a mutable carrier and a copy of it
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). After
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). After
   `links[0] = links[1];` or a call that may copy between elements,
   `poke_both(&mut links[:]);` compiled when neither carrier was used afterwards,
   and the callee could write through both. It is now `L0641`, however the
@@ -620,7 +620,7 @@ checklist.
   by replacing one of the two first, as `links[1] = Link{&mut z};`, or by using each
   through its own call: `first := links[0].to; first^ = 1;`.
 - A value printed through a mutable call result is now held until printing ends
-  ([Built-in procedures](design.md#built-in-procedures)).
+  ([Built-in procedures](docs/design.md#built-in-procedures)).
   `fmt.println(m.find_or_insert(3, 7)^, clearing(inout m))` compiled and read the
   value after `clear` emptied the map. It is now `L0511`, and the same goes for a
   `panic` or `assert` report. A read of the source, as `m.len()` there, stays
@@ -628,14 +628,14 @@ checklist.
   writes, so `fmt.println(a.slice()[0], a.slice()[1])` on an `inout` `slice` is
   `L0512`. Upgrade by binding the view first: `view := a.slice();`.
 - An owner moved by a swap or sort now keeps its region
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
   After `items[1] = fmt.to_string(arena.allocator(), 42);`, swapping or sorting a
   view of `items`, or calling `slice.reverse`, `slice.sort`, or a procedure that
   does, then `return items[0]` compiled and returned a value from the dropped arena.
   It is now `L0592`. Upgrade by allocating the result in an allocator that outlives
   the procedure.
 - A call now keeps borrowed what the storage it is handed holds
-  ([Values that contain borrows](design.md#values-that-contain-borrows)). After
+  ([Values that contain borrows](docs/design.md#values-that-contain-borrows)). After
   `holders := [1]Holder{Holder{values[:]}}; view := holders[:];`, `drop(values)`
   before `print_rows(view)` compiled and the call read the dropped array. It is now
   `L0512`, as is the same through `first(holders[:])`, a pointer to a record or to
@@ -644,45 +644,45 @@ checklist.
   Upgrade by ending the call before the drop or write, or by replacing what the
   element holds first. A slice literal now follows the same rule, so
   `drop(values); again := view;` on its view compiles, where it was rejected.
-- A mutable carrier held in a [slice literal](design.md#slice-literals)'s hidden
+- A mutable carrier held in a [slice literal](docs/design.md#slice-literals)'s hidden
   array is now checked as one in a named array is
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Taking two
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Taking two
   mutable copies of one element, using a carrier stored in an element while a copy
   of it is in use, and using two elements after a call that may copy between them
   all used to compile, and are now `L0641`. Upgrade by ending one use before the
   next, as for a named array.
 - An assignment counts as reordering its targets only when each value names a
-  target's own place ([Evaluation order](design.md#evaluation-order)), not when
+  target's own place ([Evaluation order](docs/design.md#evaluation-order)), not when
   their source text matches. `links[next()], links[next()] = links[next()],
   links[next()]` used to count, whichever elements the calls named, so a caller
   could keep one mutable carrier in two places; it now reports `L0641` there.
   Upgrade by evaluating the indices first. `links[0], links[1] = links[ 1 ],
   links[ 0 ]`, once rejected for its spacing, is now accepted.
 - A store or call that may leave what a place held no longer ends the borrow held
-  there ([Places and overlap](design.md#places-and-overlap)). A second `&mut c`
+  there ([Places and overlap](docs/design.md#places-and-overlap)). A second `&mut c`
   stored at an index that is no constant, in a loop, or through a
   `foreach (&mut x in xs)` binding used to compile beside a first one still in use,
   and is now `L0511` or `L0641`. A call given `inout held` while `held` may still
   hold a borrow left by an earlier `@(escape=stored)` argument whose root has ended
   used to compile and hand the callee ended storage, and is now `L0513`
-  ([Retaining a borrow](design.md#retaining-a-borrow)). Upgrade by giving each
+  ([Retaining a borrow](docs/design.md#retaining-a-borrow)). Upgrade by giving each
   element its own borrow, or by declaring what is stored before what holds it, so
   it outlives every use.
 - A parametric alias with a `$` name inside a nested call that computes a type,
   `Alias :: Option(Identity($T))`, is now `L0742` at its declaration
-  ([Parametric aliases](design.md#parametric-aliases)). It used to be accepted, and
+  ([Parametric aliases](docs/design.md#parametric-aliases)). It used to be accepted, and
   a pattern written through it could never match (`L0392`). Upgrade by writing the
   type the call computes where the `$` name stands, as `Option($T)`.
 - A result written through an alias declared in a generic body now depends on a
   generic argument as the same result written out does
-  ([One result](design.md#one-result)). `Outcome :: Result(T, E)` as a result used
+  ([One result](docs/design.md#one-result)). `Outcome :: Result(T, E)` as a result used
   to allow a bare `return;` in the instance where `T` is `Unit` and an implicitly
   wrapped `return value;` beside an error payload, each now `L0326`, `L0365`, or
   `L0310` as for `Result(T, E)`. Upgrade by writing `return .ok;` or
   `return .ok(value);`.
 - A call is now `L0511` when its callee may read a global a mutable borrow of it
   is still live across
-  ([Global write effects](design.md#global-write-effects)). Passing `&mut counter`
+  ([Global write effects](docs/design.md#global-write-effects)). Passing `&mut counter`
   to a procedure that names `counter`, directly, through a callee, in a
   `hook(drop)`, `hook(convert)`, or `hook(copy)` it runs, or through a procedure
   value or `dyn` call that may reach such a procedure, used to compile, and the
@@ -693,21 +693,21 @@ checklist.
   borrow before the call, passing the value the callee reads as an argument, or
   having the callee read through its parameter instead of the global's name.
 - A write into a parameter no longer hides the allocator it received there
-  ([`@(allocator_reset)`](design.md#allocator_reset)). After `if (flag) { maybe =
+  ([`@(allocator_reset)`](docs/design.md#allocator_reset)). After `if (flag) { maybe =
   .some(allowed); }` on `maybe: inout Option(Allocator)`, `free_all(maybe or_else
   allowed)` used to compile though the payload may still be the caller's; it is now
   `L0538`, as a record's field, a `switch` binding, and `.as` are. A write on every
   path is rejected too, as these facts do not follow control flow. Upgrade by
   resetting the marked allocator itself.
 - A borrow stored through a slice literal's slice is now seen
-  ([Slice literals](design.md#slice-literals)). After `view := []mut []int{{}};
+  ([Slice literals](docs/design.md#slice-literals)). After `view := []mut []int{{}};
   view[0] = values[:];`, `drop(values)` used to compile while `view[0][0]` read the
   dropped array, and a hooked element's `hook(drop)` read it at the end of the block;
   both are now `L0512`, and an element holding a local that ends first is `L0513`.
   Upgrade by replacing the element before ending what it borrows, or by ending the
   source after the literal's block.
 - An `assert` or `panic` report now borrows what it prints
-  ([Built-in procedures](design.md#built-in-procedures)), as `fmt.println` does.
+  ([Built-in procedures](docs/design.md#built-in-procedures)), as `fmt.println` does.
   `panic("stop", values[0], consume(move(values)))` used to print freed memory and
   is `L0512`; `panic("stop", p, change(inout p))` is `L0511`; and a printed value's
   `format` that writes a global the report holds is `L0512`. A value printed through
@@ -715,7 +715,7 @@ checklist.
   `fmt.println` alike, so `fmt.println(s[0], grow(inout values))` is `L0511`. Upgrade
   by evaluating the later argument into a local first.
 - A call that moves or copies carriers within the storage an argument reaches is
-  now seen ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  now seen ([Values that contain borrows](docs/design.md#values-that-contain-borrows)).
   After `exchange(&mut links[:])` over a fixed array or `share(&mut pair)` between
   fields, each carrier there kept what it held before the call, so a copy
   `held := links[0].to` still allowed writing what it now pointed at; that is now
@@ -726,7 +726,7 @@ checklist.
   the same store written out. Upgrade by ending the use of what was rearranged
   before changing its target, or by reading the carriers before the call.
 - What is stored through a `foreach` loop's `&mut` binding is now seen in the
-  source ([By-reference iteration](design.md#by-reference-iteration)). A carrier
+  source ([By-reference iteration](docs/design.md#by-reference-iteration)). A carrier
   stored as `list.head = &mut c`, or an owner stored as
   `item = fmt.to_string(arena.allocator(), 42)`, used to stay in the binding, so
   `c` could be written, or `arena` dropped, while a later `lists[1].head` or
@@ -746,7 +746,7 @@ checklist.
   with `where is_copyable(T)` so that it is left out of the instances it cannot
   serve.
 - A record with `hook(drop)` and no `hook(copy)` must now say how it is copied
-  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)):
+  ([Lifecycle hooks and resource types](docs/design.md#lifecycle-hooks-and-resource-types)):
   `L0747` at its declaration. It used to get a generated field-wise copy, which
   released twice what the hook released, or left a long chain's copy recursing
   through the chain. A record that a move-only field already makes move-only
@@ -764,7 +764,7 @@ checklist.
   `any_view(value)`, and its storage diagnostic `L0462`; `any_view` is now an
   unknown name (`L0306`). `dyn` is the one type-erased view. A `..dyn I`
   parameter still views each argument implicitly
-  ([Variadic parameters](design.md#variadic-parameters)), and the printers
+  ([Variadic parameters](docs/design.md#variadic-parameters)), and the printers
   take `..dyn fmt.Formattable`. `base:runtime`'s `Type_Kind` loses `Any_View`,
   so `Dyn` and every later member move down by one. Upgrade an `any_view`
   parameter that prints its value to `..dyn fmt.Formattable` or to a
@@ -775,7 +775,7 @@ checklist.
 - Runtime type inspection is gone: the checked extractions `view.(T)` and
   `view.as(T)` on an `any_view`, a switch over an `any_view`'s type, and a
   type such as `case int(n):` or `case f32, f64:` as a case value
-  ([switch statement](design.md#switch-statement)). `.(` is now `L0225`, a
+  ([switch statement](docs/design.md#switch-statement)). `.(` is now `L0225`, a
   type case in a switch is `L0426`, and a type switch over a `dyn` value is
   still `L0466`. A union is still read with `value.as(.name)` and its switch.
   Upgrade each inspection by what it stood for: hold a closed set of types in
@@ -784,22 +784,22 @@ checklist.
   call it through a `dyn` view.
 - A C variadic parameter is written `@(c_vararg) args: ..`, with no type,
   rather than `..any_view`, which is now `L0627`; a bare `..` without the
-  attribute is `L0627` too ([`@(c_vararg)`](design.md#c_vararg)). Upgrade by
+  attribute is `L0627` too ([`@(c_vararg)`](docs/design.md#c_vararg)). Upgrade by
   deleting `any_view` from each such parameter. `assert` and `panic` now take
   any printable value after the message by a rule of their own rather than as
   an `any_view`, so a value with no printed form, such as a capture literal, is
-  `L0310` ([Built-in procedures](design.md#built-in-procedures)).
+  `L0310` ([Built-in procedures](docs/design.md#built-in-procedures)).
 - The printers in `core:fmt` (`print`, `println`, `eprint`, `eprintln`,
   `format_to`, `concat_to`, `format_to_with`, `to_string`), `core:log`'s
   `debug`, `info`, `warning`, `error`, and `at`, and `io.write_formatted` and
   `write_formatted_line` take `..dyn fmt.Formattable` rather than
-  `..any_view` ([Printed forms](standard-library.md#printed-forms)).
+  `..any_view` ([Printed forms](docs/standard-library.md#printed-forms)).
   A call that lists its arguments is unchanged and prints the same. Upgrade a
   procedure that spreads its own `..any_view` arguments into them by declaring
   that parameter `..dyn fmt.Formattable`.
 - `Status(E)` is now `Result(Unit, E)`, declared as the parametric alias
   `Status :: Result(Unit, $E);` rather than a union of its own
-  ([Typed fallibility](design.md#typed-fallibility)). A procedure generic over
+  ([Typed fallibility](docs/design.md#typed-fallibility)). A procedure generic over
   `Result($T, $E)` now takes a `Status`, and `Status.map_error` is
   `Result.map_error`. A `Status` type's name, in a `typeid`, reflection, or a
   diagnostic, is now `Result(Unit, E)`, and a non-generic `Status` body that
@@ -813,18 +813,18 @@ checklist.
 - A union variant whose payload is `Unit` now prints as `.name`, as a
   payloadless one does, so a successful `Result(Unit, E)` prints `.ok` rather
   than `.ok(Unit{})` and `Option(Unit)` prints `.some`
-  ([Printed forms](standard-library.md#printed-forms)). A two-variant
+  ([Printed forms](docs/standard-library.md#printed-forms)). A two-variant
   union of a `Unit` variant and a non-null reference, such as
   `Result(Unit, ^T)`, now stores no tag, as `Status(^T)` already did, so it is
   one address and a nullable C pointer at a foreign boundary
-  ([Representation](design.md#representation)). Upgrade by updating expected
+  ([Representation](docs/design.md#representation)). Upgrade by updating expected
   output that contains `(Unit{})`, and any code or binding that relied on such
   a union's size.
 
 - A public type's private method no longer meets an interface slot, in any
   package, so an importer can no longer call it by declaring an interface
   with a slot of its name and calling that from a bound generic procedure or
-  a `dyn` view ([Interface bodies](design.md#interface-bodies)). The same holds
+  a `dyn` view ([Interface bodies](docs/design.md#interface-bodies)). The same holds
   for a private associated constant that a requirement such as
   `T.Element -> type` would find. Private types and every type in a
   `package main` are unchanged. A bound that relied on such a method now
@@ -835,7 +835,7 @@ checklist.
 - For the same reason, a public type's private `format` no longer decides how
   it prints: the type prints by the generated default in every package, its
   own included, as an explicit `dyn fmt.Formattable` view does
-  ([Printed forms](standard-library.md#printed-forms)). Code in its
+  ([Printed forms](docs/standard-library.md#printed-forms)). Code in its
   package can still call the method directly. Upgrade by marking `format`
   `@(public)` to keep the custom form. Private types and every type in a
   `package main` are unchanged.
@@ -843,8 +843,8 @@ checklist.
 - A store through a carrier that the same multiple assignment reassigns, as
   `p^.head` in `p, p^.head = &mut y, p^.tail`, is now checked where the
   carrier pointed before the statement, where the store lands
-  ([Evaluation order](design.md#evaluation-order),
-  [Values that contain borrows](design.md#values-that-contain-borrows)).
+  ([Evaluation order](docs/design.md#evaluation-order),
+  [Values that contain borrows](docs/design.md#values-that-contain-borrows)).
   Before, the checker took it to go through the new value, so writing the
   storage a copy of `x.head` still pointed at compiled; it is now rejected
   with `L0511`, and a reborrow of the old target still in use after the
@@ -860,20 +860,20 @@ checklist.
   assignment that reads the record it writes, as `r.second, r.first = r`,
   now keeps the values the record held before the statement. Code that
   relied on the old reading is now rejected with `L0511`
-  ([Evaluation order](design.md#evaluation-order)). Upgrade as above, by
+  ([Evaluation order](docs/design.md#evaluation-order)). Upgrade as above, by
   splitting the statement in the order you mean.
 
 - A loop that copies `s[k].head` out of a slice parameter, stores
   `s[k].tail` into it at a variable index, and uses the copy after the store
   is now rejected with `L0641`, as it already was through a pointer that may
   name either of two places
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). The next
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). The next
   iteration's copy of `tail` can alias the copy still in use. Upgrade by
   finishing with the copy before the store.
 
 - `lokec` needs LLVM/Clang 18 or later, now stated in
   [Getting started](readme.md#getting-started). The runtime's processor check
-  for [CPU levels](compiler-guide.md#cpu-levels) uses compiler-rt's
+  for [CPU levels](docs/compiler-guide.md#cpu-levels) uses compiler-rt's
   detection, which knows the levels from Clang 18; with an older Clang every
   build fails compiling `runtime/cpu.c` with `invalid cpu feature string for
   builtin`. Upgrade LLVM, for example with `winget upgrade LLVM.LLVM`.
@@ -883,8 +883,8 @@ checklist.
   copied out of that destination, as `h := p^.head`, a reborrow of the
   argument, so using `r` while `h` is still in use is rejected with `L0641`,
   as it is after storing `p^.head = r` directly
-  ([Retaining a borrow](design.md#retaining-a-borrow),
-  [Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  ([Retaining a borrow](docs/design.md#retaining-a-borrow),
+  [Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Before, it
   compiled, and two mutable paths to one node were used together. Upgrade by
   finishing with the copy before using the argument again, or by taking the
   copy after the argument's last use.
@@ -893,7 +893,7 @@ checklist.
   after `p^.head = r` with `head: ^Node` and `r: ^mut Node`, now keeps `r`
   from being written until `h`'s last use, as a read-only reborrow taken
   directly does; so does a call that stores `r` into such a destination
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before,
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Before,
   writing through `r` while `h` was still used compiled. Upgrade by moving
   the copy's last use before the write, or by taking the copy after it.
 
@@ -901,7 +901,7 @@ checklist.
   copy of one: after `read: ^Node = r; p^.head = read; h := p^.head;`, or
   `keep(p, read)` with an `@(escape=stored)` parameter, writing through `r`
   while `h` is still used is rejected with `L0641`
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Before, it
   compiled. Upgrade as above: move `h`'s last use before the write, or take
   the copy after it.
 
@@ -909,7 +909,7 @@ checklist.
   `x := p^.head` after `p^ = q^`, now reborrows the carrier it was copied
   from, so copying `q^.head` again while `x` is still in use is rejected with
   `L0641`, as storing `p^.head = q^.head` already was
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Before, it
   compiled, and two mutable pointers to one node were used together. Upgrade
   by finishing with the copy before copying the source again, or by copying
   through the destination only.
@@ -917,12 +917,12 @@ checklist.
 - A loop that keeps a copy of what an earlier iteration stored into an element
   of a slice parameter, as `s[0].head = s[1].tail; s[1].tail = s[2].tail;`
   repeated, is now rejected with `L0641`, as the same loop over a local array
-  already was ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  already was ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
   Upgrade by restructuring the loop as for the local array.
 
 - The floating-point environment is specified: rounding to nearest, ties to
   even, subnormals kept, and non-stop exceptions, on every thread a program
-  starts ([Floating-point operators](design.md#floating-point-operators)).
+  starts ([Floating-point operators](docs/design.md#floating-point-operators)).
   The specification used to suggest installing trapping through the target's
   environment; floating-point results computed in any other environment are
   now unspecified. Upgrade foreign code that Loke calls and that changes the
@@ -933,14 +933,14 @@ checklist.
 - A compound assignment through a pointer, as `h^.count += 1`, while a
   borrow of the same place, as `count := &h^.count`, is still in use is now
   rejected with `L0641`, as a plain store already was
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Before, it
   compiled, and the read-only borrow saw the place change. Upgrade by
   finishing with the borrow first, or by updating through it when it is
   mutable.
 
 - A view of a lent `foreach` element over a source reached through a pointer
   now borrows that source, as
-  [Borrowing iteration](design.md#borrowing-iteration) requires. Changing the
+  [Borrowing iteration](docs/design.md#borrowing-iteration) requires. Changing the
   source while such a view is still in use is now rejected; before, it
   compiled, and growing the container could leave the view dangling:
 
@@ -979,7 +979,7 @@ checklist.
   `foreach`, as `items.append(item)` inside `foreach (item in items^)` with
   `items: ^mut [dynamic]int`, is now rejected with `L0641`, as it already was
   for a local container
-  ([Borrowing iteration](design.md#borrowing-iteration)). So is changing it
+  ([Borrowing iteration](docs/design.md#borrowing-iteration)). So is changing it
   through a pointer to that pointer, as `p^.append(item)` inside
   `foreach (item in p^^)` with `p: ^mut ^mut [dynamic]int`, or inside
   `foreach (item in p^^[:])`. Before, these compiled, and growing the
@@ -993,7 +993,7 @@ checklist.
   `p: ^mut ^mut [dynamic]int`, or `holder.items^[:]` with
   `holder: ^mut Holder`, now keeps that outer pointer suspended while it is in
   use, as a view through one pointer already did
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Changing the
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Changing the
   container through it, as `p^.append(1)`, is now rejected with `L0641`;
   before, it compiled, and the view could be left reading freed memory.
   Reading through the pointer still compiles beside a read-only view. Upgrade
@@ -1024,7 +1024,7 @@ checklist.
 
 - A mutable pointer copied out through a pointer parameter now keeps the
   place it was copied from suspended while the copy is in use
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Using that
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Using that
   place, or the whole pointer, meanwhile is now rejected with `L0641`; before,
   it compiled, leaving two mutable paths to one value, and growing a container
   through one could leave the other reading freed memory:
@@ -1048,7 +1048,7 @@ checklist.
   `both(held, &mut held)`, which hands a callee a pointer and a pointer to the
   variable holding it, and `other := &mut held` while `copy := held` is still
   in use, are now rejected with `L0641`
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)); before,
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)); before,
   they compiled, leaving two mutable paths to one container. Upgrade by
   passing the pointer once, or by finishing with the copy first.
 
@@ -1058,14 +1058,14 @@ checklist.
   `p := &mut pairs`, now reads `p^^.a` or `p[0].a` on the way, so it waits for
   the last use of a copy of it, as `node := p^^.a`, and is rejected with
   `L0641` while that copy is in use
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). Before, it
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). Before, it
   compiled, leaving two mutable paths to one value; reading the same place
   was already rejected. Upgrade by finishing with the copy first, or by
   storing through the copy.
 
 - A `switch` payload binding of a mutable pointer over a place now waits for
   the last use of a mutable copy of the pointer stored there, as
-  [Switch ownership](design.md#switch-ownership) requires: the binding names
+  [Switch ownership](docs/design.md#switch-ownership) requires: the binding names
   that pointer. Using `next` after `copy := cur^.next` beside
   `case .some(next):`, while `copy` is still in use, is now rejected with
   `L0641`, and so is the same over a local, as `copy := held` beside
@@ -1091,7 +1091,7 @@ checklist.
   `Holder :: struct { head: ^mut Node }` read through `h: ^Holder` or
   `p: ^^Holder`, is now reborrowed by a copy of it, as one behind a mutable
   pointer already was
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A second
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). A second
   copy while the first is in use, as `b := h^.head` after `a := h^.head`, is
   now rejected with `L0641`; before, it compiled, leaving two mutable
   pointers to one node in use. Upgrade by finishing with one copy before
@@ -1099,7 +1099,7 @@ checklist.
 
 - A `switch` over a place reached through a pointer now borrows the place
   while a payload binding is in use, as one over a local already did
-  ([Switch ownership](design.md#switch-ownership)). Writing the payload
+  ([Switch ownership](docs/design.md#switch-ownership)). Writing the payload
   through any pointer to it meanwhile is rejected with `L0511`: a store, a
   mutable borrow, an `inout` argument, handing a mutable pointer that reaches
   it to a call, or a mutable copy of such a pointer, as `q := h` or
@@ -1130,7 +1130,7 @@ checklist.
 
 - A `&mut` case binding over a place reached through a pointer now borrows
   its payload exclusively while it is in use, as one over a local already did
-  ([Switch ownership](design.md#switch-ownership)). In
+  ([Switch ownership](docs/design.md#switch-ownership)). In
   `switch (h^.first) { case .some(&mut m): ... }`, storing into `h^.first`,
   reading it, or handing `h` to a call while `m` is still used is rejected
   with `L0641`; before, nothing was checked, so `h^.first = .none` could
@@ -1142,7 +1142,7 @@ checklist.
   mutable pointer reachable through it, so `touch(list)`, `q := list`,
   `q: ^List = list`, or `Holder{list}` while `node := list^.head` is still in
   use is rejected with `L0641`
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A pointer to
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). A pointer to
   a local, as `list := &mut l`, was exempt from the call rule, and `touch`
   could write through `list^.head` while `node` still pointed at the same
   node; a copy was exempt everywhere, though only a later use of it through
@@ -1151,7 +1151,7 @@ checklist.
 
 - A later load through a parameter now sees what the body stored through it,
   as one through a pointer to a local does
-  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  ([Values that contain borrows](docs/design.md#values-that-contain-borrows)).
   Using a carrier while a copy of it the body stored through a parameter is
   still in use is now rejected with `L0641`; before, it compiled, and could
   build a cycle that a write through it then broke under a live payload
@@ -1180,7 +1180,7 @@ checklist.
   keeping a second one.
 
 - The fields of `fmt.Fixed` and `fmt.Padded` are now private, as
-  [`core:fmt`](standard-library.md#corefmt) already documented them. Reading
+  [`core:fmt`](docs/standard-library.md#corefmt) already documented them. Reading
   `p.value` or `p.width` or writing a `fmt.Fixed{...}` literal is rejected;
   make the wrappers with `fmt.fixed`, `fmt.pad_left`, `fmt.pad_right`, and
   `fmt.zero_pad`, and keep the wrapped value yourself if you need it again.
@@ -1188,7 +1188,7 @@ checklist.
 - `core:random`'s distributions now compute their `exp`, `log`, `pow`, and
   `sqrt` with `core:math/repro`, so a seeded generator gives the same values
   on every machine and CPU level, and the distributions run at compile time
-  ([Distributions](standard-library.md#distributions)). The algorithms and
+  ([Distributions](docs/standard-library.md#distributions)). The algorithms and
   draw orders are unchanged, but a value whose C library result was not
   correctly rounded changes in its last bit, and with it any decision that
   bit made: on one machine, about one `log_normal` value in 200. A count from `poisson`, `binomial`, or `geometric` that changes
@@ -1200,53 +1200,53 @@ checklist.
   are slower, `beta` by Jöhnk's method most, from 13 to 205 ns; `normal` and
   `exponential` are not.
 - A member `as` in an `impl` of a generic union is now `L0409`, as in an `impl` of any other union
-  ([Inspecting a union](design.md#inspecting-a-union)). It compiled and no use could reach it, since
+  ([Inspecting a union](docs/design.md#inspecting-a-union)). It compiled and no use could reach it, since
   `u.as(.a)` selects the built-in. Upgrade by renaming it.
 - A public constant in a generic extension is no longer exported under its package
-  ([Methods and implementation blocks](design.md#methods-and-implementation-blocks)): `ext.K` is now
+  ([Methods and implementation blocks](docs/design.md#methods-and-implementation-blocks)): `ext.K` is now
   `L0335`. With `impl lib.Holder($T) { @(public) K :: size_of(T); }` it took its value from whichever
   instance came first. Upgrade by exporting an ordinary constant, or a procedure of the block.
 - The fields of a built-in array, slice, dynamic array, range or map iterator are private
-  ([Iteration protocol](design.md#iteration-protocol)): `it.index` is now `L0471`. Writing
+  ([Iteration protocol](docs/design.md#iteration-protocol)): `it.index` is now `L0471`. Writing
   `x.iter().index` let safe code read outside the array and segfault. Upgrade by calling `next`.
 - What a `foreach` step owns no longer outlives the step
-  ([Element bindings](design.md#element-bindings)): a pointer to the `indexed()` counter, or to the
+  ([Element bindings](docs/design.md#element-bindings)): a pointer to the `indexed()` counter, or to the
   record one name receives over a map or an `indexed()` loop, is `L0526` when returned and `L0513`
   when kept past the step. `foreach (e in xs.indexed()) { return &e; }` compiled and left a dangling
   pointer. Upgrade by copying what the step binds, or by keeping `e.value`, which the source owns.
 - `foreach ((p, q), &mut c in t)` that takes apart an owned part with a custom `hook(copy)` or
   `hook(drop)` is `L0508`, as in a loop with no `&mut` leaf
-  ([Destructuring](design.md#destructuring)). It compiled and the hook never ran. Upgrade by binding
+  ([Destructuring](docs/design.md#destructuring)). It compiled and the hook never ran. Upgrade by binding
   the part whole.
 - A group member no longer wins for taking an argument as a `$` parameter
-  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)).
+  ([Operator lookup and overload resolution](docs/design.md#operator-lookup-and-overload-resolution)).
   With `plain(x: int)` and `gen($x: int)`, `pick(1)` called `gen`, because the ownership tie-breaker
   counted the literal against `plain`; it now calls `plain`. Upgrade by calling `gen` by name where
   it was the one meant.
 - A capture is a binding, so `capture(true = 1)` and `capture(nil = 7)` are now `L0700`, as
-  `true := 1` is ([Predeclared names](design.md#predeclared-names)), and `capture(_ = 41)` is
-  `L0716`, since `_` binds nothing ([Capture literals](design.md#capture-literals)). They compiled,
+  `true := 1` is ([Predeclared names](docs/design.md#predeclared-names)), and `capture(_ = 41)` is
+  `L0716`, since `_` binds nothing ([Capture literals](docs/design.md#capture-literals)). They compiled,
   and in the body the name read the capture. Upgrade by renaming the capture.
 - A replacement for a bundled package given with `-collection` can no longer write an
-  [`@(intrinsic)`](design.md#intrinsic) declaration that states what nothing checks. A written type,
+  [`@(intrinsic)`](docs/design.md#intrinsic) declaration that states what nothing checks. A written type,
   as in `Arena: int : ---;`, a `where` clause, and `operator(...)` or `hook(...)` around the procedure
   are `L0734`. A receiver with no type but not named `self`, as in `proc(this)` or `proc(self, other)`,
   is `L0736`. An unknown or misplaced attribute on the block's `impl` is reported like any other. All
   compiled, unchecked, and `-doc` showed them. Upgrade by writing the declaration as the bundled
   package's source does.
-- A procedure converts to a [result contract](design.md#procedure-result-contracts) only when what
+- A procedure converts to a [result contract](docs/design.md#procedure-result-contracts) only when what
   its result reads through its parameters' carriers fits the contract too. `callback: Own = deep`,
   with `own` returning `input^.text` and `deep` returning `input^.next^.text`, compiled, and a call
   through `callback` lost the allocator `deep`'s result came from, so a reset left it reading freed
   memory. This is now `L0645`. Upgrade by declaring the contract from the deeper procedure, as
   `type_of(deep)`.
-- [`copied()`](design.md#iteration-adapters) borrows a mutable-view source, as it does a container,
+- [`copied()`](docs/design.md#iteration-adapters) borrows a mutable-view source, as it does a container,
   rather than holding a copy of it, so it copies nothing however it is used. A `foreach` directly
   over `view.copied()` copied all of `view` and reported it as `L0507`, advising the very form it
   was written in. A stored `copied()` adapter now borrows its source, so moving or reassigning the
   source while the adapter is still used is `L0512`. Upgrade by finishing with the adapter first,
   or by copying the source into a local the adapter can borrow.
-- An [adapter](design.md#iteration-adapters) holds a copy of a mutable-view source only when it
+- An [adapter](docs/design.md#iteration-adapters) holds a copy of a mutable-view source only when it
   walks that source mutably, and borrows it otherwise; `copied()` borrows another adapter's mutable
   view too. `source.reversed().copied()`, over a mutable view with `iter_reverse` and no
   `iter_mut_reverse`, cloned `source` twice, once for a `reversed()` that could only read it and
@@ -1256,7 +1256,7 @@ checklist.
   and is written under `copied()` still copies its source, and its `L0507` now advises writing
   `copied()` first, as `source.copied().reversed()`, rather than a `foreach` over the call.
 - A value read through a carrier that a record parameter holds is in what the argument's carrier
-  leads to ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  leads to ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
   With `Reader :: struct { holder: ^Holder }`, a `read_text(reader: Reader)` returning
   `reader.holder^.text` was in no region at all, by value, `^mut`, or `inout`, so a reset compiled
   while the caller's copy of arena text lived on, and read freed memory; it is now `L0537`, as are
@@ -1266,8 +1266,8 @@ checklist.
   `pointer: ^Reader`. Upgrade by
   ending what holds the copy before the reset, or by copying the text into storage the reset does
   not end.
-- A procedure type checks a [variadic parameter](design.md#variadic-parameters)'s
-  `@(escape=...)` and [`@(cross_thread)`](design.md#cross_thread) against the element type, as a
+- A procedure type checks a [variadic parameter](docs/design.md#variadic-parameters)'s
+  `@(escape=...)` and [`@(cross_thread)`](docs/design.md#cross_thread) against the element type, as a
   declaration with the same parameters does. It checked them against the `[]T` the body receives,
   so `proc(@(escape=none) values: ..int)` compiled as a type but was `L0648` as a declaration, and
   `proc(@(cross_thread) entries: ..proc())` was `L0723` as a type but compiled as a declaration.
@@ -1276,49 +1276,49 @@ checklist.
 
 ### Added
 
-- [`@(positional)`](design.md#positional) on a struct's declaration makes its field order part of
+- [`@(positional)`](docs/design.md#positional) on a struct's declaration makes its field order part of
   its public interface, so another package may write its literal positionally and destructure it:
   `geom.Point{3, 4}` and `x, y := p`, which stay `L0709` and `L0708` for a struct without it.
   `core:math/linalg` marks `Vector2`, `Vector3`, and `Vector4`, so
   `linalg.Vector3(f32){1, 2, 3}` is a literal in any package.
 - `-fmt`, `-fmt-check`, `-migrate`, `-migrate-check`, `-api`, and `-api-check` take a
-  [tree](compiler-guide.md#trees), as `-test` does: `lokec ... -fmt-check` lists every unformatted
+  [tree](docs/compiler-guide.md#trees), as `-test` does: `lokec ... -fmt-check` lists every unformatted
   file of a project, and `lokec src/... -api-check` every stale interface file. With a tree, each
   package writes or compares its own `api.loki` only, so one that several packages import is listed
   once.
-- `core:log` has [`Writer_Sink`](standard-library.md#writer-sink), a sink that writes the standard
+- `core:log` has [`Writer_Sink`](docs/standard-library.md#writer-sink), a sink that writes the standard
   logger's lines to any `io.Writer` it owns, such as an `fs.File`: `log.writer_sink(move(file))`.
   Each record reaches the writer whole, in one sequence of writes under a lock, and a record the
   writer refuses is dropped and counted by `dropped`; one refused part way never has the next record
   continue its line. A logging provider keeps one in `static`
   storage to log to a file.
 - A tree input, a directory followed by `/...` or `\...`, makes `-test` [test every
-  package](compiler-guide.md#testing-a-tree) in that directory and below it, each as a root of its
+  package](docs/compiler-guide.md#testing-a-tree) in that directory and below it, each as a root of its
   own: `lokec core/... -test`. Every package is checked, those that declare a test are built and
   run, and a last line totals the tree. With a tree, `-o` names a directory.
-- An executable links the static C runtime, as `/MT` selects; [C runtime](compiler-guide.md#c-runtime)
+- An executable links the static C runtime, as `/MT` selects; [C runtime](docs/compiler-guide.md#c-runtime)
   documents this and which builds of a foreign library match it. A foreign import of an object or
   static library compiled for another runtime, as `/MD`, `/MDd`, or `/MTd` select, now warns with
   `L0755` and names the library: the build links both runtimes, and neither linker said so.
-- [`@(subsystem = "windows")`](design.md#subsystemstring) on the root package clause links a
+- [`@(subsystem = "windows")`](docs/design.md#subsystemstring) on the root package clause links a
   windowed executable, one that gets no console window, for a game or other GUI program. `main`,
   `os.args` and the exit status are unchanged, and a `-test` build stays a console program. A
   process with no standard error, such as a windowed one started from Explorer, sends what
   `core:fmt` and the runtime write there, panic reports included, to an attached debugger a line at
   a time instead of dropping it. The value is `"console"` or `"windows"` (`L0754`), written once
   across the root package (`L0753`) and never on an imported one (`L0613`).
-- [`core:slice`](standard-library.md#partitioning-and-selection) has `partition`, which puts the
+- [`core:slice`](docs/standard-library.md#partitioning-and-selection) has `partition`, which puts the
   elements a predicate accepts first and calls it exactly once per element, `is_partitioned`,
   `partition_point`, a binary search by any key, and `select_nth_by` and `select_nth`, which put at
   index `n` what a sort would without sorting: O(n) comparisons in the worst case, by introselect
   with a median-of-medians fallback. None allocates or copies an element, so move-only elements work.
-- [`core:random`](standard-library.md#mixing-and-derived-seeds) has `mix64`, the SplitMix64
+- [`core:random`](docs/standard-library.md#mixing-and-derived-seeds) has `mix64`, the SplitMix64
   finalizer, and `Seed_Path`, which derives a 64-bit value from a seed and a path of integer words,
   such as a domain tag and a chunk's coordinates, without a generator and whatever order places are
   visited in. A word is its value modulo 2^64, so negative and `i32` or `i64` coordinates need no
   conversion. Both are frozen, with known-answer vectors: their values never change from one release
   to the next.
-- A [`..^T` variadic parameter](design.md#variadic-parameters) lends what is written at the call
+- A [`..^T` variadic parameter](docs/design.md#variadic-parameters) lends what is written at the call
   instead of copying it: a `T` is borrowed where it is or from a temporary, a named constant in its
   read-only storage, and a spread of `T`s lends each element. A `^T` or a `[]^T` is passed as it is.
   The pack lends its values only for the call: keeping the pack, a pointer in it, or a borrow of a
@@ -1326,42 +1326,42 @@ checklist.
   bounds what the values hold instead. A pack past 256 KiB is allocated from the default provider,
   so a spread has no limit, and between two variadic overloads the one whose pack copies wins a tie.
   A spread of the wrong type is `L0574`, which names both the `[]^T` and the `[]T` the pack takes.
-- [`core:container`](standard-library.md#corecontainer) has
-  [`Priority_Queue(T, C)`](standard-library.md#priority-queues) with `Min_Queue(T)` and `Max_Queue(T)`,
+- [`core:container`](docs/standard-library.md#corecontainer) has
+  [`Priority_Queue(T, C)`](docs/standard-library.md#priority-queues) with `Min_Queue(T)` and `Max_Queue(T)`,
   which always hand back the most urgent element under a comparator stored in the queue, and
-  [`Deque(T)`](standard-library.md#deques), a growable double-ended queue that extends a dynamic array's
+  [`Deque(T)`](docs/standard-library.md#deques), a growable double-ended queue that extends a dynamic array's
   names with `prepend` and `pop_front`. Both hold move-only elements and have fallible forms.
-- [`core:slice`](standard-library.md#heaps) has `make_heap`, `push_heap`, `pop_heap`, `sift_heap_top`,
+- [`core:slice`](docs/standard-library.md#heaps) has `make_heap`, `push_heap`, `pop_heap`, `sift_heap_top`,
   and `is_heap` over a slice the caller owns, and the comparators `Ascending(T)` and `Descending(T)`.
-- [`core:checksum`](standard-library.md#corechecksum) has `Crc(T, P)`, an incremental CRC of any
+- [`core:checksum`](docs/standard-library.md#corechecksum) has `Crc(T, P)`, an incremental CRC of any
   catalogue parameter set checked at compile time, with `Crc32`, `Crc32c`, and `Crc64`. Its zero
   value is the checksum of no bytes, and it is an `io.Writer`.
-- [`core:encoding/binary`](standard-library.md#coreencodingbinary) reads and writes binary
+- [`core:encoding/binary`](docs/standard-library.md#coreencodingbinary) reads and writes binary
   formats: a bounded `Reader` over a borrowed slice, whose failed operations change nothing and
   report an offset, with subrecords and lengths checked before they are used, and a `Writer(W)`
   of typed fields into any `io.Writer`.
-- `core:io` has `Slice_Writer`, a [bounded byte sink](standard-library.md#bounded-byte-sink) over a
+- `core:io` has `Slice_Writer`, a [bounded byte sink](docs/standard-library.md#bounded-byte-sink) over a
   caller's slice, and `Buffer_Writer.bytes_mut`, to patch a finished buffer in place.
 - `core:endian` has `load` and `store`, a field of a byte slice in a named order, for every
   type `is_fixed_width` accepts, floats included
-  ([Fields of a byte slice](standard-library.md#fields-of-a-byte-slice)).
+  ([Fields of a byte slice](docs/standard-library.md#fields-of-a-byte-slice)).
 - `core:math` has `to_bits` and `from_bits`, a float's exact IEEE-754 encoding in each width
-  without `core:unsafe` ([`core:math`](standard-library.md#coremath)), and
-  [Floating-point operators](design.md#floating-point-operators) now promises that moving a
+  without `core:unsafe` ([`core:math`](docs/standard-library.md#coremath)), and
+  [Floating-point operators](docs/design.md#floating-point-operators) now promises that moving a
   float keeps its encoding.
 - `@(move_only)` applies to a union too, which could be move-only only through a move-only
-  payload before ([`@(move_only)`](design.md#move_only)).
+  payload before ([`@(move_only)`](docs/design.md#move_only)).
 - `lokec -migrate` rewrites what an earlier release accepted into what this one does, in a
   file or a directory's `.loke` files, and leaves everything else as written;
   `-migrate-check` lists the files it would change
-  ([Common options](compiler-guide.md#common-options)).
-- [`@(fieldwise_copy)`](design.md#fieldwise_copy) keeps the generated field-wise
+  ([Common options](docs/compiler-guide.md#common-options)).
+- [`@(fieldwise_copy)`](docs/design.md#fieldwise_copy) keeps the generated field-wise
   copy of a record with a `hook(drop)`, for a hook that adds a step each value
   needs once.
 - A `..dyn I` parameter takes any value whose type satisfies `I`, viewing
   each argument where it is or in a temporary that lives through the call, so
   `total(square, Circle{1})` needs no `(dyn I)(&...)` per argument
-  ([Variadic parameters](design.md#variadic-parameters)). A `dyn I` argument
+  ([Variadic parameters](docs/design.md#variadic-parameters)). A `dyn I` argument
   is passed as it is, an untyped constant is viewed at its default type, and a
   move-only place stays usable after the call. Only the elements of a read-only
   `..dyn I` pack convert; a `dyn` local, an ordinary `dyn` parameter, and a
@@ -1369,19 +1369,19 @@ checklist.
 - `variants_of` takes an enum as well as a union, listing each member as a
   `meta.Variant` with the payload `Unit` and its declaration index, so one
   generic loop names the alternatives of either; a member's value stays with
-  `enum_values_of` ([Compile-time reflection](design.md#compile-time-reflection)).
+  `enum_values_of` ([Compile-time reflection](docs/design.md#compile-time-reflection)).
   `variants_of` of any other type is still `L0451`.
 - A type alias may bind `$` names, which an application supplies in order of
   first appearance: `Io_Result :: Result($T, Io_Error);` makes
   `Io_Result(int)` the type `Result(int, Io_Error)`, with no identity of its
   own, and `Buf :: [$N]u8;` takes a constant
-  ([Parametric aliases](design.md#parametric-aliases)). The body's names
+  ([Parametric aliases](docs/design.md#parametric-aliases)). The body's names
   resolve where the alias is declared. A parameter written through one,
   `r: Io_Result($T)`, infers and ranks as its expansion. A misplaced or
   doubly bound `$` name, a `distinct` or computed body, a self-reference, a
   local alias, and an `impl` over an alias's applications are rejected with
   `L0741` to `L0746`.
-- [Minimum provenance precision](design.md#minimum-provenance-precision)
+- [Minimum provenance precision](docs/design.md#minimum-provenance-precision)
   now guarantees that a pointer chosen among borrows by branches or
   reassignment keeps at least 8 places of each storage apart, and 64 in all,
   so a write to another field beside a borrow through it is portable.
@@ -1397,14 +1397,14 @@ checklist.
   have inferred them, so `value_or(x, .some(y))` against
   `proc(value: $T, fallback: Option(T) = .none)` compiles, as do
   `same(Color.Red, .Green)` and `second(1, {2, 3})`
-  ([Arguments typed after inference](design.md#arguments-typed-after-inference)).
+  ([Arguments typed after inference](docs/design.md#arguments-typed-after-inference)).
   Arguments still run in written order. A waiting argument binds nothing, so
   one that is the only binder of a `$` name is still rejected (`L0385`, now
   naming the unbound parameter), and in a procedure group it takes no part in
   choosing the member, whose parameter then checks it.
 
 - `core:math` has the
-  [integer bit operations](standard-library.md#integer-bit-operations)
+  [integer bit operations](docs/standard-library.md#integer-bit-operations)
   `count_ones`, `leading_zeros`, `trailing_zeros`, `rotate_left`, and
   `rotate_right`, for every integer type, signed or unsigned. Zero has as
   many leading and trailing zeros as its type has bits, a rotation takes any
@@ -1412,7 +1412,7 @@ checklist.
   each is one LLVM intrinsic at every optimization level.
 
 - `core:math` has the
-  [integer bit operations](standard-library.md#integer-bit-operations)
+  [integer bit operations](docs/standard-library.md#integer-bit-operations)
   `bit_width`, `reverse_bits` (LLVM's `bitreverse`), `is_power_of_two`,
   `next_power_of_two`, and `checked_next_power_of_two`, for the same types.
   The power-of-two operations read the value, so zero and every negative
@@ -1422,7 +1422,7 @@ checklist.
   form returns `.none` there.
 
 - `core:container` has
-  [index sets](standard-library.md#corecontainer-index-sets), sets of the
+  [index sets](docs/standard-library.md#corecontainer-index-sets), sets of the
   indices `0 ..< cap` held one bit each: `Index_Set(N)` inline,
   `Dynamic_Index_Set` from an allocator, and `Index_View` and
   `Index_View_Mut` over the caller's words. They set, clear, and test single
@@ -1433,11 +1433,11 @@ checklist.
   return an `Allocator_Error` instead of following the allocator's failure
   policy, leaving the set unchanged when they fail.
 
-- Compile-time evaluation runs a [capture literal](design.md#capture-literals),
+- Compile-time evaluation runs a [capture literal](docs/design.md#capture-literals),
   so a constant may be computed by a procedure that makes one and calls it,
   directly or through an `interfaces.Callable` parameter, including writes
   through a `&mut` capture
-  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
+  ([Compile-time procedure evaluation](docs/design.md#compile-time-procedure-evaluation)).
   The literal stays a runtime value: a constant's value cannot be or hold one,
   and a `dyn proc` view of one is still rejected, both with `L0341`.
 
@@ -1445,7 +1445,7 @@ checklist.
   UCRT and reproducible functions with seeded, grid, and dependent inputs.
 
 - A block comment starting with `/**` is a
-  [doc comment](design.md#doc-comments), for documentation longer than a
+  [doc comment](docs/design.md#doc-comments), for documentation longer than a
   line. Its text drops the indentation its lines share, so it needs no `*` on
   each line; `/***` and `/**/` stay ordinary comments:
 
@@ -1467,39 +1467,39 @@ checklist.
   back to its last whole record after a crash, through its append handle
   too; `fs.File.metadata` describes the open file, its size included, without
   moving the position. `io.Operation` gains `Set_Size`
-  ([Opening and file I/O](standard-library.md#opening-and-file-io)).
+  ([Opening and file I/O](docs/standard-library.md#opening-and-file-io)).
 
 - `fs.File.read_at` and `write_at` read and write at an offset in one call,
   and `read_exact_at` and `write_all_at` loop until the whole buffer has
   moved, for files read and written in place by page
-  ([Positional I/O](standard-library.md#positional-io)).
+  ([Positional I/O](docs/standard-library.md#positional-io)).
 
 - `fs.File.lock`, `try_lock`, and `unlock` take an advisory shared or
   exclusive lock on a whole file, held by the handle and released by `close`,
   `drop`, or the program ending, so a store can insist on one writer. A
   failed `unlock` keeps the lock, so a retry releases it.
   `io.Operation` gains `Lock` and `Unlock`
-  ([File locking](standard-library.md#file-locking)).
+  ([File locking](docs/standard-library.md#file-locking)).
 
 - `fs.replace_atomic` and `fs.replace_atomic_text` replace a file so that a
   reader, or the program after a crash or power loss, sees either the whole
   previous file or the whole new one, and on success the new one is durable
-  ([Atomic replacement](standard-library.md#atomic-replacement)).
+  ([Atomic replacement](docs/standard-library.md#atomic-replacement)).
 
 - `math.floor_div` and `math.floor_mod` divide any integer type rounding the
   quotient toward negative infinity, where `/` and `%` truncate toward zero,
   so `math.floor_div(-1, 16)` is `-1` and `math.floor_mod(-1, 16)` is `15`.
   For a power-of-two divisor, `x >> n` and `x & (2^n - 1)` already give the
-  same results ([Integer operators](design.md#integer-operators)).
+  same results ([Integer operators](docs/design.md#integer-operators)).
 - `core:encoding/json` parses strict RFC 8259 JSON into an immutable document
   of borrowed views, keeping member order, repeated keys, and exact number
   spellings, and writes JSON through a caller's buffer into any `io.Writer`,
   compact or pretty. Every failure is a returned error with a byte offset,
   including malformed, oversized, or deeply nested input and running out of
-  memory ([`core:encoding/json`](standard-library.md#coreencodingjson)).
+  memory ([`core:encoding/json`](docs/standard-library.md#coreencodingjson)).
 - `io.Buffer_Writer` is an owning, growable byte sink that satisfies
   `io.Writer`, for output assembled in memory before it is published
-  ([Byte buffer](standard-library.md#byte-buffer)).
+  ([Byte buffer](docs/standard-library.md#byte-buffer)).
 - `strconv.try_parse_f64` and `fmt.try_spell_f64` report a failure to create
   the "C" numeric locale as a `Backend_Error` where `parse_f64` and printing
   panic, and `fmt.try_spell_f64` spells a float into a fixed buffer without a
@@ -1511,12 +1511,12 @@ checklist.
   one instruction, with the same result. An object build makes the same check from a
   static constructor, before its C host's `main`, and the host can check first
   with `loke_rt_v1_cpu_supports`
-  ([CPU levels](compiler-guide.md#cpu-levels)).
+  ([CPU levels](docs/compiler-guide.md#cpu-levels)).
 - `math.fma_is_instruction()` is true where `math.fma` is one instruction,
   so that an `if` can choose an algorithm by it. `core:math/repro` does: at
   `x86-64-v3` its exact products come from the instruction, with the same
   results, and its functions take up to a third less time, `asin` 29%, `pow`
-  21%, and `hypot` 31% less ([`core:math`](standard-library.md#coremath)).
+  21%, and `hypot` 31% less ([`core:math`](docs/standard-library.md#coremath)).
 - `@(cpu_dispatch="x86-64-v3")` marks a procedure that a build for a lower
   CPU level also emits for the named one, with every procedure it calls
   directly; a call runs that copy on a processor with the level, which the
@@ -1524,14 +1524,14 @@ checklist.
   `core:math/repro`'s `f64` functions but `sqrt` are marked, so a baseline
   executable runs them with the FMA instruction where the processor has it,
   most near a fifth faster there. `LOKE_DISPATCH_CPU=x86-64` keeps a run on
-  the build's own code ([`@(cpu_dispatch)`](design.md#cpu_dispatchstring),
-  [CPU levels](compiler-guide.md#cpu-levels)).
+  the build's own code ([`@(cpu_dispatch)`](docs/design.md#cpu_dispatchstring),
+  [CPU levels](docs/compiler-guide.md#cpu-levels)).
 - `@(cold)` marks a rarely called procedure, which is never inlined into its
   callers, so their frames stay small, and the path to a call to it is laid
   out as unlikely. `core:math/repro`'s fixed-point slow paths are marked:
   `hypot` takes 13.4 ns rather than 17.9, `pow` 55.2 rather than 58.4, and
   `tan` 51.1 rather than 53.1, with the same results
-  ([`@(cold)`](design.md#cold)).
+  ([`@(cold)`](docs/design.md#cold)).
 - `core:math/repro` holds correctly rounded elementary functions, whose
   results are the same bits on every machine, CPU level, and optimization
   level, and at compile time: `exp`, `log`, `log2`, `log10`, `pow`, `sqrt`,
@@ -1539,12 +1539,12 @@ checklist.
   widths, and `complex_abs` and `quaternion_abs`, the magnitudes of
   `math.Complex` and `math.Quaternion`, the second rounded once where
   `q.abs()` rounds three times
-  ([`core:math/repro`](standard-library.md#coremathrepro)).
+  ([`core:math/repro`](docs/standard-library.md#coremathrepro)).
 - `repro.RESULTS_VERSION` and `random.SEQUENCE_VERSION` name the versions of
   `core:math/repro`'s results and of the values a seeded `core:random`
   generator gives; each changes with any of them, so a replay or a lockstep
   peer can record them and refuse a recording that would diverge
-  ([Version policy](releasing.md#version-policy)).
+  ([Version policy](docs/releasing.md#version-policy)).
 - `examples/lockstep.loke` is a lockstep simulation: a fixed timestep, an
   input log, `core:math/repro` and `core:random`, and a hash of a canonical
   serialization that is the same on every CPU level and optimization level,
@@ -1556,7 +1556,7 @@ checklist.
   restores the caller's on return; so do `loke_rt_v1_program_init` and the
   thread-local drops `loke_rt_v1_thread_detach` runs. With `-debug`, a call into foreign code
   that returns with the environment changed panics, naming the procedure
-  ([Floating-point operators](design.md#floating-point-operators)).
+  ([Floating-point operators](docs/design.md#floating-point-operators)).
 - `core:math/linalg` has fixed-size vectors and matrices with the same bits
   everywhere: `Vector2(T)` to `Vector4(T)` and `Matrix(T, R, C)` of any
   shape, column-major with column vectors, for any `interfaces.Numeric(T)`;
@@ -1574,7 +1574,7 @@ checklist.
   `f32`, `f64`, and `math.Complex` of any `Real` meet. At `f32`,
   `transform_point`, `transform_direction`, and a 3 x 3 `m * v` compute in
   `Simd` lanes with the same bits; `bench/linalg.loke` measures the batch
-  operations ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+  operations ([`core:math/linalg`](docs/standard-library.md#coremathlinalg)).
 - `core:math/dense` has matrices whose size is known at run time, of real or
   complex elements, with the same bits everywhere: an owning column-major
   `Matrix(T)`, `View(T)` and `View_Mut(T)` over a matrix or a foreign buffer
@@ -1591,7 +1591,7 @@ checklist.
   `f32` and `f64` products run a `Simd` kernel and `lu` and `cholesky` are
   blocked around it, and the products, `lu`, and `cholesky` take an optional
   thread pool, with the same bits either way; `bench/dense.loke` measures
-  them ([`core:math/dense`](standard-library.md#coremathdense)).
+  them ([`core:math/dense`](docs/standard-library.md#coremathdense)).
 - `core:math/geometry` has the exact predicates `orient2d`, `orient3d`,
   `incircle`, and `insphere`, which return the sign of their determinant
   exactly for `f32` and `f64` coordinates, by Shewchuk's adaptive method, and
@@ -1611,7 +1611,7 @@ checklist.
   for `f32`, `f64`, and integers. An `f32` box cast computes its three slabs
   in `Simd` lanes with the same bits; `bench/geometry.loke` measures the
   casts, frustum culling, and the predicates against hand-written loops
-  ([`core:math/geometry`](standard-library.md#coremathgeometry)).
+  ([`core:math/geometry`](docs/standard-library.md#coremathgeometry)).
 - `core:time` has time zones: `local_zone()`, the zone the system's clock
   shows, with Windows' own rules and history, read on each use; `fixed_zone`;
   and `now_local()`. `Zone.offset_at` and `Zone.to_local` convert an
@@ -1619,10 +1619,10 @@ checklist.
   `gap`, or in an `overlap`, with the offsets on each side, and `Zone.at`
   picks an instant with a `Choice`: `Compatible`, RFC 5545's and Temporal's,
   `Earlier`, `Later`, or `Reject`
-  ([Time zones](standard-library.md#time-zones)).
+  ([Time zones](docs/standard-library.md#time-zones)).
 - A `core:time` `Zone` prints what it holds rather than `Zone{}`: a fixed
   zone its offset, `+05:30` or `Z`, and the system zone `local`
-  ([Time zones](standard-library.md#time-zones)).
+  ([Time zones](docs/standard-library.md#time-zones)).
 
 - The warning `L0740` reports a public declaration that names a private one
   of its package where an importer would have to name it too: a private type
@@ -1630,16 +1630,21 @@ checklist.
   alias, or a constant's type, as `Fill` in `[]Fill` or `Option(Fill)`, and
   any private declaration in a public `where` clause. A procedure group's
   private members, defaults, array lengths, and a `package main` are not
-  reported ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  reported ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
   `core:math/linalg`'s `Converts`, the bound of the conversion hooks, is now
   public, and `time.styled` writes its bound out instead of naming a private
   procedure.
 
 ### Changed
 
+- The documentation moved into [docs/](docs/): [design.md](docs/design.md),
+  [grammar.md](docs/grammar.md), [compiler-guide.md](docs/compiler-guide.md),
+  [standard-library.md](docs/standard-library.md), and the other reference documents. The release
+  bundle ships them in its `docs` folder; `readme.md`, `CHANGELOG.md`, and `LICENSE` stay at its
+  root.
 - The parent of a `parallel` block may write a file-scope or `static` variable that no running
-  task reserves ([Globals while tasks run](design.md#globals-while-tasks-run), rationale under
-  ["Tasks that borrow, joined by their block"](comments.md#tasks-that-borrow-joined-by-their-block)). Every such write between the
+  task reserves ([Globals while tasks run](docs/design.md#globals-while-tasks-run), rationale under
+  ["Tasks that borrow, joined by their block"](docs/comments.md#tasks-that-borrow-joined-by-their-block)). Every such write between the
   first `spawn` and the join was `L0731`, so a program whose block lives in `main` around its loop
   could write no plain global from the main thread. A task reserves what its procedure may read or
   write, and what the drops its thread's exit runs may; every task also reserves a variable whose
@@ -1648,57 +1653,57 @@ checklist.
   read the variable, the drop hook, or where the borrow is kept. A task's own write of such
   storage is an error as before, and nothing that compiled is rejected by this change.
 - The diagnostic for a place passed unmarked to a `move` parameter names the copy as well as the
-  transfer ([Parameter semantics and ABI lowering](design.md#parameter-semantics-and-abi-lowering)).
+  transfer ([Parameter semantics and ABI lowering](docs/design.md#parameter-semantics-and-abi-lowering)).
   `send.try_send(next)` reported only `move(...)`, which ends `next`, so a loop that still needed
   its counter copied it to a second local first. `L0501`, and the `L0392` note for a rejected
   member, now add "or `.clone()` for a copy" when the argument's type has one:
   `send.try_send(next.clone())` sends a temporary and leaves `next` live.
-  [Channels](standard-library.md#channels) and `examples/channels.loke` show that spelling, and
-  ["Channels end by ownership"](comments.md#channels-end-by-ownership) records why a send has no
+  [Channels](docs/standard-library.md#channels) and `examples/channels.loke` show that spelling, and
+  ["Channels end by ownership"](docs/comments.md#channels-end-by-ownership) records why a send has no
   copying member.
-- [Implicit type conversions](design.md#implicit-type-conversions) now says that an unfixed
-  constant converts to a [distinct type](design.md#distinct-types) as it does to that type's
+- [Implicit type conversions](docs/design.md#implicit-type-conversions) now says that an unfixed
+  constant converts to a [distinct type](docs/design.md#distinct-types) as it does to that type's
   underlying type: `limit: Meters = 3;` and `id < 10` need no written conversion, while a typed
   value still does. The compiler already accepted this; the list named built-in types only.
 - The specification no longer describes this compiler's own behavior. Copy-cost warnings, the
   executable's entry and runtime symbol names, what a windowed program's standard handles are,
   the assemblers, and the `-debug` foreign-call check moved to
-  [compiler-guide.md](compiler-guide.md#copy-cost-diagnostics); its diagnostic codes were
+  [compiler-guide.md](docs/compiler-guide.md#copy-cost-diagnostics); its diagnostic codes were
   dropped from design.md, which names what each diagnostic reports; and how `@(cpu_dispatch)` copies
   callees and how `@(intrinsic)` declarations are written to
-  [compiler-architecture.md](compiler-architecture.md#cpu-dispatch). Nothing a program means
-  changed. [`unsafe.transmute`](design.md#unsafetransmute) no longer calls a union's tag encoding
-  unspecified, since [Representation](design.md#representation) specifies it.
-- [Weakening and reborrows](design.md#weakening-and-reborrows) now says which views keep their
+  [compiler-architecture.md](docs/compiler-architecture.md#cpu-dispatch). Nothing a program means
+  changed. [`unsafe.transmute`](docs/design.md#unsafetransmute) no longer calls a union's tag encoding
+  unspecified, since [Representation](docs/design.md#representation) specifies it.
+- [Weakening and reborrows](docs/design.md#weakening-and-reborrows) now says which views keep their
   constant elements apart as the compiler already did: a slice literal does, as a fresh borrow of
   a range does, and a range sliced through a pointer, as `&mut p^[0:2]`, does not, since it
   reborrows the pointer. Nothing a program means changed.
 - A thread the runtime did not start attaches itself the first time it calls a Loke export or a
   callback Loke handed to C
-  ([Values that outlive every scope](design.md#values-that-outlive-every-scope)), so code on a
+  ([Values that outlive every scope](docs/design.md#values-that-outlive-every-scope)), so code on a
   library's own thread, such as an audio device callback, needs no setup. A C host need not call
   `loke_rt_v1_thread_attach`, which now does nothing on an attached thread. To have the thread's
   `thread_local` values dropped, the host calls `loke_rt_v1_thread_detach`, as before.
-- The [printed form](standard-library.md#printed-forms) of a `dyn` view of an interface with a
+- The [printed form](docs/standard-library.md#printed-forms) of a `dyn` view of an interface with a
   `format` slot of `fmt.Formattable`'s shape is documented as the value it views, as the compiler
   already printed it; the table said such a view printed its type's name.
 - `container.Priority_Queue_Iterator(T)` and `Small_Array_Iterator(T)` are aliases of
   `container.Slice_Iterator(T)`, the read-only cursor over a slice that both containers return, so
   a diagnostic about a queue's iterator no longer names the small array's.
-- Inserting a new key into a [map](design.md#maps) hashes it once rather than twice when the map
+- Inserting a new key into a [map](docs/design.md#maps) hashes it once rather than twice when the map
   does not grow: the lookup that finds the key absent also finds the slot it takes. Inserting a
   million 48-byte strings fell from 607 ms to 560 ms, and a million integers from 110 ms to 103 ms.
 - `lokec -version` and `loke-lsp -version` name the revision a build comes from, so a build of the
   development tree no longer passes for the release before it: `lokec 0.9.0
   (v0.9.0-14-g01989c09-dirty)`. A release still prints `lokec 0.9.0`, and a build with no recorded
   revision adds `(unstamped)`. `build-stamp.ps1` gives the Odin flag that records it; `test-all.ps1`
-  passes it ([Inspecting a compilation](compiler-guide.md#inspecting-a-compilation)). A `-g`
+  passes it ([Inspecting a compilation](docs/compiler-guide.md#inspecting-a-compilation)). A `-g`
   build's debug information names the same producer.
-- [Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types) now states
+- [Lifecycle hooks and resource types](docs/design.md#lifecycle-hooks-and-resource-types) now states
   which body-local hooks come too late (`L0488`), as the compiler already reported: one under a
   `when` that could not be selected where the record is declared, or in a static `foreach` body,
   once an earlier statement relied on how the record is copied or dropped; asking only its size
-  does not. [Methods and implementation blocks](design.md#methods-and-implementation-blocks) now
+  does not. [Methods and implementation blocks](docs/design.md#methods-and-implementation-blocks) now
   states that a body-local block cannot declare a member an earlier use generated, as `format` or
   `hash` (`L0409`). The `L0488` report no longer says whether a block applies could not be told,
   which did not fit a `foreach`.
@@ -1709,34 +1714,34 @@ checklist.
   256 KB took 145 s and now takes under 0.2 s. A bound inside a sequence still panics.
 - Comparing a fixed array of more than 8 elements or 64 bytes generates a loop rather than a few
   instructions per element, so `[4096]u8 == [4096]u8` is about 40 lines of IR, down from about 16,400.
-- [design.md](design.md) is shorter and no longer specifies the library, with no
+- [design.md](docs/design.md) is shorter and no longer specifies the library, with no
   change to what a program means.
-  [standard-library.md](standard-library.md) now specifies printing, `core:slice`,
+  [standard-library.md](docs/standard-library.md) now specifies printing, `core:slice`,
   `core:container`, `core:simd`, `core:sync`, `core:mem`'s regions, and the
   interface catalogue. Provenance tracking rules moved to the
-  [Analysis guarantees](design.md#analysis-guarantees) appendix, and
-  [Inferred effects](design.md#inferred-effects) states once how the effects are
+  [Analysis guarantees](docs/design.md#analysis-guarantees) appendix, and
+  [Inferred effects](docs/design.md#inferred-effects) states once how the effects are
   computed. The `Type_Kind` listing no longer names the deleted `Any_View`.
 - A procedure returning a fallible union whose success carries `Unit`, such
   as `Result(Unit, E)` or `Option(Unit)`, may now reach the end of its body or
   use `return;` to succeed, as one returning `Status(E)` may, when the result
   as written makes the payload `Unit`. A body generic over `Result(T, E)` still
   writes `return .ok;` in an instance where `T` is `Unit`, and its `return;`
-  is `L0326` with a note saying why ([One result](design.md#one-result)).
+  is `L0326` with a note saying why ([One result](docs/design.md#one-result)).
 - The specification no longer lists an implicit conversion from a variant's
   payload to its union, which the compiler never had and `L0352` rejects
-  ([Implicit type conversions](design.md#implicit-type-conversions)). It now
+  ([Implicit type conversions](docs/design.md#implicit-type-conversions)). It now
   says what a procedure type's runtime member table holds: its parameters,
   then its result, as nameless entries ([`type` and
-  `typeid`](design.md#type-and-typeid)). The iteration protocol spells
+  `typeid`](docs/design.md#type-and-typeid)). The iteration protocol spells
   `iter`'s receiver `self: ^`, as the catalogue's `Iterable` does, and says a
-  plain `self` also meets it ([Iteration protocol](design.md#iteration-protocol)).
+  plain `self` also meets it ([Iteration protocol](docs/design.md#iteration-protocol)).
 - Elements of a view at different constant indices are now different places
   wherever it is known where the view starts: in a view parameter, and in a
   local view borrowed from a range or resliced from one by a constant. So
   `&mut xs[0]` leaves `xs[1]` usable, and a switch over `xs[0].first` allows a
   store into `xs[1].first`
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). An index
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). An index
   that is no constant, or a copy of the view, may still name any element.
 - Checking is faster: front-end time fell 3-16% on the examples and
   benchmarks taking over 30 ms (`bench/workspace` 184 to 162 ms,
@@ -1748,7 +1753,7 @@ checklist.
 - A thread that finds a `sync.Once` action, or a `sync.Lazy(T)`'s `init`,
   still running now blocks after a short spin instead of spinning until it
   finishes, so slow setup no longer costs every waiting thread a processor
-  ([Atomic operations and Once](standard-library.md#atomic-operations-and-once)). With
+  ([Atomic operations and Once](docs/standard-library.md#atomic-operations-and-once)). With
   24 threads on 6 processors waiting on 6 ms setups, CPU time fell from about
   1.3 s to 0.17 s, about what the setups themselves take. It needs no new
   link library.
@@ -1757,7 +1762,7 @@ checklist.
   the body, and a record's fields, and grants the slots of an application the
   interface composes on that application's subject, so a `linalg.Scalar(T)`
   bound reaches `T.Real` and `linalg.Real`'s slots on it in any package
-  ([Interface bodies](design.md#interface-bodies)). An associated constant
+  ([Interface bodies](docs/design.md#interface-bodies)). An associated constant
   requirement such as `T.Real -> type` is now met, when the applying package
   sees no such member, as a slot is: by an inherent member whatever its
   visibility or an extension in the interface's package. An application that
@@ -1774,23 +1779,23 @@ checklist.
   constant is required (`L0688`, `L0341`) and is evaluated when the program
   runs elsewhere. Comparing two `typeid_of` constants still folds. This is
   the compiler's existing behavior
-  ([`type` and `typeid`](design.md#type-and-typeid)).
+  ([`type` and `typeid`](docs/design.md#type-and-typeid)).
 - A NaN result's sign and payload are unspecified, and can differ between
   optimization and CPU levels, at compile time, or when the optimizer swaps
   the operands of `+` or `*`
-  ([Floating-point operators](design.md#floating-point-operators)).
+  ([Floating-point operators](docs/design.md#floating-point-operators)).
   `core:math/linalg`'s same-bits promise now excepts which NaN a NaN result
   is.
 - `core:fs` is documented to pass paths to Windows as given: an ordinary path
   is normalized before any link in it is followed, so
   `local/junction/../x` names `local/x`, while an extended-length `\\?\`
-  path is not normalized ([`core:fs`](standard-library.md#corefs),
-  [Filesystem operations](standard-library.md#filesystem-operations)).
+  path is not normalized ([`core:fs`](docs/standard-library.md#corefs),
+  [Filesystem operations](docs/standard-library.md#filesystem-operations)).
 - `core:math/repro`'s `sin`, `cos`, and `tan` are proved correctly rounded for
   every `f64` argument, against the published hard-to-round cases of
   Lefèvre, Ly, and Zimmermann (ARITH 2026) and CORE-MATH, with the same
   results; the probe checks them on the hardest of those cases
-  ([`core:math/repro`](standard-library.md#coremathrepro)).
+  ([`core:math/repro`](docs/standard-library.md#coremathrepro)).
 - `core:math/repro`'s `exp` takes 14 ns rather than 19, and `pow` 55 rather
   than 60, with the same results: their shared kernel's dependency chain is
   about a third shorter. `log`, `log2`, and `log10` take 1 to 4 ns less per
@@ -1810,7 +1815,7 @@ checklist.
 - `math.sqrt` and `math.sqrt_f32` are the processor's square root instruction
   rather than a call to the C library: as correctly rounded, about as fast,
   and with a compile-time value, so `ROOT :: math.sqrt(2.0)` is a constant
-  ([`core:math`](standard-library.md#coremath)).
+  ([`core:math`](docs/standard-library.md#coremath)).
 - `math.floor`, `ceil`, `trunc`, and `round`, in both widths, have
   compile-time values, and are SSE4.1's rounding instruction from
   `x86-64-v2` rather than a call to the C library, with the same exact
@@ -1829,7 +1834,7 @@ checklist.
   percent smaller, for 6 to 12 percent longer optimized builds (a third
   longer for the smallest). `-opt=none` builds, `-runtime=<dir>` builds, and
   machines without lld-link link machine code as before
-  ([Common options](compiler-guide.md#common-options)).
+  ([Common options](docs/compiler-guide.md#common-options)).
 - Under `-panic=unwind`, a procedure publishes to its unwind frame only the
   locals its cleanups read, and a procedure that registers no cleanup keeps
   no frame, live flags, or env at all. The other locals' addresses no longer
@@ -1859,7 +1864,7 @@ checklist.
 - The test harness ends a launch still running after five minutes, with every
   process it started, and fails its case, so a stalled program no longer
   hangs `test-all.ps1` until CI's job limit
-  ([Testing and verification](compiler-architecture.md#testing-and-verification)).
+  ([Testing and verification](docs/compiler-architecture.md#testing-and-verification)).
   The processes `lokec` and the harness start, clang and test executables
   among them, now inherit only their standard handles, so one child no
   longer keeps another's output open.
@@ -1875,11 +1880,11 @@ checklist.
   type has compares unequal to every real one, prints as its number, and
   answers the `Invalid` entry from `type_info_of`, while an `any_view` whose
   id names no type is invalid
-  ([Invalid representations](design.md#invalid-representations)).
+  ([Invalid representations](docs/design.md#invalid-representations)).
 - `L0399` for a dependency name that two manifests require as different
   directories now says that a `-collection` for the name chooses one directory
   for the whole program, which is how a shared dependency is vendored
-  ([Projects](compiler-guide.md#projects)).
+  ([Projects](docs/compiler-guide.md#projects)).
 - A borrow of a place reached through a pointer, as `&mut h^.count` or
   `h^.items[:]`, now reborrows the pointer for that place only, so another
   field stays usable while the borrow is in use: `h^.total += 1` beside
@@ -1888,14 +1893,14 @@ checklist.
   `&p^^.count`, and another field inside a `foreach` over a field reached
   through a pointer, as `h^.count = item` in `foreach (item in h^.items)`.
   Copying the pointer, or passing it to a procedure, still conflicts with the
-  borrow ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  borrow ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 
 - `fs.read_directory` now documents its contract: entries come in the
   filesystem's own, unspecified order, `.` and `..` are never yielded, and a
   directory changed during the walk is not snapshotted, so an entry added,
   removed, or renamed meanwhile may be yielded, missed, or yielded under both
   names, without failing the walk
-  ([Filesystem operations](standard-library.md#filesystem-operations)).
+  ([Filesystem operations](docs/standard-library.md#filesystem-operations)).
 - `core:fs` now documents how a link behaves until symbolic links are
   supported: `metadata` and a directory entry classify a junction or a
   directory link as a `Directory` and a file link as a `File`, and
@@ -1903,7 +1908,7 @@ checklist.
   through the link to its target, while `remove`, `remove_directory`,
   `rename`, and `replace_atomic` act on the link itself and leave the target
   as it was
-  ([Filesystem operations](standard-library.md#filesystem-operations)).
+  ([Filesystem operations](docs/standard-library.md#filesystem-operations)).
 - `fs.rename` now returns only once the rename is durable, and
   `fs.File.flush` is documented as making written data durable, which it
   already did.
@@ -1915,30 +1920,30 @@ checklist.
   processor's features, and an optimized build can fold a constant call with
   the compiling machine's library. Avoid them where results must agree bit for
   bit, as in lockstep simulation
-  ([`core:math`](standard-library.md#coremath)).
+  ([`core:math`](docs/standard-library.md#coremath)).
 - Compile-time evaluation reuses the storage it releases, which no longer counts
   against its 64 MB limit (`L0342`)
-  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
+  ([Compile-time procedure evaluation](docs/design.md#compile-time-procedure-evaluation)).
   A `core:math/repro` call that takes its slow path now uses 1.2 to 5.6 MB
   rather than 4.7 to 24 MB, so one constant can fold eight or more such calls,
   and a compile-time `math.fma` uses about a third of what it did.
 - The specification now documents a foreign import's path forms: `system:name` for a library on
   the linker's search path, and a relative path resolved from the importing file's directory, as a
   relative package import is, whatever directory the compiler runs in
-  ([Foreign system](design.md#foreign-system)).
+  ([Foreign system](docs/design.md#foreign-system)).
 
 ### Fixed
 
 - An owned element of a `foreach` over a user iterator has the
-  [region provenance](design.md#allocator-regions-and-region-provenance) of its `next` call's
+  [region provenance](docs/design.md#allocator-regions-and-region-provenance) of its `next` call's
   result, as the result of a `next` called by hand has. It took the regions of what the loop
   iterates, so a stage that received a `thread.Receiver` could not send on an item it received:
   `foreach (job in jobs) { out.send(move(job)); }` was `L0726`, and so was sending the result of a
   call through a plain procedure type that the item was moved into, while the same loop written
   with `jobs.receive()` compiled.
 - `reserve(n)` and `try_reserve(n)` on a dynamic array that has to grow give it a capacity of
-  exactly `n` ([Dynamic array container operations](design.md#dynamic-array-container-operations),
-  rationale under ["`reserve` takes its capacity exactly"](comments.md#reserve-takes-its-capacity-exactly)).
+  exactly `n` ([Dynamic array container operations](docs/design.md#dynamic-array-container-operations),
+  rationale under ["`reserve` takes its capacity exactly"](docs/comments.md#reserve-takes-its-capacity-exactly)).
   They rounded the request up to `append`'s growth step whenever the array already had storage, so
   `xs.try_reserve(98304)` on an array of capacity 65536 allocated 131072, and to 8 for a smaller
   request. `make([dynamic]T, len, cap)`, a `[dynamic]T{...}` literal, and a clone are sized the
@@ -1947,31 +1952,31 @@ checklist.
   `resize` still grow geometrically. A loop that calls `reserve(x.len() + 1)` before each
   insertion now moves the array every time: reserve ahead instead, as in
   `x.reserve(x.cap() * 2 + 8)` when `x.len() == x.cap()`.
-- A [struct literal](design.md#struct-literals) zero-fills the fields it omits when another field's
-  type has [no zero value](design.md#types-with-no-zero-value). With a `Box(T)` field, or a field
+- A [struct literal](docs/design.md#struct-literals) zero-fills the fields it omits when another field's
+  type has [no zero value](docs/design.md#types-with-no-zero-value). With a `Box(T)` field, or a field
   of an enum with no member represented by `0` in a literal with any runtime element, the omitted
   fields were left uninitialized: `Thing{big = box(...)}` for `Thing :: struct { a: u64, big: Box([4]u8) }`
   read garbage from `a`. The same held for such a struct nested in another literal or built as a
   fixed array's element.
-- A conversion of a [conditional expression](design.md#conditional-expression) of unfixed
+- A conversion of a [conditional expression](docs/design.md#conditional-expression) of unfixed
   constants with a runtime condition, such as `u8(1 if solid else 2)` or
   `i8(LIMIT if solid else -LIMIT)`, compiles: it emitted invalid IR that clang rejected (`L0403`).
   The operand takes the target type when a constant of its kind would convert to it implicitly, so
   `u8(300 if solid else 2)` is `L0352` as `u8(300)` is, and otherwise its default type, so
   `int(1.5 if solid else 2.5)` truncates at run time. A type that only a `hook(convert)` converts
   to still gives the operand the hook's parameter type.
-- A spread into a [variadic pack](design.md#variadic-parameters) whose parameter may keep values,
+- A spread into a [variadic pack](docs/design.md#variadic-parameters) whose parameter may keep values,
   as `keep(..lists)` or `keep(first, ..lists)` for `@(escape=static) lists: ..[]int`, keeps only
   what the spread's elements hold, which the pack copies in, not the spread slice's own storage.
   A spread of a local `[][]int` whose slices view process-lifetime storage was `L0647`, and the
   result of such a call through a procedure value was `L0513` once the spread slice ended.
 - A named procedure passed in a `@(cross_thread)` `..proc()` pack gets the `L0707` race warning
   for the shared storage it writes, as it does through a single `@(cross_thread)` parameter
-  ([`@(cross_thread)`](design.md#cross_thread)); the checks looked at the pack as one argument.
+  ([`@(cross_thread)`](docs/design.md#cross_thread)); the checks looked at the pack as one argument.
 - `L0260` no longer warns about a doc comment on a field of a type written in an array's length,
   a parameter's default, a literal's element, a `when` condition, or any other expression outside
-  a procedure body ([Doc comments](design.md#doc-comments)).
-- A [foreign binding](design.md#foreign-system) whose `@(link_name)` names an LLVM intrinsic the
+  a procedure body ([Doc comments](docs/design.md#doc-comments)).
+- A [foreign binding](docs/design.md#foreign-system) whose `@(link_name)` names an LLVM intrinsic the
   program also reaches through a built-in, such as `llvm.ctpop.i64` beside `math.count_ones` on an
   `i64`, builds: the module declared the intrinsic twice, and clang rejected it.
 - `L0443`, a compile-time value an interface parameter's type cannot represent, shows the value as
@@ -1981,7 +1986,7 @@ checklist.
 - `_ = nil` is `L0310`, as `x := nil` is: a discard gives `nil` no type. It passed the checker and
   stopped the backend with the internal error `L0405`.
 - `L0731` says a task or procedure certainly reaches through a global where any route to it does.
-  With one route past a [provenance precision limit](design.md#minimum-provenance-precision) and
+  With one route past a [provenance precision limit](docs/design.md#minimum-provenance-precision) and
   another exact, it said "may reach" or "reaches" depending on which the compiler met first.
 - Compile-time rotations, `next_power_of_two`, wrapping integer operators, `fma`, sorting, and
   `foreach` over a range release their temporaries, so only what an evaluation keeps counts
@@ -1996,52 +2001,52 @@ checklist.
   has no instruction for, is `L0687`; the compiler crashed.
 - A task that hands its own zero-valued container to a helper that grows it, through `inout`,
   `^mut`, a method's `inout` receiver, or a move in and out, reserves no allocator region
-  ([Allocators and tasks](design.md#allocators-and-tasks)): the container binds the default
+  ([Allocators and tasks](docs/design.md#allocators-and-tasks)): the container binds the default
   provider when it first needs storage. Two such tasks in one `parallel` block were `L0732`, as
   sharing a region the compiler could not name; they now compile. A container built `via` another
   allocator still reserves that allocator's region through the helper.
-- A chunk a `foreach` over [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice) binds, and
+- A chunk a `foreach` over [`chunks_mut`](docs/standard-library.md#chunks-of-a-mutable-slice) binds, and
   a view a user's iterator hands out, is in the
-  [allocator regions](design.md#allocator-regions-and-region-provenance) of the storage it views.
+  [allocator regions](docs/design.md#allocator-regions-and-region-provenance) of the storage it views.
   It was in a region the compiler could not name, so a batch whose tasks each fill one slot of a
   results array with an owned value, as
   `foreach (slot, i in all.chunks_mut(1).indexed()) { spawn fill(i, slot); }` does, was `L0732`
-  ([Allocators and tasks](design.md#allocators-and-tasks)); it now compiles when the default
+  ([Allocators and tasks](docs/design.md#allocators-and-tasks)); it now compiles when the default
   provider backs every slot. Slots an arena backs, or ones a parameter names, are still `L0732`,
   which now names the region.
 - A borrow of a place in one half of a
-  [`split_at_mut`](standard-library.md#splitting-a-mutable-slice) no longer conflicts with a place
+  [`split_at_mut`](docs/standard-library.md#splitting-a-mutable-slice) no longer conflicts with a place
   in the other half. `spawn set(&mut halves.left[0]); spawn set(&mut halves.right[0]);` in one
   `parallel` block, and a loop over `halves.left.chunks_mut(n)` beside one over
   `halves.right.chunks_mut(n)`, were `L0641`. A borrow of a place in a chunk of a
-  [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice) traversal is likewise free of later
+  [`chunks_mut`](docs/standard-library.md#chunks-of-a-mutable-slice) traversal is likewise free of later
   chunks when it is taken through a copy of the chunk, as `chunk := rows; spawn set(&mut
   chunk[0]);`, or through a chunk of the chunk, whichever inner loop bound it. Both were `L0641`
   on the next step. A borrow still suspends its own half or chunk, and the slice that was divided.
 - A borrow of a place in a chunk, such as `&mut rows[0]` in a `foreach` over
-  [`chunks_mut`](standard-library.md#chunks-of-a-mutable-slice), no longer suspends the chunk a
+  [`chunks_mut`](docs/standard-library.md#chunks-of-a-mutable-slice), no longer suspends the chunk a
   later step binds, as a copy of the chunk does not. A task given one, as
   `foreach (rows in view.chunks_mut(1)) { spawn set(&mut rows[0]); }` starts, and one kept in a
   container across steps, was `L0641` on the next step. The borrow still suspends its own chunk,
   the view, and the view's source while it is in use. Chunking the source again while it does is
   reported once, where the second traversal uses the source, not again at each place it lends.
 - The result of a call through a procedure value is in the
-  [allocator regions](design.md#allocator-regions-and-region-provenance) that the procedures of its
+  [allocator regions](docs/design.md#allocator-regions-and-region-provenance) that the procedures of its
   type the program uses as a value return their results in
-  ([Procedure result contracts](design.md#procedure-result-contracts)). It was in an unknown
+  ([Procedure result contracts](docs/design.md#procedure-result-contracts)). It was in an unknown
   region unless the call passed an allocator, so two tasks that each kept such a result, as a batch
   taking its per-item work as a `proc` parameter does, were `L0732`
-  ([Allocators and tasks](design.md#allocators-and-tasks)); they now compile when every such
+  ([Allocators and tasks](docs/design.md#allocators-and-tasks)); they now compile when every such
   procedure builds its result with the default provider or an allocator it is passed. A
   compiler-provided member used as a value, such as a map's `lookup_value`, counts by where it
   puts its result.
-- A [map](design.md#maps) spreads keys whose hashes differ only in their high bits. It took a key's
+- A [map](docs/design.md#maps) spreads keys whose hashes differ only in their high bits. It took a key's
   slot from the low bits of its `hash` alone, and the built-in integer hash carries bits only upward,
   so the bit patterns of small floats, `math.to_bits(f64(i))`, all started in one probe run and made
   insertion quadratic: 16,000 of them took 210 ms where 16,000 small integers took 1 ms. A `hash` of
   one's own that leaves the low bits alike now spreads too. A key's `hash` returns what it did.
 - `lokec -print-toolchain`'s `flag=` lines are enough to compile a C host outside a developer prompt
-  ([Building an object for a C host](compiler-guide.md#building-an-object-for-a-c-host)). They name
+  ([Building an object for a C host](docs/compiler-guide.md#building-an-object-for-a-c-host)). They name
   the MSVC toolset and Windows SDK with Clang's `-Xmicrosoft-*` options instead of `-isystem` and
   `-L` directories, so `windows.h` is found, Clang's `immintrin.h` comes ahead of MSVC's and an
   `_mm_*` intrinsic no longer fails to link, and headers and libraries come from the same toolset
@@ -2051,7 +2056,7 @@ checklist.
   passed Clang the runtime's header directory, which it warned was unused ahead of them.
 - An owner read through a parameter's carriers is in what the owners there are in, and not in what an
   allocator handle beside them names
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
   `pointer := reader.holder; return pointer^.items;` was `L0537` at a reset of the handle beside
   `items`, which the direct `return reader.holder^.items` was not.
 - So is an owner read through a pointer parameter itself, as `holder^.text` with `holder: ^Holder`,
@@ -2060,46 +2065,46 @@ checklist.
   same read through a record holding the pointer was accepted.
 - A container literal's element that hands one of its temporaries' addresses to a call keeps that
   temporary's storage until the literal is built
-  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+  ([Temporaries and procedure boundaries](docs/design.md#temporaries-and-procedure-boundaries)).
   `[dynamic]int{large(1).stash(), large(2).peek()}`, where `stash` kept
   `unsafe.raw_data(&self.bytes)` in a global, printed `1 2`: the second receiver took the first
   one's storage, as it did through an out parameter, though the element type held no address.
 - A store through a call's result read through more than four loads lands in what those loads
   reach, as a deeper read written in the caller does
-  ([Procedure result contracts](design.md#procedure-result-contracts)). With `f` returning
+  ([Procedure result contracts](docs/design.md#procedure-result-contracts)). With `f` returning
   `x^.a^.b^.c^.d^.p`, a reset after `target := f(&x); target^ = make(..., allocator)` compiled
   while `a`, which `target` pointed at, was still used, and read freed memory; it is now `L0537`.
   A summary keeps four loads, so such a store may land in anything below the fourth, its sibling
   `b` too: the reset there says it *may* end the region and names that limit, as
-  [Minimum provenance precision](design.md#minimum-provenance-precision) asks, and the note for a
+  [Minimum provenance precision](docs/design.md#minimum-provenance-precision) asks, and the note for a
   merged path says a result contract keeps 4 loads.
 - A provider moved into a record is in the field it was moved into
-  ([Allocators](design.md#allocators)). `pair := Pair{move(first), move(second)}` followed by
+  ([Allocators](docs/design.md#allocators)). `pair := Pair{move(first), move(second)}` followed by
   ending `pair.first`, by `exchange` or `unsafe.take`, was `L0537` for what `pair.second` backs;
   so was the same after `pair.first = move(first)`. A record holding moved providers that is moved
   on whole, as `other := move(pair); drop(other)`, is now `L0537` for what they back, which
   compiled and freed it.
 - A call through a local pointer to a slice, as `pointer := &mut pairs; store(pointer, ...)`,
   leaves what it stores at `pairs^[0].second` in what `second` points at only, as passing
-  `&mut pairs` directly does ([Region tracking](design.md#region-tracking)). A reset after it was
+  `&mut pairs` directly does ([Region tracking](docs/design.md#region-tracking)). A reset after it was
   `L0537` for what `first` pointed at. Only a local whose alias names the very carrier goes on
   below it: one standing for a whole record, or one past the 8 steps a written alias keeps, still
   takes all of its target.
 - A store of a carrier that could not be one the body's loads read, as `other^.p = spare` with
   `p: ^int` inside a loop stepping `cur = cur^.next`, no longer forgets what was loaded below the
-  cursor ([Weakening and reborrows](design.md#weakening-and-reborrows)). The load of `t^.next` after
+  cursor ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). The load of `t^.next` after
   it was `L0641`.
 - A long literal of large calls keeps each element's temporaries until the literal is built when
   the element can hold a C pointer, as `[dynamic][^]u8{large(1).data(), large(2).data()}` with
   `data` returning `unsafe.raw_data(&self.bytes)` does. The second call reused the first one's stack
   slot, so both pointers read `2`
-  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+  ([Temporaries and procedure boundaries](docs/design.md#temporaries-and-procedure-boundaries)).
 - A result read through a pointer to a temporary borrows what the temporary held, not the
   temporary, as one through a named local's pointer does
-  ([Procedure result contracts](design.md#procedure-result-contracts)). `s := name_one(&View{text})`
+  ([Procedure result contracts](docs/design.md#procedure-result-contracts)). `s := name_one(&View{text})`
   with `name_one` returning `x^.name` was `L0513` at the next use of `s`; so was the same read
   through a `..^View` pack lending a temporary.
-- A file-scope [`when`](design.md#when-statement) condition reads the `impl` blocks outside any
+- A file-scope [`when`](docs/design.md#when-statement) condition reads the `impl` blocks outside any
   `when`, in a package with other pending conditions too. `when (S.size() == 1)` was `L0408`, and
   `is_copyable(G(string))` ignored a later block's bounded `hook(copy)` and took the other branch.
   A condition waits for a branch, in its package or one it imports, holding a block that may
@@ -2107,7 +2112,7 @@ checklist.
   an earlier condition just selected. One only its own or another unselected branch could answer
   is `L0389`, naming the member or saying `is_copyable` asked, whichever package is reported first.
 - A parameter, a field of one, or an `Option` parameter's payload that the body assigns on every
-  path before an [`@(allocator_reset)`](design.md#allocator_reset) reset holds only what the
+  path before an [`@(allocator_reset)`](docs/design.md#allocator_reset) reset holds only what the
   assignments stored. `h.allocator = allowed; free_all(h.allocator);` with `h: inout Holder` or a
   managed record, and `other = allowed; free_all(other);` with `other: inout Allocator`, were
   `L0538`, as if the caller's allocator could still be there, and so was a managed record's field
@@ -2134,24 +2139,24 @@ checklist.
   deque paid it.
 - A provider taken out of one field, with `unsafe.take` or `exchange`, carries only that field's
   region. Taking `pair.first` carried `pair.second`'s too, so dropping it was `L0537` for an owner
-  only the second backed ([Allocators](design.md#allocators)).
+  only the second backed ([Allocators](docs/design.md#allocators)).
 - `Deque.try_append` of one borrowed element, or of several, copies them inside the call, so a copy
   that fails is returned rather than panicking; several are lent through a `..^T` pack. `try_append` and `try_prepend` no longer grow the ring before a copy
   succeeds, so a failed copy leaves the capacity, and where the ring starts, as they were
-  ([Errors are values](standard-library.md#errors-are-values)).
+  ([Errors are values](docs/standard-library.md#errors-are-values)).
 - An owner read through a carrier whose targets a body cannot name is no longer taken to be in the
   region of an allocator handle beside it in the pointee. `return reader.holder^.items` with `reader`
   a record holding `holder: ^Holder` made the caller's copy look backed by `holder.allocator`, so a
   reset of that allocator was `L0537`. Reading the handle itself, or a copy of the whole pointee,
   still names an allocator the analysis cannot name
-  ([@(allocator_reset)](design.md#allocator_reset)).
+  ([@(allocator_reset)](docs/design.md#allocator_reset)).
 - A callee that swaps or rotates carriers through a temporary, as `held := links[0]; links[0] =
   links[1]; links[1] = held;`, moves them, as the same swap in one statement does, so using each
-  after the call is no longer `L0641` ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  after the call is no longer `L0641` ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - What a body reads of a parameter's own fields, and not through a carrier it holds, is only what the
   argument holds there. `owned.out^ = owned.items` with `owned` a record took `items` to be in every
   region the argument's carriers lead to, and storing it was `L0536` when one of them was local
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
 - A store to one place replaces what a call may have left there, through a pointer to a record of one
   carrier, a pointer to a carrier, or at one element of a view parameter, so a later use of what the
   call was given is no longer `L0641`.
@@ -2165,7 +2170,7 @@ checklist.
 - A store through one carrier of a record passed by value, behind a pointer, or `inout` lands only
   where the argument's carrier at that field leads, so a reset of what was stored no longer reports
   `L0537` for the sibling's target
-  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
 - An index that runs nothing of the program only reads, however it is computed: `less(xs[i - 1], xs[i])`
   over a `[]mut T` of move-only elements, with an arithmetic, converted, indexed, or `len()` index, is
   no longer `L0641`.
@@ -2174,64 +2179,64 @@ checklist.
   which took a minute and ran out of memory at three times that, take under a second, and a chain of
   4000 reborrows went from 28 s to under a second.
 - A protocol `next` that hands back its element runs no copy of it, so a `foreach` over one, or its
-  `copied()`, no longer counts the element's `hook(copy)` reads ([Global write effects](design.md#global-write-effects)).
+  `copied()`, no longer counts the element's `hook(copy)` reads ([Global write effects](docs/design.md#global-write-effects)).
 - A load through a pointer to a field leaves the other fields alone
-  ([Places and overlap](design.md#places-and-overlap)), so `y := &mut h^.d; y^.clear();` no longer
+  ([Places and overlap](docs/design.md#places-and-overlap)), so `y := &mut h^.d; y^.clear();` no longer
   conflicts with itself, and a store to `r^.a` no longer conflicts with a read through `&mut r^.b`.
 - A generic instance's name stops at the same limit as any other
-  ([Printed forms](standard-library.md#printed-forms)), where one deep enough printed tens of KB.
+  ([Printed forms](docs/standard-library.md#printed-forms)), where one deep enough printed tens of KB.
 - `L0740` asks a generic parameter's type with the arguments before it bound, so a private type passed
   to `$V: identity_type(T)` where `T` is `type` is reported
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - A conversion uses no allocator, so tasks that each call `receive` on a `core:thread` channel no longer
-  report `L0732` ([Allocators and tasks](design.md#allocators-and-tasks)).
+  report `L0732` ([Allocators and tasks](docs/design.md#allocators-and-tasks)).
 - An `impl` subject may compute with an operator a later block declares, which was `L0318` then `L0406`
-  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)).
+  ([Operator lookup and overload resolution](docs/design.md#operator-lookup-and-overload-resolution)).
 - A pointer a call read out of a parameter reaches only the field the call read, and each field of a
   returned record only what that field was given, where both reached the siblings' targets too. So a
   reset that spares the other field no longer reports `L0537`
-  ([Procedure result contracts](design.md#procedure-result-contracts)).
+  ([Procedure result contracts](docs/design.md#procedure-result-contracts)).
 - `delegate` no longer depends on which signature comes first when a signature's constant needs an
   operator, which was `L0420` naming an operator that was declared
-  ([Delegating operators](design.md#delegating-operators)). A constant may also call a procedure
+  ([Delegating operators](docs/design.md#delegating-operators)). A constant may also call a procedure
   group declared after it, which was the "compiler defect" `L0350`
-  ([Explicit procedure overloading](design.md#explicit-procedure-overloading)).
+  ([Explicit procedure overloading](docs/design.md#explicit-procedure-overloading)).
 - `L0740` reads a generic type's value argument as a value and a group's members in the group's own
   block, so `Vec(size_of(Priv))` no longer warns and a private type in `Box(int)`'s group member is
   reported whatever another block of `Box` declares
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - A program can export any name outside the reserved prefix, as the names the compiler generates all
-  step aside for it ([`@(export)`](design.md#export)), where some of them failed in clang with
+  step aside for it ([`@(export)`](docs/design.md#export)), where some of them failed in clang with
   `L0403`.
 - A misplaced token is one report: the parser no longer takes an `impl` block for a procedure's body,
-  so `impl proc() { }` is the block on a procedure type [the grammar](grammar.md#source-files)
+  so `impl proc() { }` is the block on a procedure type [the grammar](docs/grammar.md#source-files)
   says it is, and a `return` value it could not read is not reported again.
-- A type's name stops at `...` past about 4 KB ([Printed forms](standard-library.md#printed-forms)),
+- A type's name stops at `...` past about 4 KB ([Printed forms](docs/standard-library.md#printed-forms)),
   so a chain of aliases each naming the last twice compiles and prints at any depth, where a value of
   one forty deep never finished.
 - A generic union whose `@(zero=)` payload has no zero is `L0423` when an instance's body names it,
-  which went unreported ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)). A public type
+  which went unreported ([Zero values and `@(zero=)`](docs/design.md#zero-values-and-zero)). A public type
   with a private `format` prints by the generated form, which only reads, so printing one twice no
   longer reports `L0641`.
 - What a procedure draws from a provider it reaches through a parameter is in the argument's region
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)),
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)),
   where it was in an unknown one, so another region ending no longer counts against it, and declaring
   an arena beside the result compiles.
 - `impl R(int, 0)` over `R :: struct($T: type, $V: T)` compiles, where a constant argument whose type
   an earlier argument decides was the "compiler defect" `L0350`
-  ([Generics](design.md#generics)). So does a distinct slice or pointer printed twice, when the
+  ([Generics](docs/design.md#generics)). So does a distinct slice or pointer printed twice, when the
   compiler generates its `format`.
 - An array type whose length names a constant that failed reports only that constant, not also
   `L0350`.
 - `L0537` names the local whose cleanup ends a region, rather than calling its declaration a reset,
   and says "may" where the region limit is why
-  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
 - `L0412` asks for `value.clone()` or `value.try_clone()`, which exist, rather than `clone(value)`.
 - A `delegate` no longer fails with `L0420` when the operator it forwards is declared later in the
   package, when the underlying type's own `delegate` is, or when a constant a signature needs uses
-  the operator ahead of the block ([Delegating operators](design.md#delegating-operators)).
+  the operator ahead of the block ([Delegating operators](docs/design.md#delegating-operators)).
 - A local declared in a deferred block is dropped when a panic is the only exit that runs the block
-  ([What the unwind runs, and what it does not](design.md#what-the-unwind-runs-and-what-it-does-not));
+  ([What the unwind runs, and what it does not](docs/design.md#what-the-unwind-runs-and-what-it-does-not));
   with no normal exit it leaked and its `hook(drop)` never ran.
 - A `switch` takes one view of its subject rather than one per case. A case binding nothing takes
   none, so an enum `switch` of 6000 `return` cases compiles in under a second where it crashed the
@@ -2242,16 +2247,16 @@ checklist.
   linear in its depth; every question about what a type holds took time exponential in it, at 5 to 6
   s for 20 aliases and without end for 48.
 - A map named as a generic record's argument is checked where it is named, whether or not a field
-  holds it ([Maps](design.md#maps)). `Shared(map[f64]int)` reported `L0586` inside
+  holds it ([Maps](docs/design.md#maps)). `Shared(map[f64]int)` reported `L0586` inside
   `base/runtime/shared.loke`, with an `L0308` there as well; now it reports `L0586` at the argument.
 - `L0740` reads what a `where` clause holds as values: a literal's index, as `IDX` in
   `[2]int{IDX = 1}`, and a parameter's default in a procedure type
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - `-api` and `-doc` show a private type a generic procedure's result names when a plain parameter has
   the same name, as in `proc(T: int, v: $U) -> T`. A plain parameter's name is in no type's scope, but
   the listing took it for that parameter and left the declaration out.
 - A `switch` case binding that spells a literal, as in `case .a(true):`, no longer binds the name after
-  its `L0700` ([Predeclared names](design.md#predeclared-names)). `true` in the case body stays the
+  its `L0700` ([Predeclared names](docs/design.md#predeclared-names)). `true` in the case body stays the
   literal, where it read the payload and reported a false mismatch.
 - A pointer from a user `operator([])` is treated as the call's result it is, and no longer as pointing
   wherever the receiver's carriers do. A store through one, where the operator returned another
@@ -2270,7 +2275,7 @@ checklist.
   naming `<invalid>` and no location.
 - A foreign binding of an exported procedure that returns a record or a pointer no longer gets a false
   `L0600`: `@(link_name="z") f :: proc(a: i32) -> P ---;` and `@(export, link_name="z") g :: proc "c"
-  (a: i32) -> P {...}` are one type ([`@(export)`](design.md#export)).
+  (a: i32) -> P {...}` are one type ([`@(export)`](docs/design.md#export)).
 - A bad `@(default_calling_convention)` is reported once, at the attribute, not at each procedure that
   inherits it.
 - A foreign member that is neither a `---` procedure nor a variable, such as `X :: 1;` or a record, has
@@ -2284,25 +2289,25 @@ checklist.
   and `b: Box(^int) = box(nil)` says `nil` is not a value of `^int`. Each crashed the compiler with no
   diagnostic.
 - An untyped payload takes the payload type the context expects, as an initialization does
-  ([Owned values](design.md#owned-values)): `b: Box(u8) = box(1)`, `Box(f32) = box(1.5)` and
+  ([Owned values](docs/design.md#owned-values)): `b: Box(u8) = box(1)`, `Box(f32) = box(1.5)` and
   `Box(string_view) = box("abc")` compile. They were `L0310`.
 - `try_box`, `unsafe.new` and `unsafe.try_new` take an expected payload type from an expected
   `Result(Box(T), Allocator_Error)`, `[^]T` or `Result([^]T, Allocator_Error)`, as `box` does from
   `Box(T)`. `r: Result(Box(N), Allocator_Error) = try_box({1, 2})` was `L0376`.
 - A diagnostic on `unsafe.new` or `unsafe.try_new` names the call rather than a box: `` `new` takes a
   runtime value `` and "this unsafe allocation cannot copy it".
-- [`@(export)`](design.md#export) on a procedure in a file-scope `impl` block now emits the symbol
+- [`@(export)`](docs/design.md#export) on a procedure in a file-scope `impl` block now emits the symbol
   under its own name or `@(link_name)`. It was emitted internally, so a C host failed at link.
 - `string.from_utf8`, `string_view.from_utf8`, `cstring_view.from_bytes` and `string.from_runes` take
   a fixed or dynamic array of their element type, as a read-only `[]T` parameter does
-  ([Implicit type conversions](design.md#implicit-type-conversions)). `string.from_utf8(bytes)` over a
+  ([Implicit type conversions](docs/design.md#implicit-type-conversions)). `string.from_utf8(bytes)` over a
   `[3]u8` was `L0561`.
 - `unsafe.string_view(pointer, length)` with a length wider than 64 bits that does not fit panics
-  ([string type conversions](design.md#string-type-conversions)). It truncated, so an `i128` of `-2^64`
+  ([string type conversions](docs/design.md#string-type-conversions)). It truncated, so an `i128` of `-2^64`
   gave an empty view.
 - `unsafe.string_view(pointer, 1.5)` reports the length once, where it reported `L0353` and `L0569`.
 - An operator overload taking a vector is now found where no built-in lane-wise operation exists
-  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)):
+  ([Operator lookup and overload resolution](docs/design.md#operator-lookup-and-overload-resolution)):
   `m * v`, `v + m`, `a + b` on two vector types, and `%` on float lanes were `L0686` with a matching
   overload, though `v += m` found it.
 - `y: Simd(f32, $M)` where `$M` is not bound is now `L0437` naming `$M`, and an invalid `Simd(...)`
@@ -2311,28 +2316,28 @@ checklist.
 - A negative `Simd` lane count now says that it is negative, and a zero one that a lane count is a
   power of two from 1.
 - A static `foreach` takes any compile-time slice, as
-  [Static `foreach` expansion](design.md#static-foreach-expansion) says: `K :: ARR[:]`,
+  [Static `foreach` expansion](docs/design.md#static-foreach-expansion) says: `K :: ARR[:]`,
   `K :: []int{1, 2}` and a `[]int{1, 2}` literal were `L0454` unless written `ARR[:]` in the header.
 - A note in a static expansion shows every element
-  ([Static `foreach` expansion](design.md#static-foreach-expansion)). `fields_of(T).indexed()` and a
+  ([Static `foreach` expansion](docs/design.md#static-foreach-expansion)). `fields_of(T).indexed()` and a
   record said `<value>`, an enum member its number, and a rune its code point; they now say `name`,
   `Point{1, "p"}`, `Red` and `'a'`. A string is quoted, and a rune in a generic instance's name
   prints as one.
-- `open(..a).handle(..b)` compiles ([Union argument expansion](design.md#union-argument-expansion)):
+- `open(..a).handle(..b)` compiles ([Union argument expansion](docs/design.md#union-argument-expansion)):
   a spread in the callee's receiver reported `L0305` for `dispatch$payload`, a name the program
   never wrote.
 - A diagnostic in binding an expanded case's copy names its variant, as one in its body does
-  ([Per-variant switch cases](design.md#per-variant-switch-cases)).
+  ([Per-variant switch cases](docs/design.md#per-variant-switch-cases)).
 - A generic type's `format` whose `where` bound fails leaves that instance the generated form
-  ([Printed forms](standard-library.md#printed-forms)). `fmt.println(G(int){1})` was `L0444` when
+  ([Printed forms](docs/standard-library.md#printed-forms)). `fmt.println(G(int){1})` was `L0444` when
   `format` required `T == string`.
 - A report (`assert`, `panic`) counts only a `format` its printed form calls
-  ([Global write effects](design.md#global-write-effects)). A `distinct` type's wrapped `format`, a
+  ([Global write effects](docs/design.md#global-write-effects)). A `distinct` type's wrapped `format`, a
   private field's, and a `dyn` view with no `format` slot were a false `L0512` when that `format`
   wrote what the report held.
 - A `distinct` type that declares neither `==` nor `hash`, over a type that declares both, can be a
   map key, satisfies `interfaces.Hashable`, and has that `hash` as a member
-  ([Maps](design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a
+  ([Maps](docs/design.md#maps)). `map[D]int` was `L0586`, though `D` already compared by that `==` and a
   record holding a `D` keyed a map by that pair.
 - The same error reported several times from one position, as each instance of a generic procedure
   does, now prints once with each instance as a note, also when another error at that position fell
@@ -2340,16 +2345,16 @@ checklist.
 - A diagnostic's caret line counts characters, so a mark after or across non-ASCII text in a string
   or comment stands under what it marks.
 - A member whose `where` bound fails is out of the instantiation on more paths
-  ([where clauses](design.md#where-clauses)). A conversion hook no longer stops the compiler with
+  ([where clauses](docs/design.md#where-clauses)). A conversion hook no longer stops the compiler with
   `L0405` or joins an `L0391` ambiguity; a procedure group on a generic extension can name one where
   it was `L0395`; `x.f()` on an extension's explains why with the note an inherent block's has; and
   a method or interface slot supplied by two crossed generic blocks no longer counts it.
 - A conversion hook of a name two crossed generic blocks both supply is found
-  ([Conversion hooks](design.md#conversion-hooks)). `G(int, int)(3)` was `L0373`.
+  ([Conversion hooks](docs/design.md#conversion-hooks)). `G(int, int)(3)` was `L0373`.
 - A body-local `format` or `hash` after a use that generated one now says so: `L0409` reads "already
   has a generated member", with a note to write the block before that use.
 - `L0740` reads more of what a public declaration writes
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)). It now
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)). It now
   warns about a private name that a block's `$` name had hidden from every later declaration; a
   procedure constant's written type; the application of a parametric alias in a generic `impl`; a
   field written after `_`, as in `_, a: Fill`; a private type nested deeper than eight levels in a
@@ -2368,21 +2373,21 @@ checklist.
 - `typeid_of(Nope)`, `fields_of(Nope)`, `enum_values_of(Nope)` and `variants_of(Nope)` report an
   unknown name once, not again as `L0451` "needs a type", and `type_of([]Nope)` reports it once.
 - A file-scope `when` condition now waits for what it reaches, not only for the names it writes
-  ([when statement](design.md#when-statement)). `N :: size_of(Handle); when (N == 8)` with `Handle`
+  ([when statement](docs/design.md#when-statement)). `N :: size_of(Handle); when (N == 8)` with `Handle`
   from another `when` compiles, where it was `L0315`, and a record's field type, a procedure's
   signature or body, and a procedure literal in the condition behave the same.
 - `-api` and `-doc` show an `impl` block written through a private alias of a public type, whose
   members importers can call, with the alias marked private
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - `-api` no longer fails with `L0405`, and `-doc` no longer prints a cut head, for a struct whose
   `where` clause holds a brace.
 - An interface file writes the import that only an attribute's value qualifies a name with, and no
   import for a member spelled like one, as `Wrapper{}.sub.n`. It shows a private constant that an
   array literal's key names, and a field's attributes without `public` or `private` wherever they
-  are written ([Interface files](compiler-guide.md#interface-files)).
+  are written ([Interface files](docs/compiler-guide.md#interface-files)).
 - `L0260` no longer warns about a doc comment on a field or variant of a type written under a
   pointer, array, slice, map, procedure signature or type application
-  ([Doc comments](design.md#doc-comments)).
+  ([Doc comments](docs/design.md#doc-comments)).
 - The editor's documentation command shows a package's interface for a file of that directory the
   check did not load, rather than the root package's.
 - `-check-layout` no longer overwrites and deletes the `-o` output: its probe is a temporary named
@@ -2399,7 +2404,7 @@ checklist.
   longer waits two seconds, and neither does one that finds a damaged set in place.
 - `spawn read(make().items);`, `spawn show(make_list()[0]);` and `spawn make().part.read();` no
   longer give the task storage the parent drops as the statement ends: the task gets its own copy
-  of the field or element ([Spawn statements](design.md#spawn-statements)). It could read freed
+  of the field or element ([Spawn statements](docs/design.md#spawn-statements)). It could read freed
   memory, an empty string, or a value after its `hook(drop)` ran.
 - A widened place as a `spawn` argument, as in `foreach (i in 0..<n) { spawn show(items[i]); }` with
   a smaller union's elements, now reaches its own task. Every task read the one temporary the
@@ -2410,7 +2415,7 @@ checklist.
   `core:unsafe`, is now `L0727` where it was an internal backend error `L0405`.
 - A map's `clear`, and a sequence's `clear` and `resize`, no longer count as using an unknown
   allocator region for a `hook(drop)` of what they discard. Two tasks each clearing a map of their
-  own were `L0732` ([Allocators and tasks](design.md#allocators-and-tasks)).
+  own were `L0732` ([Allocators and tasks](docs/design.md#allocators-and-tasks)).
 - A union aligned past 16 bytes, such as one holding a `Simd(f32, 8)`, now has the layout the
   checker reports. LLVM aligned its storage to 16, so `size_of` and `align_of` disagreed with the
   code, and copying an array of records holding one overran its storage and crashed.
@@ -2420,57 +2425,57 @@ checklist.
   `loke_rt_v1_frame_pop`, now refers to that one; only a few such names did, and the others
   failed with `L0403`, clang's "invalid redefinition of function".
 - An owned `foreach` leaf can be moved beside lent and `&mut` ones, as
-  [Element bindings](design.md#element-bindings) says: `move(i)` of an `indexed()` counter and
+  [Element bindings](docs/design.md#element-bindings) says: `move(i)` of an `indexed()` counter and
   `foreach (&mut a, s in t) { take(move(s)); }` with `s` owned by `next` were `L0690`.
 - `reversed()` over a map or text runs the `iter_reverse` the program supplies
-  ([Iteration adapters](design.md#iteration-adapters)); it was `L0460`.
+  ([Iteration adapters](docs/design.md#iteration-adapters)); it was `L0460`.
 - An `&mut` leaf after a `_` padding field of a record `Item` takes that field's mode, not the
-  padding's; it was `L0457` ([Destructuring](design.md#destructuring)).
+  padding's; it was `L0457` ([Destructuring](docs/design.md#destructuring)).
 - `foreach (a, b in ints)` reports that `int` is not a record, not that it has 0 fields and needs
   "1 or 0 parts" (`L0459`).
-- `delegate` now covers what [Delegating operators](design.md#delegating-operators) says it does:
+- `delegate` now covers what [Delegating operators](docs/design.md#delegating-operators) says it does:
   `+` on a distinct `string` or `string_view`, which failed in clang with `L0403`; `<<` and `>>`, which
   were `L0420`; the operators of a distinct `Simd`, also `L0420`; an overload with the underlying type
   in any operand position, such as `f64 * V` or `operator(in)`; a generic overload; the built-in
   operation beside a user overload that mentions the type; and an overload's parameter defaults.
 - A generic `operator([])`, `operator([]=)` or `operator([:])` declared outside an `impl` block is
-  found ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)),
+  found ([Operator lookup and overload resolution](docs/design.md#operator-lookup-and-overload-resolution)),
   where `a[0]` was `L0362`.
 - A user unary `-` or `~` no longer shadows the built-in one on a `Simd` type
-  ([Operator lookup and overload resolution](design.md#operator-lookup-and-overload-resolution)), as a
+  ([Operator lookup and overload resolution](docs/design.md#operator-lookup-and-overload-resolution)), as a
   binary overload already did not.
 - A `caller_location()` default on an operator reports the expression that used it, not the
-  declaration ([`caller_location()`](design.md#caller_location)).
+  declaration ([`caller_location()`](docs/design.md#caller_location)).
 - `@(deprecated)` and `@(require_results)` take effect on an operator declaration, and a deprecated
   operator warns where an expression uses it as well as where it is called by name.
 - An operator taking `self: ^` accepts a pointer operand, as its named call does; `p + v` was `L0310`.
 - Comparing a type whose inherent `==` is in a group that is not `@(public)` gets the same message as
   one with a single overload (`L0355`).
 - An operator with a `$` parameter is `L0416` where it is declared
-  ([Operator declarations](design.md#operator-declarations)). Using one crashed the compiler.
+  ([Operator declarations](docs/design.md#operator-declarations)). Using one crashed the compiler.
 - `foreach` over a temporary whose `iter` takes a plain `self` now drops the temporary when the
   statement ends, as `make_source().iter()` already did; it was never dropped
-  ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
+  ([Temporaries and procedure boundaries](docs/design.md#temporaries-and-procedure-boundaries)).
 - `foreach` over a string, map, dynamic array or fixed array in a packed struct now reads it
   with `align 1`; it claimed natural alignment, which is undefined behavior in the generated code
-  ([`@(packed)`](design.md#packed)).
+  ([`@(packed)`](docs/design.md#packed)).
 - A `^mut T` works as a `map[^T]V` key. `p in m`, `m[p]`, `m[p] = v` and `map[^T]V{ p = v }` compiled
   it as a `string_view` and failed in clang with `L0403`.
 - A map literal keeps one set of slots for all its entries, so a 300-entry `map[int]L` with a 5 KB `L`,
   or a 30000-entry `map[string]string`, no longer overflows the stack at `-opt=none`.
 - A deferred assignment on a panic's unwind now drops the value it replaces where that value is
   live, reads whether it is, and leaves the new value to be dropped
-  ([Assignment statements](design.md#assignment-statements)). The old value could leak, a hook
+  ([Assignment statements](docs/design.md#assignment-statements)). The old value could leak, a hook
   could run on a value already dropped, and the replacement could leak.
 - `-copy-cost` no longer warns of a copy of a move-only type, beside the error that it cannot be
   copied, or by size of a `string` or `Shared(T)`, whose copy only retains
-  ([Copy-cost diagnostics](compiler-guide.md#copy-cost-diagnostics)).
+  ([Copy-cost diagnostics](docs/compiler-guide.md#copy-cost-diagnostics)).
 - A procedure type's printed form names `..` and `@(by_ptr)`, so assigning a C-variadic or
   by-pointer foreign procedure to a plain type no longer reports two identical types (`L0310`).
 - `type_info_of(typeid_of([^]T)).bits` is the pointer width whichever use interned `[^]T`
   first; it was 0 when the type was first written out.
 - An application whose composition has arguments that do not resolve is false, as
-  [Interface bodies](design.md#interface-bodies) says: `Inner(T, T.N)` in `Outer(T)` made
+  [Interface bodies](docs/design.md#interface-bodies) says: `Inner(T, T.N)` in `Outer(T)` made
   `static_assert(!Outer(int))` an `L0408`, and `Callable(C, proc(n: C.Arg) -> int)` an `L0306`.
 - An interface that composes itself is false however it does so. Looking up an associated constant
   or a slot through one overflowed the compiler's stack, and `Bad(T) || Bad(T)`, or a composition
@@ -2481,15 +2486,15 @@ checklist.
 - An export whose link name starts with `loke.` stays external, and a procedure or global the
   compiler would give that same name takes another, so `@(export, link_name = "loke.host_api")`
   links and `"loke.p.helper"` beside `helper :: proc()` compiles
-  ([`@(export)`](design.md#export)).
+  ([`@(export)`](docs/design.md#export)).
 - Exporting `wmain` from an executable or a test build is now `L0635` rather than clang's
   redefinition error, and a foreign binding of `wmain` there refers to the entry
-  ([`@(export)`](design.md#export)).
+  ([`@(export)`](docs/design.md#export)).
 - A debugger shows an instance's argument as written, `wrap.[]int` rather than `wrap.$5b$5dint`.
 - `if (case 1 = x) y;` and its `for` form report the missing `{` (`L0213`) rather than ending the
   compiler with no diagnostic.
 - A variable declaration in a control-flow header takes attributes, as
-  [grammar.md](grammar.md#statements) has it: `if (@(tag) y := 1; y > 0) { }` was a cascade of errors.
+  [grammar.md](docs/grammar.md#statements) has it: `if (@(tag) y := 1; y > 0) { }` was a cascade of errors.
 - One malformed construct is one diagnostic in `for ()`, `return );`, `S :: struct(1) { }`,
   `x := (1 2);`, `move(1 2)` and `if (x := 1) { }`. A header's declaration that fails stops at the
   header's `)`, so `for (x: ) { a(); } b();` keeps its body and what follows it, and deeply nested
@@ -2506,21 +2511,21 @@ checklist.
   whose fields have none of them either.
 - A store's receiver is a place, so `m["a"][1] = 5` and `o[0][1] = 5` with an `inout` `operator([])`
   compile when the element has an `operator([]=)`, as their `+=` forms did
-  ([Indexing and slicing](design.md#indexing-and-slicing)).
+  ([Indexing and slicing](docs/design.md#indexing-and-slicing)).
 - A receiver is checked once per check of its call. A procedure literal or a `dyn proc` argument in
   a receiver no longer fails in clang, in `h[f(proc() -> int {...})][0] = 5` and its `+=` and multiple
   assignment forms, and in `f(proc() -> int {...}).unbox()`, `.copy()` and `mk(g).foo()`. A chain of
   calls to methods named like a text operation no longer doubles its checking time per link.
 - `s.byte_len()` finds a file-scope `s` declared after the procedure that calls it, as `s.len()` did.
 - A default sees a `self` written in its own group: `proc(self, x: int = self.n)` and
-  `proc(self, x := self.n)` ([Default values](design.md#default-values)).
+  `proc(self, x := self.n)` ([Default values](docs/design.md#default-values)).
 - `b[0] += n` through `operator([]=)` reads a scalar variable `n` before `operator([])` runs
-  ([Evaluation order](design.md#evaluation-order)).
+  ([Evaluation order](docs/design.md#evaluation-order)).
 - A constant keeps its destination's type in a multiple assignment with a setter however it is
   spelled, so `small[0], x = math.PI, 2` and `Small.N` compile. A setter's value and indices take
   their parameter's type as context, so `paint[0] = .Blue` compiles.
 - `g[0], y = record` works when `g` has only an `operator([]=)`
-  ([Destructuring](design.md#destructuring)).
+  ([Destructuring](docs/design.md#destructuring)).
 - A file-scope `source_location()` reports no procedure, whichever body reaches it first.
 - `@(escape=...)` on a procedure type's parameter in a generic record is exempt in a binding with no
   borrow, as it is on a method's: `Foo(int)` for `cb: proc(@(escape=none) x: T)` no longer reports
@@ -2538,16 +2543,16 @@ checklist.
   constructor's arguments, and `$n := 5` says that a `$` parameter writes its type.
 - `&mut p^.items[:]` passed where a `[]T` is wanted now suspends nothing through the carrier, as
   on a local and as `&mut p^.items` does; it was a false `L0641`
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)). A conflict on such a slice is
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). A conflict on such a slice is
   also reported once, naming the carrier.
 - An `f16` prints its own shortest spelling, as `f32` and `f64` do: `f16(0.1)` prints `0.1`
-  rather than `0.099975586` ([Printed forms](standard-library.md#printed-forms)).
+  rather than `0.099975586` ([Printed forms](docs/standard-library.md#printed-forms)).
 - An enum value no member names, reached through `unsafe.transmute`, prints as its number at the
   enum's own width and signedness: an `enum u64` holding all ones prints `18446744073709551615`
   rather than `-1`, and an `enum i128` no longer prints only its low word
-  ([Printed forms](standard-library.md#printed-forms)).
+  ([Printed forms](docs/standard-library.md#printed-forms)).
 - Compile-time evaluation matches a run in more places
-  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
+  ([Compile-time procedure evaluation](docs/design.md#compile-time-procedure-evaluation)).
   `xs.append(..view)` added nothing, so a `static_assert` could pass on the wrong length, and
   `xs.append(1, ..view)` was `L0341`. A zero `string_view` compared unequal to `""`. A single name
   over a lent `indexed()` reported a nil pointer at `r.value^`, and `&mut` over a slice expression,
@@ -2560,39 +2565,39 @@ checklist.
   each insertion, and a read makes only the element it selects, so the step limit now comes first.
 - A procedure with many spawn sites keeps a window for each. Past 64 in one body, the last
   site's window never closed, so a write after its join was a false `L0731`
-  ([Globals while tasks run](design.md#globals-while-tasks-run)).
+  ([Globals while tasks run](docs/design.md#globals-while-tasks-run)).
 - `@(escape=...)` on a parameter whose record names itself now asks whether the record carries
   a borrow once its fields are known, so a record whose carrier field comes after the procedure
-  field is no longer a false `L0648` ([`@(escape=<level>)`](design.md#escapelevel)).
+  field is no longer a false `L0648` ([`@(escape=<level>)`](docs/design.md#escapelevel)).
 - Storing an allocator handle in a field and then storing another over it no longer changes the
   first handle's own region, which was a false `L0538` when the second came from a parameter
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
 - `L0731` and `L0641` say "may" and name the limit when an array's merged elements caused them,
   and an allocator parameter past the 64th now names that limit on its `L0538`
-  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
 - Borrow checking no longer takes minutes on a recursive union with many alternatives, or a
   body with a thousand loans of one place, and a body's memory no longer grows with the square of
   its locals.
 - A panic while a record's `hook(drop)` empties an `@(initialized)` field drops what the count still
-  names ([Uninitialized capacity](design.md#uninitialized-capacity)). The unwind used the count from
+  names ([Uninitialized capacity](docs/design.md#uninitialized-capacity)). The unwind used the count from
   before the hook, so it dropped the elements the hook had already taken a second time.
 - A panic from one element's drop, when an `or_return` leaves a variadic call's operands, leaves the
   other staged elements to the unwind. They used to leak.
 - The generated copy of a fixed array of owning elements is one loop. It emitted each element's code
   separately, so copying a `[20000]Value` of owning fields wrote a `.ll` of about 60 MB.
 - A union's zero value is its designated variant with a zero payload at compile time too
-  ([Zero values and `@(zero=)`](design.md#zero-values-and-zero)). `R{} == R{m = .none}` folded to
+  ([Zero values and `@(zero=)`](docs/design.md#zero-values-and-zero)). `R{} == R{m = .none}` folded to
   `false`, `Option(int){} == .none` failed with `L0341` in compile-time code, `case .a(p)` on a zero
   `U` bound a `p` with no value, a compile-time `.hash` of one differed from the run-time hash, and a
   zero union whose payload has a `hook(drop)` or `hook(copy)` escaped the `L0341` every other such
   value gets.
 - A constant `==` or `!=` on records with an `@(initialized)` count outside `0 ..= N` is `L0343`, as
-  [Uninitialized capacity](design.md#uninitialized-capacity) has equality panic, whichever operand
+  [Uninitialized capacity](docs/design.md#uninitialized-capacity) has equality panic, whichever operand
   holds that count. It folded to unequal, and an evaluated comparison looked only at the smaller count.
 - A valid map named only inside a `Box`, as in `x: Option(Box(map[u16]int)) = .none;`, compiles. It
   used to fail with internal `L0405`, "a map key operation was not resolved during checking".
 - `pointer[0:length]` on a C pointer panics for a negative `length`, as
-  [string type conversions](design.md#string-type-conversions) says. The slice used to come out with
+  [string type conversions](docs/design.md#string-type-conversions) says. The slice used to come out with
   that length, so its later bounds checks passed and an index read out of bounds.
 - `unsafe.raw_data` of a temporary `[dynamic]T` drops the array when the full expression ends, as the
   same call on a `string` does, rather than leaking it and never running its elements' `hook(drop)`.
@@ -2600,7 +2605,7 @@ checklist.
   compiles. It used to fail in clang with `L0403`.
 - A variadic pack with a spread among other operands, as `sum(1, ..big[:])`, panics with
   "variadic argument pack is too large" past 256 KiB
-  ([Variadic parameters](design.md#variadic-parameters)). It used to overflow the stack and lose
+  ([Variadic parameters](docs/design.md#variadic-parameters)). It used to overflow the stack and lose
   buffered output.
 - A default argument can select from a parameter to its left, as `x: int = a.n`, whichever way that
   parameter passes. It used to fail in clang with `L0403`, or read the enclosing call's `a` in a
@@ -2608,7 +2613,7 @@ checklist.
 - `math.count_ones(nil)`, the other bit counts and values, `math.rotate_left(nil, 1)`,
   `math.wrap(T, nil)`, and `unsafe.transmute(T, nil)` report `L0310`. They used to crash the compiler
   with no diagnostic.
-- `try_make([dynamic]u8, allocator=my_allocator)`, as [Owners and drop](design.md#owners-and-drop)
+- `try_make([dynamic]u8, allocator=my_allocator)`, as [Owners and drop](docs/design.md#owners-and-drop)
   writes it, compiles: `make` and `try_make` take their allocator by name, and no other argument.
 - `source_location(greet).procedure` is `greet`, and a variable's is the procedure declaring it,
   empty for a global. It used to be the procedure asking, beside the line of another declaration.
@@ -2618,35 +2623,35 @@ checklist.
   builds one integer per scalar rather than several per byte: a compile-time loop over a 4 KB array
   peaks at 26 MB rather than 109 MB.
 - Arithmetic over a runtime choice of constants takes the type its context gives
-  ([Conditional expression](design.md#conditional-expression)):
+  ([Conditional expression](docs/design.md#conditional-expression)):
   `y: u8 = (1 if c() else 2) + 1`, with `*`, unary `-` and `~`, or at a `u8` argument, reached clang
   and failed `L0403`. `("a" if c() else "b") + "c"` is a `string`, and comparing such a string works;
   both failed in clang too. A left shift gives its unfixed operand the type expected, even with a
   runtime choice, or a rune: `r: rune = 1 << n` was `L0310`. A runtime choice as a shift count is an
   `int`, where `a << (1 if c() else 2)` was `L0356`.
 - A comparison accepts operands either of which is assignable to the other, as
-  [Comparison operators](design.md#comparison-operators) says: `p == r` with a `^int` and a `rawptr`,
+  [Comparison operators](docs/design.md#comparison-operators) says: `p == r` with a `^int` and a `rawptr`,
   and a labelled record against the unlabelled one with its field types, were `L0354`.
 - `pp[i]`, with `pp` a pointer to a C pointer, indexes through the C pointer. It reached clang and
-  failed `L0403` ([C pointers](design.md#c-pointers)).
-- `&mut a[lo:hi]` slices any mutable array place ([Slices](design.md#slices)): an element of a C
+  failed `L0403` ([C pointers](docs/design.md#c-pointers)).
+- `&mut a[lo:hi]` slices any mutable array place ([Slices](docs/design.md#slices)): an element of a C
   pointer, a map element, or an `inout` `operator([])` result was `L0359` or `L0477`.
 - A field a box's payload promotes beats the box's own member, as a declared one does:
   `box(Outer{...}).clone` with a `using` field holding `clone` was `L0408`
-  ([Owned values](design.md#owned-values)). `b(args)` finds `call` through a box and then a pointer,
+  ([Owned values](docs/design.md#owned-values)). `b(args)` finds `call` through a box and then a pointer,
   as `b.call(args)` does, where `Box(^T)` was `L0320`
-  ([Calling a value](design.md#calling-a-value)).
+  ([Calling a value](docs/design.md#calling-a-value)).
 - An array literal is checked by what it lists, not its length
-  ([Fixed arrays](design.md#fixed-arrays)): `x := [1 << 33]u8{1}` crashed the compiler, and
+  ([Fixed arrays](docs/design.md#fixed-arrays)): `x := [1 << 33]u8{1}` crashed the compiler, and
   `a: [2000000]u8 = {1500000 = 1}` was `L0361`, though only a `[?]T` has its length set by its keys.
 - `D([dynamic]int{})` and `M(map[int]int{})` convert an empty container literal to a distinct type,
-  which was `L0373` ([Distinct types](design.md#distinct-types)).
+  which was `L0373` ([Distinct types](docs/design.md#distinct-types)).
 - A condition that cannot be `bool`, as in `1 if 5 else 2`, is reported once rather than twice.
 - A distinct type over a union stores its variants as the union does. Its tag used to overwrite the
   payload, so `D.a(9)` read back as `.a(0)` and a reference payload was corrupted. `==` on such a
   type now compiles rather than failing in clang, and a constant comparison tells two variants with
   equal payloads apart. A `switch` over one takes variant cases and must cover them
-  ([Distinct types](design.md#distinct-types)).
+  ([Distinct types](docs/design.md#distinct-types)).
 - A union variant that is itself rejected no longer adds an `L0423` about the union's `@(zero=)` or
   `@(failure=)`, which were judged against the variants left over.
 - The `L0425` for a bare payload variant advises `.name(value)`, with its dot, and the one for a
@@ -2657,16 +2662,16 @@ checklist.
 - `T(v)` of an implicit view or splat is now that conversion written out. `string_view(s)`,
   `([]int)(list)`, `([]int)(array)`, and `Simd(f32, 4)(x)` failed in clang with `L0403`, and
   `(^T)(owner)` of a box read freed memory; they now borrow as the implicit forms do, including a
-  temporary a local borrows ([Type conversion](design.md#type-conversion)).
+  temporary a local borrows ([Type conversion](docs/design.md#type-conversion)).
 - `([4]int).len(a)` is now constant, as `a.len()` is.
 - A `value: T` parameter of a container operation is now a copy site: `m.find(big)` and a map key in
   `m.try_insert(big, 1)` warn `L0507` as `f(big)` does.
 - An argument that already failed no longer also reports `L0501` for a `move` parameter.
 - A `@(c_vararg)` procedure in a procedure group now takes its variadic arguments, where a call
   through the group said the procedure took too many
-  ([`@(c_vararg)`](design.md#c_vararg)).
+  ([`@(c_vararg)`](docs/design.md#c_vararg)).
 - A `switch` case stops testing its values at the first match, as the compile-time evaluator did
-  ([switch statement](design.md#switch-statement)): `case f(1), f(2):` no longer calls `f(2)` when
+  ([switch statement](docs/design.md#switch-statement)): `case f(1), f(2):` no longer calls `f(2)` when
   `f(1)` matched.
 - `break` and `continue` no longer drop a temporary or a loop's initial declaration twice.
 - `return inout x` no longer zeroes the place it hands back.
@@ -2679,10 +2684,10 @@ checklist.
   switching on a constant one, a large constant holding a pointer, and an iterator record holding
   one no longer segfault or fail in clang (`L0403`).
 - A panic now drops a local that every normal exit moves out, under the `unwind` strategy
-  ([What the unwind runs, and what it does not](design.md#what-the-unwind-runs-and-what-it-does-not)).
+  ([What the unwind runs, and what it does not](docs/design.md#what-the-unwind-runs-and-what-it-does-not)).
   It was skipped unless some exit left it live.
 - A last-use copy stays a clone when a deferred statement that only a panic runs reads the source
-  ([Last-use transfer](design.md#last-use-transfer)). It read the emptied source.
+  ([Last-use transfer](docs/design.md#last-use-transfer)). It read the emptied source.
 - `L0698` no longer reports a required result in code nothing reaches, as after an `if` whose
   branches both return.
 - Under `-g`, a parameter whose size is not 1, 2, 4, or 8 bytes shows its value in a debugger, not
@@ -2695,7 +2700,7 @@ checklist.
 - The compiler no longer waits a timer tick of about 15 ms on each child it launches.
 - An owner built from a provider inside a `Shared` payload is now checked: one built from
   `held.get().allocator()` that outlives `held` is now `L0537`, and returning it is `L0592`. Both
-  compiled and read a dead region ([Shared ownership](design.md#shared-ownership)). The same goes for
+  compiled and read a dead region ([Shared ownership](docs/design.md#shared-ownership)). The same goes for
   an owner built through a local pointer to a provider (`p := &arena; ... via p.allocator()`).
 - A generated `clone` of a type holding a `hook(copy)` that takes `self: ^` now borrows what it clones,
   as that hook's own type does. Its result could keep a dangling pointer to the original.
@@ -2709,7 +2714,7 @@ checklist.
   `L0728`. It crashed the compiler.
 - In a `@(cpu_dispatch)` copy, a `foreach`'s `iter` and `next`, a `hook(drop)` at a scope's end, and a
   part's own `==` now reach copies for the level too. They ran as written, which gave the same
-  results more slowly ([@(cpu_dispatch)](design.md#cpu_dispatchstring)).
+  results more slowly ([@(cpu_dispatch)](docs/design.md#cpu_dispatchstring)).
 - A program may bind `loke_rt_v1_cpu_dispatch`, or export a name spelling `loke.cpu_dispatch.v3.state`,
   beside a dispatched procedure. Either was a redefinition that clang rejected.
 - Editor completion no longer offers `move_only` as a keyword.
@@ -2723,11 +2728,11 @@ checklist.
   or in a result, binding, or slot type. Renaming one broke `foreach` or the interface with no warning.
 - An adapter stored over a mutable view that owns something now holds a clone of it, and one over a
   mutable view that cannot be copied borrows it read-only. The source and the view each dropped the
-  same value, which freed it twice ([Iteration adapters](design.md#iteration-adapters)).
+  same value, which freed it twice ([Iteration adapters](docs/design.md#iteration-adapters)).
 - A static `foreach` over `copied()` now yields the elements. It yielded zeros.
 - `foreach (p, i in source.indexed())` over a `next` lending a record now binds the counter. It read
   the record's parts as the pair's, and then garbage.
-- A `next` may lend through a named record, as [Yield modes](design.md#yield-modes) allows. It was `L0456`.
+- A `next` may lend through a named record, as [Yield modes](docs/design.md#yield-modes) allows. It was `L0456`.
 - `Iterator`, `Mut_Iterator`, and `Item` now derive in whatever order a type's members are declared,
   and on a `distinct` name from its own members. A member that is not a receiver of the protocol's
   shape no longer derives one, and `Item :: 5` on a type with no `next` is no longer `L0694`.
@@ -2742,7 +2747,7 @@ checklist.
 - The note that more than 64 local allocator regions merged now ends, as the other precision
   notes do, with how to avoid the limit.
 - An enum's own `==` and `<` are now the ones used, as a struct's are ([Operator lookup and
-  overload resolution](design.md#operator-lookup-and-overload-resolution)): `x == y` ignored its
+  overload resolution](docs/design.md#operator-lookup-and-overload-resolution)): `x == y` ignored its
   own `==` at the top level while `[2]E` used it. A generated `hash` no longer stands beside an
   enum's own `==` or `hash`, so `Hashable(E)` agrees with `map[E]int`. Editor completion no longer lists the generated `hash`
   on a built-in type, as it never did on a record; `x.hash(seed)` still compiles.
@@ -2753,14 +2758,14 @@ checklist.
   procedure's parameter type past the maximum, with a location and before the backend.
 - `@(zero=)` on unions that reach each other no longer depends on which is declared first: the
   payload is judged once every record has its fields ([Zero values and
-  `@(zero=)`](design.md#zero-values-and-zero)).
+  `@(zero=)`](docs/design.md#zero-values-and-zero)).
 - `lokec <root directory> -fmt`, and any other run that writes no executable, no longer asks for
   `-o`. `lokec .` at a drive root, and `lokec D:`, ask for `-o` or use the resolved name, instead
   of writing `C:\.exe` or `D:.exe`.
 - A `@(test)` may use a local type or capture literal with a file-scope generic, a formatter or
   a `dyn` view, and an ordinary build of the package, or of an importer of it, still compiles. It
   failed with `L0405`. An ordinary build also leaves out those instances and their `static` and
-  `thread_local` locals ([Test procedures](design.md#test-procedures)).
+  `thread_local` locals ([Test procedures](docs/design.md#test-procedures)).
 - `-migrate` refuses a record written inside another's attributes with `L0752` instead of crashing,
   and no longer joins neighbouring words, as in `union@(zero=a) where`, when it takes attributes out.
   An attribute list's trailing comma stays, and a comment between two attributes is refused.
@@ -2769,7 +2774,7 @@ checklist.
 - `-dump-ast` labels a `for` statement's post statement `(post ...)`, so `for (f();;)` and
   `for (;;f())` no longer print alike.
 - An untyped constant whose address is taken gets storage for each type it is used at, as
-  [Materialization](design.md#materialization) says. With `X :: 300`, the same `double` global
+  [Materialization](docs/design.md#materialization) says. With `X :: 300`, the same `double` global
   served every use, so a method on a `distinct int` read its bits as an integer. `&X` is now a `^T`
   of the pointee the context asks for or the constant's default type, not `^untyped int`, so
   `p: ^int = &X` compiles.
@@ -2787,9 +2792,9 @@ checklist.
   back read it a second time and repeated its diagnostics.
 - The provenance note for a merged path names both depth limits, 4 aggregate projection steps and
   8 through a written alias, as
-  [Minimum provenance precision](design.md#minimum-provenance-precision) asks.
+  [Minimum provenance precision](docs/design.md#minimum-provenance-precision) asks.
 - A swap with a temporary now leaves each carrier in one place in a branch, in a loop, and through
-  a view parameter, as [Weakening and reborrows](design.md#weakening-and-reborrows) says.
+  a view parameter, as [Weakening and reborrows](docs/design.md#weakening-and-reborrows) says.
   `if (flip()) { held := links^[0]; links^[0] = links^[1]; links^[1] = held; }` was `L0641` at
   each read after it, and a copy out of a place the swap filled conflicted with the temporary
   even when done before the temporary's next use. A carrier redefined or replaced after a copy
@@ -2797,16 +2802,16 @@ checklist.
   faster on bodies with many such stores: 300 swaps in branches took over a minute and now take
   under a second.
 - A report's arguments may name one place whatever it holds, as printing only reads
-  ([Built-in procedures](design.md#built-in-procedures)): `assert(false, "m", p^, p^)`,
+  ([Built-in procedures](docs/design.md#built-in-procedures)): `assert(false, "m", p^, p^)`,
   `assert(false, "m", s[0], s[1])`, and `assert(false, "m", h.p, h.p)` were `L0641` where
   the value held a mutable carrier.
 - A call to `len` or `cap` only reads, as
-  [Weakening and reborrows](design.md#weakening-and-reborrows) says. `y: []Pair = s;
+  [Weakening and reborrows](docs/design.md#weakening-and-reborrows) says. `y: []Pair = s;
   n := s.len(); z := y[0].n;` was `L0641` where `Pair` held a borrow, and so was the length
   of a dynamic array beside a copy out of it, read-only or mutable, or a read-only view of
   it. What the receiver holds must still last for the call.
 - A pointer into one element of a view parameter leaves the others free, as naming that
-  element does ([Places and overlap](design.md#places-and-overlap)). `p := &mut s[0];
+  element does ([Places and overlap](docs/design.md#places-and-overlap)). `p := &mut s[0];
   x := p^.to; y := s[1].to; x^ = 1; y^ = 2;` was `L0641`, and so was the same stored through
   `p`, two such pointers, and what `keep(&mut s[0], other)` may leave, read from `s[1]`.
 - Two values removed from a local dynamic array or map can be live together:
@@ -2815,27 +2820,27 @@ checklist.
 - A conversion of a slice or pointer to plain data to a read-only carrier, as
   `(dyn Shape)(box)` or `(^int)(carrier)`, now only reads a mutable carrier, as an
   implicit one does, so two such views may be live together
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A carrier loaded out of a place and passed as a `stored` argument no longer conflicts
   with itself in that call. `keep(l, m^.to); x := l^.to; x^ = 2; m^.to^ = 1;` was
   `L0641` at the call, though `x` is done by the last statement
-  ([Retaining a borrow](design.md#retaining-a-borrow)).
+  ([Retaining a borrow](docs/design.md#retaining-a-borrow)).
 - A swap of carriers written with a temporary through a pointer or view, `held :=
   links[0]; links[0] = links[1]; links[1] = held;`, no longer conflicts with itself,
   and copies out of elements reordered whole through a view parameter no longer
-  conflict ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  conflict ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A failed interface bound no longer calls a private constant, or a private
   procedure without a receiver, a private method. `L0444` now says the type has no
   such method, as neither could meet the slot if it were public
-  ([Interface bodies](design.md#interface-bodies)).
+  ([Interface bodies](docs/design.md#interface-bodies)).
 - Comparing or hashing a zero-length array no longer counts its element's `==` or
-  `hash`, which never run ([Global write effects](design.md#global-write-effects)).
+  `hash`, which never run ([Global write effects](docs/design.md#global-write-effects)).
   `a == b` on `[0]Clears` reported `L0512` under a view of what `Clears`'s `==`
   writes, as did a record or union holding one. What the comparison requires of the
   element's `==` is unchanged.
 - A public type's private `format` no longer counts as a call printing may make
-  ([Interface bodies](design.md#interface-bodies),
-  [Global write effects](design.md#global-write-effects)), as printing uses the
+  ([Interface bodies](docs/design.md#interface-bodies),
+  [Global write effects](docs/design.md#global-write-effects)), as printing uses the
   generated default. `panic("stop", data[0], Hidden{1})` and `fmt.println(Hidden{1})`
   under a view of `data` reported `L0512` when that method wrote `data`, as did any
   print or report of another type once such a method existed.
@@ -2844,11 +2849,11 @@ checklist.
   the instantiation limit (`L0436`) instead of overflowing the compiler's stack, and
   a limit first reached in a probe no longer uses up the report.
 - Completion lists a pointer's or box's members at `r.size` when `size` is a method
-  called through it ([Language server](compiler-architecture.md#language-server)),
+  called through it ([Language server](docs/compiler-architecture.md#language-server)),
   where it offered nothing.
 - A `hook(drop)` or `hook(copy)` is no longer silently skipped when something asked
   about its record first
-  ([Lifecycle hooks and resource types](design.md#lifecycle-hooks-and-resource-types)).
+  ([Lifecycle hooks and resource types](docs/design.md#lifecycle-hooks-and-resource-types)).
   This covers `is_copyable(H)` or a value made before a body-local `impl H`, a generic
   record's member bound evaluated before a later member, and a file-scope `when`
   asking before the block is declared. A hook whose own bound asks and fails is left
@@ -2857,25 +2862,25 @@ checklist.
   `list.head = list.head`, or replacing it with one read from below,
   `list.next = list.next^.next`, no longer reports `L0641`, and neither does a later
   copy out of another element after `xs[0].next = xs[0].next^.next` on a view parameter
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - Reordering carrier fields through a view parameter, as
   `links[0].to, links[1].to = links[1].to, links[0].to;`, no longer reports `L0641`,
   and what a reordering left can be copied again afterwards in a view parameter, a
   pointer's fields, or after a `swap` of a named array
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A call that copies between elements at variable indices of a view of a local
   array, in the scope of the arena an element's owner is in, no longer reports
   `L0536`, as that leaves the array nothing new.
 - A generic record's `hook(drop)` bound by a `where` clause that an instance fails
   is left out of that instance, whose parts still drop
-  ([where clauses](design.md#where-clauses)). It failed in the backend with `L0405`.
+  ([where clauses](docs/design.md#where-clauses)). It failed in the backend with `L0405`.
 - A generic record may recurse through a [parametric
-  alias](design.md#parametric-aliases) of a reference to it however the two are
+  alias](docs/design.md#parametric-aliases) of a reference to it however the two are
   reached first: `Link :: ^Node($T)` with a `Link(T)` field in `Node` reported a
   false `L0436` for `Link(int)` unless `Node(int)` had been resolved already. A
   record that contains itself by value through an alias is now `L0364`, as it is
   written out.
-- A [parametric alias](design.md#parametric-aliases) can bind a constant whose
+- A [parametric alias](docs/design.md#parametric-aliases) can bind a constant whose
   type an earlier argument decides: `Alias :: Value($T, $V)` over
   `Value :: struct($T: type, $V: T)` reported an internal `L0405`, and now
   `Alias(int, 3)` is `Value(int, 3)`. An alias can also bind a constant argument
@@ -2895,7 +2900,7 @@ checklist.
   definitions of it, or blocks between them, the procedure has. Past 63
   definitions or 256 blocks, a place of `t` still counted against `s`, so a
   disjoint write was `L0641` although each storage was within its eight places
-  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
 - A reslice in a loop that never moves a local view's start, as
   `s = &mut s[:2]`, now leaves the view's constant elements apart, so `s[1]`
   beside a live `&mut s[0]` is no longer `L0641`. A loop that moves the start,
@@ -2905,13 +2910,13 @@ checklist.
   len_of(held.items))`, `fmt.println(p, p)`, and `assert(ok, "stop", held.p, held.p)`
   are no longer `L0641`. A read-only parameter reads a field the same way, so what it
   returns no longer keeps a read of the field out
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - Local views reslicing each other in a loop no longer lose where they start when
   one begins short, as `s := base[:1]; t := base[:];` with `s = t[:]` and
   `t = s[:2]` in the loop, so `s[1]` beside a live copy out of `s[0]` is no longer
-  `L0641` ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  `L0641` ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A dynamic array's first 8 elements are now told apart by a constant index, as a
-  fixed array's are ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  fixed array's are ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
   `node := lists[0].head; other := lists[1].head;`, directly or through a fresh
   `&mut lists[:]`, was `L0641` as each element stood for all of them; and with it
   `&mut d[0]` beside a use of `d[1]`, and a write of `y` while only
@@ -2923,7 +2928,7 @@ checklist.
   and `&mut list` may be taken there. Any use of it was `L0641`, as the binding
   counted as a copy of the carrier, and using the binding as a use of that
   copy's source. It now names the element
-  ([By-reference iteration](design.md#by-reference-iteration)), and a copy out of
+  ([By-reference iteration](docs/design.md#by-reference-iteration)), and a copy out of
   it reborrows the stored carrier, over a view as well, where the copy used to
   keep only the view's borrows.
 - `free_all` of an allocator unwrapped by `or_else` from an unmarked
@@ -2932,24 +2937,24 @@ checklist.
   region was checked for the `@(allocator_reset)` promise, so an allowed
   fallback hid the payload's reset; a field of an `or_else` result, as in
   `(maybe or_else Holder{allowed}).allocator`, was likewise missed
-  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
 - A slice literal's elements keep what their drop hooks read borrowed until
   the end of the block, where the hidden array drops them, as an extended
   `&T{...}` temporary's do. After `view = {};` overwrote the slice, `drop` of
   a value an element viewed was accepted, and the hook then read it; and a
   hook's write to a global at the block's end went unchecked against a live
-  borrow of it ([Slice literals](design.md#slice-literals)).
+  borrow of it ([Slice literals](docs/design.md#slice-literals)).
 - A variadic pack built from separate arguments is now in the allocator
   regions of its elements, so a `parallel` block whose task reserves an arena
   reports the parent passing a list from that arena to a variadic callee that
   clones it by naming the arena, not "an allocator region this procedure
   cannot tell apart from it". A pack whose elements reach no allocator is in
   none, rather than in an unknown region when no other argument has one
-  ([Allocators and tasks](design.md#allocators-and-tasks)).
+  ([Allocators and tasks](docs/design.md#allocators-and-tasks)).
 - A panic after a destructuring declaration, as `low, high := pair;`, runs the
   `defer` the procedure registered first again. Binding each field that holds
   no cleanup of its own cleared the frame's first registration
-  ([What the unwind runs, and what it does not](design.md#what-the-unwind-runs-and-what-it-does-not)).
+  ([What the unwind runs, and what it does not](docs/design.md#what-the-unwind-runs-and-what-it-does-not)).
 - Checking a procedure whose analysis needs more than one GiB of scratch
   memory no longer stops the compiler with `a procedure body's analysis
   outgrew its scratch arena reservation`; the analysis arenas grow past their
@@ -2959,159 +2964,159 @@ checklist.
   counts only against the storage the pointer names where the place is
   taken, so four places of `s` and five of `t` no longer reject a write to
   another field of `s` naming the eight-place limit (`L0641`)
-  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
 - `container.words_for_bits` and `container.bytes_for_bits` no longer
   overflow for capacities near the largest `int`, and `Index_Set(N)` can be
   instantiated at that boundary
-  ([`core:container` index sets](standard-library.md#corecontainer-index-sets)).
+  ([`core:container` index sets](docs/standard-library.md#corecontainer-index-sets)).
 - A store into one element of a local view replaces its contents however many
   constant reslices of the view come before it; nine or more were rejected
   with `L0641`
-  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  ([Values that contain borrows](docs/design.md#values-that-contain-borrows)).
 - Storing a carrier through a slice parameter at a variable index, as
   `s[k].head = s[k].tail`, no longer rejects a borrow of another field of the
   same or another element kept beside it in a loop (`L0641`)
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A local view that a branch only shortens, as
   `if (flag) { s = &mut s[:2]; }`, and a fresh view of a whole dynamic array,
   as `s := &mut d[:]`, now keep their elements at different constant indices
   apart, so `&mut s[0]` leaves `s[1]` usable; both were rejected with `L0641`
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A carrier copied out of one element of a local view, as `s[0].head`, no
   longer suspends the carriers stored in its other elements, so copying
   `s[1].head` beside it compiles, as it already did out of the array itself
   and through a view parameter (`L0641`)
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A public constant with no written type in a generic `impl` now warns
   `L0740` when its value's type is private, as it does in a non-generic
   `impl`: at the declaration when the value names none of the block's `$`
   names, otherwise once from the instances
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - A public type alias in a generic `impl` now warns `L0740` when its target
   names a private type, as it does in a non-generic `impl`, including a
   private alias of a public type and a target such as `Pair(T, Corner)` that
   names the block's `$` names
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - `L0740` now also reads a type alias written with its type, as
   `Inner: type : Corner`, in a generic `impl`, and an alias, anywhere, that
   selects a private type member from an instance, as `Box(T).Hidden` or
   `Box(int).Hidden` does
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - In a generic `impl`, `L0740` now also reads the target of an alias whose
   written type is an alias of `type`, as `Inner: Meta : Corner` for
   `Meta :: type`, or a `$` name that an instance binds to `type`; selects a
   private member alias written as a slice, pointer, array, or map type, as
   `Box(T).Hidden` for `Hidden :: []T`; and follows a chain of member aliases
   however long it is, where it stopped after eight
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - `L0740` now reads parametric aliases as it does other aliases: a public one's
   target, as `Public_Result :: Result($T, Hidden)`, and a private one applied in
   a public declaration, as `consume :: proc(x: Hidden_Result($T))`. It also reads
   the members of a block written through a private alias of a public type, as
   `impl Short` for `Short :: Point`, which it used to take for a private type's
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - `L0740` now reads a selection of a generic `impl`'s private member that is a
   type only in an instance, as `Box(T).Hidden` for `Hidden: T : Point` in
   `Box(type)` or for `Hidden :: type_of(T{})`, in a public alias with or without
   a written type, a constant's written type, a method's signature, or a group's
   member. A selection such as `Box(type).Hidden`, which names no `$` name, is read
   at its declaration
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - `L0740` now reads such a selection in every instance, where it stopped after a
   declaration's first, so `Item(T, Holder(T, V).Hidden)` warns for `Hidden: T : V`
   when `Holder(int, 0)` is instantiated before `Holder(type, Point)`, as it did
   the other way round
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - `L0740` no longer reads a generic method's own `$` names by what its block or
   package means by those names, which warned for `Item(T, Holder(T, V).Hidden)`
   in `make :: proc(self, $T: type, $V: T)` when the package also declared `T` and
   `V`. It now reads a type past a plain parameter of the same name, which hides
   nothing a type names, so `proc(Corner: int) -> Corner` warns for a private
   `Corner`
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - `L0740` now reads a selection such as `Twin(Bag(T).Inferred, int)`, for a member
   that is a type only in an instance, wherever a generic declaration writes it: a
   generic record's public field or variant, a generic procedure's signature, in a
   method's own `$` names too, a parametric alias's target, and a generic interface's
   requirement. Each is read in the instances the build creates, as a generic
   `impl`'s own declarations already were
-  ([Private names in public declarations](design.md#private-names-in-public-declarations)).
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
 - Editor completion no longer offers a type's generated `format` where a use
   could not call it, on a public type with a private `format`, and shows a local
   extension's `format` rather than the generated one it hides
-  ([Language server](compiler-architecture.md#language-server)).
+  ([Language server](docs/compiler-architecture.md#language-server)).
 - `time.local_zone` on Windows no longer panics for a zone set without a
   registry key, as `SetTimeZoneInformation` can leave it, and a zone whose
   dynamic daylight saving is disabled keeps its fixed annual transitions
   instead of showing standard time all year; it reads the zone's own rule,
   as Windows' clock does
-  ([Time zones](standard-library.md#time-zones)).
+  ([Time zones](docs/standard-library.md#time-zones)).
 
 - `fs.create_directories` creates only the directories of the path Windows
   normalizes its argument to, so `a/skipped/../made` no longer creates
   `skipped`, nor fails when `skipped` is a file; an extended-length `\\?\`
   path is still walked as written
-  ([Filesystem operations](standard-library.md#filesystem-operations)).
+  ([Filesystem operations](docs/standard-library.md#filesystem-operations)).
 - An implicit selector given to a generic procedure's `$` parameter whose type
   names no `$` parameter, as `.Fast` to `run :: proc($mode: Mode, x: $T)`,
   now takes that type, as an ordinary parameter's argument does
-  ([Implicit selector expression](design.md#implicit-selector-expression)).
+  ([Implicit selector expression](docs/design.md#implicit-selector-expression)).
   Before, it was rejected with `L0385`.
 
 - A store into one element of a local slice view at a constant index, as
   `s[0].head = s[0].tail` with `s := &mut arr[:]` or a constant reslice
   `t := &mut s[1:]`, now replaces what that element held, so a loop that
   copies `s[0].head` before the store compiles, as it does through a slice
-  parameter ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  parameter ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - Such a store also replaces what the element held when the view was resliced
   from itself before the loop, as `s = &mut s[1:]`; it was rejected with
   `L0641`. Resliced inside the loop or in one branch only, `s[0]` may name
   several elements, and the store is still rejected
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - After `p^ = q^` through a pointer parameter, a copy of one carrier, as
   `p^.head`, no longer holds the loans of the record's other carriers, so
   `q^.tail` stays usable beside it
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - Passing an existing mutable carrier to an `@(escape=stored)` parameter
   beside an `inout` destination, as `keep(inout d, r)`, is no longer
   rejected with `L0641` at the call itself
-  ([Retaining a borrow](design.md#retaining-a-borrow)).
+  ([Retaining a borrow](docs/design.md#retaining-a-borrow)).
 - Passing a named read-only reborrow to an `@(escape=stored)` parameter, as
   `keep(p, read)` after `read: ^Node = r`, is no longer rejected with
   `L0641` at the call; what the call stores extends the reborrow, so `r`
   stays unwritable while it is used
-  ([Weakening and reborrows](design.md#weakening-and-reborrows),
-  [Retaining a borrow](design.md#retaining-a-borrow)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows),
+  [Retaining a borrow](docs/design.md#retaining-a-borrow)).
 - `core:math/linalg`'s `perspective` and `perspective_lh` compute their depth
   coefficients from `far/(far - near)` and `near/(far - near)`, so a finite
   near and far whose product overflows or underflows, such as 10 and 1e38 at
   `f32`, no longer give an infinite or zero coefficient
-  ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+  ([`core:math/linalg`](docs/standard-library.md#coremathlinalg)).
 - `core:math/linalg`'s `orthographic` and `orthographic_lh` compute a row from
   the halves of its bounds when their sum or difference overflows, so finite
   bounds such as 2e38 and 3e38 at `f32` no longer give an infinite or zero
   coefficient where the value is representable, a subnormal one included
-  ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+  ([`core:math/linalg`](docs/standard-library.md#coremathlinalg)).
 - `core:math/linalg`'s `to_euler` divides a finite non-unit quaternion at an
   extreme scale by its largest component magnitude first, so
   `(1e200, 0, 1e200, 0)` gives the angles of the unit `(1, 0, 1, 0)` instead
-  of a NaN ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+  of a NaN ([`core:math/linalg`](docs/standard-library.md#coremathlinalg)).
 - `core:math/dense`'s `svd` and `symmetric_eigen` scale a matrix near
   overflow or among the subnormal numbers by a power of two first, so they
   no longer return infinite or NaN factors, discard an off-diagonal element
   near overflow, or hang. An eigenvalue or singular value too large for the
   type is reported as `.No_Convergence`, and matrices in range keep their
-  bits ([`core:math/dense`](standard-library.md#coremathdense)).
+  bits ([`core:math/dense`](docs/standard-library.md#coremathdense)).
 - `core:math/dense`'s Householder reflector no longer overflows for a column
   near the largest finite value, and keeps `Q` orthonormal for a subnormal
-  column ([`core:math/dense`](standard-library.md#coremathdense)).
+  column ([`core:math/dense`](docs/standard-library.md#coremathdense)).
 - `core:math/dense`'s `symmetric_eigen` no longer rejects a NaN or infinite
   imaginary part on a Hermitian matrix's diagonal, which it does not read
-  ([`core:math/dense`](standard-library.md#coremathdense)).
+  ([`core:math/dense`](docs/standard-library.md#coremathdense)).
 - `core:math/dense`'s `Lu.reciprocal_condition` no longer reports a
   well-conditioned matrix of tiny or huge scale as singular; multiplying the
   matrix by a power of two leaves the estimate unchanged
-  ([`core:math/dense`](standard-library.md#coremathdense)).
+  ([`core:math/dense`](docs/standard-library.md#coremathdense)).
 - `core:math/geometry` gives a triangle with two equal corners the closest
   point and distance of the segment its corners span, where it returned NaN;
   `intersection` of a box with a NaN corner is empty in either operand
@@ -3121,36 +3126,36 @@ checklist.
   sphere `contains`, `closest_point`, `distance`, overlap tests, and `cast`
   no longer treat a point as inside, or miss or invent a hit, when their
   squares overflow or underflow
-  ([`core:math/geometry`](standard-library.md#coremathgeometry)).
+  ([`core:math/geometry`](docs/standard-library.md#coremathgeometry)).
 - `unsafe.transmute` to `typeid` works in constants:
   `unsafe.transmute(typeid, u64(999999))` is a constant that keeps its number
   for every bit pattern, and casting it back to an integer folds too
-  ([`unsafe.transmute`](design.md#unsafetransmute),
-  [Invalid representations](design.md#invalid-representations)). Before, it
+  ([`unsafe.transmute`](docs/design.md#unsafetransmute),
+  [Invalid representations](docs/design.md#invalid-representations)). Before, it
   reported `L0688`.
 - A store through a pointer parameter whose record has a single carrier
   field, as `p^.head = replacement`, ends the old borrow in that field, as it
   already did for records with several, and reading a plain field beside such
   a carrier is no longer taken as a use of it
-  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  ([Values that contain borrows](docs/design.md#values-that-contain-borrows)).
 - A store into one element of a slice parameter at a constant index, as
   `s[0].head = s[0].tail`, replaces what that field held instead of joining
   into the parameter, so a borrow of another field beside it is accepted, also
-  in a loop ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  in a loop ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - Storing a whole record through a pointer to one place replaces the carriers
   it held, so a copy of a field taken before the store no longer conflicts
   with one taken after it
-  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  ([Values that contain borrows](docs/design.md#values-that-contain-borrows)).
 - A rejection caused by a pointer that may point at more than eight places of
   one storage, which the analysis then takes to point at a place they share,
   says the reborrow *may* cover the place and names the limit, as
-  [Minimum provenance precision](design.md#minimum-provenance-precision)
+  [Minimum provenance precision](docs/design.md#minimum-provenance-precision)
   requires.
 - `core:math/linalg` preserves exact `lerp` and `slerp` endpoints, including
   signed zero; `angle_between` returns zero for a zero vector even when its
   dot product is negative zero; and `to_rotation_vector` chooses the same
   axis for both signs of an exact half-turn quaternion
-  ([`core:math/linalg`](standard-library.md#coremathlinalg)).
+  ([`core:math/linalg`](docs/standard-library.md#coremathlinalg)).
 - A fixed array type around a procedure literal, such as
   `[1]proc(x: int) -> int{one}` written for an array of procedures, reports
   only its parse error, not also `L0350`, the compiler-defect report; name
@@ -3170,11 +3175,11 @@ checklist.
 - A generic record's value parameters bind in a procedure's parameter pattern
   as its type parameters do, so `rows :: proc(m: M($R, $C)) -> int` compiles;
   before, every call reported `` `$R` is not bound here ``
-  ([Specialization](design.md#specialization)).
+  ([Specialization](docs/design.md#specialization)).
 - A member of a generic `impl` that adds generic parameters of its own works
   as an operator, as `operator(*) proc(left: M(R, C), right: M(C, $K))`, as a
   conversion hook generic over its source, now specified in
-  [Conversion hooks](design.md#conversion-hooks), and when called through its
+  [Conversion hooks](docs/design.md#conversion-hooks), and when called through its
   type, as `M(2, 3).times(a, b)`. File-scope generic operators are found too.
   Before, such operators and hooks were never found, and a malformed one
   went unreported; it now gets the concrete declaration's `L0416` or `L0488`.
@@ -3186,26 +3191,26 @@ checklist.
   procedure takes its type from a parameter whose written type names none of
   the procedure's `$` parameters, as it does for an ordinary procedure;
   before, it reported `L0385`
-  ([Implicit selector expression](design.md#implicit-selector-expression)).
+  ([Implicit selector expression](docs/design.md#implicit-selector-expression)).
 - A procedure group declared before its members in a generic `impl` drops a
   member that a failed `where` bound excludes, as one declared after them
   always did; before, every call through it was ambiguous
-  ([where clauses](design.md#where-clauses)).
+  ([where clauses](docs/design.md#where-clauses)).
 - A member of an instantiated generic block can be called at compile time
   before the checker reaches the block: its `where` clause no longer reports
   `L0433`, and a user operator such as an `inout` subscript, `g[i] = x`, no
   longer runs unchecked and fails with `` `self` is not compile-time storage ``
-  ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)).
-- `Status` and `try_make` are listed among the [predeclared names](design.md#predeclared-names), which they have always been, and the VS Code grammar now highlights them as such. The specification also records `@(cross_thread)` in [procedure-type compatibility](design.md#procedure-type) and that a pooled task runs on a worker rather than a thread of its own.
+  ([Compile-time procedure evaluation](docs/design.md#compile-time-procedure-evaluation)).
+- `Status` and `try_make` are listed among the [predeclared names](docs/design.md#predeclared-names), which they have always been, and the VS Code grammar now highlights them as such. The specification also records `@(cross_thread)` in [procedure-type compatibility](docs/design.md#procedure-type) and that a pooled task runs on a worker rather than a thread of its own.
 - A mutable borrow through a pointer passed to a read-only parameter is
   checked as read-only even when an index on the way calls something that
   writes, so `peek(&mut both[idx(&mut n)]^.count)` beside `&both[0]^.count`
   compiles, as it does with `&`
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 
 - Three read-only uses through a pointer beside a borrow reached through it
   are now accepted, as they are for a local
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)): a `switch`
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)): a `switch`
   binding of another field, as `switch (h^.first)` beside `&h^.count`; a
   mutable borrow weakened to a read-only parameter, as `peek(&mut h^.count)`,
   though a call in its index, as `bump(q)` in `peek(&mut h^.cells[bump(q)])`,
@@ -3220,7 +3225,7 @@ checklist.
   pointer no longer counts as a store into the others, so the same store
   repeated in a loop through a pointer that may name either of two locals
   compiles as well, though such a store still keeps what each place held
-  ([Values that contain borrows](design.md#values-that-contain-borrows)).
+  ([Values that contain borrows](docs/design.md#values-that-contain-borrows)).
 
 - A store through a pointer parameter, or a pointer loaded out of one, as
   `p^^.head = p^^.tail` with `p: ^mut ^mut List`, now lands in the caller
@@ -3230,7 +3235,7 @@ checklist.
   `p^^.head` again after storing over it, and a borrow through `p^^.head`
   no longer conflicts with a write through `p^^.tail`. A store through a
   slice parameter still counts as one into the parameter
-  ([known-gaps.md](known-gaps.md)).
+  ([known-gaps.md](docs/known-gaps.md)).
 
 - `return nil;` in a procedure returning an `Option(^T)` no longer suggests
   `.some(nil)`, which is an error of its own since `nil` is not a `^T`. The
@@ -3242,7 +3247,7 @@ checklist.
 - Returning a view of a switch payload bound over a place, as in
   `case .owned(text): return text;` with a `string_view` result through a
   borrowed receiver, is no longer rejected with `L0526`: the binding names
-  the subject's storage ([Switch ownership](design.md#switch-ownership)).
+  the subject's storage ([Switch ownership](docs/design.md#switch-ownership)).
   Returning such a view also no longer clears the payload the subject still
   owns.
 
@@ -3250,18 +3255,18 @@ checklist.
   through the borrowed parameter it came from, as in
   `foreach (item in d.items) { return item; }` with `d: ^Doc`, or over a
   `[]string` parameter. Both were rejected with `L0526`
-  ([Borrowing iteration](design.md#borrowing-iteration)).
+  ([Borrowing iteration](docs/design.md#borrowing-iteration)).
 
 - A copy of a lent `foreach` element of a slice, as
   `foreach (item in values) { return item; }` with `values: []string_view`,
   now keeps only the element's own borrow, as `values[0]` does
-  ([Procedure result contracts](design.md#procedure-result-contracts)). Using
+  ([Procedure result contracts](docs/design.md#procedure-result-contracts)). Using
   such a copy after the sliced array ended, or after changing the slice, was
   rejected even when the view was of static text.
 
 - A result read through a pointer or slice parameter now depends only on the
   fields it reads, as
-  [Procedure result contracts](design.md#procedure-result-contracts)
+  [Procedure result contracts](docs/design.md#procedure-result-contracts)
   requires. With `Pair :: struct { a: string_view, b: string_view }`, the
   result of `return values[0].a;` over `values: []Pair`, or of `return p.a;`
   over `p: ^Pair`, no longer counts as depending on `b`, also when the
@@ -3271,7 +3276,7 @@ checklist.
 - Calling a read-only method through a mutable pointer, as `items.len()` with
   `items: ^mut [dynamic]int`, is no longer rejected with `L0641` while a
   read-only reborrow of the pointer is in use: such a call only reads, which
-  [Weakening and reborrows](design.md#weakening-and-reborrows) allows.
+  [Weakening and reborrows](docs/design.md#weakening-and-reborrows) allows.
   Reading through a pointer to such a pointer, as `p^^[0]` or `p^.len()` with
   `p: ^mut ^mut [dynamic]int`, while a read-only reborrow of `p` is in use is
   no longer rejected either, nor is taking another read-only borrow through
@@ -3282,7 +3287,7 @@ checklist.
   `first :: proc(self: ^) -> string_view { return self.a; }`, now depends
   only on that field of the receiver, as it already did through a `p: ^Pair`
   parameter
-  ([Procedure result contracts](design.md#procedure-result-contracts)).
+  ([Procedure result contracts](docs/design.md#procedure-result-contracts)).
   Using `values[0].first()` after storage only `b` viewed had ended was
   rejected with `L0513`, and so was using `make_pair(...).first()` after the
   statement, even when `a` was static text.
@@ -3290,13 +3295,13 @@ checklist.
 - A field of an element of an array or record literal, as `values[0].a` after
   `values := [2]Pair{{"static", source}, {"x", other}}`, no longer depends on
   what its sibling field borrows when a later element holds a borrow too
-  ([Minimum provenance precision](design.md#minimum-provenance-precision)).
+  ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
   Using it after `source` ended was rejected with `L0513`.
 
 - A field read two loads below a parameter, as `return d.pair.a;` with
   `Deep :: struct { pair: ^Pair, other: string_view }` and `d: ^Deep`, now
   depends only on that field, as one load below already did
-  ([Procedure result contracts](design.md#procedure-result-contracts)). Using
+  ([Procedure result contracts](docs/design.md#procedure-result-contracts)). Using
   the result after storage only `other` or `pair.b` viewed had ended was
   rejected with `L0513`.
 
@@ -3304,14 +3309,14 @@ checklist.
   `switch (cur^.next) { case .some(next): cur = next; case .none: return; }`,
   is no longer rejected with an `L0641` that named no variable: loading
   `cur^.next` again leaves nothing reborrowed from the value the last pass
-  loaded ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  loaded ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 
 - A mutable pointer copied out of a place on each pass of a loop, as
   `node := list^.head;` in a `for` body with `list := &mut l`, and the same
   list walk through a pointer to a local, as `cur := &mut first`, are no
   longer rejected with `L0641`: loading the place again starts afresh, so the
   copy the last pass made no longer counts
-  ([Weakening and reborrows](design.md#weakening-and-reborrows)).
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 
 - Fields two pointers away from a parameter are now told apart as a local's
   are: `p^^.tail^.value += 5` and `p^^.count += 1` beside
@@ -3320,11 +3325,11 @@ checklist.
   `case .some(next):` over `cur^.next`. Both were rejected with `L0641`.
 
 - A parametric alias whose body refers more than once to another alias no longer takes exponential
-  time to check ([Parametric aliases](design.md#parametric-aliases)):
+  time to check ([Parametric aliases](docs/design.md#parametric-aliases)):
   `B :: Pair(C($T), C($T)); C :: Pair(B($T), B($T));` hung instead of reporting `L0745`, and a valid
   chain of 24 such aliases took seconds. A cycle longer than 64 aliases now reports `L0745` too.
 - A `$` parameter's default can name an earlier parameter in its type across calls
-  ([Default values](design.md#default-values)): with `$N: int, $A: [N]int = [N]int{}`, `f(2); f(3);`
+  ([Default values](docs/design.md#default-values)): with `$N: int, $A: [N]int = [N]int{}`, `f(2); f(3);`
   rejected the second call, as the type was read once.
 - A `$` name in a type application's constant argument that is unbound, or bound to a type, is now
   `L0437`: `v: Vec($N);` stopped with an internal `L0405` and no span.
@@ -3336,18 +3341,18 @@ checklist.
 
 - A `distinct` type may declare `hook(convert)` from a source its underlying type also converts
   from: `R` and `D :: distinct R`, each with one from `bool`, was a false `L0488`
-  ([Conversion hooks](design.md#conversion-hooks)). Two hooks from one source on `distinct int` are
+  ([Conversion hooks](docs/design.md#conversion-hooks)). Two hooks from one source on `distinct int` are
   now `L0488` where they are written, instead of `L0391` at the first use.
 - A `distinct` fixed array has `clone` as well as `try_clone`
-  ([Distinct types](design.md#distinct-types)): `a.clone()` was `L0363`.
+  ([Distinct types](docs/design.md#distinct-types)): `a.clone()` was `L0363`.
 - Copying a `[0]T` no longer counts `T`'s `hook(copy)`, so what that hook reads no longer gives a
-  false `L0511` ([Global write effects](design.md#global-write-effects)).
+  false `L0511` ([Global write effects](docs/design.md#global-write-effects)).
 - Asking whether a deeply nested record is copyable, and copying one, no longer takes time
   exponential in its nesting.
 - A conditional expression whose operands need a destination type, such as `.A if c else .B`, now
   takes one through a procedure group, a generic and a method, as it did in a plain call, and waits
   for inference as they do
-  ([Arguments typed after inference](design.md#arguments-typed-after-inference)); each was `L0385`.
+  ([Arguments typed after inference](docs/design.md#arguments-typed-after-inference)); each was `L0385`.
 - A group member with no parameter for an argument no longer hides another member's parameter type
   because it is generic. `g(1, .A)` was `L0385` with `f(x: int, m: Mode)` and `h(x: $T)` in `g`.
 - An `inout` argument no longer makes a member viable through a conversion an `inout` parameter
@@ -3360,13 +3365,13 @@ checklist.
   128 members checks in about half the time.
 - `r or_return .Bad` on a place no longer warns that it clones `r` when only the success is copied:
   an `or_return` replacement leaves the error where it is
-  ([Operator ownership](design.md#operator-ownership)). `L0507` now names the success's cost.
+  ([Operator ownership](docs/design.md#operator-ownership)). `L0507` now names the success's cost.
 - `find() or_return undefined_name` on a failure that carries nothing now reports the unknown name.
   The operand is checked as the replacement it must be, and "carries no error to map" is a note on
-  a value that does not fit ([The failure operand](design.md#the-failure-operand)).
+  a value that does not fit ([The failure operand](docs/design.md#the-failure-operand)).
 - A procedure literal assignable to the failure payload type is an `or_return` replacement, as any
   other such value is: with `F :: proc() -> int`, `res() or_return proc() -> int { return 1; }` was
-  `L0322` ([The failure operand](design.md#the-failure-operand)).
+  `L0322` ([The failure operand](docs/design.md#the-failure-operand)).
 - A `case` of a union `switch` that repeats a variant or names none no longer reports its body again:
   `case .nope(z): return z + 1;` added `L0352` for `z`, bound at the union type.
 - `lokec -fmt` no longer indents these one level too deep: the list items after a wrapped item, the first line after a wrapped
@@ -3375,10 +3380,10 @@ checklist.
   where its line began. `f(/* name */ x)` stays as written instead of becoming `f( /* name */x)`.
 - A capture literal written with the same text as one enclosing it, such as `proc() capture(x)` in
   the body of `proc() capture(x)`, compiles; it was `L0305`, naming the literal's header
-  ([Capture literals](design.md#capture-literals)).
+  ([Capture literals](docs/design.md#capture-literals)).
 - `capture(n = nil)` is `L0310`, as `n := nil` is; it was `L0306`, "unknown type `n`".
 - A `switch` with no cases over a `union {}` is exhaustive, as one over an `enum {}` is, so no return
-  need follow it ([Exhaustive switch](design.md#exhaustive-switch)). It was `L0365` in a procedure
+  need follow it ([Exhaustive switch](docs/design.md#exhaustive-switch)). It was `L0365` in a procedure
   with a result.
 
 ## [0.9.0] - 2026-10-27
@@ -3388,13 +3393,13 @@ checklist.
 - A replacement for a bundled package given with `-collection`, such as a
   `core:mem` of a project's own, must now declare each public name the
   compiler supplies to that package with
-  [`@(intrinsic)`](design.md#intrinsic); one it leaves out is `L0737`. Upgrade
+  [`@(intrinsic)`](docs/design.md#intrinsic); one it leaves out is `L0737`. Upgrade
   by copying those declarations from the bundled package's source, or from its
   `api.loki`.
 
 - A `thread.Mutex` guard kept past a `parallel` block's join, while a task of
   the block borrows the mutex, is now rejected with `L0733`
-  ([Releasing before the join](design.md#releasing-before-the-join)): a task
+  ([Releasing before the join](docs/design.md#releasing-before-the-join)): a task
   locking that mutex could never finish, and the join would wait forever. For
   example, `held := total.lock(); parallel { spawn add(&total); }` no longer
   compiles. Upgrade by dropping the guard before the block, or by locking
@@ -3409,7 +3414,7 @@ checklist.
   iterator ends.
 
 - `thread.Guard(T)`, the guard `Mutex.lock` returns, is now
-  [`@(thread_affine)`](design.md#thread_affine), since Windows requires the
+  [`@(thread_affine)`](docs/design.md#thread_affine), since Windows requires the
   thread that took the lock to release it. Moving or lending a guard to a
   thread `thread.spawn` starts, or across a `parallel` block's task boundary,
   reports `L0724`; for example, `thread.spawn(release, move(guard))`. Upgrade
@@ -3559,7 +3564,7 @@ checklist.
   `two(out, out)` with two `^mut int` parameters already was. Upgrade by
   passing the carrier once, or by calling once per carrier.
 
-- `-doc` and hover show only [doc comments](design.md#doc-comments), line
+- `-doc` and hover show only [doc comments](docs/design.md#doc-comments), line
   comments that start with `///`, and no longer the `//` comments above a
   declaration, so a `//` note for maintainers can stand beside one. A `///`
   that documents nothing, such as one in a body, is the warning `L0260`. The
@@ -3664,7 +3669,7 @@ checklist.
   switch does not care about.
 
 - `sync.Atomic(T)`'s and `thread.Mutex(T)`'s `value` fields are
-  [`@(synchronized)`](design.md#synchronized): outside their packages they are
+  [`@(synchronized)`](docs/design.md#synchronized): outside their packages they are
   reached only with exclusive access. A read through a read-only `^Atomic(T)`,
   a value parameter, or a read-only binding is `L0722`, and a read through the
   owner while it is lent read-only is `L0511`, since an atomic operation
@@ -3679,7 +3684,7 @@ checklist.
   ```
 
 - `thread.spawn` checks the argument it moves to the new thread
-  ([Concurrency and the memory model](design.md#concurrency-and-the-memory-model)).
+  ([Concurrency and the memory model](docs/design.md#concurrency-and-the-memory-model)).
   One that holds or reaches a `@(thread_affine)` type is `L0724`; one reaching
   a `dyn` or `any_view` the call did not make is `L0725`, since the erased type
   cannot be checked; and an owner backed by an allocator the spawning
@@ -3702,7 +3707,7 @@ checklist.
   ```
 
 - `parallel` and `spawn` are contextual keywords at the start of a statement
-  ([Keywords](grammar.md#keywords)). A statement that begins with a composite
+  ([Keywords](docs/grammar.md#keywords)). A statement that begins with a composite
   literal of a type named `parallel` followed by a selector or a call, such as
   `parallel{1}.run();`, now parses as a `parallel` block and is `L0261`; so is
   `parallel(T){1}.run();`. Every other use of the name, `parallel(pool);` and
@@ -3736,7 +3741,7 @@ checklist.
 
 - The release zip includes `editors/`, so the VS Code extension that starts
   `loke-lsp` can be built from the bundle.
-- [`@(intrinsic)`](design.md#intrinsic) declares a name the compiler supplies
+- [`@(intrinsic)`](docs/design.md#intrinsic) declares a name the compiler supplies
   to a bundled package in that package's source, with a `---` body, so its
   signature and doc comment appear in `-doc` and `api.loki`. `core:mem`,
   `core:unsafe`, `core:sync`, `core:log`, `core:math`, `base:runtime`, and
@@ -3751,8 +3756,8 @@ checklist.
   what `init` writes is still checked, and the value is checked as a channel
   item is: process-lifetime borrows, no `thread_local` borrow, nothing
   `@(thread_affine)`. See
-  [Atomic operations and Once](standard-library.md#atomic-operations-and-once).
-- [Structured concurrency](design.md#structured-concurrency): a
+  [Atomic operations and Once](docs/standard-library.md#atomic-operations-and-once).
+- [Structured concurrency](docs/design.md#structured-concurrency): a
   `parallel { ... }` block runs each `spawn`ed call on a thread of its own and
   waits for all of them on every way out of the block, a panic included. A
   task may borrow the caller's locals, which stay lent to it until the join,
@@ -3768,7 +3773,7 @@ checklist.
 
 - `spawn` may call a procedure value, as in `spawn result = f(x);` where `f`
   is a parameter, a local chosen at runtime, or a field
-  ([Spawn statements](design.md#spawn-statements)). The parent evaluates the
+  ([Spawn statements](docs/design.md#spawn-statements)). The parent evaluates the
   value before the arguments and the task keeps it. The task checks take the
   effects of every procedure of its type the program uses as a value, and a
   rejection names the ones that cause it. A foreign procedure value is still
@@ -3776,7 +3781,7 @@ checklist.
 
 - `spawn` may call through a `dyn` view converted at the spawn, as in
   `spawn r = (dyn Shape)(&s).area(2);` or through a callable view's `call`
-  ([Spawn statements](design.md#spawn-statements)). The view is checked as
+  ([Spawn statements](docs/design.md#spawn-statements)). The view is checked as
   the call's receiver argument, so what it views is borrowed until the join,
   shared read-only or lent exclusively by a `dyn mut` view, and must be able
   to cross to the task. A view that arrives erased, as a parameter or stored
@@ -3784,7 +3789,7 @@ checklist.
   filling the slot that writes or reaches it.
 
 - `thread.Monitor(T)` is a mutex whose holder can wait for the guarded value
-  to reach a state ([Monitors](standard-library.md#monitors)).
+  to reach a state ([Monitors](docs/standard-library.md#monitors)).
   `monitor.lock_when(ready)` sleeps until `ready` answers `true` for the
   value and returns the guard still holding the lock; dropping a guard on
   which `get` was called wakes the waiters to ask again, and one used only
@@ -3794,15 +3799,15 @@ checklist.
 
 - `thread.Ring(T)` is a bounded queue from one sender to one receiver whose
   `try_send` and `try_receive` poll without locking or allocating, for a
-  thread that must not wait ([Rings](standard-library.md#rings)). `split` makes
+  thread that must not wait ([Rings](docs/standard-library.md#rings)). `split` makes
   its only `Ring_Sender` and `Ring_Receiver`; each operation needs its
   endpoint `inout`, so two tasks cannot share one, and both endpoints are
   `@(wakes_on_drop)`. `examples/mixer.loke` takes its commands from a ring.
 
 - `parallel (&pool) { ... }` runs a block's tasks on a `thread.Pool`, a fixed
   set of persistent workers, instead of a thread each
-  ([Parallel blocks](design.md#parallel-blocks),
-  [Pools](standard-library.md#pools)). A worker joining a block of its pool
+  ([Parallel blocks](docs/design.md#parallel-blocks),
+  [Pools](docs/standard-library.md#pools)). A worker joining a block of its pool
   runs the block's queued tasks, and their pooled descendants, meanwhile, so
   nested fork/join work finishes even with one worker. Such a join counts as
   writing the `thread_local` storage those tasks write, so a borrow of it the
@@ -3810,7 +3815,7 @@ checklist.
   `examples/mixer.loke` opens a pooled block per audio buffer.
 
 - `thread.Channel(T)` is a bounded queue between tasks
-  ([Channels](standard-library.md#channels)). `channel.split()` makes the
+  ([Channels](docs/standard-library.md#channels)). `channel.split()` makes the
   first `Sender` and `Receiver` together, `fork` adds endpoints, and a side
   closes when its last endpoint drops or at `close`. `send` waits for room and
   `try_send` does not; both hand an item back in `Unsent` when they fail.
@@ -3818,20 +3823,20 @@ checklist.
   `foreach (item in receiver)` receives until the stream ends.
   `examples/channels.loke` builds a worker pipeline.
 
-- [`@(wakes_on_drop)`](design.md#wakes_on_drop) marks a struct or union whose
+- [`@(wakes_on_drop)`](docs/design.md#wakes_on_drop) marks a struct or union whose
   drop may wake threads waiting on what it borrows; `thread.Guard`,
   `thread.Monitor_Guard`, and the channel endpoints carry it. A value that is,
   holds, or reaches one and is kept past a `parallel` block's join, while a
   task of the block may borrow the same storage, is rejected with `L0733`:
   for example, a sender declared before the block while a task drains its
-  channel ([Releasing before the join](design.md#releasing-before-the-join)).
+  channel ([Releasing before the join](docs/design.md#releasing-before-the-join)).
 
 - Three attributes declare thread facts, so the compiler names no concurrency
-  type or procedure. [`@(synchronized)`](design.md#synchronized) marks a field,
+  type or procedure. [`@(synchronized)`](docs/design.md#synchronized) marks a field,
   or a file-scope or `static` variable, whose package synchronizes every access
-  to it (`L0721` elsewhere). [`@(thread_affine)`](design.md#thread_affine) on a
+  to it (`L0721` elsewhere). [`@(thread_affine)`](docs/design.md#thread_affine) on a
   struct or union keeps its values, and everything holding or reaching one, on
-  the thread that made them. [`@(cross_thread)`](design.md#cross_thread) on a
+  the thread that made them. [`@(cross_thread)`](docs/design.md#cross_thread) on a
   `move` parameter that is also `@(escape=static)`, or on one of procedure
   type, makes a user-written thread wrapper checked and warned about as
   `thread.spawn` is (`L0723` on any other parameter). It is part of the
@@ -3840,11 +3845,11 @@ checklist.
 - `xs.split_at_mut(mid)` on a `[]mut T` returns two mutable halves,
   `(left: []mut T, right: []mut T)`, usable at once and checked as one
   reborrow of `xs`, so `left, right := xs.split_at_mut(xs.len() / 2);`
-  works ([Splitting a mutable slice](standard-library.md#splitting-a-mutable-slice)).
+  works ([Splitting a mutable slice](docs/standard-library.md#splitting-a-mutable-slice)).
   It also runs at compile time.
 - `xs.chunks_mut(n)` on a `[]mut T` yields consecutive mutable chunks of `n`
   elements, which stay usable after the loop advances and after it ends while
-  `xs` stays suspended ([Chunks of a mutable slice](standard-library.md#chunks-of-a-mutable-slice)).
+  `xs` stays suspended ([Chunks of a mutable slice](docs/standard-library.md#chunks-of-a-mutable-slice)).
   A length below one panics.
 
 - `lokec <dir> -api` writes each package's interface file, `api.loki`, in its
@@ -3878,8 +3883,8 @@ checklist.
   every build but emitted only in a test build, and no code may call it
   (`L0616`); its signature rules are `L0615`. `-build-mode=test` builds the
   executable without running it. See design.md
-  [Test procedures](design.md#test-procedures) and compiler-guide.md
-  [Running tests](compiler-guide.md#running-tests).
+  [Test procedures](docs/design.md#test-procedures) and compiler-guide.md
+  [Running tests](docs/compiler-guide.md#running-tests).
 
 - Success returns: in a procedure returning a fallible union, `return value;`
   builds the success variant when `value` is not the whole result, so
@@ -3888,14 +3893,14 @@ checklist.
   carries nothing, as in `Status(E)`. Failures stay written as `.err(e)`, `nil`
   is never wrapped, and a body whose result names a generic argument with a
   failure payload, such as `Result(T, E)`, still writes `.ok(value)`. See
-  design.md [Success returns](design.md#success-returns).
+  design.md [Success returns](docs/design.md#success-returns).
 - Anonymous unions: `(found: int | missing:)` is a union with no declaration,
   identified by its ordered labels and payload types as an anonymous record is
   by its fields. It is built, switched over, compared, and printed as a named
   union is, and serves as a `Result`'s error type, which `or_return .label`
   wraps into. It carries no attributes, so it has no zero value and is never
   fallible. A trailing `|` is accepted. See design.md
-  [Anonymous unions](design.md#anonymous-unions).
+  [Anonymous unions](docs/design.md#anonymous-unions).
 - Widening by label: an anonymous union converts implicitly to one that has
   each of its alternatives, with the same label and payload type, in any order.
   A bare `or_return` therefore propagates a helper's smaller error set into a
@@ -3903,7 +3908,7 @@ checklist.
   and explicit conversions accept it too. A place is copied as any copy into
   its destination is, a last use or a temporary transfers, and the
   diagnostic for a union that does not widen names the alternative it lacks.
-  See design.md [Widening by label](design.md#widening-by-label).
+  See design.md [Widening by label](docs/design.md#widening-by-label).
 - Expanded switch cases: `case $variant(payload):`, the last case of a switch
   over a union, stands for one case per variant no earlier case names. Its body
   is checked once per variant, so a payload lacking what the body uses is a
@@ -3911,31 +3916,31 @@ checklist.
   `meta.Variant` with the label, the payload type, and the index. A payloadless
   variant binds `Unit{}`. `variants_of(T)` returns a union's descriptors in
   declaration order. See design.md
-  [Per-variant switch cases](design.md#per-variant-switch-cases).
+  [Per-variant switch cases](docs/design.md#per-variant-switch-cases).
 - Union argument expansion: `handle(..event)` over a union calls `handle` with
   the active payload as the argument named by its label, so a procedure group
   dispatches by label, `(left: int | right: int)` included. Every variant is
   checked, a place lends its payload and a temporary or `move` gives it up,
   and the call's value is the selected call's. See design.md
-  [Union argument expansion](design.md#union-argument-expansion).
+  [Union argument expansion](docs/design.md#union-argument-expansion).
 - Structural patterns: a generic parameter may bind `$` names inside an
   anonymous record or union, as in `proc(found: (some: $T | none:))` and
   `proc(pair: ($A, $B)) -> (B, A)`. A record pattern needs its labels in
   order, and an unlabelled one takes a labelled record by position. A union
   pattern takes an argument whose alternatives it has, in any order, and binds
   each payload by its label. See design.md
-  [Specialization](design.md#specialization).
+  [Specialization](docs/design.md#specialization).
 - `fmt.zero_pad(value, width)` pads an integer with zeros after its sign, so
   `zero_pad(7, 3)` prints `007` and `zero_pad(-7, 3)` prints `-07`; a `+`
   from a type's own `format` is a sign too, and a `rune` is rejected. It returns
   a `Padded(T)` like `pad_left`, honours the call's base, and builds forms such
   as `15.10.2026` from `core:time`'s accessors. See standard-library.md
-  [`core:fmt`](standard-library.md#corefmt).
+  [`core:fmt`](docs/standard-library.md#corefmt).
 - `is_union(T)`: a compile-time `bool` built-in that is true for a union,
   named or anonymous. A generic procedure with an expanded case or a union
   argument expansion can bound `where is_union(E)`, so a non-union argument is
   reported at the call instead of inside the instance. See design.md
-  [Built-in procedures](design.md#built-in-procedures).
+  [Built-in procedures](docs/design.md#built-in-procedures).
 - `examples/orders.loke` checks orders against a stock list with anonymous
   unions: an error set per helper, widened by label into the caller's, and a
   labeled layer kept with `or_return .order`.
@@ -3947,7 +3952,7 @@ checklist.
   only from the first package the edit reached. Formatting a document gives
   the layout `lokec -fmt` writes, and the `loke.documentation` command
   returns the page `lokec -doc` prints, both from unsaved text. See
-  [Language server](compiler-guide.md#language-server).
+  [Language server](docs/compiler-guide.md#language-server).
 - `editors/vscode`, an extension for VS Code and VSCodium that highlights Loke
   source and starts `loke-lsp`. See [its README](editors/vscode/README.md).
 - `core:random`: the xoshiro256++ generator `Xoshiro256`, seeded from a `u64`,
@@ -3956,7 +3961,7 @@ checklist.
   `shuffle`, `choose`, and ziggurat `normal` and `exponential`. `fill_secure`
   and `secure_u64` read the operating system's secure generator. A seeded
   generator gives the same values in every release. See
-  [`core:random`](standard-library.md#corerandom) and `examples/dice.loke`.
+  [`core:random`](docs/standard-library.md#corerandom) and `examples/dice.loke`.
 - `core:random`: a second generator, `Pcg64` (numpy's PCG64DXSM), with
   `advance` to move a stream any distance. New distributions `log_normal`,
   `gamma`, `beta`, `chi_squared`, `student_t`, `geometric`, `poisson`, and
@@ -3969,7 +3974,7 @@ checklist.
   RFC 3339 text, printed through `fmt` and read back by `parse_time` and its
   siblings, in the extended or basic format. A leap second reads as second
   59 wherever the UTC minute is 59, and a duration's fraction counts in full
-  however long it is. See [`core:time`](standard-library.md#coretime) and
+  however long it is. See [`core:time`](docs/standard-library.md#coretime) and
   `examples/timestamps.loke`. Time zones are not included yet.
 - `examples/corpus_runner.loke` reports on stderr how long the run took and
   which case was slowest.
@@ -3978,7 +3983,7 @@ checklist.
 
 - A `dyn` view that arrives erased, as a parameter or a stored local, may now
   be passed to a task or go through a spawned call
-  ([Sharing with tasks](design.md#sharing-with-tasks)), and so may a value
+  ([Sharing with tasks](docs/design.md#sharing-with-tasks)), and so may a value
   holding one passed to `thread.spawn`. It is checked through every type the
   program converts to its interface application: a read-only view is
   rejected with `L0729` if one of them reaches a mutable carrier, however the
@@ -3988,7 +3993,7 @@ checklist.
   arrives erased is still rejected.
 
 - A read-only `dyn` view stored in a global no longer rejects every task that
-  reads through it ([Globals while tasks run](design.md#globals-while-tasks-run)).
+  reads through it ([Globals while tasks run](docs/design.md#globals-while-tasks-run)).
   It reaches what each type the program converts to its interface application
   reaches, so a registry of views of plain records, or a callable view
   holding a procedure, may be read while tasks run. A view that may view a
@@ -3998,9 +4003,9 @@ checklist.
 
 - Removed `concurrency-proposal.md`, since structured concurrency is built.
   The ring algorithm and its validation moved to
-  [The ring algorithm](standard-library.md#the-ring-algorithm), and the
+  [The ring algorithm](docs/standard-library.md#the-ring-algorithm), and the
   undecided extensions to
-  [Later concurrency extensions](design-review-2026-10-31.md#later-concurrency-extensions).
+  [Later concurrency extensions](docs/design-review-2026-10-31.md#later-concurrency-extensions).
 
 - Narrowed concurrency milestone 10
   to start with procedure values using the existing task machinery, followed
@@ -4014,7 +4019,7 @@ checklist.
   through a generic `Callable` parameter, since the view only borrows it.
 
 - Global write, reach, and allocator-use effects are now per call
-  ([Global write effects](design.md#global-write-effects)). A call passing a
+  ([Global write effects](docs/design.md#global-write-effects)). A call passing a
   procedure for a parameter its callee calls, directly or through another
   helper, takes that procedure's effects instead of those of every procedure
   of its type the program uses as a value; so does a call through a local
@@ -4032,12 +4037,12 @@ checklist.
   `apply :: proc(f: dyn proc(n: int) -> int, n: int)` is accepted as a task
   beside a serial `apply(tally, 1)`.
 
-- Revised the deferred [ring proposal](standard-library.md#the-ring-algorithm)
+- Revised the deferred [ring proposal](docs/standard-library.md#the-ring-algorithm)
   to recommend a spare-slot SPSC queue with bounded indices, separate closure
   flags from hot index cache lines, and require target validation before a
   wait-free claim.
 
-- Revised the unimplemented [concurrency proposal](standard-library.md#corethread):
+- Revised the unimplemented [concurrency proposal](docs/standard-library.md#corethread):
   paired channel setup and explicit endpoint duplication, monitor shutdown
   contracts, a bounded join-check specification, and a deferred polling-only
   ring. The delivery plan separates compute pools from real-time handoff.
@@ -4047,7 +4052,7 @@ checklist.
   order and delayed receiver captures; final borrow, reset, cleanup, and task
   events are built once after those facts settle.
 
-- Edited the [language specification](design.md#contents) for clarity and
+- Edited the [language specification](docs/design.md#contents) for clarity and
   concision, separating rules from exceptions and consolidating repeated
   explanations. Language behavior, section headings, and examples are unchanged.
 
@@ -4092,13 +4097,13 @@ checklist.
   ordinary names outside their own positions; `[dynamic]T` is always a dynamic
   array, so a length named `dynamic` is written `[(dynamic)]T`. Rename in the
   language server can now rename a member to or from a reserved word. See
-  grammar.md [Keywords](grammar.md#keywords).
+  grammar.md [Keywords](docs/grammar.md#keywords).
 - An `impl` on an anonymous record or union, naming the shape or an alias of
   it, is specified as an extension: it reaches every spelling of the shape in
   its package and no other package's method lookup, and cannot add a hook. A
   hook on an anonymous record now says that no package declares it and suggests
   a struct. See design.md
-  [Methods and implementation blocks](design.md#methods-and-implementation-blocks).
+  [Methods and implementation blocks](docs/design.md#methods-and-implementation-blocks).
   Anonymous unions, new in this release, follow the comparison rule of the
   upgrade note under **Breaking changes**: an extension `==` or `!=` on one
   whose payloads are all comparable is never chosen, and its built-in equality
@@ -4132,14 +4137,14 @@ checklist.
 
 - `xs.split_at_mut(mid)` and `xs.chunks_mut(n)` reborrow `xs` as it was
   evaluated before the argument
-  ([Splitting a mutable slice](standard-library.md#splitting-a-mutable-slice)). An
+  ([Splitting a mutable slice](docs/standard-library.md#splitting-a-mutable-slice)). An
   argument that rebinds `xs`, as `replace(inout xs, other)` may, made the
   compiled program split the new slice instead; compile-time evaluation was
   already right.
 - A `dyn` slot call through a view that is not a named local, such as
   `(dyn Shape)(&s).area(scale = 2)`, a field, a call's result, or a generic
   receiver, is checked as one through a local is
-  ([Borrowed dynamic interface values](design.md#borrowed-dynamic-interface-values)).
+  ([Borrowed dynamic interface values](docs/design.md#borrowed-dynamic-interface-values)).
   Named arguments bind by the slot's parameter names, as they do in
   `(dyn Shape).area(view, scale = 2)`; they were rejected (`L0392`, `L0371`). A mutating slot may be called on a `dyn mut` view converted in
   place, so a task may call one, as in
@@ -4159,7 +4164,7 @@ checklist.
 - A case binding over a subject reached through a pointer, as in
   `switch (p^)` or `switch (holder.slot)` on a `^Holder`, names the subject's
   storage, so `return &value` from such a case is accepted when the subject is
-  the caller's, as [Switch ownership](design.md#switch-ownership) specifies.
+  the caller's, as [Switch ownership](docs/design.md#switch-ownership) specifies.
   It was rejected as a borrow of the binding (`L0526`).
 - The join check (`L0733`) tells two parameters, or a parameter and a global,
   apart by type: a kept channel or ring endpoint, or a guard, no longer
@@ -4167,14 +4172,14 @@ checklist.
   within, or reach what it borrows. An audio loop taking
   `commands: move thread.Ring_Receiver(Command)` beside
   `voices: []mut Voice` and rendering `voices` in tasks is accepted
-  ([Releasing before the join](design.md#releasing-before-the-join)).
+  ([Releasing before the join](docs/design.md#releasing-before-the-join)).
 
 - A spawned call through a `dyn` slot returning the worker's `thread_local`
   storage, as in `spawn answer = (dyn Getter)(&number).get();` where `get`
   returns `&counter`, is now rejected (`L0730`), as through a procedure value.
 
 - A spawned call's temporaries belong to its task, as
-  [Spawn statements](design.md#spawn-statements) says: `spawn a =
+  [Spawn statements](docs/design.md#spawn-statements) says: `spawn a =
   count(make_bag());` with a managed parameter, `spawn b = make_bag().size();`
   with a `self: ^` receiver, and a `self: ^` slot of a view converted at the
   spawn are no longer rejected (`L0513`) at the join. A result borrowing such a
@@ -4325,7 +4330,7 @@ checklist.
   carrier whose destinations a budget merged, no longer gets a definite
   `L0646`, `L0647`, or `L0730`. The message now says the value *may* be
   stored there or *may* reach the task, and a note names the limit, as
-  [Minimum provenance precision](design.md#minimum-provenance-precision)
+  [Minimum provenance precision](docs/design.md#minimum-provenance-precision)
   requires. A merged stored value likewise *may* borrow the storage named.
   Below a cut or a recursive type, a write-back no longer lands in what a
   read-only pointer names, so replacing a recursive child's `view: ^int`
@@ -4337,7 +4342,7 @@ checklist.
   `held` was rejected, and `chunks_mut`'s chunks could not be collected.
 - One composite literal can no longer hold two mutable views of one carrier:
   `Pair{xs, xs}` and `Pair{&mut xs[:1], &mut xs[1:]}` for `xs: []mut int`
-  were accepted, though [Weakening and reborrows](design.md#weakening-and-reborrows)
+  were accepted, though [Weakening and reborrows](docs/design.md#weakening-and-reborrows)
   makes each element a reborrow of `xs`. They are now `L0641`, as two such
   call arguments already were. Use `split_at_mut` for two halves. A record
   holding a mutable carrier is lent as the carrier is, so
@@ -4347,7 +4352,7 @@ checklist.
   either: `Pair{xs, write(xs)}` and `Wrapped{Inner{xs}, xs[0]}` were accepted
   and are now `L0641`.
 - A carrier suspended by a read-only reborrow can be copied into another
-  read-only carrier, as [Weakening and reborrows](design.md#weakening-and-reborrows)
+  read-only carrier, as [Weakening and reborrows](docs/design.md#weakening-and-reborrows)
   allows: `v1: []int = xs; v2: []int = xs;`, the same through assignment
   (`v1 = xs; v2 = xs;`), and two `Views{xs}` literals while both are live
   were `L0641`.
@@ -4984,7 +4989,7 @@ checklist.
   Debuggers show 128-bit integers and enums as exact `low` and `high` words
   rather than saturating wide enum constants.
 - Open questions and unresolved findings now live in
-  [open-questions.md](open-questions.md); [comments.md](comments.md) keeps design
+  [open-questions.md](docs/open-questions.md); [comments.md](docs/comments.md) keeps design
   rationale and differences from Odin.
 - `Enum.from_int` accepts an argument of any integer type, including a
   `distinct` integer, so `Suit.from_int(code)` works with a `code: int` and a
@@ -5185,21 +5190,21 @@ checklist.
   static import graphs and falls back to a full check for discovery, conditional
   selection, or provider changes. `session_check_stats` reports rechecked/reused
   packages and retained semantic/checkpoint bytes; repeated edits reclaim old
-  state. See [Incremental checking](compiler-architecture.md#incremental-checking).
+  state. See [Incremental checking](docs/compiler-architecture.md#incremental-checking).
 - `invalidate_session` lets compiler-service clients expire snapshots and
   emission readiness after external file or project changes. The next batch
   check rebuilds the whole program; an incremental check revalidates every
   input before reusing a checkpoint, under documented
-  [invalidation rules](compiler-architecture.md#invalidation-rules).
+  [invalidation rules](docs/compiler-architecture.md#invalidation-rules).
 - Compiler sessions accept in-memory source overlays, including new unsaved
   packages, and expose read-only snapshot queries for symbols, types,
   definitions, references, signatures, and diagnostics. Queries retain partial
   results on erroneous programs and reject stale handles after edits or checks.
-  See [compiler-architecture.md "Snapshots and queries"](compiler-architecture.md#snapshots-and-queries).
+  See [compiler-architecture.md "Snapshots and queries"](docs/compiler-architecture.md#snapshots-and-queries).
 - Reusable compiler sessions own build configuration and compilation state,
   support repeated whole-program checks and in-memory LLVM emission, and back
   the existing `lokec` command-line pipeline. See
-  [compiler-architecture.md "Reusable batch sessions"](compiler-architecture.md#reusable-batch-sessions).
+  [compiler-architecture.md "Reusable batch sessions"](docs/compiler-architecture.md#reusable-batch-sessions).
 - `core:math` adds `wrap(T, value)`, a compiler-known conversion that keeps an
   integer's low bits, and `wrapping_add`, `wrapping_sub`, `wrapping_mul`,
   `checked_add`, `checked_sub`, and `checked_mul` for signed and unsigned
@@ -5856,16 +5861,16 @@ checklist.
   status 1 when they report a failure; they used to exit 0. Examples, the
   command-line tutorial, and the standard library name a `case .err(...)`
   binding `error` rather than after the success value it is not.
-- [Language specification](design.md) corrects mutable slice/map-pointer syntax,
+- [Language specification](docs/design.md) corrects mutable slice/map-pointer syntax,
   recoverable map allocation, capture initialization, unsigned checked arithmetic,
   and the status of grapheme support. Shortens repeated examples and explanations,
   clarifies `for` versus `switch` membership syntax, and completes the fallible
   operator ownership table.
-- [Compiler architecture](compiler-architecture.md) is shorter and organized
+- [Compiler architecture](docs/compiler-architecture.md) is shorter and organized
   around the pipeline, semantic contracts, source map, and contributor workflow,
   followed by the session APIs. Corrects package boundaries and tool-dependent
   test coverage, and adds the missing query/overlay files to the source map.
-- [Design rationale](comments.md) is organized around a topic index and shorter
+- [Design rationale](docs/comments.md) is organized around a topic index and shorter
   explanations of current choices. Cuts obsolete migration inventories and
   resolved implementation reports; corrects slicing, UTF-8 boundaries, cleanup,
   allocation, and switch rationale. The spec and container tutorial also clarify
@@ -5873,13 +5878,13 @@ checklist.
 - [Contributor instructions](AGENTS.md) scope coordinated updates and regression
   tests to behavior changes, define documentation checks, and clarify compiler
   rebuilds and local full-gate use. Detailed test commands move to
-  [Testing and verification](compiler-architecture.md#testing-and-verification).
-- [Standard library](standard-library.md) adds a task index and usage examples,
+  [Testing and verification](docs/compiler-architecture.md#testing-and-verification).
+- [Standard library](docs/standard-library.md) adds a task index and usage examples,
   corrects UTF-8 byte-search boundaries, allocator selection, resource
   lifecycles, package ordering, finite-float round trips, and fallible string
   allocation descriptions. Rationale, compiler support, testing guidance, and
   planned APIs move to their owning documents.
-- [Releasing](releasing.md) uses one version-selection table and a shorter
+- [Releasing](docs/releasing.md) uses one version-selection table and a shorter
   checklist. Shared compatibility rules explicitly apply to current releases;
   failed workflows distinguish retries from unpublished source fixes, and
   published tags remain immutable.
@@ -5888,7 +5893,7 @@ checklist.
   own tag; runtime ABI versioning is unchanged.
 - [readme.md](readme.md) now leads with installation and a checked first
   program. Detailed compiler options and C-host linking instructions live in
-  [compiler-guide.md](compiler-guide.md). Collection overrides and executable
+  [compiler-guide.md](docs/compiler-guide.md). Collection overrides and executable
   location are clarified, and the library overview links to the full API docs.
   Release bundles include the Markdown documentation and tutorials, and the
   release verification checks their local document links.
@@ -5896,30 +5901,30 @@ checklist.
   fields that have no zero value, document nullable C pointers and their
   `Option` ABI, and repair the initialization cross-reference. Checked examples
   cover required reference fields, optional fields, and nullable C results.
-- [comments.md](comments.md#signed-shifts-stay-bit-operations) records why
+- [comments.md](docs/comments.md#signed-shifts-stay-bit-operations) records why
   signed `<<` stays modular rather than checked, and
-  [design.md](design.md#integer-operators) now says `x<<1` equals `x*2` only
+  [design.md](docs/design.md#integer-operators) now says `x<<1` equals `x*2` only
   when the product fits.
-- [open-questions.md](design-review-2026-10-31.md#open-items-from-the-2026-10-03-review)
+- [open-questions.md](docs/design-review-2026-10-31.md#open-items-from-the-2026-10-03-review)
   records a language-design review with prioritized proposals, compiler probes,
   and tradeoffs for ownership, safety, expressiveness, performance, and syntax.
-- [design.md](design.md#distinct-types) states that a distinct type keeps its
+- [design.md](docs/design.md#distinct-types) states that a distinct type keeps its
   underlying type's comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`) while
   inheriting no other operator, as the compiler already behaved; arithmetic
   still needs `delegate` or a forwarding overload. A procedure constant ends at
   its body's `}`, so calling the literal in place is written
-  `VALUE :: (proc() -> int { return 7; })();` ([grammar.md](grammar.md#declarations)).
-- [design.md](design.md) qualifies ownership and last-use transfer summaries,
+  `VALUE :: (proc() -> int { return 7; })();` ([grammar.md](docs/grammar.md#declarations)).
+- [design.md](docs/design.md) qualifies ownership and last-use transfer summaries,
   groups argument modes under parameter semantics, and makes copy-cost warnings
   explicitly optional. It distinguishes parameter storage from carried borrows
   and procedure-type effects from inferred global writes.
-- [comments.md](comments.md) separates current rationale from design history and
+- [comments.md](docs/comments.md) separates current rationale from design history and
   compiler notes, explains borrow-checking terms, and corrects stale pointer,
   map, and `Option` descriptions. Callable proposals are in
-  [open-questions.md](open-questions.md#callable-records-procedures-and-closures).
+  [open-questions.md](docs/open-questions.md#callable-records-procedures-and-closures).
 - Stale open questions are removed or corrected against the current compiler
   and tutorials. The completed compiler audit is recorded in
-  [comments.md](comments.md#compiler-architecture-audit-2026-09-28), with its
+  [comments.md](docs/comments.md#compiler-architecture-audit-2026-09-28), with its
   regression citations updated.
 - [tutorials/](tutorials/README.md): nine pages that teach Loke from installing
   it to a program in several packages and a call into C. The test suite builds
@@ -5927,14 +5932,14 @@ checklist.
 - A release attaches `perf.json`: compile time, compiler memory, and executable
   size for every example, and the run time of the programs in `bench/`.
   `perf.ps1` produces it and compares it with an earlier one.
-- [releasing.md](releasing.md) states what a version promises before and
+- [releasing.md](docs/releasing.md) states what a version promises before and
   after 1.0, where upgrade notes go, and the release checklist.
 
 ## [0.7.1] - 2026-09-27
 
 The first published release: the language specified by
-[design.md](design.md) and [grammar.md](grammar.md), implemented by `lokec` with
-no open entries in [known-gaps.md](known-gaps.md).
+[design.md](docs/design.md) and [grammar.md](docs/grammar.md), implemented by `lokec` with
+no open entries in [known-gaps.md](docs/known-gaps.md).
 
 ### Language
 
@@ -5967,7 +5972,7 @@ no open entries in [known-gaps.md](known-gaps.md).
 - `core:` `mem`, `unsafe`, `sync`, `simd`, `thread`, `fmt`, `strconv`,
   `strings`, `cstrings`, `encoding/utf16`, `endian`, `math`, `slice`,
   `container`, `log`, `io`, `path`, `fs`, `term`, and `os`, specified in
-  [standard-library.md](standard-library.md).
+  [standard-library.md](docs/standard-library.md).
 
 ### Platform and limits
 
@@ -5976,4 +5981,4 @@ no open entries in [known-gaps.md](known-gaps.md).
 - The release is a zip of `lokec.exe` with the `base/`, `core/`, `runtime/`,
   and `examples/` trees it finds beside itself; unzip it anywhere.
 - Not yet available: a package manager, a language server, debug information,
-  and Linux or macOS targets ([future-plans.md](future-plans.md)).
+  and Linux or macOS targets ([future-plans.md](docs/future-plans.md)).

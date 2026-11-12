@@ -3356,7 +3356,7 @@ example_timestamps_reads_its_stamps :: proc(t: ^testing.T) {
 // prevent, so the copy is checked rather than trusted.
 @(test)
 design_first_program_matches_tour_example :: proc(t: ^testing.T) {
-	expect_documented_example(t, "design.md", "examples/tour.loke")
+	expect_documented_example(t, "docs/design.md", "examples/tour.loke")
 }
 
 // readme.md "A first program" is the same hello program the example suite runs.
@@ -3723,7 +3723,7 @@ example_lexer_agrees_with_lokec :: proc(t: ^testing.T) {
 // The words grammar.md "Keywords" reserves in every position.
 @(private)
 reserved_keywords :: proc(t: ^testing.T) -> []string {
-	grammar, err := os.read_entire_file("grammar.md", context.temp_allocator)
+	grammar, err := os.read_entire_file("docs/grammar.md", context.temp_allocator)
 	if !testing.expect(t, err == nil, "cannot read grammar.md") {
 		return nil
 	}

@@ -143,9 +143,9 @@ every caller sees the same representation.
 You can also constrain a generic procedure with `where fmt.Formattable(T)`
 and call its `format` slot, just as with the interfaces in the generics lesson.
 See
-[standard-library.md "core:fmt"](../standard-library.md#corefmt) for the exact
+[standard-library.md "core:fmt"](../docs/standard-library.md#corefmt) for the exact
 signature and formatting options, and
-[design.md "Compile-time reflection"](../design.md#compile-time-reflection)
+[design.md "Compile-time reflection"](../docs/design.md#compile-time-reflection)
 for reflection's full rules.
 
 ## Where to go next
@@ -155,5 +155,5 @@ In particular, [compile_time.loke](../examples/compile_time.loke) builds a prime
 table and reflects over types, and [arena_pipeline.loke](../examples/arena_pipeline.loke)
 processes batches using explicit storage regions.
 
-Use [standard-library.md](../standard-library.md) to find library operations,
-and [design.md](../design.md) for the complete language rules.
+Use [standard-library.md](../docs/standard-library.md) to find library operations,
+and [design.md](../docs/design.md) for the complete language rules.

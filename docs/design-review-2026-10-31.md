@@ -10,7 +10,7 @@ how often the repository happens to use what it removes.
 
 This file holds only what is still open, as it stands on 2026-11-11 after
 several passes over the proposals and reviews of the steps taken. Proposals
-that landed are described by the specification, [CHANGELOG.md](CHANGELOG.md),
+that landed are described by the specification, [CHANGELOG.md](../CHANGELOG.md),
 and [comments.md](comments.md); earlier drafts and their reasoning are in git.
 [Open items from the 2026-10-03 review](#open-items-from-the-2026-10-03-review)
 carries what remains of the review this one built on. Optimizations that change
@@ -246,7 +246,7 @@ for the duration of a call:
 parameter says that nothing else reaches the pointee while the procedure runs,
 the panic call included. Under the default `unwind` strategy that is false: the
 runtime runs every frame's cleanup inside the panic call
-([runtime/panic.c](runtime/panic.c)), so a caller's drop hooks and `defer`s
+([runtime/panic.c](../runtime/panic.c)), so a caller's drop hooks and `defer`s
 read its locals while the callee still holds the pointer. LLVM then drops a
 store before the panic as dead, and in the probe a drop hook prints `0` where
 [Panic strategy](design.md#panic-strategy) requires `3`; an `inout` dynamic array
@@ -494,7 +494,7 @@ the reason, so that it is not proposed again without an answer to it.
   ([Container insertion](design.md#container-insertion)); an `init` parameter
   clones at the call, before the callee can fail.
 - *Table-driven unwinding.* The runtime runs registered cleanup without
-  unwinding the native stack ([runtime/panic.c](runtime/panic.c)), so it runs
+  unwinding the native stack ([runtime/panic.c](../runtime/panic.c)), so it runs
   every Loke frame's cleanup even across foreign frames, as in a callback from
   C. Unwinding through those frames would let a C++ host's `catch (...)` catch
   the panic, stop at frames without unwind tables, or skip the cleanup of Loke

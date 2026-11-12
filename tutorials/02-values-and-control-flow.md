@@ -54,7 +54,7 @@ The common types are:
 | `string` | text, always valid UTF-8 |
 | `rune` | one Unicode scalar value, written `'a'` |
 
-[design.md "Primitive types"](../design.md#primitive-types) lists every type.
+[design.md "Primitive types"](../docs/design.md#primitive-types) lists every type.
 
 ## Every variable must have a value before it is read
 
@@ -373,7 +373,7 @@ error[L0370]: this parameter is `inout`; write `inout` at the call site
     | 	                ^
 ```
 
-[design.md "Procedures"](../design.md#procedures) has the rest: variadic
+[design.md "Procedures"](../docs/design.md#procedures) has the rest: variadic
 parameters, procedure values, and overloading.
 
 ## Pointers and mutation
@@ -418,6 +418,6 @@ pointer. Both borrow existing storage without allocating it. The compiler
 checks that a borrow does not outlive its owner or conflict with another use.
 Mutable slices follow the same distinction for elements, as
 [Arrays and slices](04-strings-and-containers.md#arrays-and-slices) shows.
-[design.md "Pointers"](../design.md#pointers) gives the full pointer rules.
+[design.md "Pointers"](../docs/design.md#pointers) gives the full pointer rules.
 
 Next: [Records, enums, and unions](03-records-enums-unions.md).

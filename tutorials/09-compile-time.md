@@ -125,7 +125,7 @@ Evaluation has memory and step limits. Exceeding them, or reaching a panic,
 is a compilation error; the compiler does not silently defer required work to
 runtime. Keep large or input-dependent computations in the running program.
 
-[design.md "Compile-time procedure evaluation"](../design.md#compile-time-procedure-evaluation)
+[design.md "Compile-time procedure evaluation"](../docs/design.md#compile-time-procedure-evaluation)
 defines the boundary. [Reflection and formatting](15-reflection-and-formatting.md)
 later uses compile-time information about types; first, the next lesson uses
 compile-time parameters to write generic code.

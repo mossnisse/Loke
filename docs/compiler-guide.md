@@ -1,8 +1,8 @@
 # Compiler guide
 
 This is the command-line reference for `lokec`. Start with
-[Getting started](tutorials/01-getting-started.md) for installation and a first
-program, or [Building from source](readme.md#building-from-source) to build the
+[Getting started](../tutorials/01-getting-started.md) for installation and a first
+program, or [Building from source](../readme.md#building-from-source) to build the
 compiler. The commands below use PowerShell from the repository root;
 examples under `tests/` require a source checkout.
 
@@ -53,7 +53,7 @@ destination directory first if it does not exist, and quote paths containing
 spaces. Output files at the selected path can be overwritten.
 
 Compile examples individually: `examples/` contains separate programs, not one
-multi-file package. [Examples](examples/README.md) describes each one.
+multi-file package. [Examples](../examples/README.md) describes each one.
 `greeting.loke` writes `greetings.txt` in the working directory; `keys.loke`
 requires a real console and exits on Escape.
 
@@ -513,7 +513,7 @@ other revision adds the `git describe` output it was built from, such as
 `g` and the commit alone: `(g01989c09)`. `(unstamped)` marks a build that
 recorded no revision. To build against a development tree, pin a commit and compare it
 with the stamp; a `-dirty` stamp names no revision that can be rebuilt. See
-[Building from source](readme.md#building-from-source) for stamping a build.
+[Building from source](../readme.md#building-from-source) for stamping a build.
 Compiler exit codes are `0` for success, `1` for source/configuration diagnostics
 or a failing test under `-test`, and `2` for invalid command-line usage or
 backend/toolchain failure. In PowerShell, inspect `$LASTEXITCODE` immediately
@@ -566,7 +566,7 @@ An object build accepts a root package without `main` and emits no executable
 entry point. Declarations marked `@(export)` provide symbols to the host.
 The final C host link must supply the required Loke runtime and foreign
 libraries; the object does not bundle them. To link the example object with
-[its C host](tests/obj/host.c), use an x64 Visual Studio developer PowerShell
+[its C host](../tests/obj/host.c), use an x64 Visual Studio developer PowerShell
 with Clang on `PATH`, from the repository root:
 
 ```powershell
@@ -629,7 +629,7 @@ link step.
 server for editors. Keep it beside `lokec.exe`, `base/`, and `core/`; it finds
 the bundled library the same way. An editor starts it with no arguments and
 talks to it on stdin and stdout. `loke-lsp -version` prints its version.
-For VS Code and VSCodium, [editors/vscode](editors/vscode/README.md) holds an
+For VS Code and VSCodium, [editors/vscode](../editors/vscode/README.md) holds an
 extension that starts the server and highlights Loke source; its README says
 how to build and install it.
 

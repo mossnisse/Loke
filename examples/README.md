@@ -60,7 +60,7 @@ one past its own read limit; `dice` is compared in full with the seed 2026, and
 run once unseeded, when it only has to print the seed it chose; `timestamps` is
 compared in full given fixed timestamps, and run once without them, when it
 only has to read its own stamp back; `lockstep` is also compared at every
-[CPU level](../compiler-guide.md#cpu-levels). Every example must be classified in
+[CPU level](../docs/compiler-guide.md#cpu-levels). Every example must be classified in
 `tests/corpus_test.odin`, so a new one cannot arrive unchecked.
 
 ### Checking `keys` by hand

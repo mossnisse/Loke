@@ -35,7 +35,7 @@ Examples use Loke syntax; the API summaries use Odin-style declaration sketches.
 
 Start with the [design rules](#design-rules) for text, errors, and ownership.
 The [package layout](#package-layout) lists the remaining foundational packages.
-The [tutorials](tutorials/README.md) teach complete programs from first steps.
+The [tutorials](../tutorials/README.md) teach complete programs from first steps.
 
 ## Design rules
 
@@ -4179,9 +4179,9 @@ not the `f64` one narrowed, which could round twice.
 `RESULTS_VERSION`, a `u32`, is the version of these results. It changes
 whenever any procedure's result for any argument does: the results are
 correctly rounded, so only a fix changes one, and the
-[CHANGELOG](CHANGELOG.md) says which. A replay or a lockstep peer records it
+[CHANGELOG](../CHANGELOG.md) says which. A replay or a lockstep peer records it
 with the other versions its values depend on and refuses a recording with
-another, as [examples/lockstep.loke](examples/lockstep.loke) does.
+another, as [examples/lockstep.loke](../examples/lockstep.loke) does.
 
 The reasons for the package's design are in
 [Standard-library API choices](comments.md#standard-library-api-choices), and
@@ -4921,7 +4921,7 @@ to get a second generator.
 
 To make an unseeded run replayable, draw the seed with `secure_u64()`, record
 it, and construct the generator with `from_seed`, as
-[examples/dice.loke](examples/dice.loke) does. Do not seed from the clock or a
+[examples/dice.loke](../examples/dice.loke) does. Do not seed from the clock or a
 process ID: parallel runs started together share them.
 
 Seeded generators, the procedures that compute on integers and floats, the
@@ -4958,7 +4958,7 @@ and so is a [`core:math/repro`](#coremathrepro) fix that changes a
 distribution's value. Each increments `SEQUENCE_VERSION`, the version of every
 value a seeded or restored generator gives here, which a replay or a lockstep
 peer records with `repro.RESULTS_VERSION`, `LOKE_VERSION`, and its own
-version; [examples/lockstep.loke](examples/lockstep.loke) refuses a recording
+version; [examples/lockstep.loke](../examples/lockstep.loke) refuses a recording
 whose versions differ. An unseeded generator is not reproducible.
 
 ### Distributions
@@ -5115,7 +5115,7 @@ a generator that a path seeds are covered by `SEQUENCE_VERSION` as any other
 draw is.
 
 These are the known answers, which
-[tests/run/lib_random_mix.loke](tests/run/lib_random_mix.loke) checks. A path
+[tests/run/lib_random_mix.loke](../tests/run/lib_random_mix.loke) checks. A path
 is written as its words, seed first:
 
 | Input | Result |
@@ -5579,4 +5579,4 @@ Planned additions and smaller gaps are listed in
 
 See [Standard-library verification](compiler-architecture.md#standard-library-verification)
 for required coverage and terminal checks. The checked library examples live
-in [examples/](examples/) and [tests/run/](tests/run/).
+in [examples/](../examples/) and [tests/run/](../tests/run/).

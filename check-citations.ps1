@@ -7,8 +7,8 @@
 # case, which let three citations drift to a lower-case spelling of a real
 # heading and still pass.
 [CmdletBinding()]
-param([string[]]$Specs = @('design.md', 'grammar.md', 'standard-library.md', 'compiler-architecture.md',
-    'compiler-guide.md', 'comments.md', 'open-questions.md', 'readme.md'))
+param([string[]]$Specs = @('docs/design.md', 'docs/grammar.md', 'docs/standard-library.md', 'docs/compiler-architecture.md',
+    'docs/compiler-guide.md', 'docs/comments.md', 'docs/open-questions.md', 'readme.md'))
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location -LiteralPath $repoRoot

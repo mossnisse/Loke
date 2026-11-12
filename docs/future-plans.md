@@ -65,7 +65,7 @@ Implementation order:
 
 The compile-time evaluator's values are one candidate for that measurement:
 every scalar is a `core:math/big` integer inside a whole constant
-(`Eval_Value` in [src/eval.odin](src/eval.odin)), so loops and arithmetic set
+(`Eval_Value` in [src/eval.odin](../src/eval.odin)), so loops and arithmetic set
 both its time and what it charges against its memory limit. A small-integer
 fast path (`i64`, promoted to a big integer on overflow) with a tagged scalar
 representation would cut both; it needs a `bench/` workload of compile-time
@@ -82,8 +82,8 @@ compiler workloads. The API inventory is in
 [standard-library.md](standard-library.md); required coverage is in
 [Standard-library verification](compiler-architecture.md#standard-library-verification).
 
-Already available: [examples/lexer.loke](examples/lexer.loke) is checked against
-`lokec -dump-tokens`. [examples/corpus_runner.loke](examples/corpus_runner.loke)
+Already available: [examples/lexer.loke](../examples/lexer.loke) is checked against
+`lokec -dump-tokens`. [examples/corpus_runner.loke](../examples/corpus_runner.loke)
 exercises run, trap, diagnostic, syntax-error, IR, and package corpora, using
 `process.output`, `thread.processor_count`, and the toolchain reported by
 `lokec -print-toolchain`.

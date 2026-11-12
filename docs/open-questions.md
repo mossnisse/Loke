@@ -20,7 +20,7 @@ rather than instances. One slot vector per root and per-block region sets were
 tried and measured, and [not adopted](comments.md#provenance-slots-and-regions-stay-apart).
 These remain. None fixes a bug or accepts a new program, except where it says so,
 and estimates have been poor: the
-[borrow matrix](tests/borrow_matrix_test.odin), whose model is written apart from
+[borrow matrix](../tests/borrow_matrix_test.odin), whose model is written apart from
 the compiler, is the oracle for any of them.
 
 - **Place loans beside root loans (P3).** A borrow of a named place is a loan
@@ -55,14 +55,14 @@ unresolved target keeps its uncertainty. Each case was likely added beside a
 fix, so a rewrite must show that the general rules imply every listed case, and
 reject nothing they now accept, before it replaces them. The two sections are
 normative, so this is a careful restatement, not a cut; the
-[borrow matrix](tests/borrow_matrix_test.odin) and the
-[store matrix](tests/carrier_store_matrix_test.odin) are the checks for it.
+[borrow matrix](../tests/borrow_matrix_test.odin) and the
+[store matrix](../tests/carrier_store_matrix_test.odin) are the checks for it.
 
 ## Literal elements that lend a temporary to a call
 
 A container literal's element that hands an address to a call keeps its large
 temporaries' slots until the literal is built (`note_lent_arguments` in
-[emit_llvm_cleanup.odin](src/emit_llvm_cleanup.odin)), since the callee may keep the
+[emit_llvm_cleanup.odin](../src/emit_llvm_cleanup.odin)), since the callee may keep the
 address by `unsafe` means for the rest of the full expression
 ([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
 Every `self: ^` method call on a temporary counts, though only a callee that reaches
@@ -171,7 +171,7 @@ Every access to a place reached through carriers goes through one walk of the
 normalized place, and a borrow, slice, traversal, or switch of one takes a
 **place loan** ([Ownership, lifecycle, and
 provenance](compiler-architecture.md#ownership-lifecycle-and-provenance));
-[borrow_matrix_test.odin](tests/borrow_matrix_test.odin) checks the rules
+[borrow_matrix_test.odin](../tests/borrow_matrix_test.odin) checks the rules
 against a model written apart from the compiler. Still open:
 
 - **Calls.** A carrier handed to a call uses every mutable carrier it reaches
@@ -690,7 +690,7 @@ on up to one seeded argument in 40 (`tan`, 2026-10-27); LLVM also folds a call
 with constant arguments using the compiling machine's library. Neither path is
 more than an ulp from correct rounding, but `exp` misses it on about one
 argument in 200 and `sin` and `cos` on one in 40 (2026-10-29, against
-[the oracle](tests/math_oracle.odin)), and `sinf` and `cosf` of an infinity
+[the oracle](../tests/math_oracle.odin)), and `sinf` and `cosf` of an infinity
 return a negative NaN.
 
 The answer so far is a separate correctly rounded package,
@@ -944,7 +944,7 @@ What [Parametric aliases](design.md#parametric-aliases) left open:
 ### Combining error sets
 
 A caller that flattens its helpers' errors restates each of their labels and
-payload types. In [examples/orders.loke](examples/orders.loke), `Order_Error`
+payload types. In [examples/orders.loke](../examples/orders.loke), `Order_Error`
 repeats `parse_order`'s three alternatives and `quote`'s two. Changing a payload
 in a helper is a diagnostic at the caller's `or_return`, naming the
 alternative, but the fix is a second edit by hand. A spread inside an anonymous

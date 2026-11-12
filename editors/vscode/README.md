@@ -4,7 +4,7 @@ Syntax highlighting for `.loke` files, and the `loke-lsp` language server:
 diagnostics as you type, hover, go to definition, document symbols,
 completion, signature help, find references, rename, formatting, and the
 interface file of the current package. What each operation does is described in
-[Language server](../../compiler-guide.md#language-server).
+[Language server](../../docs/compiler-guide.md#language-server).
 
 ## Install
 

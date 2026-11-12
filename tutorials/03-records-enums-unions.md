@@ -98,7 +98,7 @@ main :: proc() {
 an `Option`. Boxes, enums without a value represented by `0`, and unions
 without a designated zero variant also have no zero value. A record or
 non-empty fixed array containing any such type has none either; see
-[design.md "Types with no zero value"](../design.md#types-with-no-zero-value).
+[design.md "Types with no zero value"](../docs/design.md#types-with-no-zero-value).
 
 ## Methods
 
@@ -167,7 +167,7 @@ Vector{x = 7.0, y = 9.0}
   `inout` marker, because the dot already shows which value is involved.
 - `v.length_squared()` and `Vector.length_squared(v)` are the same call.
 - `operator(+)` makes `a + b` call `add`. The operators a type may define are
-  listed in [design.md "Operator declarations"](../design.md#operator-declarations).
+  listed in [design.md "Operator declarations"](../docs/design.md#operator-declarations).
 - The literal `{value, value}` needs no type name: the result type says it is a
   `Vector`. The same shorthand works wherever the type is already known.
 

@@ -226,8 +226,8 @@ error[L0444]: `Line` does not satisfy `Shape(Line)`
   = note: unsatisfied.loke:21:2: while instantiating `describe(Line)`
 ```
 
-[design.md "Generics"](../design.md#generics) and
-[design.md "Interfaces and polymorphism"](../design.md#interfaces-and-polymorphism)
+[design.md "Generics"](../docs/design.md#generics) and
+[design.md "Interfaces and polymorphism"](../docs/design.md#interfaces-and-polymorphism)
 cover specialization, operator requirements, and the rest.
 
 Next: [Choosing an allocator](11-allocators.md).
