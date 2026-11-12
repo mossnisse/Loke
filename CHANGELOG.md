@@ -1963,7 +1963,9 @@ checklist.
   names. A block on an alias of a generic application, as `impl Slice_Box` is after
   `Slice_Box :: Box([]int)`, is a block on `Box([]int)`, as if written `impl Box([]int)`: declaring
   it no longer instantiates the type, which asked `Box`'s bound before a later `impl []int` had
-  met it. One ordering still decides, between two blocks on procedure types or the like
+  met it. It also ranks as that application does, so its member wins over one of the same name in a
+  block on `Box($T)`, where the two were `L0409`. One ordering still decides, between two blocks on
+  procedure types or the like
   ([known-gaps.md](docs/known-gaps.md#an-impl-block-on-a-procedure-type-ahead-of-a-block-its-subjects-bound-needs)).
 - An extension block's public procedure takes its name in the package whether or not a generic
   extension with a public procedure of that name is written before it. The generic block reserved

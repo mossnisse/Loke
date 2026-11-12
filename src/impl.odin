@@ -104,7 +104,9 @@ impl_subject_application :: proc(k: ^Checker, item: ^Item_Impl) -> ^Expr_Call {
 	target := shell_name_target(k, ident)
 	call, is_call := target.value.(^Expr_Call)
 	// An alias in this package's scope, where the block's own names are read too.
-	if !is_call || target.scope != k.scope {
+	// A parametric alias's bare name names nothing (design.md "Parametric aliases"),
+	// so a block on it is resolved, and reported, as written.
+	if !is_call || target.scope != k.scope || type_syntax_has_poly(call) {
 		return nil
 	}
 	template := generic_template_of_callee(k, call.callee, {.Record})
@@ -459,11 +461,13 @@ require_impl_member_form :: proc(k: ^Checker, d: ^Decl) -> bool {
 @(private = "file")
 bind_member_in_package :: proc(k: ^Checker, name: Name, name_id: Identifier_Id, id: Symbol_Id) {
 	if existing, taken := k.scope.names[name_id]; taken {
-		// A generic extension's group only reserves the name until an instance fills
-		// it (`register_generic_extension_groups`), and a name the package uses for
-		// something else keeps that meaning, whichever block is declared first.
+		// A generic extension's group only reserves the name: a name the package uses
+		// for something else keeps that meaning, whichever block is declared first and
+		// whether or not an instance has joined the group yet, as one does when another
+		// package instantiated the type first. Once displaced, the group takes no more
+		// instances (`register_instance_extension_name`).
 		group := symbol_of(k.c, existing)
-		if group == nil || group.kind != .Proc_Group || group.instance_of == INVALID_SYMBOL || len(group.members) > 0 {
+		if group == nil || group.kind != .Proc_Group || group.instance_of == INVALID_SYMBOL {
 			errorf(k.c, name.span, "L0304", "`%s` is already declared in this package", name.text)
 			return
 		}

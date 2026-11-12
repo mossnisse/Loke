@@ -1,0 +1,11 @@
+@(public)
+package vendor;
+
+Cell :: struct($T: type) { value: T }
+Thing :: struct { n: int }
+
+// Declaring this block instantiates `Cell(int)` before the importer's blocks are
+// declared, so the importer's generic extension fills its groups at once.
+impl []Cell(int) {
+	@(public) count :: proc(self) -> int { return self.len(); }
+}

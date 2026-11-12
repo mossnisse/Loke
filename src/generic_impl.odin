@@ -100,18 +100,14 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 	if call == nil {
 		return
 	}
-	// An alias's own declaration reports what its application gets wrong.
-	if item.applies != nil {
-		for member in item.members {
-			if d, is_decl := member.(^Decl); is_decl {
-				require_impl_member_form(k, d)
+	// An alias's own declaration reports what its application gets wrong, so a
+	// block on one checks only its members.
+	written := item.applies == nil
+	if written {
+		for arg in call.args {
+			for name in pattern_names(arg.value) {
+				reject_reserved_name(k, name_identifier(k.c, name), name.span)
 			}
-		}
-		return
-	}
-	for arg in call.args {
-		for name in pattern_names(arg.value) {
-			reject_reserved_name(k, name_identifier(k.c, name), name.span)
 		}
 	}
 	template := generic_template_of_callee(k, call.callee, {.Record})
@@ -123,7 +119,7 @@ check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
 			require_impl_member_form(k, d)
 		}
 	}
-	if template_rejected(k, template) || !generic_application_fits(k, call.args, expr_span(item.type), template, true) {
+	if !written || template_rejected(k, template) || !generic_application_fits(k, call.args, expr_span(item.type), template, true) {
 		return
 	}
 	applied := applied_parameters(k, call.callee)

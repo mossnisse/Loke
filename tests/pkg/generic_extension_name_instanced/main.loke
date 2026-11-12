@@ -1,0 +1,28 @@
+package main;
+
+import "core:fmt";
+import "./vendor";
+
+// A public procedure of a generic extension reserves its name in this package,
+// and an instance of the generic type exists before either block is declared.
+// The extension on a plain type still takes the name, written after the generic
+// block (`describe`) or before it (`label`).
+impl vendor.Cell($T) {
+	@(public) describe :: proc(self) -> int { return 1; }
+}
+
+impl vendor.Thing {
+	@(public) describe :: proc(self) -> int { return self.n; }
+	@(public) label :: proc(self) -> int { return self.n * 10; }
+}
+
+impl vendor.Cell($T) {
+	@(public) label :: proc(self) -> int { return 2; }
+}
+
+main :: proc() {
+	thing := vendor.Thing{n = 7};
+	cell := vendor.Cell(int){value = 1};
+	fmt.println(thing.describe(), cell.describe(), thing.label(), cell.label());
+	fmt.println(describe(thing), label(thing));
+}

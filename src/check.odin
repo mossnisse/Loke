@@ -194,8 +194,13 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	// declare without resolving anything go first, in any order. Next come the
 	// subjects that ask nothing of this package's blocks (`subject_asks_nothing`),
 	// and only then the ones left, in file order.
+	Impl_Pass :: enum {
+		Resolving_Nothing, // the blocks `declare_impl_block` declares with `unresolved_only`
+		Asking_Nothing,    // the subjects `subject_asks_nothing` passes
+		Rest,
+	}
 	pending := make(map[Package_Id]bool, 8, context.temp_allocator)
-	for pass in 0 ..< 3 {
+	for pass in Impl_Pass {
 		for file in pkg.files {
 			k.file, k.file_node = file.file, file
 			for item in file.active_items {
@@ -203,7 +208,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 				if !ok || impl.declared {
 					continue
 				}
-				if pass == 1 && !subject_asks_nothing(k, impl.type) {
+				if pass == .Asking_Nothing && !subject_asks_nothing(k, impl.type) {
 					continue
 				}
 				subject := impl_subject_package(k, impl)
@@ -213,7 +218,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 					pending[subject] = waits
 				}
 				if !waits || first_unresolved_name(k, impl.type) == "" {
-					declare_impl_block(k, impl, unresolved_only = pass == 0)
+					declare_impl_block(k, impl, unresolved_only = pass == .Resolving_Nothing)
 				}
 			}
 		}

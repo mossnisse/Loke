@@ -193,35 +193,8 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		// An associated type, `Countdown.Iterator`.
 		return resolve_associated_type(k, value)
 
-	case ^Type_Pointer:
-		if element := resolve_type_syntax(k, value.elem); element != INVALID_TYPE {
-			return denote(&value.base, pointer_to(k.c, element, value.mutable))
-		}
-
-	case ^Type_C_Pointer:
-		if element := resolve_type_syntax(k, value.elem); element != INVALID_TYPE {
-			return denote(&value.base, c_pointer_to(k.c, element))
-		}
-
-	case ^Type_Slice:
-		if element := resolve_type_syntax(k, value.elem); element != INVALID_TYPE {
-			return denote(&value.base, slice_of(k.c, element, value.mutable))
-		}
-
-	case ^Type_Dynamic_Array:
-		if element := resolve_type_syntax(k, value.elem); element != INVALID_TYPE {
-			return denote(&value.base, dynamic_array_of(k.c, element))
-		}
-
-	case ^Type_Array:
-		return resolve_array_type(k, value)
-
-	case ^Type_Map:
-		key := resolve_type_syntax(k, value.key)
-		element := resolve_type_syntax(k, value.value)
-		if key != INVALID_TYPE && element != INVALID_TYPE {
-			return denote(&value.base, map_of(k.c, key, element))
-		}
+	case ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Array, ^Type_Map:
+		return resolve_composite_type(k, syntax)
 
 	case ^Type_Distinct:
 		// A fresh identity; a named one got its shell in `prepare_package`.
@@ -292,14 +265,14 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 }
 
 // What a bare name in type syntax stands for, read off the declarations as they
-// are written, with none of them resolved or evaluated: `type` is a nominal
+// are written, with none of them resolved or evaluated: `nominal` is a nominal
 // type's symbol, or else `value` is what the last alias on the way is declared
 // as, in `scope`. `named` is the symbol the name itself binds, and
 // `INVALID_SYMBOL` says the name is neither.
 Shell_Name :: struct {
-	named, type: Symbol_Id,
-	value:       Expr,
-	scope:       ^Scope,
+	named, nominal: Symbol_Id,
+	value:          Expr,
+	scope:          ^Scope,
 }
 
 // Bounds the aliases followed, so aliases naming each other end; they are
@@ -319,7 +292,7 @@ shell_name_target :: proc(k: ^Checker, ident: ^Expr_Ident, hops := 0) -> Shell_N
 			if sym.type == INVALID_TYPE || symbol_is_generic(k, id) {
 				break
 			}
-			return {named = named, type = id}
+			return {named = named, nominal = id}
 		}
 		if sym.kind != .Const || sym.decl == nil || sym.def_scope == nil || len(sym.decl.names) != 1 || sym.decl.declared_type != nil {
 			break
@@ -327,11 +300,11 @@ shell_name_target :: proc(k: ^Checker, ident: ^Expr_Ident, hops := 0) -> Shell_N
 		value := decl_value(sym.decl)
 		target, is_name := value.(^Expr_Ident)
 		if !is_name {
-			return {named = named, type = INVALID_SYMBOL, value = value, scope = sym.def_scope}
+			return {named = named, nominal = INVALID_SYMBOL, value = value, scope = sym.def_scope}
 		}
 		id = lookup_symbol(sym.def_scope, identifier_of(k.c, target))
 	}
-	return {named = INVALID_SYMBOL, type = INVALID_SYMBOL}
+	return {named = INVALID_SYMBOL, nominal = INVALID_SYMBOL}
 }
 
 // What type syntax denotes, where finding out resolves no declaration: the name
@@ -343,53 +316,68 @@ shell_name_target :: proc(k: ^Checker, ident: ^Expr_Ident, hops := 0) -> Shell_N
 // here instantiates a generic or asks a bound. An `impl` subject is read this
 // way while a package's blocks are still being declared (`declare_impl_block`).
 resolve_type_shell :: proc(k: ^Checker, syntax: Expr, hops := 0) -> Type_Id {
-	#partial switch value in syntax {
-	case ^Expr_Ident:
-		target := shell_name_target(k, value, hops)
-		type := INVALID_TYPE
-		switch {
-		case target.type != INVALID_SYMBOL:
-			type = symbol_of(k.c, target.type).type
-		case target.value != nil:
-			saved := k.scope
-			k.scope = target.scope
-			type = resolve_type_shell(k, target.value, hops + 1)
-			k.scope = saved
-		}
-		if type == INVALID_TYPE {
-			return INVALID_TYPE
-		}
-		value.symbol = target.named
-		return mark_denotes_type(&value.base, type, target.named)
+	ident, is_ident := syntax.(^Expr_Ident)
+	if !is_ident {
+		return resolve_composite_type(k, syntax, shell = true, hops = hops)
+	}
+	target := shell_name_target(k, ident, hops)
+	type := INVALID_TYPE
+	switch {
+	case target.nominal != INVALID_SYMBOL:
+		type = symbol_of(k.c, target.nominal).type
+	case target.value != nil:
+		saved := k.scope
+		k.scope = target.scope
+		type = resolve_type_shell(k, target.value, hops + 1)
+		k.scope = saved
+	}
+	if type == INVALID_TYPE {
+		return INVALID_TYPE
+	}
+	ident.symbol = target.named
+	return mark_denotes_type(&ident.base, type, target.named)
+}
 
+// The type pointer, slice, dynamic-array, array, or map syntax denotes, built
+// from its elements: each resolved by `resolve_type_syntax`, or, with `shell`,
+// read by `resolve_type_shell`, which also takes an array's length only as a
+// literal. `INVALID_TYPE` for any other syntax.
+//
+// `[?]T` takes its length from the literal it types, which `check_composite`
+// fills in; on its own it has none.
+@(private = "file")
+resolve_composite_type :: proc(k: ^Checker, syntax: Expr, shell := false, hops := 0) -> Type_Id {
+	element_of :: proc(k: ^Checker, syntax: Expr, shell: bool, hops: int) -> Type_Id {
+		return shell ? resolve_type_shell(k, syntax, hops) : resolve_type_syntax(k, syntax)
+	}
+	#partial switch value in syntax {
 	case ^Type_Pointer:
-		if element := resolve_type_shell(k, value.elem, hops); element != INVALID_TYPE {
+		if element := element_of(k, value.elem, shell, hops); element != INVALID_TYPE {
 			return denote(&value.base, pointer_to(k.c, element, value.mutable))
 		}
 
 	case ^Type_C_Pointer:
-		if element := resolve_type_shell(k, value.elem, hops); element != INVALID_TYPE {
+		if element := element_of(k, value.elem, shell, hops); element != INVALID_TYPE {
 			return denote(&value.base, c_pointer_to(k.c, element))
 		}
 
 	case ^Type_Slice:
-		if element := resolve_type_shell(k, value.elem, hops); element != INVALID_TYPE {
+		if element := element_of(k, value.elem, shell, hops); element != INVALID_TYPE {
 			return denote(&value.base, slice_of(k.c, element, value.mutable))
 		}
 
 	case ^Type_Dynamic_Array:
-		if element := resolve_type_shell(k, value.elem, hops); element != INVALID_TYPE {
+		if element := element_of(k, value.elem, shell, hops); element != INVALID_TYPE {
 			return denote(&value.base, dynamic_array_of(k.c, element))
 		}
 
 	case ^Type_Array:
 		// A named length is a constant to evaluate, which can resolve anything.
-		literal, is_literal := value.length.(^Expr_Literal)
-		if !is_literal || literal.kind != .Int {
+		if literal, is_literal := value.length.(^Expr_Literal); shell && (!is_literal || literal.kind != .Int) {
 			return INVALID_TYPE
 		}
-		element := resolve_type_shell(k, value.elem, hops)
-		if element == INVALID_TYPE {
+		element := element_of(k, value.elem, shell, hops)
+		if element == INVALID_TYPE || value.length == nil {
 			return INVALID_TYPE
 		}
 		if value.denoted_type != INVALID_TYPE {
@@ -399,28 +387,17 @@ resolve_type_shell :: proc(k: ^Checker, syntax: Expr, hops := 0) -> Type_Id {
 		return counted ? denote(&value.base, array_of(k.c, element, length)) : INVALID_TYPE
 
 	case ^Type_Map:
-		key := resolve_type_shell(k, value.key, hops)
-		element := key == INVALID_TYPE ? INVALID_TYPE : resolve_type_shell(k, value.value, hops)
-		if element != INVALID_TYPE {
+		// A shell read stops at a key it cannot read; a resolution reports both.
+		key := element_of(k, value.key, shell, hops)
+		if shell && key == INVALID_TYPE {
+			return INVALID_TYPE
+		}
+		element := element_of(k, value.value, shell, hops)
+		if key != INVALID_TYPE && element != INVALID_TYPE {
 			return denote(&value.base, map_of(k.c, key, element))
 		}
 	}
 	return INVALID_TYPE
-}
-
-// `[N]T`. `[?]T` takes its length from the literal it types, which
-// `check_composite` fills in; on its own it has none.
-@(private = "file")
-resolve_array_type :: proc(k: ^Checker, value: ^Type_Array) -> Type_Id {
-	element := resolve_type_syntax(k, value.elem)
-	if element == INVALID_TYPE || value.length == nil {
-		return INVALID_TYPE
-	}
-	if value.denoted_type != INVALID_TYPE {
-		return value.denoted_type
-	}
-	length, counted := constant_count(k, value.length, "an array length", "L0384")
-	return counted ? denote(&value.base, array_of(k.c, element, length)) : INVALID_TYPE
 }
 
 // A written `[N]E` length or `Simd(T, N)` lane count: a constant, or `$N` bound

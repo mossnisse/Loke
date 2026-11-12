@@ -1,0 +1,19 @@
+package main;
+
+// A parametric alias's bare name names nothing (design.md "Parametric
+// aliases"), so a block on it is no block on the generic type it stands for,
+// directly or through another alias.
+Box :: struct($T: type) { value: T }
+Short :: Box($T);
+
+impl Short {
+	get :: proc(self) -> int { return 1; }
+}
+
+Other :: Short;
+
+impl Other {
+	put :: proc(self) -> int { return 2; }
+}
+
+main :: proc() {}

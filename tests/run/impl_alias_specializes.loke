@@ -1,0 +1,21 @@
+package main;
+
+import "core:fmt";
+
+// A block on an alias of a generic application is a block on that application,
+// as if written `impl Box(int)`, so it is more specialized than a block on every
+// instance and its member wins where both give one.
+Box :: struct($T: type) { value: T }
+Int_Box :: Box(int);
+
+impl Box($T) {
+	kind :: proc(self) -> string { return "any"; }
+}
+
+impl Int_Box {
+	kind :: proc(self) -> string { return "int"; }
+}
+
+main :: proc() {
+	fmt.println(Int_Box{1}.kind(), Box(int){2}.kind(), Box(bool){true}.kind());
+}

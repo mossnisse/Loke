@@ -1,0 +1,9 @@
+L0406
+@9:6
+this `impl` subject does not name a type
+L0431
+@13:10
+`Short` is generic and needs its arguments; an uninstantiated generic is not a value
+L0406
+@15:6
+this `impl` subject does not name a type
