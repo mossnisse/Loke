@@ -1308,6 +1308,11 @@ Item_Impl :: struct {
 	// Declared on its subject's shell, so what the subject's own declaration gives
 	// a member's name is still to be asked (`reject_shell_clashes`).
 	on_shell:   bool,
+	// The generic application an alias the subject names is declared as, which
+	// makes this a block on that application (`impl_subject_application`), and
+	// the generic type applied.
+	applies:    ^Expr_Call,
+	template:   Symbol_Id,
 }
 
 // `delegate(+, -);` inside an `impl` body.

@@ -12,12 +12,19 @@ import "core:strings"
 
 // Runs in the discovery fixed point, so it must be idempotent and tolerate a
 // subject whose package is not loaded yet (`quiet` defers that failure).
-declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
+//
+// Resolving a subject can instantiate a generic, whose bounds ask for methods
+// that blocks not declared yet supply. So a block is declared without resolving
+// anything wherever it can be: one on a generic application waits for the
+// instances, and one whose subject `resolve_type_shell` reads is declared on
+// that. `unresolved_only` declares those and leaves any other block for a
+// later call, once they are all declared.
+declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true, unresolved_only := false) {
 	if item.declared {
 		return
 	}
 	// A block on a generic type waits for an instantiation to install it on.
-	if call, is_call := item.type.(^Expr_Call); is_call {
+	if call := impl_subject_application(k, item); call != nil {
 		if template := generic_template_of_callee(k, call.callee, {.Record}); template != nil {
 			register_generic_impl(k, item, template.symbol, call.args)
 			return
@@ -35,27 +42,29 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 		}
 	}
 
-	// A type named outright is taken as its shell, which resolves nothing. Any
-	// other quiet attempt that fails is rolled back and retried, so it is a
-	// speculation: it must not claim a report-once cache the retry needs.
-	subject: Type_Id
-	if named, shell := impl_subject_shell(k, item.type); named != INVALID_SYMBOL {
-		ident := item.type.(^Expr_Ident)
-		ident.symbol = named
-		subject = mark_denotes_type(&ident.base, shell, named)
+	// A subject read as a shell resolves nothing. Any other quiet attempt that
+	// fails is rolled back and retried, so it is a speculation: it must not claim
+	// a report-once cache the retry needs.
+	probe := begin_probe(k.c)
+	subject := resolve_type_shell(k, item.type)
+	end_probe(k.c, probe, keep = subject != INVALID_TYPE)
+	switch {
+	case subject != INVALID_TYPE:
 		item.on_shell = true
-	} else if quiet {
+	case unresolved_only:
+		return
+	case quiet:
 		visited := make(map[Symbol_Id]bool, 8, context.temp_allocator)
 		if subject_may_need_operator(k, item.type, k.scope, &visited) {
 			return
 		}
-		probe := begin_probe(k.c)
+		probe = begin_probe(k.c)
 		subject = resolve_type_syntax(k, item.type)
 		end_probe(k.c, probe, keep = subject != INVALID_TYPE)
 		if subject == INVALID_TYPE {
 			return
 		}
-	} else {
+	case:
 		subject = resolve_impl_subject(k, item)
 	}
 	item.declared = true
@@ -74,45 +83,51 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	defer_delegates(k, item)
 }
 
-// The symbol a subject names and the type it is, where the subject is the bare
-// name of a nominal type or of an alias of one, as `impl Holder` is; otherwise
-// `INVALID_SYMBOL`. Such a block is declared on the type's shell, without
-// resolving the type's own declaration: a record's fields can instantiate a
-// generic whose bounds ask for a method that a block not declared yet supplies.
-// An alias is followed as written, since evaluating it could do the same.
-impl_subject_shell :: proc(k: ^Checker, subject: Expr) -> (named: Symbol_Id, type: Type_Id) {
-	ident, is_ident := subject.(^Expr_Ident)
-	if !is_ident {
-		return INVALID_SYMBOL, INVALID_TYPE
+// The generic application a block's subject is, or nil: written, as
+// `impl Table($K, $V)` is, or the declaration of an alias the subject names, as
+// for `impl Names` after `Names :: Table(string, int)`. The alias is read as it
+// is written, since evaluating it would instantiate the type and ask its bounds
+// while the blocks that meet them may not be declared; the block is then one on
+// `Table(string, int)`, installed whenever that instance comes to exist.
+impl_subject_application :: proc(k: ^Checker, item: ^Item_Impl) -> ^Expr_Call {
+	if item.applies != nil {
+		return item.applies
 	}
-	named = lookup_symbol(k.scope, identifier_of(k.c, ident))
-	id := named
-	// Bounded, so aliases naming each other end, and are reported where they are checked.
-	for _ in 0 ..< MAX_SHELL_ALIASES {
-		sym := symbol_of(k.c, id)
-		if sym == nil {
-			break
-		}
-		if sym.kind == .Type {
-			if sym.type == INVALID_TYPE || symbol_is_generic(k, id) {
-				break
-			}
-			return named, sym.type
-		}
-		if sym.kind != .Const || sym.decl == nil || sym.def_scope == nil || len(sym.decl.names) != 1 || sym.decl.declared_type != nil {
-			break
-		}
-		target, is_name := decl_value(sym.decl).(^Expr_Ident)
-		if !is_name {
-			break
-		}
-		id = lookup_symbol(sym.def_scope, identifier_of(k.c, target))
+	if call, is_call := item.type.(^Expr_Call); is_call {
+		return call
 	}
-	return INVALID_SYMBOL, INVALID_TYPE
+	ident, is_ident := item.type.(^Expr_Ident)
+	// A body-local block names a type declared in its body, never an instance.
+	if !is_ident || k.scope == nil || k.scope.kind != .Package {
+		return nil
+	}
+	target := shell_name_target(k, ident)
+	call, is_call := target.value.(^Expr_Call)
+	// An alias in this package's scope, where the block's own names are read too.
+	if !is_call || target.scope != k.scope {
+		return nil
+	}
+	template := generic_template_of_callee(k, call.callee, {.Record})
+	if template == nil {
+		return nil
+	}
+	ident.symbol = target.named
+	item.applies, item.template = call, template.symbol
+	return call
 }
 
+// The alias a block's subject names denotes its type once the alias is checked,
+// which a block declared from the alias's syntax never asked.
 @(private = "file")
-MAX_SHELL_ALIASES :: 16
+denote_alias_subject :: proc(k: ^Checker, item: ^Item_Impl) {
+	ident, is_ident := item.type.(^Expr_Ident)
+	if item.applies == nil || !is_ident {
+		return
+	}
+	if type := const_type_value(k, ident.symbol); type != INVALID_TYPE {
+		mark_denotes_type(&ident.base, type, ident.symbol)
+	}
+}
 
 // What a block declared on its subject's shell could not ask: whether the
 // subject's own declaration, resolved by now, gives a member's name another
@@ -162,6 +177,33 @@ resolve_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) -> Type_Id {
 		errorf(k.c, expr_span(item.type), "L0406", "this `impl` subject does not name a type")
 	}
 	return subject
+}
+
+// Whether resolving a subject asks nothing that a block of this package could
+// answer: it applies nothing and names nothing this package declares, so it
+// instantiates no generic and resolves no record here. `impl proc(value: int)`
+// and `impl vendor.Thing` are such subjects; `prepare_package` declares them
+// ahead of the ones that may ask.
+subject_asks_nothing :: proc(k: ^Checker, e: Expr) -> bool {
+	if e == nil {
+		return true
+	}
+	#partial switch v in e {
+	case ^Expr_Call, ^Type_Record, ^Type_Enum, ^Type_Interface, ^Expr_Error:
+		return false
+	case ^Expr_Ident:
+		// A predeclared name, or an imported package's.
+		sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, v)))
+		return sym != nil && sym.pkg != k.pkg
+	case ^Expr_Selector:
+		// A member of another package, which cannot see this one.
+		if _, _, is_alias := selector_package_alias(k, v); is_alias {
+			return true
+		}
+	}
+	return !expr_children(e, k, proc(data: rawptr, child: Expr) -> bool {
+		return !subject_asks_nothing((^Checker)(data), child)
+	})
 }
 
 // Whether resolving a subject may ask for an operator, as `[N]int` does where
@@ -416,9 +458,15 @@ require_impl_member_form :: proc(k: ^Checker, d: ^Decl) -> bool {
 
 @(private = "file")
 bind_member_in_package :: proc(k: ^Checker, name: Name, name_id: Identifier_Id, id: Symbol_Id) {
-	if _, taken := k.scope.names[name_id]; taken {
-		errorf(k.c, name.span, "L0304", "`%s` is already declared in this package", name.text)
-		return
+	if existing, taken := k.scope.names[name_id]; taken {
+		// A generic extension's group only reserves the name until an instance fills
+		// it (`register_generic_extension_groups`), and a name the package uses for
+		// something else keeps that meaning, whichever block is declared first.
+		group := symbol_of(k.c, existing)
+		if group == nil || group.kind != .Proc_Group || group.instance_of == INVALID_SYMBOL || len(group.members) > 0 {
+			errorf(k.c, name.span, "L0304", "`%s` is already declared in this package", name.text)
+			return
+		}
 	}
 	k.scope.names[name_id] = id
 }
@@ -605,10 +653,11 @@ check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 	if item.subject == INVALID_TYPE {
 		// A generic block's members are checked per instance, but a public
 		// constant's type may be the same in all of them.
-		if call, is_call := item.type.(^Expr_Call); is_call {
+		if call := impl_subject_application(k, item); call != nil {
 			if template := generic_template_of_callee(k, call.callee, {.Record}); template != nil {
 				read_generic_impl_constants(k, item, call, template)
 				check_generic_impl_hooks(k, item, template)
+				denote_alias_subject(k, item)
 			}
 		}
 		return

@@ -329,7 +329,12 @@ impl_members_read :: proc(x: ^Exposure, v: ^Item_Impl) -> bool {
 // for `Short :: Box($T)`, is on that public type, whose values an importer has.
 // A generic block's subject is resolved only per instance, and a block cannot
 // apply an alias to `$` names, so such a block names the private type itself.
+// One on an alias declared as an application is on the generic type applied.
 subject_type_is_public :: proc(c: ^Compiler, v: ^Item_Impl) -> bool {
+	if v.applies != nil {
+		applied := symbol_of(c, v.template)
+		return applied != nil && applied.public
+	}
 	info := type_of(c, v.subject)
 	if info != nil && info.kind == .Pointer {
 		info = type_of(c, info.element)

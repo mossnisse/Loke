@@ -1,0 +1,9 @@
+L0444
+@12:14
+`[]u8` does not satisfy `Sized([]u8)`
+L0409
+@24:2
+`Pair(int)` already has a field `value`
+L0406
+@25:2
+an `impl` member is a constant, a procedure, or an associated type

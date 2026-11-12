@@ -1,0 +1,92 @@
+package main;
+
+import "core:fmt";
+
+// A package's `impl` blocks may be written in any order. Every block here comes
+// before the block that supplies the method a generic's bound asks for, and the
+// subjects are not bare type names: aliases of an application, slices,
+// pointers, arrays, maps, and procedure types.
+
+Sized :: interface($T: type) {
+	slot size: proc(self) -> int;
+}
+
+Box :: struct($T: type) where Sized(T) { value: T }
+
+// A block on an alias of an application is a block on the application, so
+// declaring it instantiates nothing.
+Slice_Box :: Box([]int);
+
+impl Slice_Box {
+	twice :: proc(self) -> int { return self.value.size() * 2; }
+}
+
+impl []int {
+	size :: proc(self) -> int { return self.len(); }
+}
+
+// An alias of an array, and an application of the alias.
+Vec4 :: [4]f32;
+Vec_Box :: Box(Vec4);
+
+impl Vec_Box {
+	lanes :: proc(self) -> int { return self.value.size(); }
+}
+
+impl Vec4 {
+	size :: proc(self) -> int { return 4; }
+}
+
+// A slice and a map of a record whose field asks the bound.
+Holder :: struct { box: Box(^Holder) }
+Holders :: map[string]Holder;
+
+impl []Holder {
+	total :: proc(self) -> int { return self.len(); }
+}
+
+impl Holders {
+	count :: proc(self: ^) -> int { return self^.len(); }
+}
+
+impl ^Holder {
+	size :: proc(self) -> int { return 8; }
+}
+
+// The method comes from a generic block.
+Cell :: struct($T: type) { value: T }
+
+impl []Box(Cell(int)) {
+	total :: proc(self) -> int { return self.len() * 10; }
+}
+
+impl Cell($T) {
+	size :: proc(self) -> int { return 1; }
+}
+
+// The method comes from a block on a procedure type.
+impl []Box(proc(value: int) -> int) {
+	total :: proc(self) -> int { return self.len() * 100; }
+}
+
+impl proc(value: int) -> int {
+	size :: proc(self) -> int { return self(2); }
+}
+
+double :: proc(value: int) -> int { return value * 2; }
+
+main :: proc() {
+	fmt.println(Slice_Box{[]int{1, 2, 3}}.twice());
+	fmt.println(Vec_Box{{1, 2, 3, 4}}.lanes());
+
+	holders := []Holder{};
+	fmt.println(holders.total());
+	table: Holders = {};
+	fmt.println(table.count());
+
+	cells := []Box(Cell(int)){ {{1}}, {{2}} };
+	fmt.println(cells.total());
+
+	steps := []Box(proc(value: int) -> int){ {double} };
+	fmt.println(steps.total(), steps[0].value.size());
+}

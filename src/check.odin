@@ -187,14 +187,15 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	// has no pending `when` is the cheap case of that, and reports a bad subject
 	// here. Any block left is declared by `resolve_impl_signatures`.
 	//
-	// Resolving any other subject can instantiate a generic, whose bounds ask for
-	// the methods of its arguments, so the blocks on a type named outright go first:
-	// they are declared on the type's shell (`impl_subject_shell`), which resolves
-	// nothing, so no block of the package is missing when a bound is asked. That
-	// keeps the order of blocks and of files from deciding it (design.md "when
-	// statement": file-scope declarations may appear in any order).
+	// Resolving a subject can instantiate a generic, whose bounds ask for the
+	// methods of its arguments, so the order blocks are declared in must not
+	// decide whether a bound holds (design.md "when statement": file-scope
+	// declarations may appear in any order). The blocks `declare_impl_block` can
+	// declare without resolving anything go first, in any order. Next come the
+	// subjects that ask nothing of this package's blocks (`subject_asks_nothing`),
+	// and only then the ones left, in file order.
 	pending := make(map[Package_Id]bool, 8, context.temp_allocator)
-	for shells in ([]bool{true, false}) {
+	for pass in 0 ..< 3 {
 		for file in pkg.files {
 			k.file, k.file_node = file.file, file
 			for item in file.active_items {
@@ -202,7 +203,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 				if !ok || impl.declared {
 					continue
 				}
-				if named, _ := impl_subject_shell(k, impl.type); shells && named == INVALID_SYMBOL {
+				if pass == 1 && !subject_asks_nothing(k, impl.type) {
 					continue
 				}
 				subject := impl_subject_package(k, impl)
@@ -212,7 +213,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 					pending[subject] = waits
 				}
 				if !waits || first_unresolved_name(k, impl.type) == "" {
-					declare_impl_block(k, impl)
+					declare_impl_block(k, impl, unresolved_only = pass == 0)
 				}
 			}
 		}

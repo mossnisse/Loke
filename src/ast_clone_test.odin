@@ -78,7 +78,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Item_Foreign_Import, "name path path_written", ""},
 		{Item_Foreign_Block, "library members", "declared"},
 		// `kind` is filled in by the checker, but an instance reads its template's.
-		{Item_Impl, "kind type members", "subject declared on_shell"},
+		{Item_Impl, "kind type members", "subject declared on_shell applies template"},
 		{Item_Delegate, "symbols", ""},
 		{Item_When, "cond then otherwise", "state"},
 		{Item_Block, "items", ""},

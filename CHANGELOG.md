@@ -1958,9 +1958,18 @@ checklist.
   as `queue: container.Priority_Queue(int, By_Value)` asked for `By_Value.call` before a block
   written later, or in a file that sorts later, had supplied it: `impl Holder` ahead of
   `impl By_Value` was `L0444`, and renaming a file made the same package compile. A block on a type
-  named outright, or on an alias of one, is now declared without resolving the type. A block whose
-  subject is written any other way still has to come after the blocks its subject depends on
-  ([known-gaps.md](docs/known-gaps.md#an-impl-block-whose-subject-instantiates-a-generic-ahead-of-a-block-its-bound-needs)).
+  named outright, or on an alias of one, is now declared without resolving the type, and so is one
+  whose subject is a pointer, slice, dynamic array, map, or array of a literal length over such
+  names. A block on an alias of a generic application, as `impl Slice_Box` is after
+  `Slice_Box :: Box([]int)`, is a block on `Box([]int)`, as if written `impl Box([]int)`: declaring
+  it no longer instantiates the type, which asked `Box`'s bound before a later `impl []int` had
+  met it. One ordering still decides, between two blocks on procedure types or the like
+  ([known-gaps.md](docs/known-gaps.md#an-impl-block-on-a-procedure-type-ahead-of-a-block-its-subjects-bound-needs)).
+- An extension block's public procedure takes its name in the package whether or not a generic
+  extension with a public procedure of that name is written before it. The generic block reserved
+  the name first, so `impl vendor.Thing { @(public) describe :: ... }` after
+  `impl vendor.Cell($T) { @(public) describe :: ... }` was `L0304`, and compiled in the other
+  order.
 - An owned element of a `foreach` over a user iterator has the
   [region provenance](docs/design.md#allocator-regions-and-region-provenance) of its `next` call's
   result, as the result of a `next` called by hand has. It took the regions of what the loop

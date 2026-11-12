@@ -1,0 +1,28 @@
+package main;
+
+Sized :: interface($T: type) {
+	slot size: proc(self) -> int;
+}
+
+Box :: struct($T: type) where Sized(T) { value: T }
+
+// A block on an alias of an application is declared without evaluating the
+// alias. Nothing gives `[]u8` a `size`, so the alias's own declaration is still
+// what reports the bound, once.
+Bytes_Box :: Box([]u8);
+
+impl Bytes_Box {
+	twice :: proc(self) -> int { return 2; }
+}
+
+Pair :: struct($T: type) { value: T }
+Int_Pair :: Pair(int);
+
+// A member taking a field's name is still rejected through the alias, and one
+// that is no constant, procedure, or associated type is reported once.
+impl Int_Pair {
+	value :: proc(self) -> int { return 1; }
+	count: int;
+}
+
+main :: proc() {}

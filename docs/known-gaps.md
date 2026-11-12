@@ -46,14 +46,19 @@ checker walks the place a second time without evaluating it
 for an index that may run code or for a map lookup. A local for the index, or
 for the value read, makes either call compile.
 
-### An `impl` block whose subject instantiates a generic ahead of a block its bound needs
+### An `impl` block on a procedure type ahead of a block its subject's bound needs
 
 [when statement](design.md#when-statement) lets file-scope declarations appear
-in any order. The compiler declares the `impl` blocks on a type named outright,
-or on an alias of one, before it resolves any other subject, so those may be
-written anywhere. The remaining blocks are declared in file-name order and then
-source order, each by resolving its subject, and a subject that instantiates a
-generic asks the generic's bounds on the spot:
+in any order. The compiler declares most `impl` blocks without resolving their
+subject, so those may be written anywhere: a block on a generic application or
+on an alias of one, and a block whose subject is a type's name, or an alias's,
+under pointers, slices, dynamic arrays, maps, and arrays of a literal length.
+A subject written any other way is resolved to declare its block: a procedure
+type, an anonymous record or union, a `dyn` view, an array whose length is a
+named constant, or a generic application inside one of the forms above. Those
+that name nothing this package declares go first. The rest are declared in
+file-name order and then source order, and one that instantiates a generic
+asks the generic's bounds on the spot:
 
 ```loke
 package main;
@@ -64,28 +69,27 @@ Sized :: interface($T: type) {
 
 Box :: struct($T: type) where Sized(T) { value: T }
 
-Slice_Box :: Box([]int);              // L0444, should be accepted
+Point :: struct { x, y: int }
 
-impl Slice_Box {
-	twice :: proc(self) -> int { return self.value.size() * 2; }
+impl []Box(proc(p: Point) -> int) {   // L0406, should be accepted
+	total :: proc(self) -> int { return self.len(); }
 }
 
-impl []int {
-	size :: proc(self) -> int { return self.len(); }
+impl proc(p: Point) -> int {
+	size :: proc(self) -> int { return 1; }
 }
 
-main :: proc() {
-	assert(Slice_Box{[]int{1, 2, 3}}.twice() == 6);
-}
+main :: proc() {}
 ```
 
-`[]int` is reported as not satisfying `Sized([]int)`, because `impl []int` is
-not declared when `impl Slice_Box` resolves `Box([]int)`. The block that
-supplies the method has a subject that is not a bare type name (a slice, a
-pointer, an array, a procedure type, `pkg.Type`, or an alias of one of those),
-and the block that needs it has a subject that instantiates the generic.
-Writing `impl []int` first, or in a file that sorts first, compiles. Declaring a
-block without resolving its subject is what `impl_subject_shell` in `impl.odin`
-does for a type named outright; these subjects have no shell to stand in for
-them, so the fix is to keep a bound unasked until every block of the package is
-declared.
+The first block is reported as not naming a type, because the block on
+`proc(p: Point) -> int` is not declared when `Box(proc(p: Point) -> int)` is
+instantiated, so `Sized` does not hold. Both subjects have to be of the kind
+that is resolved, and the one supplying the method has to name a type of this
+package: with `proc(value: int) -> int` in both, or with the second block
+written first, the program compiles. Trying again once every block is declared
+is not possible as the checker stands, since a rejected instance stays cached
+and a declaration checked on the way is settled (`begin_settling` in
+`speculation.odin`); the fix is to make a procedure type and the other forms
+readable without resolving what they name, as `resolve_type_shell` in
+`check_types.odin` reads the rest.

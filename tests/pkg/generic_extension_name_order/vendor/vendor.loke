@@ -1,0 +1,5 @@
+@(public)
+package vendor;
+
+Cell :: struct($T: type) { value: T }
+Thing :: struct { n: int }

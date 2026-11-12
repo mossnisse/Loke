@@ -357,12 +357,27 @@ evaluation ends. A growing container therefore keeps room to spare in its block
 A bound is asked when a record is instantiated, and reads the methods the
 `impl` blocks declared so far give its arguments, so a file-scope block must be
 declared before anything resolves a field that instantiates. `prepare_package`
-therefore declares the blocks whose subject is the bare name of a nominal type,
-or of an alias of one, first and on the type's shell (`impl_subject_shell`),
-without resolving the type's declaration; the L0409 check against the type's
-fields waits for `resolve_impl_signatures` (`reject_shell_clashes`). Only then
-are the remaining subjects resolved, in file order
-([known-gaps.md](known-gaps.md#an-impl-block-whose-subject-instantiates-a-generic-ahead-of-a-block-its-bound-needs)).
+therefore declares a package's blocks in three passes, each in file order:
+
+1. The blocks `declare_impl_block` can declare without resolving anything. A
+   block on a generic application is registered for the instances
+   (`register_generic_impl`), and so is one on an alias declared as an
+   application, whose declaration `impl_subject_application` reads as written
+   instead of evaluating. Any subject `resolve_type_shell` reads is declared on
+   that type: a nominal type's name, or an alias's, under pointers, slices,
+   dynamic arrays, maps, and arrays of a literal length. A record named this
+   way is its shell, with its fields unresolved, so the L0409 check against the
+   fields waits for `resolve_impl_signatures` (`reject_shell_clashes`).
+2. The subjects that ask nothing of this package (`subject_asks_nothing`): they
+   apply nothing and name nothing the package declares, as `impl vendor.Thing`
+   and `impl proc(value: int)` do.
+3. The subjects left, which may instantiate
+   ([known-gaps.md](known-gaps.md#an-impl-block-on-a-procedure-type-ahead-of-a-block-its-subjects-bound-needs)).
+
+A failed attempt cannot be retried once more blocks are declared: a rejected
+instance stays cached, and a declaration checked on the way is settled for the
+program (`begin_settling`). That is why the order is fixed ahead of time by what
+a subject's syntax can ask, rather than found by trying.
 
 `generic.odin` owns inference, specialization, `where` checks, caching, and body
 commitment, with parametric aliases in `generic_alias.odin` and `impl` blocks in

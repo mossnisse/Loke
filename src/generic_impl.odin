@@ -96,8 +96,17 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 // that does not resolve, would silently match no instance. A member no instance
 // can declare would be silently dropped from all of them.
 check_generic_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) {
-	call, is_call := item.type.(^Expr_Call)
-	if !is_call {
+	call := impl_subject_application(k, item)
+	if call == nil {
+		return
+	}
+	// An alias's own declaration reports what its application gets wrong.
+	if item.applies != nil {
+		for member in item.members {
+			if d, is_decl := member.(^Decl); is_decl {
+				require_impl_member_form(k, d)
+			}
+		}
 		return
 	}
 	for arg in call.args {
