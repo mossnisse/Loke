@@ -1,0 +1,362 @@
+// Measures the polling ring (standard-library.md "The ring algorithm") on the
+// machine it runs on: throughput of one producer and one consumer, and the
+// round trip of an item sent out on one ring and back on another. Build it with
+// `-opt=speed`; its output is timings, so no test runs it.
+//
+// `library` is `thread.Ring(int)` itself. The other rows are copies of its
+// algorithm over plain `int` slots, each changing one thing:
+//
+// - `copy`: the algorithm as the library builds it, the copies' baseline;
+// - `no closure check`: no `receiver_gone` load at the start of every send,
+//   only before a send reports `.full`;
+// - `flags on head's line`: the closure flags next to `head`, not a cache line
+//   away, so every send's flag load shares the line the receiver stores;
+// - `power-of-two mask`: 1024 slots indexed by masking, not the end-of-array
+//   comparison; still one spare slot;
+// - `16-byte slots`: each slot an item and a `live` count both sides write, as
+//   the library's `Ring_Slot(int)` is.
+package main;
+
+import "core:fmt";
+import "core:slice";
+import "core:sync";
+import "core:thread";
+import "core:time";
+import "core:unsafe";
+
+LINE :: 128;
+SLOTS :: 1024;
+
+Bench :: struct($GAP: int) {
+	slots: [dynamic]int,
+	pairs: [dynamic]Pair,
+	size: uint,
+	mask: uint,
+	pad_metadata: [LINE]u8,
+	tail: sync.Atomic(uint),
+	pad_tail: [LINE]u8,
+	head: sync.Atomic(uint),
+	pad_head: [GAP]u8,
+	sender_gone: sync.Atomic(bool),
+	receiver_gone: sync.Atomic(bool),
+	pad_flags: [LINE]u8,
+}
+
+@(move_only) Snd :: struct($GAP: int) { ring: ^Bench(GAP), tail: uint, head_seen: uint }
+@(move_only) Rcv :: struct($GAP: int) { ring: ^Bench(GAP), head: uint, tail_seen: uint }
+
+next :: proc(size: uint, mask: uint, index: uint, $MASK: bool) -> uint {
+	if (MASK) { return (index + 1) & mask; }
+	after := index + 1;
+	return 0 if after == size else after;
+}
+
+// A slot as the library's `Ring_Slot(int)` is: the item and a `live` count.
+Pair :: struct { item: int, live: int }
+
+slot :: proc(ring: ^Bench($G), index: uint) -> ^mut int {
+	return (^mut int)(rawptr(&ring.slots[int(index)]));
+}
+
+pair :: proc(ring: ^Bench($G), index: uint) -> ^mut Pair {
+	return (^mut Pair)(rawptr(&ring.pairs[int(index)]));
+}
+
+// 0 sent, 1 full, 2 closed.
+send :: proc(self: inout Snd($G), value: int, $CHECK: bool, $MASK: bool, $WIDE: bool) -> int {
+	ring := self.ring;
+	if (CHECK) {
+		if (ring.receiver_gone.load(sync.Memory_Order.Acquire)) { return 2; }
+	}
+	at := self.tail;
+	after := next(ring.size, ring.mask, at, MASK);
+	if (after == self.head_seen) {
+		self.head_seen = ring.head.load(sync.Memory_Order.Acquire);
+		if (after == self.head_seen) {
+			if (ring.receiver_gone.load(sync.Memory_Order.Acquire)) { return 2; }
+			return 1;
+		}
+	}
+	if (WIDE) {
+		p := pair(ring, at);
+		p^.item = value;
+		p^.live = 1;
+	} else {
+		slot(ring, at)^ = value;
+	}
+	ring.tail.store(after, sync.Memory_Order.Release);
+	self.tail = after;
+	return 0;
+}
+
+// The item, or -1 for empty and -2 for closed.
+receive :: proc(self: inout Rcv($G), $MASK: bool, $WIDE: bool) -> int {
+	ring := self.ring;
+	at := self.head;
+	if (at == self.tail_seen) {
+		self.tail_seen = ring.tail.load(sync.Memory_Order.Acquire);
+		if (at == self.tail_seen) {
+			if (!ring.sender_gone.load(sync.Memory_Order.Acquire)) { return -1; }
+			self.tail_seen = ring.tail.load(sync.Memory_Order.Acquire);
+			if (at == self.tail_seen) { return -2; }
+		}
+	}
+	after := next(ring.size, ring.mask, at, MASK);
+	item := 0;
+	if (WIDE) {
+		p := pair(ring, at);
+		p^.live = 0;
+		item = p^.item;
+	} else {
+		item = slot(ring, at)^;
+	}
+	ring.head.store(after, sync.Memory_Order.Release);
+	self.head = after;
+	return item;
+}
+
+produce :: proc(items: move Snd($G), count: int, $CHECK: bool, $MASK: bool, $WIDE: bool) {
+	foreach (i in 0 ..< count) {
+		for (send(inout items, i, CHECK, MASK, WIDE) != 0) { }
+	}
+}
+
+consume :: proc(items: move Rcv($G), count: int, $MASK: bool, $WIDE: bool) -> int {
+	sum := 0;
+	foreach (_ in 0 ..< count) {
+		item := receive(inout items, MASK, WIDE);
+		for (item < 0) { item = receive(inout items, MASK, WIDE); }
+		sum += item;
+	}
+	return sum;
+}
+
+make_bench :: proc($GAP: int) -> Bench(GAP) {
+	ring := Bench(GAP){slots = {}, size = SLOTS, mask = SLOTS - 1};
+	ring.slots.resize(SLOTS);
+	ring.pairs.resize(SLOTS);
+	return ring;
+}
+
+// Nanoseconds per item.
+copy_throughput :: proc($GAP: int, $CHECK: bool, $MASK: bool, $WIDE: bool, count: int) -> f64 {
+	ring := make_bench(GAP);
+	sum: int;
+	start := time.tick_now();
+	parallel {
+		spawn sum = consume(Rcv(GAP){ring = &ring}, count, MASK, WIDE);
+		spawn produce(Snd(GAP){ring = &ring}, count, CHECK, MASK, WIDE);
+	}
+	elapsed := f64(i64(time.tick_now() - start));
+	if (sum != count * (count - 1) / 2) { fmt.println("wrong sum"); }
+	return elapsed / f64(count);
+}
+
+library_produce :: proc(items: move thread.Ring_Sender(int), count: int) {
+	foreach (i in 0 ..< count) {
+		for (;;) {
+			item := i;
+			switch (items.try_send(move(item))) {
+			case .ok: break;
+			case .err(_): continue;
+			}
+			break;
+		}
+	}
+}
+
+library_consume :: proc(items: move thread.Ring_Receiver(int)) -> int {
+	sum := 0;
+	for (;;) {
+		switch (items.try_receive()) {
+		case .item(item): sum += item;
+		case .empty: continue;
+		case .closed: return sum;
+		}
+	}
+	return sum;
+}
+
+library_throughput :: proc(count: int) -> f64 {
+	ring := thread.Ring(int).init(SLOTS - 1);
+	sum: int;
+	start := time.tick_now();
+	parallel {
+		send, receive := ring.split();
+		spawn sum = library_consume(move(receive));
+		spawn library_produce(move(send), count);
+	}
+	elapsed := f64(i64(time.tick_now() - start));
+	if (sum != count * (count - 1) / 2) { fmt.println("wrong sum"); }
+	return elapsed / f64(count);
+}
+
+// Round trips: `ping` sends out on one ring and waits for the item back on the
+// other, timing each; `pong` echoes.
+ping :: proc(out: move thread.Ring_Sender(int), back: move thread.Ring_Receiver(int), count: int) -> [dynamic]i64 {
+	times: [dynamic]i64 = {};
+	times.reserve(count);
+	foreach (i in 0 ..< count) {
+		start := time.tick_now();
+		for (;;) {
+			item := i;
+			switch (out.try_send(move(item))) {
+			case .ok: break;
+			case .err(_): continue;
+			}
+			break;
+		}
+		for (;;) {
+			switch (back.try_receive()) {
+			case .item(_): break;
+			case .empty: continue;
+			case .closed: return times;
+			}
+			break;
+		}
+		times.append(i64(time.tick_now() - start));
+	}
+	return times;
+}
+
+pong :: proc(items: move thread.Ring_Receiver(int), back: move thread.Ring_Sender(int)) {
+	for (;;) {
+		switch (items.try_receive()) {
+		case .item(item):
+			for (;;) {
+				echo := item;
+				switch (back.try_send(move(echo))) {
+				case .ok: break;
+				case .err(_): continue;
+				}
+				break;
+			}
+		case .empty: continue;
+		case .closed: return;
+		}
+	}
+}
+
+round_trips :: proc(count: int) {
+	there := thread.Ring(int).init(16);
+	again := thread.Ring(int).init(16);
+	times: [dynamic]i64;
+	start := time.tick_now();
+	parallel {
+		out, items := there.split();
+		echo, back := again.split();
+		spawn times = ping(move(out), move(back), count);
+		spawn pong(move(items), move(echo));
+	}
+	whole := f64(i64(time.tick_now() - start)) / f64(count);
+	slice.sort(&mut times[:]);
+	n := times.len();
+	fmt.println("round trip ns: mean", whole, "p50", times[n / 2], "p99", times[n * 99 / 100],
+		"p99.9", times[n * 999 / 1000], "max", times[n - 1]);
+}
+
+best :: proc(values: []f64) -> f64 {
+	low := values[0];
+	foreach (v in values) { if (v < low) { low = v; } }
+	return low;
+}
+
+median :: proc(values: []mut f64) -> f64 {
+	slice.sort(values);
+	return values[values.len() / 2];
+}
+
+report :: proc(name: string, runs: []mut f64) {
+	fmt.println(name, "ns/item: best", best(runs), "median", median(runs));
+}
+
+BATCH :: 512;
+
+// Nanoseconds per item sent and received, both endpoints on this thread: the
+// operations' own cost, with no other core contending for a line.
+copy_alone :: proc($GAP: int, $CHECK: bool, $MASK: bool, $WIDE: bool, count: int) -> f64 {
+	ring := make_bench(GAP);
+	out := Snd(GAP){ring = &ring};
+	back := Rcv(GAP){ring = &ring};
+	sum := 0;
+	start := time.tick_now();
+	foreach (_ in 0 ..< count / BATCH) {
+		foreach (i in 0 ..< BATCH) { _ = send(inout out, i, CHECK, MASK, WIDE); }
+		foreach (_ in 0 ..< BATCH) { sum += receive(inout back, MASK, WIDE); }
+	}
+	elapsed := f64(i64(time.tick_now() - start));
+	if (sum != count / BATCH * (BATCH * (BATCH - 1) / 2)) { fmt.println("wrong sum"); }
+	return elapsed / f64(count);
+}
+
+library_alone :: proc(count: int) -> f64 {
+	ring := thread.Ring(int).init(SLOTS - 1);
+	out, back := ring.split();
+	sum := 0;
+	start := time.tick_now();
+	foreach (_ in 0 ..< count / BATCH) {
+		foreach (i in 0 ..< BATCH) {
+			item := i;
+			_ = out.try_send(move(item));
+		}
+		foreach (_ in 0 ..< BATCH) {
+			switch (back.try_receive()) {
+			case .item(item): sum += item;
+			case .empty: sum = -1;
+			case .closed: sum = -1;
+			}
+		}
+	}
+	elapsed := f64(i64(time.tick_now() - start));
+	if (sum != count / BATCH * (BATCH * (BATCH - 1) / 2)) { fmt.println("wrong sum"); }
+	return elapsed / f64(count);
+}
+
+Rows :: struct {
+	library: [RUNS]f64,
+	copy: [RUNS]f64,
+	unchecked: [RUNS]f64,
+	shared: [RUNS]f64,
+	masked: [RUNS]f64,
+	wide: [RUNS]f64,
+}
+
+RUNS :: 15;
+
+show :: proc(title: string, rows: inout Rows) {
+	fmt.println(title);
+	report("  library", &mut rows.library[:]);
+	report("  copy", &mut rows.copy[:]);
+	report("  no closure check", &mut rows.unchecked[:]);
+	report("  flags on head's line", &mut rows.shared[:]);
+	report("  power-of-two mask", &mut rows.masked[:]);
+	report("  16-byte slots", &mut rows.wide[:]);
+}
+
+main :: proc() {
+	ALONE :: 51_200_000;
+	COUNT :: 20_000_000;
+	alone := Rows{};
+	both := Rows{};
+	// Interleaved, so drift in the machine's state spreads over every row.
+	foreach (r in 0 ..< RUNS) {
+		alone.library[r] = library_alone(ALONE);
+		alone.copy[r] = copy_alone(LINE, true, false, false, ALONE);
+		alone.unchecked[r] = copy_alone(LINE, false, false, false, ALONE);
+		alone.shared[r] = copy_alone(8, true, false, false, ALONE);
+		alone.masked[r] = copy_alone(LINE, true, true, false, ALONE);
+		alone.wide[r] = copy_alone(LINE, true, false, true, ALONE);
+	}
+	foreach (r in 0 ..< RUNS) {
+		both.library[r] = library_throughput(COUNT);
+		both.copy[r] = copy_throughput(LINE, true, false, false, COUNT);
+		both.unchecked[r] = copy_throughput(LINE, false, false, false, COUNT);
+		both.shared[r] = copy_throughput(8, true, false, false, COUNT);
+		both.masked[r] = copy_throughput(LINE, true, true, false, COUNT);
+		both.wide[r] = copy_throughput(LINE, true, false, true, COUNT);
+	}
+	fmt.println(RUNS, "runs each; capacity", SLOTS - 1);
+	show("one thread, batches of 512 sends then 512 receives:", inout alone);
+	show("two threads, one producer and one consumer:", inout both);
+	foreach (_ in 0 ..< 3) { round_trips(1_000_000); }
+}

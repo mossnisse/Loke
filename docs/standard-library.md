@@ -1250,16 +1250,27 @@ cause cache traffic, so this is no claim of eliminating all sharing.
 
 Validation:
 
-1. **Model checking.** An exhaustive search of the interleavings under
-   sequential consistency, with every shared access one step, found no
-   violation over one producer and one consumer, capacities 1, 2, and 3,
-   repeated index laps, stale peer caches, retries on a full ring, and every
-   placement of either endpoint's drop. It checked FIFO, no overwrite or read
-   of an empty slot, drain-before-closed, and exactly-once item ownership
-   including the ring's drop, and it fails on two seeded mutants: without the
-   final-tail reload, and without the fullness check. It does not cover
-   weak-memory reorderings; a C11 model check, with GenMC or a tool like it,
-   is still open.
+1. **Model checking.** `tests/model/ring_model.py` searches every
+   interleaving and every stale read that C11 release/acquire semantics
+   permit, with every shared access one step, over one producer and one
+   consumer, capacities 1, 2, and 3, two laps of the indices, stale peer
+   caches, retries on a full ring, and every placement of either endpoint's
+   drop. Each atomic location has one writer and every access is a release
+   store or an acquire load, so the model is exact for the algorithm, and it
+   includes every sequentially consistent interleaving. It found no violation
+   of FIFO order, no overwrite or take of an empty slot, no data race on a
+   slot, no `.closed` before the queue drained, no item owned twice or lost
+   (including in the ring's drop), no send result other than `.closed` after
+   one, and no drop failing to happen before its peer observes the side
+   closed. Every seeded mutant fails: a relaxed `tail` or `head` store or
+   acquire races on a slot; a relaxed `sender_gone` store or load loses the
+   sender's last item; a relaxed `receiver_gone` store or load breaks only the
+   drop's happens-before guarantee; and so does removing the final-tail reload
+   or the fullness check. The reload at line 6 of `try_receive` needs no
+   acquire, since line 5's acquire of `sender_gone` already orders the
+   sender's last `tail` store; on x86-64 an acquire load costs nothing extra.
+   The model checks the algorithm, not compiled code; item 4 checks the
+   emitted orderings.
 2. **The exclusive-endpoint API under the borrow checker.**
    `tests/err/lib_thread_ring.loke` rejects sharing either endpoint between
    two tasks, sending through a read-only endpoint, keeping the sender past a
@@ -1277,13 +1288,33 @@ Validation:
    `tests/pkg/ring_allocation` fills its default allocator, a fixed arena,
    until it refuses a byte, then runs a million operations, closure by either
    endpoint, and the ring's drop; an allocation seeded into either operation
-   panics there. No latency or throughput has been measured on a target;
-   the spare slot is a simplicity choice, not an established speed
-   improvement, and measurements would not establish a hard real-time
-   bound.
+   panics there.
 
-The points this leaves for review are in
-[open-questions.md](design-review-2026-10-31.md#ring-algorithm-validation).
+   `tests/model/ring_measure.loke` measured an `int` ring of capacity 1023 on
+   an Intel Core i5-9600K (six cores, Windows 10), built at `-opt=speed` by
+   `lokec` at `85c586a7`, against copies of the algorithm that each change one
+   thing. Figures are medians of 15 runs:
+
+   - **Alone.** One thread sending 512 items, then receiving them, spends
+     3.9 to 4.3 ns on a send and its receive. Checking `receiver_gone` at the
+     start of every send costs 0.55 to 0.8 ns of that. A power-of-two mask in
+     place of the end-of-array comparison saves 0 to 0.35 ns, about as much as
+     code layout moves the figures between builds. A 16-byte slot, as
+     `Ring_Slot(int)` is with its `live` count, costs 0.35 ns over an 8-byte one.
+   - **Between threads.** One producer and one consumer pass an item in 4 to
+     30 ns. The figures cluster near 4 ns and near 15 to 30 ns, and the build
+     of the program, not the variant, decided where: the unchanged copy
+     measured 4 to 9 ns in some builds and 20 to 22 ns in another, and with the
+     flags on `head`'s line it measured 4 ns in one process and 13 to 34 ns in
+     the rest. The library measured 7 to 19 ns. Whether the producer and
+     consumer fall in step on the same cache lines likely outweighs the
+     variants' differences, so this benchmark cannot rank them, nor confirm
+     that keeping the flags off `head`'s line pays.
+   - **Round trip.** An item sent out on one ring of capacity 16 and echoed
+     back on another returns in a mean of 285 to 325 ns; the median is 200 ns
+     and the 99th percentile 300 ns, at the clock's 100 ns resolution. One
+     round trip in a thousand took 0.3 to 15 µs and the slowest 0.5 to 7 ms,
+     which is preemption: no real-time bound follows.
 
 The item checks, FIFO ordering, and result variants match the channel, but
 changing a channel to a ring also requires exclusive endpoint access and a

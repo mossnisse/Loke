@@ -520,8 +520,10 @@ proposal rounded storage to a power of two, used a mask for indexing, and
 needed explicit wrapping operators for its position counters: ordinary
 unsigned addition and subtraction in Loke can panic. At power-of-two
 capacities that scheme saves one slot; the revised scheme adds an end-of-array
-comparison on each operation. The choice favors simpler arithmetic, not an
-unmeasured performance advantage.
+comparison on each operation. The choice favors simpler arithmetic, not speed:
+measured, a mask saves at most 0.35 ns of the 4 ns a send and its receive take
+alone, within what code layout moves between builds
+([The ring algorithm](standard-library.md#the-ring-algorithm)).
 
 A latest-value handoff is a different contract. A triple buffer can suit
 settings snapshots when a newer value supersedes intermediate updates;

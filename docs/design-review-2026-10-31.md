@@ -773,21 +773,6 @@ followed as a procedure-typed one is. Three conservative limits remain:
   argument at that parameter. A capture literal's `call` and a converted
   slot are direct calls and bind by parameter.
 
-### Ring algorithm validation
-
-[The ring algorithm](standard-library.md#the-ring-algorithm) is built as
-written, and an exhaustive interleaving search under sequential consistency
-found no violation. Two checks remain:
-
-- **Weak-memory model checking.** The interleaving search treats every access
-  as sequentially consistent, so it cannot find a missing release or acquire.
-  A C11 model check with GenMC or a tool like it, over the same capacities,
-  laps, and drop placements, is still needed.
-- **Measurements.** Measure the closure check on every send, with the flags
-  separated from the indices, and latency and throughput on the intended
-  target. The spare slot is for simpler arithmetic, not demonstrated higher
-  speed.
-
 ## Probes
 
 Programs run to confirm claims this review still depends on, with the compiler
