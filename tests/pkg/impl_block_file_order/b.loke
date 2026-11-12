@@ -1,0 +1,20 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+By_Value :: struct {}
+
+impl By_Value {
+	call :: proc(self, left, right: int) -> bool { return left < right; }
+}
+
+Holder :: struct {
+	queue: container.Priority_Queue(int, By_Value),
+}
+
+main :: proc() {
+	h := Holder{};
+	h.queue = container.Priority_Queue(int, By_Value).from_items({3, 1, 2}, By_Value{});
+	fmt.println(h.size());
+}

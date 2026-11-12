@@ -1,0 +1,24 @@
+package main;
+
+// The block is written before its subject, and is declared without resolving
+// the subject's fields; a member taking a field's name is still rejected, and
+// the other members of the block still count.
+impl C {
+	v :: proc(self) -> int { return 99; }
+	w :: proc(self) -> int { return self.v + 1; }
+}
+
+C :: struct { v: int }
+
+// The same through an alias of the subject.
+Alias :: D;
+
+impl Alias {
+	count :: 3;
+}
+
+D :: struct { count: int }
+
+main :: proc() {
+	_ = C{ v = 7 }.w();
+}

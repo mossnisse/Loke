@@ -354,6 +354,16 @@ not, since copies share its digits and elements, so it stays charged until
 evaluation ends. A growing container therefore keeps room to spare in its block
 (`eval_splice`), and a read of a folded constant makes only the part it selects.
 
+A bound is asked when a record is instantiated, and reads the methods the
+`impl` blocks declared so far give its arguments, so a file-scope block must be
+declared before anything resolves a field that instantiates. `prepare_package`
+therefore declares the blocks whose subject is the bare name of a nominal type,
+or of an alias of one, first and on the type's shell (`impl_subject_shell`),
+without resolving the type's declaration; the L0409 check against the type's
+fields waits for `resolve_impl_signatures` (`reject_shell_clashes`). Only then
+are the remaining subjects resolved, in file order
+([known-gaps.md](known-gaps.md#an-impl-block-whose-subject-instantiates-a-generic-ahead-of-a-block-its-bound-needs)).
+
 `generic.odin` owns inference, specialization, `where` checks, caching, and body
 commitment, with parametric aliases in `generic_alias.odin` and `impl` blocks in
 `generic_impl.odin`. Procedures and records are monomorphized with definition-site

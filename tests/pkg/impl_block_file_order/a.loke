@@ -1,0 +1,8 @@
+package main;
+
+// This file sorts before the one declaring `Holder` and `By_Value`. Declaring
+// this block must not resolve `Holder`'s fields: `queue` instantiates a generic
+// whose bound asks for `By_Value.call`, which the other file's block supplies.
+impl Holder {
+	size :: proc(self: ^) -> int { return self.queue.len(); }
+}

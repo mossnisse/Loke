@@ -35,10 +35,16 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 		}
 	}
 
-	// A quiet attempt that fails is rolled back and retried, so it is a
+	// A type named outright is taken as its shell, which resolves nothing. Any
+	// other quiet attempt that fails is rolled back and retried, so it is a
 	// speculation: it must not claim a report-once cache the retry needs.
 	subject: Type_Id
-	if quiet {
+	if named, shell := impl_subject_shell(k, item.type); named != INVALID_SYMBOL {
+		ident := item.type.(^Expr_Ident)
+		ident.symbol = named
+		subject = mark_denotes_type(&ident.base, shell, named)
+		item.on_shell = true
+	} else if quiet {
 		visited := make(map[Symbol_Id]bool, 8, context.temp_allocator)
 		if subject_may_need_operator(k, item.type, k.scope, &visited) {
 			return
@@ -66,6 +72,85 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	item.kind = own_package ? .Impl : .Extend
 	declare_impl_members(k, item)
 	defer_delegates(k, item)
+}
+
+// The symbol a subject names and the type it is, where the subject is the bare
+// name of a nominal type or of an alias of one, as `impl Holder` is; otherwise
+// `INVALID_SYMBOL`. Such a block is declared on the type's shell, without
+// resolving the type's own declaration: a record's fields can instantiate a
+// generic whose bounds ask for a method that a block not declared yet supplies.
+// An alias is followed as written, since evaluating it could do the same.
+impl_subject_shell :: proc(k: ^Checker, subject: Expr) -> (named: Symbol_Id, type: Type_Id) {
+	ident, is_ident := subject.(^Expr_Ident)
+	if !is_ident {
+		return INVALID_SYMBOL, INVALID_TYPE
+	}
+	named = lookup_symbol(k.scope, identifier_of(k.c, ident))
+	id := named
+	// Bounded, so aliases naming each other end, and are reported where they are checked.
+	for _ in 0 ..< MAX_SHELL_ALIASES {
+		sym := symbol_of(k.c, id)
+		if sym == nil {
+			break
+		}
+		if sym.kind == .Type {
+			if sym.type == INVALID_TYPE || symbol_is_generic(k, id) {
+				break
+			}
+			return named, sym.type
+		}
+		if sym.kind != .Const || sym.decl == nil || sym.def_scope == nil || len(sym.decl.names) != 1 || sym.decl.declared_type != nil {
+			break
+		}
+		target, is_name := decl_value(sym.decl).(^Expr_Ident)
+		if !is_name {
+			break
+		}
+		id = lookup_symbol(sym.def_scope, identifier_of(k.c, target))
+	}
+	return INVALID_SYMBOL, INVALID_TYPE
+}
+
+@(private = "file")
+MAX_SHELL_ALIASES :: 16
+
+// What a block declared on its subject's shell could not ask: whether the
+// subject's own declaration, resolved by now, gives a member's name another
+// meaning. Such a member is withdrawn, as `declare_impl_member` never makes one.
+@(private = "file")
+reject_shell_clashes :: proc(k: ^Checker, item: ^Item_Impl) {
+	if !item.on_shell {
+		return
+	}
+	item.on_shell = false
+	info := type_of(k.c, item.subject)
+	if info == nil {
+		return
+	}
+	resolve_symbol_signature_in_place(k, info.symbol)
+	for member in item.members {
+		d, is_decl := member.(^Decl)
+		if !is_decl || len(d.symbols) != len(d.names) {
+			continue
+		}
+		for &id, index in d.symbols {
+			sym := symbol_of(k.c, id)
+			if sym == nil {
+				continue
+			}
+			name := d.names[index]
+			clash := impl_member_clash(k, item.subject, name.text, sym.name, nil)
+			if clash == "" {
+				continue
+			}
+			errorf(
+				k.c, name.span, "L0409",
+				"`%s` already has a %s `%s`", type_name(k.c, item.subject), clash, name.text,
+			)
+			withdraw_impl_member(k, item.kind, item.subject, k.pkg, id)
+			id = INVALID_SYMBOL
+		}
+	}
 }
 
 // `resolve_type_syntax` reports nothing for a subject that names no type at all.
@@ -367,6 +452,25 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 	}
 }
 
+// Takes `member` out of the table `impl_member_table` reads.
+@(private = "file")
+withdraw_impl_member :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, in_pkg: Package_Id, member: Symbol_Id) {
+	previous := impl_member_table(k, kind, subject, in_pkg)
+	kept := make([dynamic]Symbol_Id, 0, len(previous), k.c.semantic_allocator)
+	for entry in previous {
+		if entry != member {
+			append(&kept, entry)
+		}
+	}
+	if kind == .Impl {
+		if info := type_of(k.c, subject); info != nil {
+			info.members = kept[:]
+		}
+	} else if pkg := package_of(k.c, in_pkg); pkg != nil {
+		pkg.extensions[subject] = kept[:]
+	}
+}
+
 // Puts `entry` where `previous` is in the table `impl_member_table` reads.
 replace_impl_member :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, in_pkg: Package_Id, previous, entry: Symbol_Id) {
 	for &member in impl_member_table(k, kind, subject, in_pkg) {
@@ -485,6 +589,7 @@ resolve_impl_signatures :: proc(k: ^Checker, item: ^Item_Impl) {
 		check_generic_impl_subject(k, item)
 		return
 	}
+	reject_shell_clashes(k, item)
 	outer := k.impl_type
 	k.impl_type = item.subject
 	defer k.impl_type = outer

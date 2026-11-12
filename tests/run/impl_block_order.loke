@@ -1,0 +1,64 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+// A package's `impl` blocks may be written in any order. Each block here comes
+// before the block that supplies the method its subject's fields ask for through
+// a generic's bound, so declaring one must not resolve its subject's fields.
+
+Holder :: struct {
+	queue: container.Priority_Queue(int, By_Value),
+}
+
+impl Holder {
+	size :: proc(self: ^) -> int { return self.queue.len(); }
+}
+
+By_Value :: struct {}
+
+impl By_Value {
+	call :: proc(self, left, right: int) -> bool { return left < right; }
+}
+
+// The subject is an alias of the generic's instance, and the method comes from
+// a block written on an alias of the argument.
+Reversed_Queue :: container.Priority_Queue(int, Reversed);
+
+impl Reversed_Queue {
+	twice :: proc(self: ^) -> int { return self.len() * 2; }
+}
+
+Reversed :: struct {}
+Descending :: Reversed;
+
+impl Descending {
+	call :: proc(self, left, right: int) -> bool { return left > right; }
+}
+
+// A user-declared interface, met by a block on a built-in type.
+Sized :: interface($T: type) {
+	slot size: proc(self) -> int;
+}
+
+Box :: struct($T: type) where Sized(T) { value: T }
+Int_Box :: Box(int);
+
+impl Int_Box {
+	twice :: proc(self) -> int { return self.value.size() * 2; }
+}
+
+impl int {
+	size :: proc(self) -> int { return self; }
+}
+
+main :: proc() {
+	h := Holder{};
+	h.queue = container.Priority_Queue(int, By_Value).from_items({3, 1, 2}, By_Value{});
+	fmt.println(h.size());
+
+	q := Reversed_Queue.from_items({3, 1, 2, 5}, Reversed{});
+	fmt.println(q.twice());
+
+	fmt.println(Int_Box{21}.twice());
+}

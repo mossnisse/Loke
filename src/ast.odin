@@ -1305,6 +1305,9 @@ Item_Impl :: struct {
 	// Set once members are installed, so a later discovery round skips them.
 	subject:    Type_Id,
 	declared:   bool,
+	// Declared on its subject's shell, so what the subject's own declaration gives
+	// a member's name is still to be asked (`reject_shell_clashes`).
+	on_shell:   bool,
 }
 
 // `delegate(+, -);` inside an `impl` body.

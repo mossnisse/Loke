@@ -1952,6 +1952,15 @@ checklist.
 
 ### Fixed
 
+- The order of a package's `impl` blocks, and of its files, no longer decides whether a generic's
+  bound holds ([when statement](docs/design.md#when-statement): file-scope declarations may appear
+  in any order). A block on a record was declared by resolving the record's fields, so a field such
+  as `queue: container.Priority_Queue(int, By_Value)` asked for `By_Value.call` before a block
+  written later, or in a file that sorts later, had supplied it: `impl Holder` ahead of
+  `impl By_Value` was `L0444`, and renaming a file made the same package compile. A block on a type
+  named outright, or on an alias of one, is now declared without resolving the type. A block whose
+  subject is written any other way still has to come after the blocks its subject depends on
+  ([known-gaps.md](docs/known-gaps.md#an-impl-block-whose-subject-instantiates-a-generic-ahead-of-a-block-its-bound-needs)).
 - An owned element of a `foreach` over a user iterator has the
   [region provenance](docs/design.md#allocator-regions-and-region-provenance) of its `next` call's
   result, as the result of a `next` called by hand has. It took the regions of what the loop
