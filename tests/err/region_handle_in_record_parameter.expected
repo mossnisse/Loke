@@ -1,0 +1,15 @@
+L0592
+@45:9
+this result is backed by `arena`
+L0592
+@51:9
+this result is backed by `arena`
+L0592
+@56:9
+this result is backed by `arena`
+L0592
+@62:9
+this result is backed by `arena`
+L0726
+@68:16
+`cells` is backed by an allocator region this procedure received

@@ -1664,7 +1664,10 @@ walk_foreach_binding_provenance :: proc(
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable), copies = !lent)
 		// A user's iterator says nothing of where in the source it lends.
 		element := s.kind == .Protocol ? nil : prov_concat_path(graph, prov_extend(graph, nil, proj_wild()), at)
-		prov_bind_element_region(graph, binding.symbol, prov_input_value(graph, s.iterable), element, binding.is_ref)
+		prov_bind_element_region(
+			graph, binding.symbol, prov_input_value(graph, s.iterable), element, binding.is_ref,
+			next = s.kind == .Protocol ? s.next_symbol : INVALID_SYMBOL,
+		)
 		// A lent or mutable element is the source's storage (design.md "Borrowing
 		// iteration"), so the binding views what `&iterable` would; the loop's own
 		// reads already hold that.

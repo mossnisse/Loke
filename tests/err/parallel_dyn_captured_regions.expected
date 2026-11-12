@@ -1,0 +1,9 @@
+warning[L0507]
+@16:39
+this aggregate literal clones `maker`, which may allocate
+L0732
+@25:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
+L0732
+@43:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join

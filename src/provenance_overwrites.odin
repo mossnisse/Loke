@@ -1,11 +1,10 @@
 // design.md "@(allocator_reset)": what a parameter received is gone from a place the
 // body wrote on every path to a read, so the read is in what those writes stored and
 // not in an allocator the caller supplied there. Region facts merge without regard to
-// control flow. The incoming value is added at each read (`prov_add_received_allocator`),
-// or seeded into a parameter's own entry (`prov_seed_parameter_region`), so a read records
-// the places written on every path to it, from the construction walk's control flow, which
-// no fact changes, and leaves the incoming value out there (`prov_received_replaced`,
-// `prov_received_region`).
+// control flow. The incoming value is seeded into a parameter's own entry
+// (`prov_seed_parameter_region`), so a read records the places written on every path to
+// it, from the construction walk's control flow, which no fact changes, and leaves the
+// incoming value out there (`prov_received_replaced`, `prov_received_region`).
 package lokec
 
 import "core:mem"

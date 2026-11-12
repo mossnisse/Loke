@@ -9631,7 +9631,9 @@ region provenance. Result provenance follows these rules:
   takes the result allocator's region provenance; a shared-storage logical clone
   keeps the source allocation's provenance.
 - An owning result built with an allocator parameter derives its region
-  provenance from that argument. A call whose body the checker follows is backed
+  provenance from that argument, and one built with a handle that a record or
+  `Option` parameter holds, passed by value or `inout`, from the handles that
+  argument holds. A call whose body the checker follows is backed
   by exactly the allocators that body builds the result with, so an allocator
   argument the body never uses backs nothing. A call it cannot follow, through a
   procedure value or a `dyn` slot, is backed by every allocator argument, and
@@ -9651,6 +9653,13 @@ region provenance. Result provenance follows these rules:
   parameter or a `^mut` or `[]mut` one, derives its region provenance the same
   way: after the call, that argument is backed by the regions of the allocator
   and moved-owner arguments the owner was built from.
+- An owned element of a [protocol](#iteration-protocol) loop is the result of
+  the step's `next` call ([Yield modes](#yield-modes)) and has that result's
+  region provenance, as the result of a `next` called by hand has: an item a
+  channel's receiver hands out is not in the receiver's regions, and an owner
+  taken out of a queue the iterable points at, or built with an allocator it
+  holds, is in that queue's or that allocator's. A lent or mutable element is
+  in the regions of the storage it views.
 
 A diagnostic identifies the escaping owner and its shorter-lived allocator
 region.

@@ -1,0 +1,87 @@
+// design.md "Allocator regions and region provenance": a copied handle keeps its region
+// identity, so an allocator a parameter received inside a record or an `Option`, by
+// value or `inout`, names its argument's region as one passed alone does. An owner
+// built with it may not outlive a local arena or cross to another thread.
+package main;
+
+import "core:mem";
+import "core:thread";
+
+Maker :: struct { allocator: mem.Allocator, made: int }
+
+build_inout :: proc(maker: inout Maker) -> [dynamic]int {
+	maker.made += 1;
+	cells: [dynamic]int via maker.allocator = {};
+	cells.append(7);
+	return cells;
+}
+
+build_value :: proc(maker: Maker) -> [dynamic]int {
+	cells: [dynamic]int via maker.allocator = {};
+	cells.append(7);
+	return cells;
+}
+
+build_option :: proc(allocator: Option(mem.Allocator)) -> [dynamic]int {
+	switch (allocator) {
+	case .some(chosen):
+		cells: [dynamic]int via chosen = {};
+		return cells;
+	case .none:
+	}
+	return {};
+}
+
+impl Maker {
+	build :: proc(self: inout) -> [dynamic]int {
+		cells: [dynamic]int via self.allocator = {};
+		return cells;
+	}
+}
+
+escape_inout :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	maker := Maker{arena.allocator(), 0};
+	return build_inout(inout maker);
+}
+
+escape_value :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	maker := Maker{arena.allocator(), 0};
+	return build_value(maker);
+}
+
+escape_option :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	return build_option(.some(arena.allocator()));
+}
+
+escape_method :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	maker := Maker{arena.allocator(), 0};
+	return maker.build();
+}
+
+cross :: proc(send: ^thread.Sender([dynamic]int), allocator: mem.Allocator) {
+	maker := Maker{allocator, 0};
+	cells := build_inout(inout maker);
+	_ = send.send(move(cells));
+}
+
+// The default allocator's region outlives every body.
+keep :: proc() -> [dynamic]int {
+	maker := Maker{mem.default_allocator(), 0};
+	return build_inout(inout maker);
+}
+
+main :: proc() {
+	channel := thread.Channel([dynamic]int).init(1);
+	send, receive := channel.split();
+	_ = escape_inout();
+	_ = escape_value();
+	_ = escape_option();
+	_ = escape_method();
+	cross(&send, mem.default_allocator());
+	_ = keep();
+	drop(receive);
+}

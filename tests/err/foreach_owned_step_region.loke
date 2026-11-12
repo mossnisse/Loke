@@ -1,0 +1,122 @@
+// design.md "Allocator regions and region provenance": an owned element of a protocol
+// loop has the region provenance of its `next` call's result, as the result of a `next`
+// called by hand has. Where that result names the iterator, the element is in what the
+// loop iterates and what its carriers and handles lead to: an owner taken out of a queue
+// the iterable points at, or built with an allocator it holds, may not cross to another
+// thread or outlive its arena.
+package main;
+
+import "core:mem";
+import "core:thread";
+
+Job :: struct { cells: [dynamic]int }
+
+// Hands back the owners a queue it points at holds.
+Drain :: struct { queue: ^mut [dynamic]Job }
+Drain_Iterator :: struct { queue: ^mut [dynamic]Job }
+
+impl Drain {
+	Element :: Job;
+
+	iter :: proc(self: ^) -> Drain_Iterator {
+		return {self.queue};
+	}
+}
+
+impl Drain_Iterator {
+	next :: proc(self: inout) -> Option(Job) {
+		if (self.queue.len() == 0) { return .none; }
+		return .some(self.queue.remove(0));
+	}
+}
+
+// Builds each owner with the allocator it holds.
+Fresh :: struct { allocator: mem.Allocator, count: int }
+Fresh_Iterator :: struct { allocator: mem.Allocator, left: int }
+
+impl Fresh {
+	Element :: Job;
+
+	iter :: proc(self: ^) -> Fresh_Iterator {
+		return {self.allocator, self.count};
+	}
+}
+
+impl Fresh_Iterator {
+	next :: proc(self: inout) -> Option(Job) {
+		if (self.left == 0) { return .none; }
+		self.left -= 1;
+		cells: [dynamic]int via self.allocator = {};
+		cells.append(self.left);
+		return .some(Job{move(cells)});
+	}
+}
+
+send_lent :: proc(send: ^thread.Sender(Job), queue: inout [dynamic]Job) {
+	foreach (job in Drain{&mut queue}) {
+		_ = send.send(move(job));
+	}
+}
+
+send_lent_by_hand :: proc(send: ^thread.Sender(Job), queue: inout [dynamic]Job) {
+	drain := Drain{&mut queue};
+	iterator := drain.iter();
+	job := iterator.next() or_else return;
+	_ = send.send(move(job));
+}
+
+send_built :: proc(send: ^thread.Sender(Job), allocator: mem.Allocator) {
+	foreach (job in Fresh{allocator, 2}) {
+		_ = send.send(move(job));
+	}
+}
+
+send_built_by_hand :: proc(send: ^thread.Sender(Job), allocator: mem.Allocator) {
+	fresh := Fresh{allocator, 2};
+	iterator := fresh.iter();
+	job := iterator.next() or_else return;
+	_ = send.send(move(job));
+}
+
+escape_drained :: proc() -> Job {
+	arena := mem.Arena.init();
+	queue: [dynamic]Job via arena.allocator() = {};
+	foreach (job in Drain{&mut queue}) { return job; }
+	return {};
+}
+
+escape_drained_named :: proc() -> Job {
+	arena := mem.Arena.init();
+	queue: [dynamic]Job via arena.allocator() = {};
+	drain := Drain{&mut queue};
+	foreach (job in drain) { return job; }
+	return {};
+}
+
+escape_built :: proc() -> Job {
+	arena := mem.Arena.init();
+	foreach (job in Fresh{arena.allocator(), 2}) { return job; }
+	return {};
+}
+
+// An owner built with the default allocator is in no region of the queue.
+keep_default :: proc() -> Job {
+	queue: [dynamic]Job = {};
+	foreach (job in Drain{&mut queue}) { return job; }
+	return {};
+}
+
+main :: proc() {
+	channel := thread.Channel(Job).init(4);
+	send, receive := channel.split();
+	queue: [dynamic]Job = {};
+	send_lent(&send, inout queue);
+	send_lent_by_hand(&send, inout queue);
+	send_built(&send, mem.default_allocator());
+	send_built_by_hand(&send, mem.default_allocator());
+	_ = escape_drained();
+	_ = escape_drained_named();
+	_ = escape_built();
+	_ = keep_default();
+	drop(receive);
+}

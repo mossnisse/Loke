@@ -25,3 +25,7 @@ L0724
 `Window` is `@(thread_affine)`, so it cannot cross to another thread
 @52:41
 while instantiating `Lazy(Window).get(
+L0726
+this value is backed by an allocator region this procedure received
+@47:6
+while instantiating `Lazy(Box(int)).get(

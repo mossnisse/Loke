@@ -74,12 +74,7 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 		}
 	}
 	if root, base, ok := prov_value_place_of(graph, id); ok {
-		at := prov_concat_path(graph, base, path)
-		set := prov_region_content_at(graph, root, at, query, id)
-		if query == .All {
-			prov_add_received_allocator(graph, &set, root, prov_type_at(graph.k.c, type, path), id, at)
-		}
-		return set
+		return prov_region_content_at(graph, root, prov_concat_path(graph, base, path), query, id)
 	}
 	if region, known := prov_read_storage_regions(graph, id, path, query); known {
 		return region
@@ -87,24 +82,6 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj_Ste
 		return prov_unknown_target_read(graph, carrier, region, prov_type_at(graph.k.c, type, path))
 	}
 	return prov_result_region(graph, id)
-}
-
-// design.md "@(allocator_reset)": an allocator a parameter received inside another
-// value, as an `Option(Allocator)`'s payload, a record's field, or what a carrier in
-// a record leads to, is one the analysis cannot name. Region facts record only this
-// body's writes there, so the incoming one is added at a read of `value` at `path` of
-// its root, unless a write on every path to the read replaced it
-// (`prov_received_replaced`). A parameter `prov_bind_parameters` gives a region of
-// its own names it by that.
-@(private = "file")
-prov_add_received_allocator :: proc(graph: ^Flow_Graph, set: ^Region_Set, root: Root_Id, type: Type_Id, value: Value_Id, path: []Proj_Step) {
-	c := graph.k.c
-	if root == NO_ROOT || !prov_root_is_parameter(graph, root) || !prov_holds_allocator(c, type) {
-		return
-	}
-	if !prov_type_keeps_argument_region(c, symbol_of(c, graph.roots[int(root)].symbol).type) && !prov_received_replaced(graph, value, path) {
-		set.unknown = true
-	}
 }
 
 // Whether `root` is one of this body's parameters, whose contents the caller
@@ -426,10 +403,9 @@ prov_region_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id, viewed := fals
 	sym := symbol_of(graph.k.c, id)
 	if aliases := graph.region_aliases[id]; len(aliases) > 0 {
 		for alias in aliases {
-			region_merge(&out, prov_region_content_at(graph, alias.root, alias.path, .All))
-			if sym != nil {
-				prov_add_received_allocator(graph, &out, alias.root, sym.type, alias.from, alias.path)
-			}
+			// What the parameter received is gone where every path to the read the
+			// binding names wrote the place (`Prov_Region_Alias.from`).
+			region_merge(&out, prov_region_content_at(graph, alias.root, alias.path, .All, alias.from))
 		}
 		if prov_aliases_settle(aliases) { return out }
 	}
@@ -815,7 +791,7 @@ prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // Whether a value of `type` holds an allocator handle anywhere in it, a record's
 // fields and a union's payloads included, not behind a carrier.
-@(private = "file")
+@(private)
 prov_holds_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return prov_record_holds(c, &c.holds_allocator, type, type_is_allocator)
 }
@@ -918,7 +894,6 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 			if region_is_empty(set) && type_is_allocator(c, value.type) {
 				set.unknown = true
 			}
-			prov_add_received_allocator(graph, &set, root, value.type, id, path)
 			return set
 		}
 		// A field of a temporary is in what produced it, each alternative of a
@@ -989,6 +964,16 @@ prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id, whole := true) -> R
 	case Prov_Form_Move:
 		return prov_viewed_region(graph, form.operand)
 	case Prov_Form_Call:
+		// design.md "Borrowed callable views", "Borrowed dynamic interface values":
+		// a view made by a conversion views what it was converted from: what a
+		// pointer views, or the callable itself, with the handles and owners it
+		// captured, which a call through the view gives its callee.
+		if underlying_kind(graph.k.c, prov_value(graph, id).type) == .Dyn && len(form.arguments) == 1 && form.arguments[0] != 0 {
+			#partial switch _ in form.call.operation {
+			case Call_Conversion, Call_Dyn_Conversion:
+				return prov_storage_region(graph, form.arguments[0])
+			}
+		}
 		return prov_call_viewed_region(graph, form)
 	case Prov_Form_Selector, Prov_Form_Index:
 		if _, _, ok := prov_value_place_of(graph, id); !ok {
@@ -1068,7 +1053,6 @@ prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, belo
 		if alias.target == 0 { known = false; continue }
 		root := prov_root_for_storage(graph, alias.target)
 		region_merge(&out, prov_region_content_at(graph, root, prov_concat_path(graph, alias.at, below), query))
-		prov_add_received_allocator(graph, &out, root, type, 0, nil)
 		// Read below what the parameter names, so no path of it says what this holds:
 		// it stands for what the whole argument reaches (`prov_reached_regions`), as
 		// the read through `carrier` decides (`region_read_through`).
@@ -1243,11 +1227,16 @@ prov_read_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 // `traversed`, names it there at `element` below what the loop iterates, so
 // what is stored through the leaf is in that storage too (design.md "Allocator
 // regions and region provenance"), as for a borrowed case binding.
+//
+// `next` is a protocol loop's, whose owned element is its result instead
+// (`prov_owned_step_region`).
 @(private)
-prov_bind_element_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable: Value_Id, element: []Proj_Step = nil, traversed := false) {
+prov_bind_element_region :: proc(
+	graph: ^Flow_Graph, id: Symbol_Id, iterable: Value_Id, element: []Proj_Step = nil, traversed := false, next := INVALID_SYMBOL,
+) {
 	prov_effect_scope(
 		graph, prov_effect_active(graph) && prov_effect_symbol_relevant(graph, id),
-		Prov_Effect_Element{id, iterable, prov_effect_copy(graph, element), traversed},
+		Prov_Effect_Element{id, iterable, prov_effect_copy(graph, element), traversed, next},
 	)
 	sym := symbol_of(graph.k.c, id)
 	if sym != nil && traversed && prov_type_has_region(graph.k.c, sym.type) {
@@ -1256,15 +1245,53 @@ prov_bind_element_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable: Va
 	if sym == nil || !(type_is_managed(graph.k.c, sym.type) || type_is_carrier(graph.k.c, sym.type)) {
 		return
 	}
-	set := prov_storage_region(graph, iterable)
-	// An iterator that hands out views, as `chunks_mut`'s does, is a record and
-	// no view itself: what it yields views what its own carriers do.
-	if prov_type_is_view_carrier(graph.k.c, sym.type) && !type_is_carrier(graph.k.c, prov_value(graph, iterable).type) {
-		region_merge(&set, prov_viewed_region(graph, iterable))
+	set, step := prov_owned_step_region(graph, sym, next)
+	if step != .Result {
+		region_merge(&set, prov_storage_region(graph, iterable))
+	}
+	switch step {
+	case .Result:
+	case .Iterator:
+		// The iterator was made from what the loop iterates, so what it leads to is
+		// what that names, there above, or its carriers lead to, handles included.
+		reached, _ := prov_reached_regions(graph, iterable, handles = true, loaded = true)
+		region_merge(&set, reached)
+	case .Storage:
+		// An iterator that hands out views, as `chunks_mut`'s does, is a record and
+		// no view itself: what it yields views what its own carriers do.
+		if prov_type_is_view_carrier(graph.k.c, sym.type) && !type_is_carrier(graph.k.c, prov_value(graph, iterable).type) {
+			region_merge(&set, prov_viewed_region(graph, iterable))
+		}
 	}
 	if !region_is_empty(set) {
 		prov_merge_region_of(graph, id, set)
 	}
+}
+
+// Where a loop element's regions come from: the storage the loop iterates; the
+// result of a protocol loop's `next` alone; or that and what its iterator leads to.
+@(private = "file")
+Prov_Step_Source :: enum { Storage, Result, Iterator }
+
+// design.md "Yield modes": an owned element is what `next` handed back, so it is
+// in what `next`'s result is (design.md "Procedure result contracts"), as the
+// result of a `next` called by hand is, and not in what the loop iterates: an
+// item a channel's receiver hands out was never in the region the receiver is.
+// `set` is what that result names besides `next`'s parameters. A result that
+// names them is also in what the iterator leads to. An element lent, or holding a
+// borrow, whose views are in the storage they view, or handed back by a `next`
+// with no body to summarize, is in the storage the loop iterates.
+@(private = "file")
+prov_owned_step_region :: proc(graph: ^Flow_Graph, sym: ^Symbol, next: Symbol_Id) -> (set: Region_Set, step: Prov_Step_Source) {
+	c := graph.k.c
+	if sym.borrowed_binding != .None || type_carries_borrow(c, sym.type).any || !prov_has_direct_body(c, next) {
+		return {}, .Storage
+	}
+	prov_note_summary_dependency(graph, next)
+	// A summary still to be made names nothing yet, as at a direct call.
+	summary, _ := result_summary(c, next)
+	set = Region_Set{default = summary.region.default, unknown = summary.region.unknown}
+	return set, region_is_parameter_backed(summary.region) ? .Iterator : .Result
 }
 
 // The storage a `&mut` loop leaf names: where the source is, or what its

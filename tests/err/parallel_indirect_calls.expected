@@ -25,7 +25,7 @@ this task may use `arena`'s allocator, which a task started earlier reserves unt
 
 L0732
 @131:3
-this task may use an allocator region this procedure cannot tell apart from it, which a task started earlier reserves until the join
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
 
 L0729
 @143:18

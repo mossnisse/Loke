@@ -1,0 +1,67 @@
+// design.md "Allocators and tasks": a callback operates on the regions its callee
+// passes it, and a view made by a conversion views the callable it was converted
+// from, so a call through a `dyn proc` view gives the callable the regions of the
+// handles and owners it captured. Two tasks calling through views of one callable
+// that allocates from a captured arena conflict, as two calling it directly do.
+package main;
+
+import "core:mem";
+
+Maker :: struct { allocator: mem.Allocator, scratch: [dynamic]int }
+
+// A managed capture: the record holds an owner beside the handle.
+captured_record :: proc() {
+	arena := mem.Arena.init();
+	maker := Maker{arena.allocator(), {}};
+	build := proc(n: i32) -> int capture(maker) {
+		cells: [dynamic]int via maker.allocator = {};
+		cells.append(int(n));
+		return cells.len();
+	};
+	x: int;
+	y: int;
+	parallel {
+		spawn x = (dyn proc(n: i32) -> int)(build)(1);
+		spawn y = (dyn proc(n: i32) -> int)(build)(2);
+	}
+}
+
+// The view kept in a local views the same callable.
+stored_view :: proc() {
+	arena := mem.Arena.init();
+	allocator := arena.allocator();
+	build := proc(n: i32) -> int capture(allocator) {
+		cells: [dynamic]int via allocator = {};
+		cells.append(int(n));
+		return cells.len();
+	};
+	view := (dyn proc(n: i32) -> int)(build);
+	x: int;
+	y: int;
+	parallel {
+		spawn x = view(1);
+		spawn y = view(2);
+	}
+}
+
+// The default provider accepts concurrent use, so nothing is reserved.
+captured_default :: proc() {
+	allocator := mem.default_allocator();
+	build := proc(n: i32) -> int capture(allocator) {
+		cells: [dynamic]int via allocator = {};
+		cells.append(int(n));
+		return cells.len();
+	};
+	x: int;
+	y: int;
+	parallel {
+		spawn x = (dyn proc(n: i32) -> int)(build)(1);
+		spawn y = (dyn proc(n: i32) -> int)(build)(2);
+	}
+}
+
+main :: proc() {
+	captured_record();
+	stored_view();
+	captured_default();
+}

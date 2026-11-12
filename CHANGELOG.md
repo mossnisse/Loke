@@ -10,6 +10,29 @@ checklist.
 
 ### Breaking changes
 
+- An allocator that a parameter received inside a record or an `Option`, by value or `inout`, names
+  its argument's region, as one passed alone or behind a pointer does
+  ([Allocator regions and region provenance](design.md#allocator-regions-and-region-provenance)).
+  It was a region of unknown provenance, which the escape checks accept: with
+  `Maker :: struct { allocator: Allocator }`, a `build(maker: inout Maker)` returning an owner made
+  `via maker.allocator` let its caller return storage of a local arena, and send an owner built with
+  a received allocator to another thread. These are now `L0592` and `L0726`, as they are when the
+  record is passed as `^Maker`. Upgrade by building the owner with an allocator that outlives it, or
+  by using it before the arena ends.
+- An owned element of a `foreach` over a user iterator is also in what the loop's iterable leads to
+  when its `next` hands back what the iterator reaches: an owner taken out of a queue the iterable
+  points at, or built with an allocator it holds. Only the regions of the iterated value itself
+  counted, so `foreach (job in Drain{&mut queue}) { return job; }` returned an owner backed by a
+  local arena, which is now `L0592`, and sending such an element to another thread is `L0726`, as
+  both were with `next()` called by hand. Upgrade by cloning the element with an allocator that
+  outlives the loop's storage.
+- A call through a `dyn proc` view gives the callable the regions of the handles and owners it
+  captured ([Allocators and tasks](design.md#allocators-and-tasks)): a view made by a conversion
+  views what it was converted from. The view was in no region, so two tasks calling through
+  `(dyn proc(n: i32) -> int)(build)`, with `build` capturing a record that holds an arena's
+  allocator, both allocated from that arena unchecked. This is now `L0732`, and where a captured
+  `Allocator` alone was already rejected the report names the arena. A callable that captured the
+  default allocator is no longer rejected. Upgrade by giving each task an arena of its own.
 - A task holds, until the join, the borrows found through the storage it is lent or given, at any
   depth ([Task borrows and the join](design.md#task-borrows-and-the-join), rationale under
   ["Tasks that borrow, joined by their block"](comments.md#tasks-that-borrow-joined-by-their-block)). A spawn held only its arguments'
@@ -1906,6 +1929,13 @@ checklist.
 
 ### Fixed
 
+- An owned element of a `foreach` over a user iterator has the
+  [region provenance](design.md#allocator-regions-and-region-provenance) of its `next` call's
+  result, as the result of a `next` called by hand has. It took the regions of what the loop
+  iterates, so a stage that received a `thread.Receiver` could not send on an item it received:
+  `foreach (job in jobs) { out.send(move(job)); }` was `L0726`, and so was sending the result of a
+  call through a plain procedure type that the item was moved into, while the same loop written
+  with `jobs.receive()` compiled.
 - `reserve(n)` and `try_reserve(n)` on a dynamic array that has to grow give it a capacity of
   exactly `n` ([Dynamic array container operations](design.md#dynamic-array-container-operations),
   rationale under ["`reserve` takes its capacity exactly"](comments.md#reserve-takes-its-capacity-exactly)).

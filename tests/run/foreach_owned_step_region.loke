@@ -1,0 +1,91 @@
+// design.md "Yield modes": an owned element is what `next` handed back, so it is in the
+// regions of `next`'s result and not of what the loop iterates. An item a channel's
+// receiver hands out is therefore not backed by a region the stage received with its
+// endpoints, and may cross to another thread again, by `foreach` as by hand.
+package main;
+
+import "core:fmt";
+import "core:thread";
+
+Job :: struct { cells: [dynamic]int }
+Result :: struct { totals: [dynamic]int }
+
+// A stage that passes owned items on.
+forward :: proc(jobs: move thread.Receiver(Job), out: move thread.Sender(Job)) {
+	foreach (job in jobs) {
+		switch (out.send(move(job))) {
+		case .ok:
+		case .err(_): return;
+		}
+	}
+}
+
+by_hand :: proc(jobs: move thread.Receiver(Job), out: move thread.Sender(Job)) {
+	for (;;) {
+		job := jobs.receive() or_else return;
+		switch (out.send(move(job))) {
+		case .ok:
+		case .err(_): return;
+		}
+	}
+}
+
+// Through a plain procedure type the result keeps the regions of the job moved
+// in (design.md "Procedure result contracts"), which are the received item's.
+serve :: proc(
+	jobs: move thread.Receiver($J), results: move thread.Sender($R), work: proc(state: inout int, job: move J) -> R,
+) {
+	state := 0;
+	foreach (job in jobs) {
+		result := work(inout state, move(job));
+		switch (results.send(move(result))) {
+		case .ok:
+		case .err(_): return;
+		}
+	}
+}
+
+total :: proc(state: inout int, job: move Job) -> Result {
+	sum := 0;
+	foreach (cell in job.cells) { sum += cell; }
+	state += sum;
+	result: Result = {};
+	result.totals.append(sum);
+	result.totals.append(state);
+	return result;
+}
+
+collect :: proc(results: move thread.Receiver(Result)) -> [dynamic]int {
+	totals: [dynamic]int = {};
+	foreach (result in results) {
+		foreach (value in result.totals) { totals.append(value); }
+	}
+	return totals;
+}
+
+main :: proc() {
+	first := thread.Channel(Job).init(2);
+	second := thread.Channel(Job).init(2);
+	third := thread.Channel(Job).init(2);
+	results := thread.Channel(Result).init(2);
+	totals: [dynamic]int;
+	parallel {
+		send, receive := first.split();
+		forwarded, staged := second.split();
+		handed, served := third.split();
+		answer, answers := results.split();
+		spawn totals = collect(move(answers));
+		spawn forward(move(receive), move(forwarded));
+		spawn by_hand(move(staged), move(handed));
+		spawn serve(move(served), move(answer), total);
+		foreach (count in 1 ..< 4) {
+			job: Job = {};
+			foreach (_ in 0 ..< count) { job.cells.append(count); }
+			switch (send.send(move(job))) {
+			case .ok:
+			case .err(_):
+			}
+		}
+	}
+	fmt.println(totals[:]);
+}

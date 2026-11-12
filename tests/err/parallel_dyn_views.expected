@@ -38,7 +38,7 @@ this write of `s` is not compatible with the mutable pointer of it that is still
 
 L0732
 @125:3
-this task may use an allocator region this procedure cannot tell apart from it, which a task started earlier reserves until the join
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
 
 L0731
 @142:13
