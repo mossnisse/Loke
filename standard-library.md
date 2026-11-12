@@ -1697,6 +1697,11 @@ builder unchanged on allocation failure. `finish` applies the builder
 allocator's failure policy. `copy_string` and `try_copy_string` leave the
 builder unchanged.
 
+`reserve(additional)` makes room for `additional` more bytes than are written.
+A builder that has to grow gets exactly that capacity, as a
+[dynamic array's `reserve`](design.md#dynamic-array-container-operations) does,
+so code that reserves before each append reserves ahead.
+
 A reservation whose total exceeds the largest `int` is an allocation failure:
 `try_reserve` reports it and `reserve` applies the allocator's policy.
 
@@ -2616,7 +2621,9 @@ compared, so that a call reads the same.
   temporary or `move(x)` transfers. Under
   [container insertion](design.md#container-insertion), a failed `try_` form drops
   an element it took. A caller who must keep the element reserves first and then
-  inserts, which cannot fail for want of space.
+  inserts, which cannot fail for want of space. `reserve` takes its capacity
+  exactly, so a loop that does this for each element reserves ahead, as on a
+  [dynamic array](design.md#dynamic-array-container-operations).
 - **Move-only elements.** Held in full. Members that copy an element are bound on
   `is_copyable(T)` and are absent from a move-only instance. As for every
   container, the [sequence interfaces](#standard-interface-catalogue) then do not

@@ -48,7 +48,11 @@ impl String_Builder {
 
 	cap :: proc(self) -> int ---;
 
-	// Room for `additional` more bytes, on top of what is already written.
+	/*
+		Room for `additional` more bytes, on top of what is already written. A
+		builder that has to grow gets exactly that capacity, as a dynamic array's
+		`reserve` does.
+	*/
 	reserve :: proc(self: inout String_Builder, additional: int) ---;
 
 	try_reserve :: proc(self: inout String_Builder, additional: int) -> Status(Allocator_Error) ---;

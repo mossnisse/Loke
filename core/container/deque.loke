@@ -541,16 +541,15 @@ impl Deque($T) {
 	@(private)
 	grow :: proc(self: inout, wanted: int) {
 		if (!self.must_grow(wanted)) { return; }
-		ring := make([dynamic]T, 0, self.grown_capacity(wanted), self.allocator);
-		_ = self.relocate(move(ring), 0);
+		capacity := self.grown_capacity(wanted);
+		self.reserve(capacity);
 	}
 
 	@(private)
 	try_grow :: proc(self: inout, wanted: int) -> Status(Allocator_Error) {
 		if (!self.must_grow(wanted)) { return .ok; }
-		ring := try_make([dynamic]T, 0, self.grown_capacity(wanted), self.allocator) or_return;
-		_ = self.relocate(move(ring), 0);
-		return .ok;
+		capacity := self.grown_capacity(wanted);
+		return self.try_reserve(capacity);
 	}
 
 	// Each requires a free slot.

@@ -42,11 +42,14 @@ main :: proc() {
 	ys.reserve(4);
 	fmt.println(ys.cap());
 
-	// `make`, a literal, and a clone are sized by the same request.
+	// `make`, a literal, a clone, and runes from a string are sized by the same
+	// request.
 	made := make([dynamic]u32, 2, 5);
 	literal: [dynamic]u32 = {1, 2, 3};
 	copied := literal.clone();
 	fmt.println(made.len(), made.cap(), literal.cap(), copied.cap());
+	runes := "héllo".to_runes();
+	fmt.println(runes.len(), runes.cap());
 
 	// Adding elements still grows geometrically: a thousand of them move the
 	// array a handful of times, by `append` and by `resize` alike.

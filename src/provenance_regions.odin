@@ -985,7 +985,7 @@ prov_viewed_region :: proc(graph: ^Flow_Graph, id: Value_Id, whole := true) -> R
 		if info := underlying_info(graph.k.c, prov_value(graph, id).type); info != nil {
 			viewed = info.element
 		}
-		out, known := prov_carrier_storage_regions(graph, id, nil, viewed, .All)
+		out, known := prov_carrier_storage_regions(graph, id, nil, .All)
 		// One a parameter holds, which no write here pointed anywhere, views what its
 		// argument's carriers lead to (`prov_region_content_at`).
 		if root, path, _ := prov_value_place_of(graph, id); !known && root != NO_ROOT && prov_root_is_parameter(graph, root) {
@@ -1037,15 +1037,15 @@ prov_read_storage_regions :: proc(graph: ^Flow_Graph, id: Value_Id, path: []Proj
 	if carrier == 0 { return {}, false }
 	below := prov_concat_path(graph, prov_path_below_carrier(graph, id), path)
 	type := prov_type_at(graph.k.c, prov_value(graph, id).type, path)
-	out, known := prov_carrier_storage_regions(graph, carrier, below, type, query)
+	out, known := prov_carrier_storage_regions(graph, carrier, below, query)
 	region_read_through(&out, prov_region_read(graph.k.c, type))
 	return out, known
 }
 
-// What `carrier`'s known targets hold at `below`, a value of `type`, and whether every
-// target it may have is known.
+// What `carrier`'s known targets hold at `below`, and whether every target it may have
+// is known.
 @(private = "file")
-prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, below: []Proj_Step, type: Type_Id, query: Region_Query) -> (Region_Set, bool) {
+prov_carrier_storage_regions :: proc(graph: ^Flow_Graph, carrier: Value_Id, below: []Proj_Step, query: Region_Query) -> (Region_Set, bool) {
 	out := Region_Set{}
 	aliases := prov_place_aliases(graph, carrier, unresolved = false)
 	known := len(aliases) > 0
@@ -1278,13 +1278,14 @@ Prov_Step_Source :: enum { Storage, Result, Iterator }
 // result of a `next` called by hand is, and not in what the loop iterates: an
 // item a channel's receiver hands out was never in the region the receiver is.
 // `set` is what that result names besides `next`'s parameters. A result that
-// names them is also in what the iterator leads to. An element lent, or holding a
-// borrow, whose views are in the storage they view, or handed back by a `next`
-// with no body to summarize, is in the storage the loop iterates.
+// names them is also in what the iterator leads to. An element of a loop with no
+// `next` (`INVALID_SYMBOL`), lent, or holding a borrow, whose views are in the
+// storage they view, or handed back by a `next` with no body to summarize, is in
+// the storage the loop iterates.
 @(private = "file")
 prov_owned_step_region :: proc(graph: ^Flow_Graph, sym: ^Symbol, next: Symbol_Id) -> (set: Region_Set, step: Prov_Step_Source) {
 	c := graph.k.c
-	if sym.borrowed_binding != .None || type_carries_borrow(c, sym.type).any || !prov_has_direct_body(c, next) {
+	if next == INVALID_SYMBOL || sym.borrowed_binding != .None || type_carries_borrow(c, sym.type).any || !prov_has_direct_body(c, next) {
 		return {}, .Storage
 	}
 	prov_note_summary_dependency(graph, next)

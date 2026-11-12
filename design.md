@@ -1284,7 +1284,9 @@ connections.try_append(connect("c.example")) or_return;  // dropped if the appen
 
 A caller that must keep the element when space runs out reserves first, with
 `try_reserve`, and then inserts with `move(...)`, which cannot fail for want of
-space.
+space. `reserve` takes its capacity exactly, so a loop that does this for each
+element reserves ahead, as
+[dynamic array container operations](#dynamic-array-container-operations) shows.
 
 #### Dynamic array container operations
 

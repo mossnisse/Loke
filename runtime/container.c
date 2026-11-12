@@ -64,7 +64,7 @@ static void *dyn_at(const loke_rt_dynamic_v1 *self, const loke_rt_container_ops_
  * minimum. The exact sequence is pinned by the runtime tests and is deliberately
  * not a language guarantee. This is the capacity an operation that adds elements
  * grows to; a requested capacity is taken exactly, by `loke_rt_v1_dyn_reserve`. */
-static int32_t dyn_growth_target(int64_t cap, int64_t min_capacity, int64_t *out) {
+static int64_t dyn_growth_target(int64_t cap, int64_t min_capacity) {
 	int64_t want = min_capacity;
 	if (cap > 0) {
 		int64_t doubled;
@@ -72,31 +72,27 @@ static int32_t dyn_growth_target(int64_t cap, int64_t min_capacity, int64_t *out
 			want = doubled;
 		}
 	}
-	if (want < 8) {
-		want = 8;
-	}
-	if (want < min_capacity) {
-		return 0;
-	}
-	*out = want;
-	return 1;
+	return want < 8 ? 8 : want;
 }
 
-/* Moves the storage to hold `target` elements, which is more than it holds now. */
-static int32_t dyn_grow_storage(
+/* Moves the storage to hold exactly `target` elements, at least the length. */
+static int32_t dyn_set_capacity(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t target) {
 	uint64_t old_bytes, new_bytes;
 	void *storage;
 
-	if (!loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
+	if (!loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &old_bytes) ||
+	    !loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
 		return 0;
 	}
-	if (!loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &old_bytes)) {
-		return 0;
-	}
-	/* A zero-sized element needs no storage at all, and `_aligned_realloc` of
-	 * zero bytes would answer NULL and read as a failure. */
+	/* No element left, or a zero-sized element, whose capacity never has storage
+	 * behind it; `_aligned_realloc` of zero bytes would answer NULL and read as a
+	 * failure. */
 	if (new_bytes == 0) {
+		if (self->data != 0) {
+			loke_rt_v1_free(self->allocator, self->data, old_bytes, sane_container_align(ops->elem_align));
+		}
+		self->data = 0;
 		self->cap = target;
 		return 1;
 	}
@@ -123,7 +119,7 @@ int32_t loke_rt_v1_dyn_reserve(
 	if (min_capacity <= self->cap) {
 		return 1;
 	}
-	return dyn_grow_storage(self, ops, min_capacity);
+	return dyn_set_capacity(self, ops, min_capacity);
 }
 
 /* design.md "What the unwind runs, and what it does not": the caller keeps the
@@ -221,9 +217,7 @@ static int32_t dyn_regrow(
 	if (need <= self->cap && !force) {
 		return 1;
 	}
-	if (!dyn_growth_target(self->cap, need, &target)) {
-		return 0;
-	}
+	target = dyn_growth_target(self->cap, need);
 	if (!loke_rt_v1_checked_bytes(target, ops->elem_size, &bytes)) {
 		return 0;
 	}
@@ -469,11 +463,8 @@ int32_t loke_rt_v1_dyn_resize(
 	loke_rt_v1_dyn_bind(self);
 	/* A resize adds elements, so it grows as `append` does: lengthening an array
 	 * one element at a time stays linear. */
-	if (new_len > self->cap) {
-		int64_t target;
-		if (!dyn_growth_target(self->cap, new_len, &target) || !dyn_grow_storage(self, ops, target)) {
-			return 0;
-		}
+	if (new_len > self->cap && !dyn_set_capacity(self, ops, dyn_growth_target(self->cap, new_len))) {
+		return 0;
 	}
 	/* Every Loke zero value is all-zero bits, so the new tail is one memset and
 	 * the drop of an untouched element is the no-op every hook already handles. */
@@ -487,8 +478,6 @@ int32_t loke_rt_v1_dyn_resize(
 int32_t loke_rt_v1_dyn_shrink(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
 	int64_t target = self->len < min_capacity ? min_capacity : self->len;
-	uint64_t old_bytes, new_bytes;
-	void *storage;
 
 	if (min_capacity < 0) {
 		loke_rt_v1_container_fault("a container capacity cannot be negative");
@@ -496,28 +485,7 @@ int32_t loke_rt_v1_dyn_shrink(
 	if (target >= self->cap) {
 		return 1;
 	}
-	if (!loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &old_bytes) ||
-	    !loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
-		return 0;
-	}
-	/* No element left, or a zero-sized element, whose capacity never had
-	 * storage behind it. */
-	if (new_bytes == 0) {
-		if (self->data != 0) {
-			loke_rt_v1_free(self->allocator, self->data, old_bytes, sane_container_align(ops->elem_align));
-		}
-		self->data = 0;
-		self->cap = target;
-		return 1;
-	}
-	storage = loke_rt_v1_resize(
-		self->allocator, self->data, old_bytes, new_bytes, sane_container_align(ops->elem_align));
-	if (storage == 0) {
-		return 0; /* the old allocation is still live and unchanged */
-	}
-	self->data = storage;
-	self->cap = target;
-	return 1;
+	return dyn_set_capacity(self, ops, target);
 }
 
 /* ------------------------------------------------------------------- map -- */

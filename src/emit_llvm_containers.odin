@@ -710,7 +710,6 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		status = status_call(e, "dyn_resize", ops)
 
 	case .Reserve:
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_dyn_bind(ptr %%arg0)")
 		status = status_call(e, "dyn_reserve", ops)
 
 	case .Shrink:
@@ -748,7 +747,6 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, value))
 
 	case .Map_Reserve:
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_map_bind(ptr %%arg0)")
 		status = status_call(e, "map_reserve", ops)
 
 	case .Map_Shrink:

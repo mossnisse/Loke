@@ -226,7 +226,7 @@ impl Task_Scope {
 		// `reserve` takes its capacity exactly, so the list doubles here rather
 		// than move for every thread.
 		if (self.threads.len() == self.threads.cap()) {
-			wanted := self.threads.cap() * 2 + 4;
+			wanted := self.threads.cap() * 2 + 8;
 			self.threads.reserve(wanted);
 		}
 		handle := rt_create_thread(nil, 0, thread_main, frame, 0, nil);

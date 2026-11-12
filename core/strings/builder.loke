@@ -40,7 +40,11 @@ impl String_Builder {
 	len :: proc(self) -> int { return self.data.len(); }
 	cap :: proc(self) -> int { return self.data.cap(); }
 
-	/// Room for `additional` more bytes, on top of what is already written.
+	/**
+		Room for `additional` more bytes, on top of what is already written. A
+		builder that has to grow gets exactly that capacity, as a dynamic array's
+		`reserve` does.
+	*/
 	reserve :: proc(self: inout String_Builder, additional: int) {
 		wanted := wanted_capacity(self.data.len(), additional);
 		self.data.reserve(wanted);
