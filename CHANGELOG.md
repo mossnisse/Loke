@@ -1952,6 +1952,16 @@ checklist.
 
 ### Fixed
 
+- A copy of text made by `text.copy()`, `strings.copy`, or `strings.try_copy` is in the region of
+  the allocator it was copied into, the default provider's when none is named, and in no region of
+  the text it read
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
+  It also kept the regions of its source, so a procedure lent a record could not send
+  `strings.copy(state.name)` or `state.name.copy()` to another thread (`L0726`), and a task given
+  such a copy reserved the arena its source was in until the join (`L0732`); only a concatenation
+  such as `"" + state.name` was accepted. A copy into an allocator the procedure received is
+  rejected as before, and so is `state.name.clone()`, a logical copy that shares its source's
+  allocation.
 - The order of a package's `impl` blocks, and of its files, no longer decides whether a generic's
   bound holds ([when statement](docs/design.md#when-statement): file-scope declarations may appear
   in any order). A block on a record was declared by resolving the record's fields, so a field such

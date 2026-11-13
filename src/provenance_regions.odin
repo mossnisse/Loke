@@ -1586,8 +1586,21 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 	if operation, conversion := v.operation.(Call_Text_Conversion); conversion && text_conversion_copies(operation.op) {
 		return Region_Set{default = true}
 	}
-	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
+	// design.md "Allocator regions and region provenance": `text.copy()` is a
+	// string in an allocation of its own, from the default provider, with none of
+	// the regions of the text it read; a `clone` shares its source's.
+	if operation, text := v.operation.(Call_Text); text && operation.op == .Copy {
 		return Region_Set{default = true}
+	}
+	if sym := symbol_of(c, v.resolution.symbol); sym != nil {
+		#partial switch sym.builtin {
+		case .Default_Allocator:
+			return Region_Set{default = true}
+		case .Strings_Allocate:
+			// The primitive under `strings.copy`: new storage from its allocator
+			// operand, with none of the viewed text's.
+			return prov_allocation_region(graph, bound)
+		}
 	}
 	// Also here, because a stored call result is consulted before `prov_region_of`.
 	if set, ok := prov_handle_region(graph, v, prov_receiver_value(form.arguments)); ok {

@@ -1,0 +1,53 @@
+// design.md "Allocator regions and region provenance": a copy of text is in the
+// region of the allocator it was copied into, so one built with an allocator the
+// procedure received may not cross to another thread, and a task given one
+// reserves that allocator. A `clone` of a string is a logical copy that keeps
+// its source's allocation, and with it the source's region.
+package main;
+
+import "core:mem";
+import "core:strings";
+import "core:thread";
+
+State :: struct { name: string }
+
+send_names :: proc(out: ^thread.Sender(string), state: ^State, allocator: Allocator) {
+	_ = out.send(strings.copy(state.name, allocator));
+	_ = out.send(state.name.clone());
+	switch (strings.try_copy(state.name, allocator)) {
+	case .ok(copied): _ = out.send(move(copied));
+	case .err(_):
+	}
+	// In the default provider, whatever the source is in.
+	_ = out.send(strings.copy(state.name));
+	_ = out.send(state.name.copy());
+}
+
+length :: proc(name: move string) -> int {
+	return name.len();
+}
+
+build :: proc(allocator: Allocator) -> int {
+	built := strings.copy("built", allocator);
+	return built.len();
+}
+
+main :: proc() {
+	channel := thread.Channel(string).init(8);
+	send, receive := channel.split();
+	arena := mem.Arena.init();
+	state := State{strings.copy("arena text", arena.allocator())};
+	send_names(&send, &state, mem.default_allocator());
+	drop(send);
+	drop(receive);
+
+	first, second, third, fourth: int;
+	parallel {
+		spawn first = length(strings.copy(state.name, arena.allocator()));
+		spawn second = build(arena.allocator());
+	}
+	parallel {
+		spawn third = length(state.name.clone());
+		spawn fourth = build(arena.allocator());
+	}
+}

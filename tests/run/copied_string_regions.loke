@@ -1,0 +1,57 @@
+// design.md "Allocator regions and region provenance": `text.copy()` and
+// `strings.copy` build a new string in the allocator they copy into, the default
+// provider when none is named, which shares nothing with the text they read. A
+// copy of a string a procedure was lent is therefore not backed by a region the
+// procedure received, and may cross to another thread (design.md
+// "@(cross_thread)"); a task given one reserves nothing of the source's
+// (design.md "Allocators and tasks").
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:strings";
+import "core:thread";
+
+State :: struct { name: string }
+
+send_names :: proc(out: ^thread.Sender(string), state: ^State, view: string_view) {
+	_ = out.send(strings.copy(state.name));
+	_ = out.send(strings.copy(state.name, mem.default_allocator()));
+	_ = out.send(state.name.copy());
+	_ = out.send(view.copy());
+	switch (strings.try_copy(view)) {
+	case .ok(copied): _ = out.send(move(copied));
+	case .err(_):
+	}
+}
+
+length :: proc(name: move string) -> int {
+	return name.len();
+}
+
+build :: proc(allocator: Allocator) -> int {
+	built := strings.copy("built", allocator);
+	return built.len();
+}
+
+main :: proc() {
+	channel := thread.Channel(string).init(8);
+	send, receive := channel.split();
+	arena := mem.Arena.init();
+	state := State{strings.copy("arena text", arena.allocator())};
+	send_names(&send, &state, "viewed");
+	drop(send);
+	foreach (name in receive) {
+		fmt.println(name);
+	}
+
+	// Each task owns a copy in the default provider, so the arena the source is
+	// in is free for a third task and for the parent.
+	first, second, third: int;
+	parallel {
+		spawn first = length(strings.copy(state.name));
+		spawn second = length(state.name.copy());
+		spawn third = build(arena.allocator());
+	}
+	fmt.println(first, second, third);
+}
