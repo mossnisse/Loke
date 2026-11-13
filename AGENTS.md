@@ -68,3 +68,7 @@ bug.
 See [Testing and verification](docs/compiler-architecture.md#testing-and-verification)
 for commands, individual test selection, and troubleshooting. For performance
 changes, measure before and after with `perf.ps1` as described there.
+
+## Guidelines
+- When reviewing code, try to find ways to simplify and shorten the code, don't only try to find bugs.
+- When edit and change the code, you own the code. Leave the code in good health. If needed do some refactoring for simplifications and increase code quality, so the code doesn't spagethify with repeated edits. 
