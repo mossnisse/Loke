@@ -19,8 +19,9 @@
 // which copies known-valid UTF-8 into string storage from a *supplied*
 // allocator. Every built-in text operation allocates from the default provider,
 // so this is the one thing a library cannot express — `copy` and `try_copy`
-// below are its public face, and every string-returning procedure in the rest of
-// the standard library goes through them.
+// below are its public face. `String_Builder.copy_string` and `fmt.to_string`
+// call it directly, and the rest of the standard library goes through `copy` and
+// `try_copy` or a builder.
 @(public)
 package strings;
 

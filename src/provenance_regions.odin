@@ -1583,13 +1583,10 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 	if prov_call_keeps_shared_handle(graph, v, result_type) {
 		return prov_storage_region(graph, bound[0])
 	}
-	if operation, conversion := v.operation.(Call_Text_Conversion); conversion && text_conversion_copies(operation.op) {
-		return Region_Set{default = true}
-	}
-	// design.md "Allocator regions and region provenance": `text.copy()` is a
-	// string in an allocation of its own, from the default provider, with none of
-	// the regions of the text it read; a `clone` shares its source's.
-	if operation, text := v.operation.(Call_Text); text && operation.op == .Copy {
+	// design.md "Allocator regions and region provenance": a copy of text is in
+	// the region of the allocator it was copied into and in none of the text it
+	// read; a string's `clone` shares its source's allocation.
+	if text_call_copies(v) {
 		return Region_Set{default = true}
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil {
@@ -1597,8 +1594,8 @@ prov_call_region :: proc(graph: ^Flow_Graph, id: Value_Id, result_type: Type_Id)
 		case .Default_Allocator:
 			return Region_Set{default = true}
 		case .Strings_Allocate:
-			// The primitive under `strings.copy`: new storage from its allocator
-			// operand, with none of the viewed text's.
+			// The primitive under `strings.copy`, the builder's `copy_string`, and
+			// `fmt.to_string`: new storage from its allocator operand.
 			return prov_allocation_region(graph, bound)
 		}
 	}

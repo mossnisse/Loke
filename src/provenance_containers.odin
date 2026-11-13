@@ -173,19 +173,21 @@ text_reads_bytes :: proc(v: ^Expr_Call) -> bool {
 	return true
 }
 
-// design.md "string type conversions": these copy into the default allocator,
-// where the others borrow their operand.
-text_conversion_copies :: proc(op: Text_Conversion) -> bool {
-	return op == .String_From_Bytes || op == .String_From_C_View || op == .String_From_Runes
+// Whether a built-in text operation copies its operand into new storage from
+// the default provider, where the others borrow it: `text.copy()` (design.md
+// "Allocator regions and region provenance") and the copying conversions
+// (design.md "string type conversions").
+text_call_copies :: proc(v: ^Expr_Call) -> bool {
+	#partial switch operation in v.operation {
+	case Call_Text:
+		return operation.op == .Copy
+	case Call_Text_Conversion:
+		return operation.op == .String_From_Bytes || operation.op == .String_From_C_View || operation.op == .String_From_Runes
+	}
+	return false
 }
 
 @(private = "file")
 text_result_borrows :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> bool {
-	#partial switch operation in v.operation {
-	case Call_Text:
-		if operation.op == .Copy { return false }
-	case Call_Text_Conversion:
-		if text_conversion_copies(operation.op) { return false }
-	}
-	return prov_type_or_wrapped(graph.k.c, prov_type(graph, v), type_is_carrier)
+	return !text_call_copies(v) && prov_type_or_wrapped(graph.k.c, prov_type(graph, v), type_is_carrier)
 }

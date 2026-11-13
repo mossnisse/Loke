@@ -1,15 +1,19 @@
 L0726
-@15:15
-this value is backed by an allocator region this procedure received
-L0726
 @16:15
 this value is backed by an allocator region this procedure received
 L0726
-@18:33
+@17:15
+this value is backed by an allocator region this procedure received
+a string's `clone` shares its source's allocation; `copy()` makes one of its own
+L0726
+@19:33
 `copied` is backed by an allocator region this procedure received
-L0732
-@47:3
-this task may use `arena`'s allocator, which a task started earlier reserves until the join
+L0726
+@25:15
+this value is backed by an allocator region this procedure received
 L0732
 @51:3
+this task may use `arena`'s allocator, which a task started earlier reserves until the join
+L0732
+@55:3
 this task may use `arena`'s allocator, which a task started earlier reserves until the join

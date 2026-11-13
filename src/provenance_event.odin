@@ -199,6 +199,18 @@ prov_drop_event_diagnostics :: proc(c: ^Compiler, program: ^Prov_Effect_Program)
 	shrink_diagnostics(c, kept)
 }
 
+// design.md "Allocator regions and region provenance": a string's `clone` or
+// `try_clone` is a logical copy that keeps its source's allocation, so naming an
+// allocator for it changes nothing; `copy()` is the copy with storage of its own.
+@(private = "file")
+prov_is_string_clone :: proc(c: ^Compiler, e: Expr) -> bool {
+	call, is_call := e.(^Expr_Call)
+	if !is_call { return false }
+	contract := symbol_of(c, call_contract_declaration(c, call))
+	if contract == nil || (contract.synth != .Clone && contract.synth != .Try_Clone) { return false }
+	return type_underlying(c, contract.owner_type) == TYPE_STRING
+}
+
 @(private)
 prov_materialize_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operation) {
 	switch op in operation {
@@ -224,7 +236,11 @@ prov_materialize_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operati
 				"%s is backed by an allocator region this procedure received, which another thread may not be allowed to use",
 				op.owner,
 			)
-			add_notef(graph.k.c, op.span, "build it with the default allocator, or in the thread that uses it")
+			if prov_is_string_clone(graph.k.c, prov_value(graph, op.value).origin) {
+				add_notef(graph.k.c, op.span, "a string's `clone` shares its source's allocation; `copy()` makes one of its own")
+			} else {
+				add_notef(graph.k.c, op.span, "build it with the default allocator, or in the thread that uses it")
+			}
 		}
 	case Prov_Event_Static_Escape:
 		if region := prov_result_region(graph, op.value); region_has_local(region) {

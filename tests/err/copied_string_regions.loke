@@ -1,8 +1,9 @@
 // design.md "Allocator regions and region provenance": a copy of text is in the
 // region of the allocator it was copied into, so one built with an allocator the
 // procedure received may not cross to another thread, and a task given one
-// reserves that allocator. A `clone` of a string is a logical copy that keeps
-// its source's allocation, and with it the source's region.
+// reserves that allocator; a builder's `copy_string` follows the same rule. A
+// `clone` of a string is a logical copy that keeps its source's allocation, and
+// with it the source's region.
 package main;
 
 import "core:mem";
@@ -11,7 +12,7 @@ import "core:thread";
 
 State :: struct { name: string }
 
-send_names :: proc(out: ^thread.Sender(string), state: ^State, allocator: Allocator) {
+send_names :: proc(out: ^thread.Sender(string), state: ^State, allocator: Allocator, builder: ^strings.String_Builder) {
 	_ = out.send(strings.copy(state.name, allocator));
 	_ = out.send(state.name.clone());
 	switch (strings.try_copy(state.name, allocator)) {
@@ -21,6 +22,8 @@ send_names :: proc(out: ^thread.Sender(string), state: ^State, allocator: Alloca
 	// In the default provider, whatever the source is in.
 	_ = out.send(strings.copy(state.name));
 	_ = out.send(state.name.copy());
+	_ = out.send(builder.copy_string(allocator));
+	_ = out.send(builder.copy_string());
 }
 
 length :: proc(name: move string) -> int {
@@ -37,7 +40,8 @@ main :: proc() {
 	send, receive := channel.split();
 	arena := mem.Arena.init();
 	state := State{strings.copy("arena text", arena.allocator())};
-	send_names(&send, &state, mem.default_allocator());
+	builder := strings.init(arena.allocator());
+	send_names(&send, &state, mem.default_allocator(), &builder);
 	drop(send);
 	drop(receive);
 

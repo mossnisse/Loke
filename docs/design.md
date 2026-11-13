@@ -9706,10 +9706,11 @@ region provenance. Result provenance follows these rules:
   newly allocated storage takes the destination allocator's region, while a
   logical copy of a `string` or shared handle keeps its existing allocation's
   region. Generated copies apply this rule recursively to fields and container
-  elements; a custom copy hook uses its result's region provenance. A string
-  in an allocation of its own is made by `text.copy()` or
-  [`strings.copy`](standard-library.md#corestrings): it has the region
-  provenance of the allocator it was copied into and none of its source's.
+  elements; a custom copy hook uses its result's region provenance.
+  `text.copy()` and the [`core:strings`](standard-library.md#corestrings)
+  procedures `copy` and `try_copy` copy the bytes into new storage: the result
+  has the region provenance of the allocator it was copied into and none of its
+  source's.
 - An owner a callee leaves in an argument it may write, through an `inout`
   parameter or a `^mut` or `[]mut` one, derives its region provenance the same
   way: after the call, that argument is backed by the regions of the allocator
