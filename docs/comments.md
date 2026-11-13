@@ -1117,13 +1117,58 @@ inside one expression, and making it an error would reject
 flow analysis and is easy to predict. The cost is that
 `return .ok(list) if list.len() > 0 else .err(.Empty);` still clones.
 
-The rule stops at `return`. `p := Pair{list, 1};` still clones `list` when
-nothing reads it again, since
-[last-use transfer](design.md#last-use-transfer) covers a binding or an
-assignment of a whole local and not an operand inside one. Extending it is
-[an open question](open-questions.md#last-use-transfer-of-construction-operands).
+The rule stops at `return`. `p := Pair{list, 1};` is a binding, where
+[last-use transfer](design.md#last-use-transfer) decides by liveness whether
+`list` is copied
+([Last-use transfer of construction operands](#last-use-transfer-of-construction-operands)).
 A call's argument is not an operand either: the callee decides how it takes
 its parameter, and `return wrap(list);` means what `wrap(list)` means anywhere.
+
+### Last-use transfer of construction operands
+
+`third := second;` moved a local at its last use, and `p := Pair{list, 1};`
+cloned `list` when nothing read it again, because
+[last-use transfer](design.md#last-use-transfer) covered only the bound value
+itself. A procedure that fills several locals and assembles them into a record
+or a result it goes on using allocated once per operand, or wrote `move(...)`
+around each. The rule now covers the operands of a bound or assigned
+construction.
+
+The operands are those of a
+[returned construction](design.md#returned-constructions), so one definition
+says what a construction can take from a local, and a local named twice is
+copied for the same reason as there. The liveness analysis sees the reads of
+one statement in evaluation order and could move the `list` of
+`Pair{list.len(), list}` while copying that of `Pair{list, list.len()}`.
+Counting names gives both the answer the returned rule gives, and predicting a
+copy needs no evaluation-order rule.
+
+The rule stops at a binding or an assignment because the exclusions are judged
+on a destination. A `via` is written on the destination's declaration, and a
+stored borrow is one the destination keeps. A construction that is a call's
+argument has a temporary for a destination, and how the callee keeps it is the
+call's business, so its operands are copied as before. A
+[container insertion](design.md#container-insertion), `box`, and `shared` are
+left out for the allocator each clones with, which is
+[an open question](open-questions.md#last-use-transfer-into-a-container-box-or-shared).
+
+It stays a second rule beside the returned one. Nothing follows a `return` but
+deferred statements, so that rule moves without asking about liveness and
+reports a deferred read. Last-use transfer replaces a copy that is valid as
+written, so a later read, deferred or not, keeps the copy. Merging them would
+either let `return .ok(list);` clone silently under a `defer`, which the
+returned rule exists to prevent, or reject a bound construction whose operand
+is read afterwards, which is ordinary code. For the same reason a move-only
+operand still needs its `move` here and not in a `return`: whether a program
+compiles should not depend on what a later statement reads.
+
+The transfer is the `move` the programmer could have written and inherits its
+checks, as the transfer of a whole local does. Two programs that compiled
+through the clone are errors: a borrow of the local that a callee stored
+through a pointer and that is still in use, and a destination that outlives the
+region backing the local, since the moved value keeps its allocator where the
+clone took the destination's. Both were already errors for `copy := list;`.
+A borrow the procedure itself stores keeps the copy instead, by the exclusion.
 
 ### `errdefer`
 

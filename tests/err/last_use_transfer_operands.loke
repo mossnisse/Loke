@@ -1,0 +1,62 @@
+// design.md "Last-use transfer": an operand of a bound construction moves at
+// its last use and is checked as a written `move` is, so what a `move` rejects
+// is rejected here, where the construction once cloned. The fix in each case is
+// the `.clone()` the copy stood for.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+E :: enum { Bad }
+Pair :: struct { items: [dynamic]int, n: int }
+@(move_only) Connection :: struct { id: int }
+Holder :: struct { held: Connection }
+
+// `keep` stores the slice through a pointer, not an `inout` argument, so the
+// procedure is not seen to lend `list` and the copy of it is still a last use.
+keep :: proc(into: ^mut [dynamic][]int, @(escape=stored) view: []int) {
+	into^.append(view);
+}
+
+still_borrowed :: proc() {
+	views: [dynamic][]int = {};
+	list := [dynamic]int{1};
+	keep(&mut views, list[:]);
+	p := Pair{list, 1};
+	fmt.println(views, p.n);
+}
+still_borrowed_payload :: proc() {
+	views: [dynamic][]int = {};
+	list := [dynamic]int{1};
+	keep(&mut views, list[:]);
+	r: Result([dynamic]int, E) = .ok(list);
+	fmt.println(views);
+	_ = r;
+}
+still_borrowed_arm :: proc(first: bool) {
+	views: [dynamic][]int = {};
+	list := [dynamic]int{1};
+	other := [dynamic]int{2};
+	keep(&mut views, list[:]);
+	chosen := list if first else other;
+	fmt.println(views, chosen);
+}
+// A moved owner keeps its allocator, so it cannot go where its arena does not reach.
+arena_backed :: proc() -> int {
+	outer := Pair{};
+	{
+		arena := mem.Arena.init(mem.default_allocator());
+		list: [dynamic]int via arena.allocator() = {};
+		list.append(1);
+		outer = Pair{list, 1};
+	}
+	return outer.items.len();
+}
+// The transfer replaces a copy, and a move-only local has none to replace.
+move_only :: proc() -> int {
+	c := Connection{1};
+	h := Holder{c};
+	return h.held.id;
+}
+
+main :: proc() {}

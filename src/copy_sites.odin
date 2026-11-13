@@ -64,7 +64,7 @@ transfer_returned_local :: proc(k: ^Checker, e: Expr) -> Expr {
 mark_returned_value :: proc(e: Expr) {
 	mark_returned(e)
 	names := make([dynamic]^Expr_Ident, context.temp_allocator)
-	collect_returned_names(e, &names)
+	collect_local_names(e, &names)
 	counts := make(map[string]int, context.temp_allocator)
 	for name in names {
 		counts[name.name] += 1
@@ -83,8 +83,7 @@ mark_returned :: proc(e: Expr) {
 // Every name `e` writes that may be a local of the procedure it is in. A
 // procedure literal's body names none of them, and one with a capture clause
 // names what the clause lists (design.md "Capture literals").
-@(private = "file")
-collect_returned_names :: proc(e: Expr, names: ^[dynamic]^Expr_Ident) {
+collect_local_names :: proc(e: Expr, names: ^[dynamic]^Expr_Ident) {
 	#partial switch v in e {
 	case ^Expr_Ident:
 		append(names, v)
@@ -92,12 +91,12 @@ collect_returned_names :: proc(e: Expr, names: ^[dynamic]^Expr_Ident) {
 	case ^Expr_Composite:
 		if v.capture != nil {
 			for entry in v.capture.entries {
-				collect_returned_names(entry.value, names)
+				collect_local_names(entry.value, names)
 			}
 		}
 	}
 	expr_children(e, names, proc(data: rawptr, child: Expr) -> bool {
-		collect_returned_names(child, (^[dynamic]^Expr_Ident)(data))
+		collect_local_names(child, (^[dynamic]^Expr_Ident)(data))
 		return false
 	})
 }
@@ -173,7 +172,7 @@ classify_copy :: proc(k: ^Checker, value: Expr, destination: Type_Id, site: Copy
 }
 
 // Copy cost also applies to large unmanaged aggregates.
-classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) {
+classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site, held := Held_Copy_Report{}) {
 	if !expression_is_borrowed_place(value) {
 		return
 	}
@@ -183,12 +182,25 @@ classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_S
 	if base.type != type || base.erased_from != INVALID_TYPE {
 		return
 	}
-	record_copy(k, site, expr_span(value), value, copied_type(value, type))
+	record_copy(k, site, expr_span(value), value, copied_type(value, type), held)
 }
 
 // A copy site that reports what the copy costs and asks whether it clones.
 classify_costed_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
 	classify_copy_cost(k, value, type, site)
+	return classify_copy(k, value, type, site)
+}
+
+// The copy of `value`, operand `index` of the construction `parent`. An owned
+// local may yet transfer at its last use (design.md "Last-use transfer"), so the
+// report of what its copy costs waits for that. A probe's report rolls back
+// with the probe, so it is made at once.
+classify_operand_copy :: proc(k: ^Checker, parent: Expr, index: int, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
+	held := Held_Copy_Report{}
+	if ident, is_ident := value.(^Expr_Ident); is_ident && committing(k.c) && symbol_is_owned_here(symbol_of(k.c, ident.symbol)) {
+		held = Held_Copy_Report{operand_of = parent, index = index}
+	}
+	classify_copy_cost(k, value, type, site, held)
 	return classify_copy(k, value, type, site)
 }
 
@@ -202,7 +214,7 @@ mark_clone :: proc(k: ^Checker, clones: ^[]bool, count, index: int) {
 }
 
 classify_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, type: Type_Id) {
-	if classify_costed_copy(k, v.elements[index].value, type, .Literal) {
+	if classify_operand_copy(k, v, index, v.elements[index].value, type, .Literal) {
 		mark_clone(k, &v.element_clones, len(v.elements), index)
 	}
 }
@@ -346,15 +358,18 @@ COPY_SITE_TEXT := [Copy_Site]string {
 	.Adapter           = "iteration adapter",
 }
 
-// A binding or assignment copy whose report waits for last-use transfer: the
-// copy it names may yet become a move (design.md "Last-use transfer"), or an adapter's
-// copy of its source, which `foreach` may yet peel and not make (design.md
-// "Iteration adapters"). A copy that may allocate waits either way; one costed by its
-// bytes waits only for an adapter, as last-use transfer moves only what clones.
+// A copy by a binding or assignment, or of a construction's operand, whose report
+// waits for last-use transfer: the copy it names may yet become a move
+// (design.md "Last-use transfer"), or an adapter's copy of its source, which
+// `foreach` may yet peel and not make (design.md "Iteration adapters"). A copy
+// that may allocate waits either way; one costed by its bytes waits only for an
+// adapter, as last-use transfer moves only what clones.
 Held_Copy_Report :: struct {
 	decl:    ^Decl,
 	assign:  ^Stmt_Assign,
 	adapter: ^Expr_Call,
+	// The literal, variant construction, or conditional copying its operand `index`.
+	operand_of: Expr,
 	index:   int,
 	site:    Copy_Site,
 	span:    Span,
@@ -396,7 +411,7 @@ warn_copy_cost :: proc(
 	if !allocates && (underlying_kind(k.c, type) == .String || type_is_shared_handle(k.c, type) || type_size(k.c, type) < k.c.copy_cost_threshold) {
 		return
 	}
-	waits := held.adapter != nil || allocates && (held.decl != nil || held.assign != nil)
+	waits := held.adapter != nil || allocates && (held.decl != nil || held.assign != nil || held.operand_of != nil)
 	if !waits {
 		report_copy(k, Held_Copy_Report{site = site, span = span, source = source, type = type, in_loop = in_loop, inline = !allocates})
 		return
@@ -488,7 +503,18 @@ held_copy_is_made :: proc(held: Held_Copy_Report) -> bool {
 	if held.adapter != nil {
 		return !held.adapter.adapter_peeled
 	}
-	clones := held.decl != nil ? held.decl.value_clones : held.assign.rhs_clones
+	clones: []bool
+	#partial switch parent in held.operand_of {
+	case ^Expr_Composite:
+		clones = parent.element_clones
+	case ^Expr_Cond:
+		return held.index == 0 ? parent.then_clone : parent.else_clone
+	case ^Expr_Call:
+		operation, constructs := parent.operation.(Call_Union_Construct)
+		return constructs && operation.clone
+	case:
+		clones = held.decl != nil ? held.decl.value_clones : held.assign.rhs_clones
+	}
 	return held.index < len(clones) && clones[held.index]
 }
 

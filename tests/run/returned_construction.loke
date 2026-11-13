@@ -108,7 +108,8 @@ argument :: proc() -> Pair {
 	t := Tracked{24};
 	return wrap(t);
 }
-// A construction that is bound first is not returned.
+// A construction that is bound first is not returned: its binding takes `t`,
+// which moves there as its last use (design.md "Last-use transfer").
 bound :: proc() -> Pair {
 	t := Tracked{25};
 	p := Pair{t, 6};

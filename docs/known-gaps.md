@@ -93,3 +93,52 @@ and a declaration checked on the way is settled (`begin_settling` in
 `speculation.odin`); the fix is to make a procedure type and the other forms
 readable without resolving what they name, as `resolve_type_shell` in
 `check_types.odin` reads the rest.
+
+### An earlier element of a literal is not dropped when a later one exits
+
+[or_else expression](design.md#or_else-expression) says that an exit after
+anything an operation already holds drops those values on its way out, as
+`or_return` does. The compiler does so for a call's earlier arguments, and not
+for the earlier elements of a composite literal:
+
+```loke
+package main;
+
+import "core:fmt";
+
+@(move_only) Tracked :: struct { id: int }
+
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+
+E :: enum { Bad }
+Pair :: struct { item: Tracked, n: int }
+
+fail :: proc() -> Result(int, E) { return .err(.Bad); }
+use :: proc(t: Tracked, n: int) -> int { return t.id + n; }
+
+in_literal :: proc() -> Result(int, E) {
+	p := Pair{Tracked{1}, fail() or_return};   // `Tracked{1}` is never dropped
+	return p.n;
+}
+in_call :: proc() -> Result(int, E) {
+	return use(Tracked{2}, fail() or_return);  // prints `drop 2`
+}
+
+main :: proc() {
+	_ = in_literal();
+	_ = in_call();
+}
+```
+
+The program prints `drop 2` only. The element may be a temporary, a
+`move(x)`, a clone of a place, or a local that
+[last-use transfer](design.md#last-use-transfer) or a
+[returned construction](design.md#returned-constructions) moved; in each the
+value built into the literal leaks, and a clone's source is still dropped. The
+same holds for a literal nested in a variant construction or an array literal,
+and for an exit written with `or_else`. The emitter guards each part it has
+stored for a panic's unwind (`guard_record_part` and `guard_built_element` in
+`emit_composite_into`, `emit_llvm_expr.odin`), and these exits leave without
+dropping the guarded parts.

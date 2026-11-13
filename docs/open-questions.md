@@ -1075,29 +1075,25 @@ none of which they wait on.
   values. Either bless this as the way to opt out of generated element handling, or
   give it its own spelling before `Small_Deque` is built.
 
-## Last-use transfer of construction operands
+## Last-use transfer into a container, `box`, or `shared`
 
-[Last-use transfer](design.md#last-use-transfer) moves a whole local that a
-binding or an assignment would clone and nothing reads again. An operand inside
-a construction still clones, so `p := Pair{list, 1};` and
-`out.append(Pair{list, 1});` allocate at `list`'s last use.
-[Returned constructions](design.md#returned-constructions) covers the case where
-the construction is returned, by the rule of the `return` statement and not by
-liveness.
+[Last-use transfer](design.md#last-use-transfer) moves a local that a binding or
+an assignment would clone, itself or as an operand of the construction bound,
+when nothing reads it again. A
+[container insertion](design.md#container-insertion), `box`, and `shared` take
+their operand as an initialization does and still clone it, so
+`out.append(list);`, `out.append(Pair{list, 1});`, and `node := box(list);`
+allocate at `list`'s last use unless `move(list)` is written.
 
-Extending last-use transfer to construction operands would cover the rest.
-Open points:
+Extending the transfer to them is open:
 
-- **Order within an expression.** `Pair{list, list.len()}` reads `list` after
-  the operand that would transfer it. The analysis would have to order reads
-  inside one expression, which the returned rule avoids by counting names.
-- **Which operands.** Composite elements and variant payloads are the clear
-  ones. A [container insertion](design.md#container-insertion), `box`, and
-  `shared` take their element as an initialization does, and an argument of a
-  `move` parameter already needs a written `move`.
-- **The exclusions.** A `via` destination, a stored borrow, and an enclosing
-  `foreach` or `switch` keep a copy a clone today. Each would need restating for
-  an operand whose destination is a temporary.
-- **One rule or two.** If it lands, the returned rule could become a case of
-  it, except that a `return` rejects a deferred read where last-use transfer
-  would keep the clone.
+- **Which allocator.** A clone into a container allocates from the container's
+  provider, and a `box` or `shared` from the allocator it is given. A move keeps
+  the local's own allocator, so the element could be backed by a different
+  region than the container holding it. A binding keeps the clone when its
+  destination has a `via`, which is written at the declaration; a container's
+  provider belongs to its value, and the lifecycle analysis that decides the
+  transfer does not know it.
+- **Arguments.** An insertion is a call, and an argument of a `move` parameter
+  needs a written `move` so that the call shows what it gives away. A transfer
+  at an insertion would be the one argument that moves unwritten.

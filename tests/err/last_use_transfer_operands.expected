@@ -1,0 +1,20 @@
+L0512
+@25:12
+`list` cannot be moved by its last use here: a read-only slice of it is still in use
+a copy of a local that nothing reads afterwards moves it; write `.clone()` to copy it instead
+
+L0512
+@32:35
+`list` cannot be moved by its last use here: a read-only slice of it is still in use
+
+L0512
+@41:12
+`list` cannot be moved by its last use here: a read-only slice of it is still in use
+
+L0537
+@48:3
+cleaning up `arena` would end the region backing `outer`, which is still live here
+
+L0503
+@58:14
+`Connection` is move-only, so this aggregate literal cannot copy it; write `move(...)` to transfer ownership instead

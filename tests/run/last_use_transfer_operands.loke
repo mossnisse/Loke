@@ -1,0 +1,255 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Last-use transfer": a local that a bound or assigned construction
+// takes as an operand moves at its last use, as a local bound whole does, when
+// the statement names it once. The hooks print, so the output shows which copies
+// ran: a transferred value is never copied and drops once, with its destination.
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		fmt.println("  copy", self.id);
+		return .ok(Tracked{self.id});
+	}
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("  drop", self.id); }
+}
+
+E :: enum { Bad }
+Pair :: struct { item: Tracked, n: int }
+Two :: struct { a: Tracked, b: Tracked }
+Holder :: struct { held: Tracked }
+Lists :: struct { items: [dynamic]Tracked, n: int }
+Maybe :: struct { item: Option(Tracked) }
+Viewed :: struct { item: Tracked, view: []int }
+
+show :: proc(r: Result(Pair, E)) {
+	switch (r) {
+	case .ok(p): fmt.println("ok", p.item.id, p.n);
+	case .err:   fmt.println("err");
+	}
+}
+
+wrap :: proc(t: Tracked) -> Pair { return Pair{t, 0}; }
+
+// A `move` parameter is owned, so it transfers too.
+take :: proc(t: move Tracked) -> int {
+	p := Pair{t, 3};
+	return p.item.id;
+}
+
+main :: proc() {
+	fmt.println("record");
+	{
+		t := Tracked{1};
+		p := Pair{t, 1};                 // moved
+		fmt.println(p.item.id);
+	}
+	fmt.println("named field");
+	{
+		item := Tracked{2};
+		p := Pair{item = item, n = 2};   // moved
+		fmt.println(p.item.id);
+	}
+	fmt.println("variant");
+	{
+		t := Tracked{3};
+		o: Option(Tracked) = .some(t);   // moved
+		switch (o) { case .some(x): fmt.println(x.id); case .none: fmt.println("none"); }
+	}
+	fmt.println("nested");
+	{
+		t := Tracked{4};
+		r: Result(Pair, E) = .ok(Pair{t, 4});   // moved
+		show(r);
+	}
+	fmt.println("assignment");
+	{
+		t := Tracked{5};
+		r: Result(Pair, E) = .err(.Bad);
+		r = .ok(Pair{t, 5});             // moved
+		show(r);
+	}
+	fmt.println("assignment over a live value");
+	{
+		t := Tracked{6};
+		p := Pair{Tracked{7}, 0};
+		p = Pair{t, 6};                  // moved; the old `p` drops
+		fmt.println(p.item.id);
+	}
+	fmt.println("arms");
+	{
+		a := Tracked{8};
+		b := Tracked{9};
+		first := false;
+		c := a if first else b;          // the arm taken moves; `a` drops at the scope's end
+		fmt.println(c.id);
+	}
+	fmt.println("array");
+	{
+		a := Tracked{10};
+		b := Tracked{11};
+		both := [2]Tracked{a, b};        // both moved
+		fmt.println(both[0].id, both[1].id);
+	}
+	fmt.println("dynamic array");
+	{
+		list := [dynamic]Tracked{Tracked{12}};
+		outer := [dynamic][dynamic]Tracked{list};   // moved
+		fmt.println(outer.len());
+	}
+	fmt.println("map value");
+	{
+		t := Tracked{13};
+		m := map[int]Tracked{1 = t};     // moved
+		fmt.println(m.len());
+	}
+	fmt.println("destructured");
+	{
+		t := Tracked{14};
+		item, n := Pair{t, 14};          // moved
+		fmt.println(item.id, n);
+	}
+	fmt.println("discarded");
+	{
+		t := Tracked{15};
+		_ = Pair{t, 15};                 // moved, and dropped with the discarded record
+		fmt.println("after");
+	}
+	fmt.println("loop-local source");
+	{
+		foreach (i in 0 ..< 2) {
+			t := Tracked{16 + i};
+			p := Pair{t, i};             // moved: each iteration has its own `t`
+			fmt.println(p.item.id);
+		}
+	}
+	fmt.println("move parameter");
+	fmt.println(take(Tracked{18}));
+
+	fmt.println("named twice");
+	{
+		t := Tracked{20};
+		p := Two{t, t};                  // both copied
+		fmt.println(p.a.id, p.b.id);
+	}
+	fmt.println("read in the statement");
+	{
+		t := Tracked{21};
+		p := Pair{t, t.id};              // copied: the statement names `t` twice
+		fmt.println(p.item.id, p.n);
+	}
+	fmt.println("condition names it");
+	{
+		a := Tracked{22};
+		b := Tracked{23};
+		c := a if a.id > 0 else b;       // copied: the condition names `a` too
+		fmt.println(c.id);
+	}
+	fmt.println("read afterwards");
+	{
+		t := Tracked{24};
+		p := Pair{t, 1};                 // copied
+		fmt.println(p.item.id, t.id);
+	}
+	fmt.println("read on one path");
+	{
+		t := Tracked{25};
+		p := Pair{t, 1};                 // copied: the branch may read `t`
+		if (p.n > 0) {
+			fmt.println(t.id);
+		}
+	}
+	fmt.println("deferred read");
+	{
+		t := Tracked{26};
+		defer fmt.println("deferred", t.id);
+		p := Pair{t, 1};                 // copied: the deferred statement reads `t` later
+		fmt.println(p.item.id);
+	}
+	fmt.println("loop over an outer local");
+	{
+		t := Tracked{27};
+		foreach (_ in 0 ..< 2) {
+			p := Pair{t, 1};             // copied: the next iteration reads `t`
+			fmt.println(p.item.id);
+		}
+	}
+	fmt.println("field of a local");
+	{
+		h := Holder{Tracked{28}};
+		p := Pair{h.held, 1};            // copied: part of `h`, not the whole local
+		fmt.println(p.item.id);
+	}
+	fmt.println("argument");
+	{
+		t := Tracked{29};
+		p := wrap(t);                    // borrowed by the call, which copies it
+		fmt.println(p.item.id);
+	}
+	fmt.println("construction as an argument");
+	{
+		t := Tracked{30};
+		out: [dynamic]Pair = {};
+		out.append(Pair{t, 1});          // copied: the record is an argument, not bound
+		fmt.println(out.len());
+	}
+	fmt.println("box");
+	{
+		t := Tracked{31};
+		b := box(t);                     // copied
+		fmt.println(b^.id);
+	}
+	fmt.println("insertion");
+	{
+		t := Tracked{32};
+		out: [dynamic]Tracked = {};
+		out.append(t);                   // copied
+		fmt.println(out.len());
+	}
+	fmt.println("iterated");
+	{
+		list := [dynamic]Tracked{Tracked{33}};
+		foreach (x in list) {
+			l := Lists{list, x.id};      // copied: the loop still holds `list`
+			fmt.println(l.n);
+			break;
+		}
+	}
+	fmt.println("switched");
+	{
+		o: Option(Tracked) = .some(Tracked{34});
+		switch (o) {
+		case .some(x):
+			m := Maybe{o};               // copied: the switch binds `x` from `o`
+			fmt.println(x.id);
+			_ = m;
+		case .none:
+		}
+	}
+	fmt.println("viewed");
+	{
+		list := [dynamic]Tracked{Tracked{35}};
+		view := list[:];
+		l := Lists{list, 1};             // copied: `view` may still be in use
+		fmt.println(view.len(), l.n);
+	}
+	fmt.println("borrow-carrying construction");
+	{
+		t := Tracked{36};
+		numbers := [dynamic]int{1, 2};
+		v := Viewed{t, numbers[:]};      // copied: the record may carry a borrow
+		fmt.println(v.item.id, v.view.len());
+	}
+	fmt.println("via");
+	{
+		arena := mem.Arena.init(mem.default_allocator());
+		list := [dynamic]Tracked{Tracked{37}};
+		outer: [dynamic][dynamic]Tracked via arena.allocator() = {list};   // copied into the arena
+		fmt.println(outer.len());
+	}
+	fmt.println("end");
+}

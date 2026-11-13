@@ -373,8 +373,9 @@ Expr_Cond :: struct {
 Expr_Move :: struct {
 	using base: Expr_Base,
 	value:      Expr,
-	// Not written: a copy at the local's last use, which the lifecycle pass
-	// turned into this move (design.md "Last-use transfer").
+	// Not written: a copy at the local's last use, by a binding or assignment or
+	// of an operand of the construction it binds, which the lifecycle pass turned
+	// into this move (design.md "Last-use transfer").
 	implicit:   bool,
 }
 

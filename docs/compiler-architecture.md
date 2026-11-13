@@ -397,7 +397,10 @@ them, and `transfer_returned_operand` wraps an eligible one in the implicit
 move a wrapped success return uses, before the copy site is classified.
 Before liveness analysis,
 `settle_last_uses` rewrites eligible last-use clones as ordinary moves, outside
-probes. Allocating-copy diagnostics wait for that decision. `lifecycle.odin`
+probes. Its candidates are the bound value of a binding or an assignment and,
+from `note_bound_operands`, the operands of a construction bound there that the
+statement names once; both are judged by the same read solve. Allocating-copy
+diagnostics wait for that decision. `lifecycle.odin`
 then settles initialization, liveness, and cleanup slots. All locals have
 initialization state; only managed locals need scope-exit cleanup.
 

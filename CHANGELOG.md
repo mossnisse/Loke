@@ -55,6 +55,21 @@ checklist.
   arena, is `L0592`. Upgrade by writing `.clone()` on the operand where the copy was meant. A local
   named twice in the returned value, a field of a local, a borrowed parameter, and an argument of a
   call are copied as before.
+- Last-use transfer covers the operands of a construction that a binding or an assignment takes as
+  its value ([Last-use transfer](docs/design.md#last-use-transfer), rationale under
+  ["Last-use transfer of construction operands"](docs/comments.md#last-use-transfer-of-construction-operands)).
+  `copy := list;` moved `list` when nothing read it again, while `p := Pair{list, 1};`,
+  `r = .ok(list);`, and `pick := a if flag else b;` cloned it with warning `L0507`. The payload of a
+  variant construction, an element of a composite literal, and an arm of a conditional expression
+  now transfer at the local's last use, nested to any depth, when the statement names the local
+  once; a written `move(list)` there can be dropped. The transfer is checked as a written `move`
+  is, as it already was for `copy := list;`, so two programs that compiled through the clone are
+  errors. A borrow of the local that a callee stored through a pointer and that is still in use is
+  `L0512` at the operand; a local built `via` an arena that ends before the destination does is
+  `L0537`. Upgrade by writing `.clone()` on the operand where the copy was meant. A local the
+  statement names twice or that is read afterwards, a destination with a `via`, a move-only local,
+  and an operand of a construction passed as an argument, to `box`, or to an insertion are handled
+  as before.
 - A union's storage is the compiler's choice ([Representation](docs/design.md#representation),
   rationale under ["Union layout is the compiler's"](docs/comments.md#union-layout-is-the-compilers)).
   design.md specified the payload region, the tag's width and position, and its values, while

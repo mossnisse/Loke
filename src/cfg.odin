@@ -228,11 +228,13 @@ Flow_Graph :: struct {
 	// Lifecycle only, for design.md "Last-use transfer": the locals read while
 	// `reads` is set, those an enclosing `foreach` or `switch` holds a borrow
 	// of, those ever bound into a borrow-carrying value, and the clones of a
-	// whole local that may turn out to be its last use.
+	// whole local that may turn out to be its last use. `operands` are the
+	// locals that the bound values being walked take as construction operands.
 	reads:     ^[dynamic]int,
 	held:      [dynamic]int,
 	lent:      map[int]bool,
 	last_uses: [dynamic]Last_Use,
+	operands:  [dynamic]Operand_Site,
 	// design.md "@(require_results)": the writes of a required result, each
 	// checked for a read before the next write or the scope's end.
 	required:  [dynamic]Required_Write,
@@ -246,12 +248,23 @@ Required_Write :: struct {
 }
 
 // A clone of a local that may allocate, and the `Use` event that reads it: the
-// operand and the flag that make it a move instead.
+// operand and the flag that make it a move instead. A variant construction
+// keeps its payload as written too, in `also`.
 Last_Use :: struct {
 	block: Block_Id,
 	event: int,
 	site:  ^Expr,
 	clone: ^bool,
+	also:  ^Expr,
+}
+
+// design.md "Last-use transfer": a local that a bound construction takes as an
+// operand, where the construction keeps it and the flag that it is cloned.
+Operand_Site :: struct {
+	ident: ^Expr_Ident,
+	site:  ^Expr,
+	clone: ^bool,
+	also:  ^Expr,
 }
 
 NO_BLOCK :: Block_Id(-1)
@@ -284,6 +297,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 	graph.held = make([dynamic]int, allocator)
 	graph.lent = make(map[int]bool, allocator)
 	graph.last_uses = make([dynamic]Last_Use, allocator)
+	graph.operands = make([dynamic]Operand_Site, allocator)
 	graph.required = make([dynamic]Required_Write, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.held_owners = make([dynamic]Expr, allocator)
@@ -435,10 +449,14 @@ call_may_store :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 }
 
 // Lifecycle mode: walks a value bound into a destination, which is stored, and
-// which is a candidate last use when it is a bare local.
+// which is a candidate last use when it is a bare local. The locals a bound
+// construction takes as operands are candidates too, noted as the walk reads them.
 @(private = "file")
 walk_flow_bound_value :: proc(graph: ^Flow_Graph, value: Expr, decl: ^Decl, assign: ^Stmt_Assign, index: int) {
+	outer := len(graph.operands)
+	note_bound_operands(graph, value, decl, assign, index)
 	walk_flow_stored(graph, value)
+	resize(&graph.operands, outer)
 	ident, is_ident := value.(^Expr_Ident)
 	if !is_ident {
 		return
@@ -453,7 +471,7 @@ walk_flow_bound_value :: proc(graph: ^Flow_Graph, value: Expr, decl: ^Decl, assi
 	}
 	site, clone := last_use_site(graph, decl, assign, index)
 	if clone != nil && clone^ && clone_may_allocate(graph.k.c, copied_type(ident, prov_type(graph, ident))) {
-		append(&graph.last_uses, Last_Use{graph.current, len(events) - 1, site, clone})
+		append(&graph.last_uses, Last_Use{graph.current, len(events) - 1, site, clone, nil})
 	}
 }
 
@@ -477,6 +495,130 @@ last_use_site :: proc(graph: ^Flow_Graph, decl: ^Decl, assign: ^Stmt_Assign, ind
 		return nil, nil
 	}
 	return &assign.rhs[index], &assign.rhs_clones[index]
+}
+
+// design.md "Last-use transfer": the locals that the construction bound here
+// takes as operands, each a candidate when the statement names it once. A clone
+// into a destination with a `via` allocates from it, which a move would not, and
+// a compound assignment's value is an operator's argument.
+@(private = "file")
+note_bound_operands :: proc(graph: ^Flow_Graph, value: Expr, decl: ^Decl, assign: ^Stmt_Assign, index: int) {
+	c := graph.k.c
+	if decl != nil {
+		if decl.via != nil {
+			return
+		}
+	} else {
+		if assign.op != .Assign {
+			return
+		}
+		for target, at in assign.lhs {
+			paired := len(assign.lhs) != len(assign.rhs) || at == index
+			if paired && symbol_via_allocator(c, place_root_symbol(target)) != nil {
+				return
+			}
+		}
+	}
+	first := len(graph.operands)
+	collect_operand_sites(graph, value)
+	if len(graph.operands) == first {
+		return
+	}
+	names := make([dynamic]^Expr_Ident, graph.alloc)
+	if decl != nil {
+		for written in decl.values {
+			collect_local_names(written, &names)
+		}
+	} else {
+		for written in assign.lhs {
+			collect_local_names(written, &names)
+		}
+		for written in assign.rhs {
+			collect_local_names(written, &names)
+		}
+	}
+	kept := first
+	for operand in graph.operands[first:] {
+		count := 0
+		for name in names {
+			if name.symbol == operand.ident.symbol {
+				count += 1
+			}
+		}
+		if count == 1 {
+			graph.operands[kept] = operand
+			kept += 1
+		}
+	}
+	resize(&graph.operands, kept)
+}
+
+// The operands of the construction `e`, as design.md "Returned constructions"
+// defines them: a variant's payload, a literal's elements, a conditional's arms,
+// and the operands of any of those that is itself a construction. A capture's
+// entries state their own modes, a designated array element may fill several
+// slots, and a map's key is not one.
+@(private = "file")
+collect_operand_sites :: proc(graph: ^Flow_Graph, e: Expr) {
+	#partial switch v in e {
+	case ^Expr_Composite:
+		if v.capture != nil || v.slot_ends != nil {
+			return
+		}
+		for &element, index in v.elements {
+			note_operand_site(graph, &element.value, index < len(v.element_clones) ? &v.element_clones[index] : nil)
+		}
+	case ^Expr_Cond:
+		note_operand_site(graph, &v.then, &v.then_clone)
+		note_operand_site(graph, &v.otherwise, &v.else_clone)
+	case ^Expr_Call:
+		operation, constructs := &v.operation.(Call_Union_Construct)
+		if !constructs || len(v.bound) != 1 {
+			return
+		}
+		// The payload as written is the bound one until a transfer replaces both.
+		also: ^Expr
+		if len(v.args) == 1 && v.args[0].value == v.bound[0] {
+			also = &v.args[0].value
+		}
+		note_operand_site(graph, &v.bound[0], &operation.clone, also)
+	}
+}
+
+// One operand: a whole tracked local that is cloned at its own type, where the
+// clone may allocate, is a candidate. A converted operand is not the local itself.
+@(private = "file")
+note_operand_site :: proc(graph: ^Flow_Graph, site: ^Expr, clone: ^bool, also: ^Expr = nil) {
+	ident, is_ident := site^.(^Expr_Ident)
+	if !is_ident {
+		collect_operand_sites(graph, site^)
+		return
+	}
+	if clone == nil || !clone^ || ident.symbol not_in graph.by_symbol {
+		return
+	}
+	if conversion_source(&ident.base) != INVALID_TYPE || ident.copied_as != ident.type ||
+	   !clone_may_allocate(graph.k.c, ident.type) {
+		return
+	}
+	append(&graph.operands, Operand_Site{ident, site, clone, also})
+}
+
+// The `Use` just emitted reads `ident`: when a bound construction takes it as an
+// operand, that read is a candidate last use, unless an enclosing `foreach` or
+// `switch` holds the local.
+@(private = "file")
+note_operand_use :: proc(graph: ^Flow_Graph, ident: ^Expr_Ident, slot: int) {
+	if graph.current == NO_BLOCK || slice.contains(graph.held[:], slot) {
+		return
+	}
+	for operand in graph.operands {
+		if operand.ident == ident {
+			event := len(graph.blocks[graph.current].events) - 1
+			append(&graph.last_uses, Last_Use{graph.current, event, operand.site, operand.clone, operand.also})
+			return
+		}
+	}
 }
 
 // ------------------------------------------------------------- the walk --
@@ -1639,6 +1781,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		if !prov {
 			if slot, tracked := graph.by_symbol[v.symbol]; tracked {
 				flow_emit(graph, Flow_Event{kind = .Use, slot = slot, span = v.span, name = v.name})
+				if len(graph.operands) > 0 {
+					note_operand_use(graph, v, slot)
+				}
 			}
 			return nil
 		}
@@ -2048,7 +2193,8 @@ LAST_USE_VERB :: "moved by its last use"
 RETURNED_VERB :: "moved into the returned value"
 
 // design.md "Last-use transfer": a clone of a whole local that no path reads
-// again becomes a move of it, unless something may still borrow it. A read is
+// again, bound itself or as an operand of the construction bound, becomes a
+// move of it, unless something may still borrow it. A read is
 // a use, a move, or a drop; a new value ends the old one's reads. The events
 // stay in place, with the move's `Kill` where its `Use` was, so the forward
 // solve that follows sees the local end there.
@@ -2117,6 +2263,9 @@ transfer_last_uses :: proc(graph: ^Flow_Graph) {
 			moved.value = ident
 			moved.implicit = true
 			use.site^ = moved
+			if use.also != nil {
+				use.also^ = moved
+			}
 		}
 	}
 }

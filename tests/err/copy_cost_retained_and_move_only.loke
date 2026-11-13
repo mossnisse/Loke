@@ -16,7 +16,7 @@ retained :: proc() {
 	fmt.println(s.get()^, t.get()^, a, b);
 }
 
-// Bound, not returned: design.md "Returned constructions" would transfer `a`.
+// Bound, not returned: design.md "Last-use transfer" replaces a copy, and a move-only local has none.
 move_only_literal :: proc() -> int {
 	a := Holding{};
 	c := Carrier{held = a};

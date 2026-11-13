@@ -1,0 +1,140 @@
+record
+1
+  drop 1
+named field
+2
+  drop 2
+variant
+3
+  drop 3
+nested
+ok 4 4
+  drop 4
+assignment
+ok 5 5
+  drop 5
+assignment over a live value
+  drop 7
+6
+  drop 6
+arms
+9
+  drop 9
+  drop 8
+array
+10 11
+  drop 11
+  drop 10
+dynamic array
+1
+  drop 12
+map value
+1
+  drop 13
+destructured
+14 14
+  drop 14
+discarded
+  drop 15
+after
+loop-local source
+16
+  drop 16
+17
+  drop 17
+move parameter
+  drop 18
+18
+named twice
+  copy 20
+  copy 20
+20 20
+  drop 20
+  drop 20
+  drop 20
+read in the statement
+  copy 21
+21 21
+  drop 21
+  drop 21
+condition names it
+  copy 22
+22
+  drop 22
+  drop 23
+  drop 22
+read afterwards
+  copy 24
+24 24
+  drop 24
+  drop 24
+read on one path
+  copy 25
+25
+  drop 25
+  drop 25
+deferred read
+  copy 26
+26
+  drop 26
+deferred 26
+  drop 26
+loop over an outer local
+  copy 27
+27
+  drop 27
+  copy 27
+27
+  drop 27
+  drop 27
+field of a local
+  copy 28
+28
+  drop 28
+  drop 28
+argument
+  copy 29
+29
+  drop 29
+  drop 29
+construction as an argument
+  copy 30
+1
+  drop 30
+  drop 30
+box
+  copy 31
+31
+  drop 31
+  drop 31
+insertion
+  copy 32
+1
+  drop 32
+  drop 32
+iterated
+  copy 33
+33
+  drop 33
+  drop 33
+switched
+  copy 34
+34
+  drop 34
+  drop 34
+viewed
+  copy 35
+1 1
+  drop 35
+  drop 35
+borrow-carrying construction
+  copy 36
+36 2
+  drop 36
+  drop 36
+via
+  copy 37
+1
+  drop 37
+  drop 37
+end

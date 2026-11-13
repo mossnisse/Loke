@@ -4915,7 +4915,8 @@ ownership; an ordinary parameter borrows it for the call.** [Borrows and
 lifetimes](#borrows-and-lifetimes) ensures that sharing a managed owner for an
 ordinary call cannot be distinguished from copying it. The table below
 distinguishes the contexts; [last-use transfer](#last-use-transfer) can replace
-an eligible binding or assignment clone.
+an eligible clone made by a binding or an assignment, of its value or of an
+operand its value is constructed from.
 
 | context | a place | a temporary, or `move(x)` |
 | --- | --- | --- |
@@ -4963,6 +4964,22 @@ fmt.println(first, second);
 third := second;          // nothing reads `second` again: a move
 ```
 
+The copy may also be of an operand of a construction that the binding or
+assignment takes as its value. The operands are those of a [returned
+construction](#returned-constructions): the payload of a variant construction,
+an element of a composite literal, or an arm of a conditional expression, when
+the construction or conditional is the bound or assigned value or is itself such
+an operand, with the same exceptions. An operand transfers when it is the name
+of the whole local, has the operand's type without a conversion, and is the only
+place the binding or assignment names the local:
+
+```loke
+scan := Scan{tokens, errors};          // neither is read again: both move
+state = .done(scan);                   // `scan` moves into the payload
+sized := Sized{names, names.len()};    // `names` is named twice: a clone
+pick := first if flag else second;     // the arm taken moves; the other local stays live
+```
+
 A read is any use naming the local, including a borrow, `move`, `drop`, or a
 deferred statement executed after the copy. Even at last use, a copy remains a
 clone if:
@@ -4972,17 +4989,26 @@ clone if:
 - Anywhere in the body, the procedure stores a possibly borrow-carrying value
   whose expression reads the local. This includes binding or assigning it, as
   in `view := list[:]`, and passing it to a call with an `inout` argument or
-  receiver, as in `views.append(list[:])`.
+  receiver, as in `views.append(list[:])`. A bound construction whose type can
+  carry a borrow is such a value, so none of its operands transfers.
 - The destination has a `via` allocator, which a clone uses but a move would
-  bypass.
+  bypass. An operand's destination is the one its construction is bound or
+  assigned to.
 
 The transfer follows explicit `move` checks. A still-live borrow, including one
-stored by a callee through a pointer, produces an error at the copy; write
-`.clone()` to keep it a copy. A transfer runs no `hook(copy)`, allocates
-nothing, and cannot fail as a copy could. The destination takes responsibility
-for dropping the value. Other copying contexts, including arguments, aggregate
-elements, container insertion, and `or_else` operands, still clone, apart from
-the operands of a [returned construction](#returned-constructions).
+stored by a callee through a pointer, produces an error at the copy. A moved
+owner keeps its allocator, so a destination that outlives the
+[region](#allocator-regions-and-region-provenance) backing the local is an error
+too. Write `.clone()` to keep either a copy. A transfer runs no `hook(copy)`,
+allocates nothing, and cannot fail as a copy could. The destination takes
+responsibility for dropping the value. A move-only local has no copy to
+replace, so it still needs a written `move`.
+
+Other copying contexts still clone: an argument, including that of `box` or
+`shared`, a [container insertion](#container-insertion), an `or_else` operand,
+and an operand of a construction that is itself an argument or the right
+operand of a compound assignment. The operands of a [returned
+construction](#returned-constructions) transfer by that rule.
 
 #### Returned constructions
 
@@ -5045,7 +5071,8 @@ Viewed{list, view};`, is an error at the operand, as it is for any move.
 
 Nothing else in a `return` changes. An argument of a call, as in `return
 wrap(list);` or `return .some(box(list));`, is passed as that call takes it, and
-a construction bound to a name first copies its operands at the binding.
+a construction bound to a name first takes its operands at the binding, where
+[last-use transfer](#last-use-transfer) decides whether each is copied.
 
 #### Values that outlive every scope
 

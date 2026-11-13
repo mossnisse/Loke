@@ -528,7 +528,7 @@ finish_union_construct :: proc(k: ^Checker, v: ^Expr_Call, subject: Type_Id, ind
 	v.bound = bound_exprs(k, value)
 	v.operation = Call_Union_Construct{
 		index = index,
-		clone = classify_costed_copy(k, value, payload, .Variant),
+		clone = classify_operand_copy(k, v, 0, value, payload, .Variant),
 	}
 
 	// design.md "Zero values": explicit constant variant construction is
