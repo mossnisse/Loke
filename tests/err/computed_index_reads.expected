@@ -1,6 +1,9 @@
 L0641
-@12:74
-`values` cannot be used here: a mutable reborrow of it is still in use
+@17:70
+`values` cannot be used here: a read-only reborrow of it is still in use
 L0641
-@13:88
-`values` cannot be used here: a mutable reborrow of it is still in use
+@18:73
+`jobs` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@19:80
+`holder` cannot be used here: a read-only reborrow of it is still in use

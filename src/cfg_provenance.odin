@@ -1132,9 +1132,10 @@ prov_hold_result :: proc(graph: ^Flow_Graph, sources: []int, result_type: Type_I
 // design.md "Evaluation order": a value keeps what its carriers held when it
 // was evaluated. A mutable carrier is reborrowed, others copied. With
 // `keep_reborrows`, a slot that is already a mutable reborrow is kept as it is,
-// since the carrier it suspends cannot be written meanwhile.
+// since the carrier it suspends cannot be written meanwhile. The reborrow is
+// `mutable` unless the value is only read through what it captured.
 @(private)
-prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span, keep_reborrows := false) -> []int {
+prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span, keep_reborrows := false, mutable := true) -> []int {
 	out := make([dynamic]int, 0, len(slots), graph.alloc)
 	for slot in slots {
 		if keep_reborrows && prov_slot_is_reborrow(graph, slot, mutable_only = true) {
@@ -1142,7 +1143,7 @@ prov_capture :: proc(graph: ^Flow_Graph, slots: []int, span: Span, keep_reborrow
 			continue
 		}
 		if prov_slot_is_mutable_carrier(graph, slot) {
-			append(&out, ..prov_reborrow_traversal(graph, prov_one(graph, slot), span, true))
+			append(&out, ..prov_reborrow_traversal(graph, prov_one(graph, slot), span, mutable))
 			continue
 		}
 		held := prov_hold_slot(graph, slot, span)
@@ -1485,15 +1486,23 @@ prov_read_selector :: proc(graph: ^Flow_Graph, v: ^Expr_Selector) -> []int {
 	return nil
 }
 
+// Reading a map's element clones it out, which writing one does not: the effects
+// of that copy, when `e` is such an element read as a value.
+@(private)
+prov_map_element_read_effects :: proc(graph: ^Flow_Graph, e: Expr) {
+	v, is_index := e.(^Expr_Index)
+	if is_index && v.resolution.kind != .User_Operator && len(v.bound) == 0 &&
+	   underlying_kind(graph.k.c, prov_type(graph, v.operand)) == .Map {
+		prov_copy_effects(graph, prov_type(graph, v), v.span)
+	}
+}
+
 @(private)
 prov_read_index :: proc(graph: ^Flow_Graph, v: ^Expr_Index) -> []int {
 	if v.resolution.kind == .User_Operator {
 		return prov_call(graph, prov_operator_call(graph, v))
 	}
-	// Reading a map's element clones it out, which writing one does not.
-	if len(v.bound) == 0 && underlying_kind(graph.k.c, prov_type(graph, v.operand)) == .Map {
-		prov_copy_effects(graph, prov_type(graph, v), v.span)
-	}
+	prov_map_element_read_effects(graph, v)
 	if content, ok := prov_read_rooted(graph, v); ok {
 		return content
 	}

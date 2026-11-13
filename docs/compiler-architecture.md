@@ -356,11 +356,12 @@ evaluation ends. A growing container therefore keeps room to spare in its block
 
 A bound is asked when a record is instantiated, and reads the methods the
 `impl` blocks declared so far give its arguments, so a file-scope block must be
-declared before anything resolves a field that instantiates. `prepare_package`
-therefore declares a package's blocks in three passes, each in file order:
+declared before anything resolves a field that instantiates, and before a bound
+asks for the members of its subject. `prepare_package` therefore declares a
+package's blocks in two steps:
 
-1. The blocks `declare_impl_block` can declare without resolving anything. A
-   block on a generic application is registered for the instances
+1. The blocks `declare_impl_block` can declare without resolving anything, in
+   file order. A block on a generic application is registered for the instances
    (`register_generic_impl`), and so is one on an alias declared as an
    application, whose declaration `impl_subject_application` reads as written
    instead of evaluating. Any subject `resolve_type_shell` reads is declared on
@@ -368,17 +369,27 @@ therefore declares a package's blocks in three passes, each in file order:
    dynamic arrays, maps, and arrays of a literal length. A record named this
    way is its shell, with its fields unresolved, so the L0409 check against the
    fields waits for `resolve_impl_signatures` (`reject_shell_clashes`).
-2. The subjects that ask nothing of this package (`subject_asks_nothing`): they
-   apply nothing and name nothing the package declares, as `impl vendor.Thing`
-   and `impl proc(value: int)` do.
-3. The subjects left, which may instantiate
-   ([known-gaps.md](known-gaps.md#an-impl-block-on-a-procedure-type-ahead-of-a-block-its-subjects-bound-needs)).
+2. The subjects left, which have to be resolved and may instantiate: a member
+   of another package, a procedure type, an anonymous record or union, a `dyn`
+   view, an array of a named length, or a generic application inside one of
+   these. They are queued in file order (`declare_queued_impl_blocks`,
+   `Compiler.impl_queue`) and declared in turn.
 
 A failed attempt cannot be retried once more blocks are declared: a rejected
 instance stays cached, and a declaration checked on the way is settled for the
-program (`begin_settling`). That is why the order is fixed ahead of time by what
-a subject's syntax can ask, rather than found by trying.
-
+program (`begin_settling`). So the order is never found by trying. In the
+second step the lookup that would miss a block declares it first: every lookup
+of a type's members (`member_candidates`, `find_member`, and `slot_candidates`,
+which a bound's slots go through) calls `declare_impl_blocks_on`, which
+declares the queued blocks whose subject may be a way to write that type
+(`type_syntax_may_denote`, read off the syntax as `resolve_type_shell` reads
+it). Only those are declared ahead of their turn: a block on another type may
+need the very block whose subject led to the lookup, and trying it then would
+reject it for good. A block whose subject is being resolved is skipped
+(`Item_Impl.declaring`), and what is declared this way is settled at file scope
+(`begin_settling_file_scope`), as an operator declared from a lookup is. The
+blocks `resolve_package_operators` still has to declare, those a quiet attempt
+left because their subject may need an operator, are that phase's queue.
 `generic.odin` owns inference, specialization, `where` checks, caching, and body
 commitment, with parametric aliases in `generic_alias.odin` and `impl` blocks in
 `generic_impl.odin`. Procedures and records are monomorphized with definition-site
@@ -677,7 +688,15 @@ Keep these contracts:
   the call's span (`Prov_Event.reserved_call`), so its diagnostic gets a note at
   the call, and it reports nothing when a diagnostic was already reported inside
   the call, as a later argument's conflict with the hold is.
-  `provenance_reserve.odin` owns this.
+  `provenance_reserve.odin` owns this. A place reached through carriers is found
+  again where the call starts (`prov_place_reservable`): the named carrier is
+  read again and the others loaded through it, and no index is evaluated twice
+  (`again` in `prov_reach_hop`), so an index that calls a procedure, or looks up
+  a map's key, is no obstacle. Where the argument is evaluated such an index
+  runs after the carrier was read, so the carrier is captured (`prov_capture`),
+  read-only for the hold, and the hold of a captured or loaded carrier is a
+  reborrow made once the place is complete (`prov_reserve_carriers`), so that
+  the index's own use of the carrier is no conflict with the reservation.
 - **A printed view through a mutable call result holds its loan for invalidation
   only.** A slot marked `Prov_Slot.read_only_hold` conflicts with no read of what its
   loans lend, as a read does not move what is viewed, and with any write or further
@@ -971,6 +990,18 @@ action after which is a cleared temporary's: a container literal's element that
 owes nothing at its end rewinds there (`unwind_rewind`), and the next element's
 drops take the same actions in order (`unwind_reuse`). Any other reservation
 ends the reuse.
+
+An exit from inside an expression, `or_return` or an `or_else` exit, owes the
+same drops a panic there would, and takes them from `Function_State.held`
+(`drain_temporaries`): the owned values an operation has finished and still
+holds while it evaluates what comes next. A call holds its earlier arguments
+(`hold_temporary_value`), and a literal holds the parts it has built, each
+registered for the unwind and held by one call (`hold_built_part`,
+`hold_record_part`): a struct's fields, the elements of an array or of a slice
+literal's hidden array, and the built prefix of a dynamic array or map.
+`finish_temporary_drop` ends both when the finished value owns the part. A
+synthesized body, which evaluates no expression of the program's, registers
+its parts for the unwind alone (`guard_built_element`, `guard_record_part`).
 
 ### CPU dispatch
 

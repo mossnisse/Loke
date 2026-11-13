@@ -371,12 +371,27 @@ prov_lend_reserved :: proc(graph: ^Flow_Graph, actual: []int, type: Type_Id, bor
 
 // design.md "Weakening and reborrows": what `carriers` hold while the loan of them
 // is reserved: each named mutable one is reborrowed read-only, so it is not
-// written through, nor reborrowed mutably, until the call starts.
+// written through, nor reborrowed mutably, until the call starts. So is one read
+// on the way to the place, whose own value was captured before the indices after
+// it ran (`prov_reach_hop`): the hold starts here, where the place is complete,
+// and an index that used the carrier it was read from is no conflict with it.
 @(private = "file")
 prov_reserve_carriers :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -> []int {
 	made := len(graph.reborrows)
-	hold := prov_reborrow_traversal(graph, carriers, span, false)
+	hold := prov_reborrow_each(graph, carriers, span, false, proc(graph: ^Flow_Graph, slot: int) -> bool {
+		return prov_slot_is_mutable_carrier(graph, slot) || graph.prov_slots[slot].kind == .Temporary
+	})
 	prov_mark_reserved(graph, made)
+	// What such a temporary reborrows is held through it, for the call too.
+	for slot in carriers {
+		if graph.prov_slots[slot].kind != .Temporary {
+			continue
+		}
+		deriving := prov_reborrows_deriving(graph, slot)
+		for reborrow in prov_next_reborrow(graph, &deriving) {
+			reborrow.reserved = true
+		}
+	}
 	return hold
 }
 
@@ -430,8 +445,7 @@ prov_reserved_form :: proc(
 		place = bounds.operand
 	}
 	type := prov_type(graph, place)
-	if !type_carries_borrow(c, type).mutable || type_is_region_provider(c, type) || !prov_reads_as_place(graph, place) ||
-	   prov_place_indexes_map(graph, place) {
+	if !type_carries_borrow(c, type).mutable || type_is_region_provider(c, type) || !prov_reads_as_place(graph, place) {
 		return .None, nil, nil
 	}
 	if _, _, named := prov_place_of(graph, place); !named {
@@ -440,21 +454,6 @@ prov_reserved_form :: proc(
 		}
 	}
 	return .Carrier, place, bounds
-}
-
-// Whether `place` goes through a map's element, which reading clones out
-// (`prov_read_index`), so it is no place to read a second time.
-@(private = "file")
-prov_place_indexes_map :: proc(graph: ^Flow_Graph, place: Expr) -> bool {
-	#partial switch v in place {
-	case ^Expr_Selector:
-		return prov_place_indexes_map(graph, v.operand)
-	case ^Expr_Postfix:
-		return prov_place_indexes_map(graph, v.operand)
-	case ^Expr_Index:
-		return underlying_kind(graph.k.c, prov_type(graph, v.operand)) == .Map || prov_place_indexes_map(graph, v.operand)
-	}
-	return false
 }
 
 // An argument whose mutable loan its call reserves (`prov_reserve_argument`).
@@ -501,6 +500,9 @@ prov_reserve_argument :: proc(graph: ^Flow_Graph, argument: Expr, parameter: Typ
 	} else {
 		reserved.watched = prov_reserved_carriers(graph, place)
 	}
+	// The place is read here, once, so a map's element is cloned out here
+	// (`prov_read_index`); where the call starts it is only found again.
+	prov_map_element_read_effects(graph, place)
 	// A carrier read out of a record reborrows the record read-only, which holds it
 	// too.
 	made := len(graph.reborrows)

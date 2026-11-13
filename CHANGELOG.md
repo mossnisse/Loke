@@ -1668,8 +1668,9 @@ checklist.
   argument computes, as in `poke(pick(p), p^.n)`. Nothing that compiled is rejected by this change.
   A conflict found where a reserved loan starts has a note pointing at the call, and a call whose
   later argument already conflicts with the reservation, as `both(p, pick(p))`, is reported once.
-  [known-gaps.md](docs/known-gaps.md#a-reserved-loan-through-an-index-that-calls-or-through-a-map-element)
-  lists two forms the compiler does not reserve yet.
+  The place may be reached through an index that calls a procedure, as in
+  `rows[pick()].set(rows[0].flag)`, and the carrier may be read out of a map's element, as in
+  `poke(m^[1], m^[1]^.n)`: the index is evaluated once, where the argument is.
 - The documentation moved into [docs/](docs/): [design.md](docs/design.md),
   [grammar.md](docs/grammar.md), [compiler-guide.md](docs/compiler-guide.md),
   [standard-library.md](docs/standard-library.md), and the other reference documents. The release
@@ -1990,9 +1991,18 @@ checklist.
   `Slice_Box :: Box([]int)`, is a block on `Box([]int)`, as if written `impl Box([]int)`: declaring
   it no longer instantiates the type, which asked `Box`'s bound before a later `impl []int` had
   met it. It also ranks as that application does, so its member wins over one of the same name in a
-  block on `Box($T)`, where the two were `L0409`. One ordering still decides, between two blocks on
-  procedure types or the like
-  ([known-gaps.md](docs/known-gaps.md#an-impl-block-on-a-procedure-type-ahead-of-a-block-its-subjects-bound-needs)).
+  block on `Box($T)`, where the two were `L0409`. A block whose subject has to be resolved, as a
+  procedure type, an anonymous record, a `dyn` view, an array of a named length, or a generic
+  application inside one of these, is declared when a bound first asks for the members of its
+  type: `impl []Box(proc(p: Point) -> int)` ahead of `impl proc(p: Point) -> int`, which supplies
+  what `Box`'s bound needs, was `L0406`.
+- An element a composite literal has already built is dropped when a later element leaves with
+  `or_return` or an `or_else` exit ([or_else expression](docs/design.md#or_else-expression)), as a
+  call's earlier arguments are. `p := Pair{Tracked{1}, fail() or_return};` leaked `Tracked{1}`: its
+  drop hook never ran, and neither did the release of what it owned. The same held for an array,
+  slice, dynamic-array, and map literal, where the storage a dynamic array or map had reserved
+  leaked with the elements, for a literal inside a variant construction or another literal, and
+  for an element that was moved or cloned in.
 - An extension block's public procedure takes its name in the package whether or not a generic
   extension with a public procedure of that name is written before it. The generic block reserved
   the name first, so `impl vendor.Thing { @(public) describe :: ... }` after
@@ -2238,6 +2248,11 @@ checklist.
 - An index that runs nothing of the program only reads, however it is computed: `less(xs[i - 1], xs[i])`
   over a `[]mut T` of move-only elements, with an arithmetic, converted, indexed, or `len()` index, is
   no longer `L0641`.
+- An element read through a mutable carrier reborrows it read-only also where its index calls a
+  procedure or a user-defined operator, as in `less(xs[pick(0)], xs[1])` over a `[]mut T` of move-only
+  elements, which was `L0641`: the read took a mutable reborrow of the whole carrier. The index may
+  read through the carrier, as in `xs[last(xs)]`, and one that writes through it is still `L0641`
+  ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A body's analysis no longer grows with blocks times slots times loans: a block keeps what changed
   in pages it shares with its neighbors, and each row of loans once. So 2000 branches that each borrow,
   which took a minute and ran out of memory at three times that, take under a second, and a chain of

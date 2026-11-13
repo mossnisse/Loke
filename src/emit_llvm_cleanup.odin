@@ -211,8 +211,26 @@ hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string, storage 
 	if !emit_lifecycle(e, type).managed { return Deferred{} }
 	place := storage != "" ? storage : alloca(e, llvm_type(e, type))
 	store(e, type, value, place)
-	entry := begin_temporary_drop(e, type, place)
-	append(&e.held, entry)
+	return hold_built_part(e, type, place)
+}
+
+// A completed part, at `place`, of a value an expression is still building, as an
+// element of a literal: the unwind's to drop if a later part panics, and the
+// expression's to drop if a later part exits (`Function_State.held`), until
+// `finish_temporary_drop` hands it to the finished value.
+@(private)
+hold_built_part :: proc(e: ^Emitter, type: Type_Id, place: string) -> Deferred {
+	if !emit_lifecycle(e, type).managed { return Deferred{} }
+	return hold_cleanup(e, begin_temporary_drop(e, type, place))
+}
+
+// `entry`, registered for the unwind, is also held: an exit from what the
+// operation evaluates next drops it (`drain_temporaries`).
+@(private)
+hold_cleanup :: proc(e: ^Emitter, entry: Deferred) -> Deferred {
+	if entry.order != 0 {
+		append(&e.held, entry)
+	}
 	return entry
 }
 
@@ -401,6 +419,11 @@ drain_temporaries :: proc(e: ^Emitter, frame, first_held: int) {
 		if entry.kind == .Array {
 			// A variadic call's staged elements, each flagged while it is owned, so
 			// it stays registered: a panicking hook leaves the rest to the unwind.
+			// A prefix with no flags is cleared first, as the traversal registers
+			// what it has left itself (`emit_drop_elements_reversed`).
+			if entry.array_flags == "" {
+				unwind_clear(e, entry.slot)
+			}
 			emit_drop_staged_array(e, entry)
 			unwind_clear(e, entry.slot)
 		} else {

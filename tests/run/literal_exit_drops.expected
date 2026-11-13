@@ -1,0 +1,39 @@
+struct
+drop 1
+struct two
+drop 3
+drop 2
+nested
+drop 4
+inner
+drop 5
+array
+drop 6
+array of pairs
+drop 8
+drop 7
+variant
+drop 9
+dynamic
+drop 10
+map
+drop 11
+slice
+drop 12
+or_else
+drop 13
+loop
+drop 14
+moved
+drop 16
+last use
+drop copy 17
+cloned
+drop copy 118
+drop copy 18
+returned
+drop copy 19
+succeeds
+drop 22
+drop 21
+drop 20

@@ -111,6 +111,36 @@ nested :: proc() {
 	fmt.println(c.n, other.n);
 }
 
+// An index on the way to the place may run a procedure: it is evaluated once,
+// where the argument is, and the place is found again when the call starts.
+// One that writes the carrier it indexes leaves the place computed first.
+pick :: proc(at: int) -> int { return at; }
+shift :: proc(rows: inout []mut Row, @(escape=stored) other: []mut Row) -> int { rows = other; return 0; }
+
+through_an_index_that_calls :: proc(counters: []mut Counter, rows: []mut Row, table: ^mut [2]Counter, spare: []mut Row) {
+	counters[pick(0)].set(!counters[0].flag);
+	counters[pick(0)].add(counters[pick(1)].get());
+	put(inout counters[pick(1)], counters[1].n + 1);
+	poke(&mut counters[pick(1)], counters[0].n + counters[1].n);
+	rows[pick(0)].cells.append(rows[0].cells.len());
+	rows[pick(0)].cells.append(rows[pick(1)].total);
+	table^[pick(1)].add(table^[0].n);
+	view := rows;
+	view[shift(inout view, spare)].cells.append(view[0].total);
+	fmt.println(counters[0].n, counters[0].flag, counters[1].n, rows[0].cells, table^[1].n, spare[0].cells);
+}
+
+// A carrier read out of a map's element is lent as one read out of a field is.
+through_a_map_element :: proc(m: ^mut map[int]^mut Counter) {
+	poke(m^[1], m^[1]^.n + 1);
+	poke(m^[pick(1)], m^[2]^.n + m^[1]^.n);
+	m^[2]^.add(m^[1]^.n);
+	local := map[int]^mut Counter{};
+	defer drop(local);
+	local[7] = m^[2];
+	poke(local[7], local[7]^.n * 2);
+	fmt.println(m^[1]^.n, m^[2]^.n);
+}
 main :: proc() {
 	listed();
 	c := Counter{1, false};
@@ -134,4 +164,16 @@ main :: proc() {
 	defaults_and_loops();
 	rewritten_pointer();
 	nested();
+	counters := [2]Counter{Counter{1, false}, Counter{2, false}};
+	more := [2]Row{Row{[dynamic]int{3}, 4}, Row{[dynamic]int{}, 5}};
+	defer drop(more);
+	extra := [1]Row{Row{[dynamic]int{}, 6}};
+	defer drop(extra);
+	table := [2]Counter{Counter{10, false}, Counter{20, false}};
+	through_an_index_that_calls(&mut counters[:], &mut more[:], &mut table, &mut extra[:]);
+	one := Counter{1, false};
+	two := Counter{2, false};
+	by_key := map[int]^mut Counter{1 = &mut one, 2 = &mut two};
+	defer drop(by_key);
+	through_a_map_element(&mut by_key);
 }

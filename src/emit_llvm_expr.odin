@@ -832,13 +832,14 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 	info := type_of(e.c, backing)
 	root := alloca(e, llvm_type(e, backing))
 
-	// Each element is the unwind's to drop until the scope owns the array.
+	// Each element is the literal's to drop, on a panic or an exit from a later
+	// one, until the scope owns the array.
 	guards := make([]Deferred, len(v.elements))
 	for element, index in v.elements {
 		slot := element_address(e, backing, root, index)
 		value := emit_copied_expr(e, element.value, info.element, index < len(v.element_clones) && v.element_clones[index])
 		store(e, info.element, value, slot)
-		guards[index] = guard_built_element(e, info.element, slot)
+		guards[index] = hold_built_part(e, info.element, slot)
 	}
 	for guard in guards {
 		finish_temporary_drop(e, guard)
@@ -867,7 +868,9 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 	}
 	// design.md "What the unwind runs, and what it does not": a part is the
 	// unwind's to drop from when it is stored until the literal is complete, so
-	// a later element that panics releases exactly the parts already built.
+	// a later element that panics releases exactly the parts already built. So
+	// does one that exits, with `or_return` or an `or_else` exit (design.md
+	// "or_else expression"): the parts are held meanwhile.
 	guards := make([dynamic]Deferred)
 	defer delete(guards)
 	for element, index in v.elements {
@@ -898,9 +901,9 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 			record_field_align(e, as_type, address, field_address, element_type)
 			store(e, element_type, stored, field_address)
 			if info.kind == .Struct {
-				append(&guards, guard_record_part(e, as_type, address, target))
+				append(&guards, hold_record_part(e, as_type, address, target))
 			} else {
-				append(&guards, guard_built_element(e, element_type, field_address))
+				append(&guards, hold_built_part(e, element_type, field_address))
 			}
 		}
 	}

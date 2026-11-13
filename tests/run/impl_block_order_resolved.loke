@@ -1,0 +1,112 @@
+package main;
+
+import "core:fmt";
+
+// design.md "when statement": file-scope declarations may appear in any order.
+// Every block here is written before the block that supplies the method its
+// subject's bound asks for, and both subjects have to be resolved to be
+// declared: a procedure type, an anonymous record, an array whose length is a
+// named constant, a `dyn` view, and a generic application inside another form.
+
+Sized :: interface($T: type) {
+	slot size: proc(self) -> int;
+}
+
+Box :: struct($T: type) where Sized(T) { value: T }
+
+Point :: struct { x, y: int }
+
+// A procedure type that names a type of this package.
+impl []Box(proc(p: Point) -> int) {
+	total :: proc(self) -> int { return self.len() * 100; }
+}
+
+impl proc(p: Point) -> int {
+	size :: proc(self) -> int { return self(Point{1, 2}); }
+}
+
+// An anonymous record.
+impl []Box((at: Point, weight: int)) {
+	total :: proc(self) -> int { return self.len() * 10; }
+}
+
+impl (at: Point, weight: int) {
+	size :: proc(self) -> int { return self.weight; }
+}
+
+// An array whose length is a named constant, and one a constant computes.
+N :: 3;
+A :: 1;
+M :: A + N;
+
+impl []Box([N]Point) {
+	total :: proc(self) -> int { return self.len(); }
+}
+
+impl [N]Point {
+	size :: proc(self) -> int { return N; }
+}
+
+impl []Box([M]Point) {
+	total :: proc(self) -> int { return self.len() + 40; }
+}
+
+impl [M]Point {
+	size :: proc(self) -> int { return M; }
+}
+
+// An application inside another form, whose own subject needs one in turn.
+Cell :: struct($T: type) { value: T }
+
+impl ^Box([]Box([]Cell(Point))) {
+	depth :: proc(self) -> int { return self^.value.size() + 2; }
+}
+
+impl []Box([]Cell(Point)) {
+	size :: proc(self) -> int { return self.len() + 1; }
+}
+
+impl []Cell(Point) {
+	size :: proc(self) -> int { return self.len(); }
+}
+
+// A `dyn` view.
+Shape :: interface($T: type) {
+	slot area: proc(self: ^) -> int;
+}
+
+impl Point {
+	area :: proc(self: ^) -> int { return self^.x * self^.y; }
+}
+
+impl []Box(dyn Shape) {
+	total :: proc(self) -> int { return self.len() + 7; }
+}
+
+impl dyn Shape {
+	size :: proc(self) -> int { return self.area(); }
+}
+
+sum :: proc(p: Point) -> int { return p.x + p.y; }
+
+main :: proc() {
+	steps := []Box(proc(p: Point) -> int){ {sum} };
+	fmt.println(steps.total(), steps[0].value.size());
+
+	weighed := []Box((at: Point, weight: int)){ {{at = Point{1, 2}, weight = 5}} };
+	fmt.println(weighed.total(), weighed[0].value.size());
+
+	triples := []Box([N]Point){};
+	fmt.println(triples.total());
+	quads := []Box([M]Point){};
+	fmt.println(quads.total());
+
+	cells := []Cell(Point){ {Point{1, 1}} };
+	inner := []Box([]Cell(Point)){ {cells} };
+	outer := Box([]Box([]Cell(Point))){inner};
+	fmt.println((&outer).depth());
+
+	p := Point{3, 4};
+	shapes := []Box(dyn Shape){ {(dyn Shape)(&p)} };
+	fmt.println(shapes.total(), shapes[0].value.size());
+}

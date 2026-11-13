@@ -338,6 +338,83 @@ resolve_type_shell :: proc(k: ^Checker, syntax: Expr, hops := 0) -> Type_Id {
 	return mark_denotes_type(&ident.base, type, target.named)
 }
 
+// Whether type syntax may be a way to write `type`, read off the syntax as
+// `resolve_type_shell` reads it, with no declaration resolved. False only where
+// the two cannot agree: a slice's syntax and a pointer, a nominal type's name
+// and another type, an application of one generic type and an instance of
+// another. Whatever only resolving could tell, as an array's length, a
+// procedure type's parameters, or what a call computes, may be.
+//
+// A lookup of a type's members asks this of the `impl` subjects still to be
+// declared (`declare_impl_blocks_on`).
+type_syntax_may_denote :: proc(k: ^Checker, syntax: Expr, type: Type_Id, hops := 0) -> bool {
+	info := type_of(k.c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch value in syntax {
+	case ^Expr_Ident:
+		target := shell_name_target(k, value, hops)
+		switch {
+		case target.nominal != INVALID_SYMBOL:
+			return symbol_of(k.c, target.nominal).type == type
+		case target.value != nil:
+			saved := k.scope
+			k.scope = target.scope
+			defer k.scope = saved
+			return type_syntax_may_denote(k, target.value, type, hops + 1)
+		}
+
+	case ^Type_Pointer:
+		return info.kind == .Pointer && info.mutable == value.mutable && type_syntax_may_denote(k, value.elem, info.element, hops)
+
+	case ^Type_C_Pointer:
+		return info.kind == .C_Pointer && type_syntax_may_denote(k, value.elem, info.element, hops)
+
+	case ^Type_Slice:
+		return info.kind == .Slice && info.mutable == value.mutable && type_syntax_may_denote(k, value.elem, info.element, hops)
+
+	case ^Type_Dynamic_Array:
+		return info.kind == .Dynamic_Array && type_syntax_may_denote(k, value.elem, info.element, hops)
+
+	case ^Type_Array:
+		return info.kind == .Array && type_syntax_may_denote(k, value.elem, info.element, hops)
+
+	case ^Type_Map:
+		return info.kind == .Map && type_syntax_may_denote(k, value.key, info.key, hops) &&
+		       type_syntax_may_denote(k, value.value, info.element, hops)
+
+	case ^Type_Proc:
+		return info.kind == .Proc
+
+	case ^Type_Anon_Record:
+		return info.anonymous_record
+
+	case ^Type_Anon_Union:
+		return info.anonymous_union
+
+	case ^Type_Dyn:
+		return info.kind == .Dyn
+
+	case ^Expr_Call:
+		// `Table(string, int)` denotes an instance of `Table` with those arguments.
+		// An alias's application, or a call that computes a type, may denote any.
+		template := generic_template_of_callee(k, value.callee, {.Record})
+		if template == nil {
+			return true
+		}
+		if info.instance_of != template.symbol || len(info.instance_args) != len(value.args) {
+			return false
+		}
+		for arg, index in value.args {
+			if given := info.instance_args[index]; given.is_type && !type_syntax_may_denote(k, arg.value, given.type, hops) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // The type pointer, slice, dynamic-array, array, or map syntax denotes, built
 // from its elements: each resolved by `resolve_type_syntax`, or, with `shell`,
 // read by `resolve_type_shell`, which also takes an array's length only as a

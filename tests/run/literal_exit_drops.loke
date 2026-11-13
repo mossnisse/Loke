@@ -1,0 +1,157 @@
+package main;
+
+import "core:fmt";
+
+// design.md "or_else expression": an exit after anything an operation already
+// holds drops those values on its way out. A literal holds the elements it has
+// built: each is dropped once, newest first, when a later element leaves with
+// `or_return` or an `or_else` exit, whatever kind of literal it is and however
+// the element came to be in it.
+
+@(move_only) Tracked :: struct { id: int }
+
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+
+Copied :: struct { id: int }
+
+impl Copied {
+	release :: hook(drop) proc(self: inout Copied) { fmt.println("drop copy", self.id); }
+	again :: hook(copy) proc(self, allocator: Allocator) -> Result(Copied, Allocator_Error) { return .ok(Copied{self.id + 100}); }
+}
+
+E :: enum { Bad }
+Pair :: struct { item: Tracked, n: int }
+Both :: struct { a: Tracked, b: Tracked, n: int }
+Wrap :: struct { pair: Pair, n: int }
+Held :: struct { item: Copied, n: int }
+
+fail :: proc() -> Result(int, E) { return .err(.Bad); }
+fine :: proc() -> Result(int, E) { return .ok(7); }
+fail_tracked :: proc() -> Result(Tracked, E) { return .err(.Bad); }
+none :: proc() -> Option(int) { return .none; }
+
+in_struct :: proc() -> Result(int, E) {
+	p := Pair{Tracked{1}, fail() or_return};
+	return p.n;
+}
+
+in_struct_two :: proc() -> Result(int, E) {
+	p := Both{Tracked{2}, Tracked{3}, fail() or_return};
+	return p.n;
+}
+
+// A finished inner literal is one part of the outer one.
+in_nested :: proc() -> Result(int, E) {
+	w := Wrap{Pair{Tracked{4}, 1}, fail() or_return};
+	return w.n;
+}
+
+in_inner :: proc() -> Result(int, E) {
+	w := Wrap{Pair{Tracked{5}, fail() or_return}, 2};
+	return w.n;
+}
+
+in_array :: proc() -> Result(int, E) {
+	xs := [2]Tracked{Tracked{6}, fail_tracked() or_return};
+	return xs[0].id;
+}
+
+in_array_of_pairs :: proc() -> Result(int, E) {
+	xs := [2]Pair{Pair{Tracked{7}, 1}, Pair{Tracked{8}, fail() or_return}};
+	return xs[0].n;
+}
+
+in_variant :: proc() -> Result(int, E) {
+	o := Option(Pair).some(Pair{Tracked{9}, fail() or_return});
+	switch (o) {
+	case .some(p): return p.n;
+	case .none: return 0;
+	}
+}
+
+// The elements already appended go with the array, and its storage with them.
+in_dynamic :: proc() -> Result(int, E) {
+	xs := [dynamic]Tracked{Tracked{10}, fail_tracked() or_return};
+	defer drop(xs);
+	return xs.len();
+}
+
+in_map :: proc() -> Result(int, E) {
+	m := map[int]Tracked{1 = Tracked{11}, 2 = fail_tracked() or_return};
+	defer drop(m);
+	return m.len();
+}
+
+in_slice :: proc() -> Result(int, E) {
+	xs := []Tracked{Tracked{12}, fail_tracked() or_return};
+	return xs.len();
+}
+
+with_or_else :: proc() -> int {
+	p := Pair{Tracked{13}, none() or_else return -1};
+	return p.n;
+}
+
+in_loop :: proc() -> int {
+	total := 0;
+	for (i := 0; i < 2; i += 1) {
+		p := Pair{Tracked{14 + i}, none() or_else break};
+		total += p.n;
+	}
+	return total;
+}
+
+// A local moved into the literal is the literal's, by `move` or by its last use.
+moved_local :: proc() -> Result(int, E) {
+	t := Tracked{16};
+	p := Pair{move(t), fail() or_return};
+	return p.n;
+}
+
+last_use :: proc() -> Result(int, E) {
+	c := Copied{17};
+	h := Held{c, fail() or_return};
+	return h.n;
+}
+
+// A place read again later is cloned in: the clone and the place are both dropped.
+cloned_place :: proc() -> Result(int, E) {
+	c := Copied{18};
+	h := Held{c, fail() or_return};
+	return h.n + c.id;
+}
+
+returned :: proc() -> Result(Held, E) {
+	c := Copied{19};
+	return .ok(Held{c, fail() or_return});
+}
+
+// Nothing is dropped early when no element exits.
+succeeds :: proc() -> Result(int, E) {
+	p := Pair{Tracked{20}, fine() or_return};
+	xs := [dynamic]Tracked{Tracked{21}, Tracked{22}};
+	defer drop(xs);
+	return p.n + xs.len();
+}
+
+main :: proc() {
+	fmt.println("struct"); _ = in_struct();
+	fmt.println("struct two"); _ = in_struct_two();
+	fmt.println("nested"); _ = in_nested();
+	fmt.println("inner"); _ = in_inner();
+	fmt.println("array"); _ = in_array();
+	fmt.println("array of pairs"); _ = in_array_of_pairs();
+	fmt.println("variant"); _ = in_variant();
+	fmt.println("dynamic"); _ = in_dynamic();
+	fmt.println("map"); _ = in_map();
+	fmt.println("slice"); _ = in_slice();
+	fmt.println("or_else"); _ = with_or_else();
+	fmt.println("loop"); _ = in_loop();
+	fmt.println("moved"); _ = moved_local();
+	fmt.println("last use"); _ = last_use();
+	fmt.println("cloned"); _ = cloned_place();
+	fmt.println("returned"); _ = returned();
+	fmt.println("succeeds"); _ = succeeds();
+}

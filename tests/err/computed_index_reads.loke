@@ -1,15 +1,21 @@
-// design.md "Weakening and reborrows": an index that may run the program's code may
-// write what is being indexed, so a mutable reborrow stays taken beside it.
+// design.md "Weakening and reborrows": an element read through a mutable carrier
+// reborrows it read-only, from where the carrier is read, which is before the
+// index is evaluated (design.md "Evaluation order"). So an index that runs the
+// program's code may read through the carrier, and may not write through it.
 package main;
 
 @(move_only) Job :: struct { d: int }
-Key :: struct { at: int }
-add :: operator(+) proc(left, right: Key) -> int { return left.at + right.at; }
+Holder :: struct { jobs: [dynamic]Job }
 
 less :: proc(left, right: Job) -> bool { return left.d < right.d; }
-pick :: proc(at: int) -> int { return at; }
+last :: proc(values: []Job) -> int { return values.len() - 1; }
+grab :: proc(values: []mut Job) -> int { values[1].d = 0; return 0; }
+grow :: proc(jobs: ^mut [dynamic]Job) -> int { jobs^.append(Job{d = 1}); return 0; }
+clear :: proc(holder: ^mut Holder) -> int { holder^.jobs = [dynamic]Job{}; return 0; }
 
-called :: proc(values: []mut Job) -> bool { return less(values[pick(0)], values[1]); }
-operated :: proc(values: []mut Job, key: Key) -> bool { return less(values[key + key], values[1]); }
+read :: proc(values: []mut Job) -> bool { return less(values[last(values)], values[0]); }
+written :: proc(values: []mut Job) -> bool { return less(values[grab(values)], values[1]); }
+grown :: proc(jobs: ^mut [dynamic]Job) -> bool { return less(jobs^[grow(jobs)], jobs^[1]); }
+replaced :: proc(holder: ^mut Holder) -> bool { return less(holder^.jobs[clear(holder)], holder^.jobs[1]); }
 
 main :: proc() {}

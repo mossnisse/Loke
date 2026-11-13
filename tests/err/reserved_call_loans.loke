@@ -97,4 +97,17 @@ handed_back :: proc(p: ^mut Counter) {
 	both(p, pick(p));
 }
 
+// A place reached through an index that calls a procedure, or a carrier read out
+// of a map's element, is reserved as any other: written while reserved, or handed
+// to the call, it is rejected.
+at :: proc() -> int { return 0; }
+calling_index :: proc(cs: []mut Counter, m: ^mut map[int]^mut Counter) {
+	cs[at()].add(bump(&mut cs[0]));
+	put(inout cs[at()], bump(&mut cs[1]));
+	poke(&mut cs[at()], bump(&mut cs[0]));
+	cs[at()].watch(&cs[0].n);
+	poke(m^[1], bump(m^[1]));
+	poke_seen(m^[1], &m^[1]^.n);
+}
+
 main :: proc() {}

@@ -191,38 +191,35 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	// methods of its arguments, so the order blocks are declared in must not
 	// decide whether a bound holds (design.md "when statement": file-scope
 	// declarations may appear in any order). The blocks `declare_impl_block` can
-	// declare without resolving anything go first, in any order. Next come the
-	// subjects that ask nothing of this package's blocks (`subject_asks_nothing`),
-	// and only then the ones left, in file order.
-	Impl_Pass :: enum {
-		Resolving_Nothing, // the blocks `declare_impl_block` declares with `unresolved_only`
-		Asking_Nothing,    // the subjects `subject_asks_nothing` passes
-		Rest,
-	}
+	// declare without resolving anything go first, in any order. The ones left
+	// are queued in file order, and a lookup one of their subjects leads to
+	// declares the queued blocks it needs ahead of their turn
+	// (`declare_queued_impl_blocks`).
 	pending := make(map[Package_Id]bool, 8, context.temp_allocator)
-	for pass in Impl_Pass {
-		for file in pkg.files {
-			k.file, k.file_node = file.file, file
-			for item in file.active_items {
-				impl, ok := item.(^Item_Impl)
-				if !ok || impl.declared {
-					continue
-				}
-				if pass == .Asking_Nothing && !subject_asks_nothing(k, impl.type) {
-					continue
-				}
-				subject := impl_subject_package(k, impl)
-				waits, asked := pending[subject]
-				if !asked {
-					waits = package_closure_has_pending_whens(k.c, subject)
-					pending[subject] = waits
-				}
-				if !waits || first_unresolved_name(k, impl.type) == "" {
-					declare_impl_block(k, impl, unresolved_only = pass == .Resolving_Nothing)
-				}
+	resolved := make([dynamic]Pending_Block, 0, 8, context.temp_allocator)
+	for file in pkg.files {
+		k.file, k.file_node = file.file, file
+		for item in file.active_items {
+			impl, ok := item.(^Item_Impl)
+			if !ok || impl.declared {
+				continue
+			}
+			subject := impl_subject_package(k, impl)
+			waits, asked := pending[subject]
+			if !asked {
+				waits = package_closure_has_pending_whens(k.c, subject)
+				pending[subject] = waits
+			}
+			if waits && first_unresolved_name(k, impl.type) != "" {
+				continue
+			}
+			declare_impl_block(k, impl, unresolved_only = true)
+			if !impl.declared {
+				append(&resolved, Pending_Block{impl, k.location})
 			}
 		}
 	}
+	declare_queued_impl_blocks(k, resolved[:], quiet = true)
 }
 
 // The package whose scope an `impl` subject is written in, read off the syntax

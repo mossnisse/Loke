@@ -658,11 +658,16 @@ settle_pending_operators :: proc(k: ^Checker) {
 		return
 	}
 	saved := k.location
+	saved_queue := c.impl_queue
 	settling := begin_settling_file_scope(c)
 	defer {
 		end_settling(c, settling)
 		k.location = saved
+		c.impl_queue = saved_queue
 	}
+	// A block still to come that a subject's bound needs is declared from where the
+	// bound asks (`declare_impl_blocks_on`), and found declared when its turn comes.
+	c.impl_queue = {c.pending_operator_blocks[c.next_pending_operator_block:], false}
 	for c.next_pending_operator_block < len(c.pending_operator_blocks) {
 		entry := c.pending_operator_blocks[c.next_pending_operator_block]
 		c.next_pending_operator_block += 1

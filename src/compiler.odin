@@ -112,6 +112,9 @@ Compiler :: struct {
 	// The blocks of each subject whose `delegate` items have yet to run
 	// (`settle_delegates`).
 	pending_delegates:     map[Type_Id][dynamic]Pending_Block,
+	// The blocks being declared by resolving each subject in turn, which a lookup of
+	// a type's members may declare ahead of their turn (`declare_impl_blocks_on`).
+	impl_queue:            Impl_Queue,
 	// The blocks of the package being declared, and its operators whose signatures have
 	// yet to resolve (`settle_pending_operators`), with the first of each not yet taken.
 	pending_operator_blocks:     [dynamic]Pending_Block,

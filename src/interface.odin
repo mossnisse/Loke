@@ -798,6 +798,9 @@ check_slot_requirement :: proc(
 // A slot's candidates (design.md "Interface bodies"), shared with witness
 // construction so `dyn` selects what satisfaction promised.
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
+	// design.md "when statement": a bound holds wherever the block that meets it
+	// is written.
+	declare_impl_blocks_on(k, subject)
 	ensure_format_member(k, subject, name)
 	ensure_iteration_members(k, subject)
 	ensure_lifecycle_members(k, subject, name)

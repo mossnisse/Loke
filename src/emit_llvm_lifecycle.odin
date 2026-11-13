@@ -336,7 +336,23 @@ emit_drop_staged_array :: proc(e: ^Emitter, entry: Deferred) {
 // record, whose own hook must not run for it.
 @(private)
 guard_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) -> Deferred {
-	if !unwind_enabled(e) || !emit_lifecycle(e, clone_part(e.c, record, index)).managed {
+	if !unwind_enabled(e) {
+		return Deferred{}
+	}
+	return record_part_cleanup(e, record, base, index)
+}
+
+// `guard_record_part` for a record literal, whose later fields are expressions
+// that may exit: the part is held too, so such an exit drops it (`hold_built_part`).
+@(private)
+hold_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) -> Deferred {
+	return hold_cleanup(e, record_part_cleanup(e, record, base, index))
+}
+
+// The drop of one part of a record, registered for the unwind where there is one.
+@(private = "file")
+record_part_cleanup :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) -> Deferred {
+	if !emit_lifecycle(e, clone_part(e.c, record, index)).managed {
 		return Deferred{}
 	}
 	if field, counter, prefixed := record_prefix_part(e, record, index); prefixed {

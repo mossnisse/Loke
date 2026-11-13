@@ -18,11 +18,15 @@ import "core:strings"
 // anything wherever it can be: one on a generic application waits for the
 // instances, and one whose subject `resolve_type_shell` reads is declared on
 // that. `unresolved_only` declares those and leaves any other block for a
-// later call, once they are all declared.
+// later call, once they are all declared. The blocks left are declared from a
+// queue (`declare_queued_impl_blocks`), where a lookup that a subject leads to
+// declares the blocks it needs first.
 declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true, unresolved_only := false) {
-	if item.declared {
+	if item.declared || item.declaring {
 		return
 	}
+	item.declaring = true
+	defer item.declaring = false
 	// A block on a generic type waits for an instantiation to install it on.
 	if call := impl_subject_application(k, item); call != nil {
 		if template := generic_template_of_callee(k, call.callee, {.Record}); template != nil {
@@ -81,6 +85,61 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true, unresol
 	item.kind = own_package ? .Impl : .Extend
 	declare_impl_members(k, item)
 	defer_delegates(k, item)
+}
+
+// The file-scope blocks a phase declares by resolving each one's subject, and
+// whether a subject that does not resolve is left for a later attempt (`quiet` of
+// `declare_impl_block`).
+Impl_Queue :: struct {
+	blocks: []Pending_Block,
+	quiet:  bool,
+}
+
+// Declares `blocks` in the order given. Resolving one's subject can instantiate
+// a generic whose bound asks for the members of a type that a block further on
+// gives it, so a lookup of a type's members declares those blocks first
+// (`declare_impl_blocks_on`), and the order blocks are written in does not
+// decide whether a bound holds (design.md "when statement").
+declare_queued_impl_blocks :: proc(k: ^Checker, blocks: []Pending_Block, quiet: bool) {
+	saved_queue, saved_location := k.c.impl_queue, k.location
+	k.c.impl_queue = {blocks, quiet}
+	defer k.c.impl_queue, k.location = saved_queue, saved_location
+	for entry in blocks {
+		k.location = entry.location
+		declare_impl_block(k, entry.item, quiet)
+	}
+}
+
+// Declares, ahead of its turn, each queued block whose subject may be written
+// for `type` (`type_syntax_may_denote`), so a lookup of the members of `type`
+// finds what its package gives it wherever the blocks are written. Only those:
+// a block on another type may need, for its own subject, the very block whose
+// subject led here, and would be rejected for good if it were tried now. A
+// block whose subject is being resolved further up is left to finish there; a
+// lookup its own subject makes is one it cannot answer.
+//
+// These are declared at file scope, so a probe that led here does not take them
+// with it (`begin_settling_file_scope`).
+declare_impl_blocks_on :: proc(k: ^Checker, type: Type_Id) {
+	queue := k.c.impl_queue
+	if len(queue.blocks) == 0 {
+		return
+	}
+	saved := k.location
+	defer k.location = saved
+	for entry in queue.blocks {
+		if entry.item.declared || entry.item.declaring {
+			continue
+		}
+		// Read where the block is written, as its subject will be resolved.
+		k.location = entry.location
+		if !type_syntax_may_denote(k, entry.item.type, type) {
+			continue
+		}
+		settling := begin_settling_file_scope(k.c)
+		declare_impl_block(k, entry.item, queue.quiet)
+		end_settling(k.c, settling)
+	}
 }
 
 // The generic application a block's subject is, or nil: written, as
@@ -179,33 +238,6 @@ resolve_impl_subject :: proc(k: ^Checker, item: ^Item_Impl) -> Type_Id {
 		errorf(k.c, expr_span(item.type), "L0406", "this `impl` subject does not name a type")
 	}
 	return subject
-}
-
-// Whether resolving a subject asks nothing that a block of this package could
-// answer: it applies nothing and names nothing this package declares, so it
-// instantiates no generic and resolves no record here. `impl proc(value: int)`
-// and `impl vendor.Thing` are such subjects; `prepare_package` declares them
-// ahead of the ones that may ask.
-subject_asks_nothing :: proc(k: ^Checker, e: Expr) -> bool {
-	if e == nil {
-		return true
-	}
-	#partial switch v in e {
-	case ^Expr_Call, ^Type_Record, ^Type_Enum, ^Type_Interface, ^Expr_Error:
-		return false
-	case ^Expr_Ident:
-		// A predeclared name, or an imported package's.
-		sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, v)))
-		return sym != nil && sym.pkg != k.pkg
-	case ^Expr_Selector:
-		// A member of another package, which cannot see this one.
-		if _, _, is_alias := selector_package_alias(k, v); is_alias {
-			return true
-		}
-	}
-	return !expr_children(e, k, proc(data: rawptr, child: Expr) -> bool {
-		return !subject_asks_nothing((^Checker)(data), child)
-	})
 }
 
 // Whether resolving a subject may ask for an operator, as `[N]int` does where
@@ -698,9 +730,10 @@ lookup_package :: proc(k: ^Checker) -> Package_Id {
 }
 
 // Members the compiler contributes on demand, as if a hand-written `impl` had
-// declared them.
+// declared them, after the hand-written blocks still waiting to be declared.
 @(private = "file")
 ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
+	declare_impl_blocks_on(k, type)
 	ensure_format_member(k, type, name)
 	ensure_standard_customization_members(k, type)
 	ensure_hash_member(k, type, name)

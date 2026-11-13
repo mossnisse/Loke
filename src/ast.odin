@@ -1306,6 +1306,9 @@ Item_Impl :: struct {
 	// Set once members are installed, so a later discovery round skips them.
 	subject:    Type_Id,
 	declared:   bool,
+	// Its subject is being resolved, so a lookup that resolution leads to does not
+	// start declaring the block again (`declare_impl_blocks_on`).
+	declaring:  bool,
 	// Declared on its subject's shell, so what the subject's own declaration gives
 	// a member's name is still to be asked (`reject_shell_clashes`).
 	on_shell:   bool,

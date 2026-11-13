@@ -37,12 +37,17 @@ the compiler, is the oracle for any of them.
   `resolve_content_reads` already materializes loaded reborrows after the
   forward pass, leaving one check.
 - **An index's syntax as evidence (P3).** `prov_indices_may_write` takes any
-  index that may run a program's code to write the carrier being indexed, where
-  the [global write effects](design.md#global-write-effects) already say what a
-  call writes. Asking them would accept more programs, not remove a special
-  case, and a call may also write through an argument, which those effects do
-  not cover. Whether that precision is worth an effect for writes through
-  arguments is open.
+  index that may run a program's code to write the carrier being indexed, so a
+  place written or mutably borrowed through such an index reborrows the whole
+  carrier mutably (`prov_capture`), where the
+  [global write effects](design.md#global-write-effects) already say what a
+  call writes. A place only read is not affected: its capture is a read-only
+  reborrow, which an index that reads does not conflict with. Asking the
+  effects would accept more programs, not remove a special case, and a call
+  may also write through an argument, which those effects do not cover.
+  Whether that precision is worth an effect for writes through arguments is
+  open. [known-gaps.md](known-gaps.md#a-switch-over-a-place-whose-index-calls-suspends-the-whole-view)
+  has a program the mutable capture rejects.
 
 ### Carrier and region tracking as principles
 

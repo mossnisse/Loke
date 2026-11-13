@@ -7,138 +7,42 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A reserved loan through an index that calls, or through a map element
+### A switch over a place whose index calls suspends the whole view
 
-[Weakening and reborrows](design.md#weakening-and-reborrows) reserves the
-mutable loan an argument takes for its call until the call starts, so the later
-arguments may read the place. The compiler takes the loan where the argument is
-evaluated, as it did before the rule, in two forms:
+[Switch ownership](design.md#switch-ownership) has a switch over a place borrow
+that place, and [Places and overlap](design.md#places-and-overlap) keeps two
+fields of an element apart whichever element it is. When the subject is reached
+through an index that calls a procedure, the compiler suspends the whole view
+for as long as a payload binding is in use:
 
 ```loke
 package main;
 
-Row :: struct { flag: bool }
-Counter :: struct { n: int }
+Node :: struct { value: int }
+List :: struct { first: Option(^mut Node), cells: [2]int }
 
-impl Row { set :: proc(self: inout, flag: bool) { self.flag = flag; } }
+at :: proc() -> int { return 0; }
+bump :: proc(n: ^mut int) { n^ += 1; }
 
-poke :: proc(c: ^mut Counter, n: int) { c^.n = n; }
-pick :: proc() -> int { return 0; }
-
-// The receiver's place is reached through a view or a pointer, and an index on
-// the way calls a procedure.
-indexed :: proc(rows: []mut Row) {
-	rows[pick()].set(rows[0].flag);   // L0641, should be accepted
-}
-
-// The carrier is read through a map element.
-mapped :: proc(m: ^mut map[int]^mut Counter) {
-	poke(m^[1], m^[1]^.n);            // L0641, should be accepted
+called :: proc(s: []mut List) {
+	switch (s[at()].first) {
+	case .some(node):
+		bump(&mut s[at()].cells[1]);   // L0641, should be accepted
+		node^.value = 1;
+	case .none:
+	}
 }
 
 main :: proc() {}
 ```
 
-Both are rejected with `L0641`. `rows[0].set(rows[1].flag)` and the same calls
-on a local container are accepted. To take the loan when the call starts, the
-checker walks the place a second time without evaluating it
-(`prov_place_reservable` in `provenance_places.odin`); it does not yet do that
-for an index that may run code or for a map lookup. A local for the index, or
-for the value read, makes either call compile.
-
-### An `impl` block on a procedure type ahead of a block its subject's bound needs
-
-[when statement](design.md#when-statement) lets file-scope declarations appear
-in any order. The compiler declares most `impl` blocks without resolving their
-subject, so those may be written anywhere: a block on a generic application or
-on an alias of one, and a block whose subject is a type's name, or an alias's,
-under pointers, slices, dynamic arrays, maps, and arrays of a literal length.
-A subject written any other way is resolved to declare its block: a procedure
-type, an anonymous record or union, a `dyn` view, an array whose length is a
-named constant, or a generic application inside one of the forms above. Those
-that name nothing this package declares go first. The rest are declared in
-file-name order and then source order, and one that instantiates a generic
-asks the generic's bounds on the spot:
-
-```loke
-package main;
-
-Sized :: interface($T: type) {
-	slot size: proc(self) -> int;
-}
-
-Box :: struct($T: type) where Sized(T) { value: T }
-
-Point :: struct { x, y: int }
-
-impl []Box(proc(p: Point) -> int) {   // L0406, should be accepted
-	total :: proc(self) -> int { return self.len(); }
-}
-
-impl proc(p: Point) -> int {
-	size :: proc(self) -> int { return 1; }
-}
-
-main :: proc() {}
-```
-
-The first block is reported as not naming a type, because the block on
-`proc(p: Point) -> int` is not declared when `Box(proc(p: Point) -> int)` is
-instantiated, so `Sized` does not hold. Both subjects have to be of the kind
-that is resolved, and the one supplying the method has to name a type of this
-package: with `proc(value: int) -> int` in both, or with the second block
-written first, the program compiles. Trying again once every block is declared
-is not possible as the checker stands, since a rejected instance stays cached
-and a declaration checked on the way is settled (`begin_settling` in
-`speculation.odin`); the fix is to make a procedure type and the other forms
-readable without resolving what they name, as `resolve_type_shell` in
-`check_types.odin` reads the rest.
-
-### An earlier element of a literal is not dropped when a later one exits
-
-[or_else expression](design.md#or_else-expression) says that an exit after
-anything an operation already holds drops those values on its way out, as
-`or_return` does. The compiler does so for a call's earlier arguments, and not
-for the earlier elements of a composite literal:
-
-```loke
-package main;
-
-import "core:fmt";
-
-@(move_only) Tracked :: struct { id: int }
-
-impl Tracked {
-	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
-}
-
-E :: enum { Bad }
-Pair :: struct { item: Tracked, n: int }
-
-fail :: proc() -> Result(int, E) { return .err(.Bad); }
-use :: proc(t: Tracked, n: int) -> int { return t.id + n; }
-
-in_literal :: proc() -> Result(int, E) {
-	p := Pair{Tracked{1}, fail() or_return};   // `Tracked{1}` is never dropped
-	return p.n;
-}
-in_call :: proc() -> Result(int, E) {
-	return use(Tracked{2}, fail() or_return);  // prints `drop 2`
-}
-
-main :: proc() {
-	_ = in_literal();
-	_ = in_call();
-}
-```
-
-The program prints `drop 2` only. The element may be a temporary, a
-`move(x)`, a clone of a place, or a local that
-[last-use transfer](design.md#last-use-transfer) or a
-[returned construction](design.md#returned-constructions) moved; in each the
-value built into the literal leaks, and a clone's source is still dropped. The
-same holds for a literal nested in a variant construction or an array literal,
-and for an exit written with `or_else`. The emitter guards each part it has
-stored for a panic's unwind (`guard_record_part` and `guard_built_element` in
-`emit_composite_into`, `emit_llvm_expr.odin`), and these exits leave without
-dropping the guarded parts.
+`s` is reported as mutably reborrowed by the subject. With `s[k]` for a
+parameter `k` in both places the procedure compiles, and so do a copy out of
+`s[at()].head`, a borrow of `s[at()].count`, and a slice or traversal of
+`s[at()].cells` beside the same use. An index that may run a program's code is
+evaluated after the view was read, so the view is captured as it was
+(`prov_capture` in `cfg_provenance.odin`); the capture of a mutable view is a
+mutable reborrow of all of it, which the binding then extends, where a place
+loan of the element's `first` would do. `borrow_matrix` in
+`tests/borrow_matrix_test.odin` leaves the place form out for this reason
+(`RESERVED_PLACES`). A local for the index makes the switch compile.

@@ -31,7 +31,8 @@ MATRIX_DIR :: TMP + "/borrow_matrix"
 // two elements of an array, so it may point at either, and
 // `param_slice_indexed` reaches at an index that is no constant, so it may be
 // any element of the view, while a branch only shortens the view
-// `local_shortened` reaches through, which leaves where it starts known. A
+// `local_shortened` reaches through, which leaves where it starts known. In
+// `param_map` the pointer is read out of a map's element. A
 // `read_only` place is
 // reached through a read-only pointer, so nothing writes the place itself,
 // but the mutable carriers stored in it keep their capability (design.md
@@ -68,6 +69,7 @@ MATRIX_PLACES := [?]Matrix_Place {
 	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]", "", false},
 	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]", "s[1]", false},
 	{"param_slice_indexed", "s: []mut List, k: int", "", "s[k]", "&mut s[k]", "s[1]", false},
+	{"param_map", "m: ^mut map[int]^mut List", "", "m^[1]^", "m^[1]", "", false},
 	{
 		"local_slice", "",
 		MATRIX_NODES + MATRIX_MORE_NODES + " lists := [2]List{" + MATRIX_LIST + ", " + MATRIX_OTHER_LIST + "}; s := &mut lists[:];",
@@ -99,6 +101,15 @@ MATRIX_PLACES := [?]Matrix_Place {
 	},
 	{"param_read_only", "list: ^List", "", "list^", "list", "", true},
 	{"param_read_only_two_pointers", "p: ^^List", "", "p^^", "p^", "", true},
+}
+
+// A place form only `reserved_matrix` takes: the view is indexed by what a call
+// returns, which is evaluated once, where the lending argument is. A switch over
+// such a place is known-gaps.md "A switch over a place whose index calls
+// suspends the whole view", so `borrow_matrix` leaves it out.
+@(private = "file")
+RESERVED_PLACES := [?]Matrix_Place {
+	{"param_slice_called", "s: []mut List", "", "s[at()]", "&mut s[at()]", "s[1]", false},
 }
 
 // What is taken: a mutable carrier copied out of `head`, or bound as the
@@ -648,6 +659,7 @@ reserved_program :: proc(place: Matrix_Place, lend: Reserved_Lend, cases: ^[dyna
 	line(&b, &lines, "List :: struct { head: ^mut Node, tail: ^mut Node, count: int, first: Option(^mut Node), cells: [2]int, items: [dynamic]int }")
 	line(&b, &lines, "impl List { add_count :: proc(self: inout, n: int, seen: ^int) { self.count += n + seen^; } }")
 	line(&b, &lines, "cond :: proc() -> bool { return true; }")
+	line(&b, &lines, "at :: proc() -> int { return 0; }")
 	line(&b, &lines, "put_count :: proc(list: inout List, n: int, seen: ^int) { list.count += n + seen^; }")
 	line(&b, &lines, "poke_count :: proc(list: ^mut List, n: int, seen: ^int) { list^.count += n + seen^; }")
 	line(&b, &lines, "count_last :: proc(n: int, seen: ^int, list: inout List) { list.count += n + seen^; }")
@@ -702,7 +714,10 @@ reserved_matrix :: proc(t: ^testing.T) {
 	}
 	programs := make([dynamic]Program, context.temp_allocator)
 	jobs := make([dynamic]Exec, context.temp_allocator)
-	for place in MATRIX_PLACES {
+	places := make([dynamic]Matrix_Place, context.temp_allocator)
+	append(&places, ..MATRIX_PLACES[:])
+	append(&places, ..RESERVED_PLACES[:])
+	for place in places {
 		for lend in Reserved_Lend {
 			program := Program{place = place, lend = lend, cases = make([dynamic]Reserved_Case, context.temp_allocator)}
 			source := reserved_program(place, lend, &program.cases)

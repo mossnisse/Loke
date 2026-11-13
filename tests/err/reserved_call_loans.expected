@@ -72,3 +72,22 @@ L0641
 L0641
 @97:15
 `p` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@105:20
+`cs` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@106:32
+`cs` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@107:27
+`cs` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@108:2
+`cs` cannot be used here: a read-only reborrow of it is still in use
+reserved_call_loans.loke:108:2: the argument's loan is taken when this call starts, after its later arguments
+L0641
+@109:19
+`m` cannot be used here: a read-only reborrow of it is still in use
+L0641
+@110:12
+`m` cannot be used here: a read-only reborrow of it is still in use

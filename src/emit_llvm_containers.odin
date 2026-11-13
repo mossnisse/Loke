@@ -449,8 +449,8 @@ emit_destination_allocator :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string 
 }
 
 // Stores a written `via`, binds the header, and reserves room for every written
-// element; a temporary unwind action then covers the built prefix until the
-// literal is complete.
+// element; the built prefix is then the literal's to drop, on a panic or an exit
+// from a later element, until the literal is complete (`hold_built_part`).
 @(private = "file")
 begin_container_literal :: proc(
 	e: ^Emitter, v: ^Expr_Composite, address: string, as_type: Type_Id,
@@ -468,7 +468,7 @@ begin_container_literal :: proc(
 		reserved, family, address, ops, len(v.elements),
 	)
 	emit_container_policy_failure(e, address, reserved)
-	return ops, begin_temporary_drop(e, as_type, address)
+	return ops, hold_built_part(e, as_type, address)
 }
 
 // `[dynamic]T{a, b, c}` over an already zeroed header. Each element is appended
