@@ -1,0 +1,38 @@
+// design.md "Procedures with inferred generic parameters": an unfixed constant
+// filling a `$T` parameter leaves `T` to the typed arguments and converts to
+// what they bind, whichever is written first. Constants alone bind their
+// default type, a floating one deciding it over an integer.
+package main;
+import "core:fmt";
+import "core:math";
+
+same :: proc(a, b: $T) -> T { return b; }
+// A `$` parameter reads `T` as bound so far, so the constant before it binds.
+pinned :: proc(x: $T, $fallback: T) -> T { return x + fallback; }
+last :: proc(values: ..$T) -> T { return values[values.len() - 1]; }
+Meters :: distinct f64;
+
+main :: proc() {
+	x: f64 = 2.5;
+	fmt.println(math.max(x, 0), math.max(0, x), math.min(3, x));
+	i: i64 = 7;
+	fmt.println(math.max(i, 1), math.max(1, i));
+	static_assert(type_of(same(1, x)) == f64);
+	static_assert(type_of(same(i, 1)) == i64);
+
+	static_assert(type_of(same(1, 2)) == int);
+	static_assert(type_of(same(1, 2.5)) == f64);
+	static_assert(type_of(same(2.5, 1)) == f64);
+	fmt.println(same(1, 2), same(1, 2.5), same(2.5, 1));
+
+	b: u8 = 3;
+	m: Meters = 4.0;
+	static_assert(type_of(same(200, b)) == u8);
+	static_assert(type_of(same(1, m)) == Meters);
+	fmt.println(same(b, 200), same(1, m));
+
+	static_assert(type_of(last(1, x)) == f64);
+	static_assert(type_of(last(1, 2.5)) == f64);
+	fmt.println(last(1, x), last(x, 1), last(1, 2), last(2.5, 1));
+	fmt.println(pinned(1, 2));
+}

@@ -1388,6 +1388,27 @@ once per member. The cost is that `show(1, .none)` picks the non-parametric
 `show_color` from `1` and then rejects `.none`, though a generic member would
 have taken it; the error says that the other arguments chose the member.
 
+### An unfixed constant leaves `$T` to the typed arguments
+
+A constant filling `a: $T` used to bind `T` to its default type like any other
+argument, so `math.max(x, 0)` with `x: f64` bound `T` to both `f64` and `int`
+and was rejected, though `x + 0`, `x < 0`, and `y: f64 = 0` all take the
+literal. A literal has a default type only for want of a destination, and here
+the other argument supplies one, so [the rule](design.md#procedures-with-inferred-generic-parameters)
+is the binary-operand rule applied to a call: the constant converts to the
+typed operand's type. Order cannot matter, as it does not for `0 + x`.
+
+Unlike an [argument typed after inference](#arguments-typed-after-inference),
+the constant has a type to fall back on, so constants alone still bind `T`, and
+it still takes part in ranking, at the rank its conversion has. Among constants
+a floating one decides, as `1 + 2.5` is an unfixed float; binding the first
+one's default instead would accept `pick(2.5, 1)` and reject `pick(1, 2.5)`.
+
+A `$` parameter such as `$n: T` selects the instance and is read during the
+walk, so it cannot wait for a later argument to bind `T`. Constants written
+before it bind then, which keeps `pinned(1, 2)` for `proc(x: $T, $n: T)`
+meaning what it did.
+
 ### Per-variant switch cases
 
 Interpreters walking a tree, protocol handlers, and error reporters often do

@@ -1652,6 +1652,14 @@ checklist.
 
 ### Changed
 
+- An unfixed constant filling a parameter written `$T`, or an element of a `..$T` pack, binds `T`
+  only when no typed argument does, and otherwise converts to the type that argument binds
+  ([Procedures with inferred generic parameters](docs/design.md#procedures-with-inferred-generic-parameters)).
+  With `x: f64`, `math.max(x, 0)`, `math.max(0, x)`, and `math.min(3, x)` were `L0392`, since the
+  literal bound `T` to `int` beside the argument's `f64`, and needed `0.0` or `i64(1)` written out.
+  Constants alone still bind their default type, and a floating one now decides it over an integer,
+  so `math.max(1, 2.5)` is an `f64`. A constant that does not convert is reported as an argument of
+  the bound type: `` `max(u8)` does not apply: argument 2 is `untyped int` where `u8` is wanted ``.
 - A mutable loan that a call's receiver or argument takes is reserved until the call starts, so the
   arguments after it and the defaults may read its place
   ([Weakening and reborrows](docs/design.md#weakening-and-reborrows), rationale under

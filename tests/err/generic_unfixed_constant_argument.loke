@@ -1,0 +1,18 @@
+// design.md "Procedures with inferred generic parameters": an unfixed constant
+// beside a typed argument binds nothing, so one that does not convert to the
+// bound type is refused as an argument of that type, not as a second binding.
+package main;
+
+same :: proc(a, b: $T) -> T { return b; }
+last :: proc(values: ..$T) -> T { return values[0]; }
+
+main :: proc() {
+	b: u8 = 3;
+	i: int = 3;
+	_ = same(b, 300);
+	_ = same(2.5, i);
+	_ = same("a", 1);
+	_ = same(true, 2.5);
+	_ = last(2.5, i);
+	_ = same(nil, 1);
+}

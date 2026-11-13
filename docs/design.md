@@ -7314,6 +7314,27 @@ foreach (v, i in array.indexed()) {
 }
 ```
 
+An [unfixed constant](#unfixed-constants) filling a parameter written `$T`, or
+an element of a `..$T` pack, binds `T` only when no typed argument does. Beside
+one it binds nothing and converts to the type that argument binds, as it would
+to a parameter declared with that type, whichever is written first. Constants
+alone bind `T` to their default type, and a floating constant decides it over
+an integer one, as in `1 + 2.5`. `nil` has no default type and never binds.
+
+```loke
+same :: proc(a, b: $T) -> T {...}
+
+x: f64 = 2.5;
+p := same(x, 0);   // T is f64, and `0` converts to it
+q := same(0, x);   // the same
+r := same(1, 2);   // T is int
+s := same(1, 2.5); // T is f64
+t := same(x, "a"); // error: `"a"` does not convert to f64
+```
+
+`$` parameters are bound in written order and read `T` as bound so far: in
+`proc(x: $T, $n: T)`, a constant `x` binds `T` before `n` is read.
+
 #### Arguments typed after inference
 
 An argument that takes its type from its parameter, an [implicit

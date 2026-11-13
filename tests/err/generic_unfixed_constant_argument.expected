@@ -1,0 +1,18 @@
+L0392
+@12:6
+`same(u8)` does not apply: argument 2 is `untyped int` where `u8` is wanted
+L0392
+@13:6
+`same(int)` does not apply: argument 1 is `untyped float` where `int` is wanted
+L0392
+@14:6
+`same(string)` does not apply: argument 2 is `untyped int` where `string` is wanted
+L0392
+@15:6
+`same(f64)` does not apply: argument 1 is `untyped bool` where `f64` is wanted
+L0392
+@16:6
+`last(int)` does not apply: argument 1 is `untyped float` where `int` is wanted
+L0392
+@17:6
+`nil` has no type to infer parameter 1 from

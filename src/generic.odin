@@ -1318,7 +1318,8 @@ match_type_pattern :: proc(
 	case ^Type_Poly:
 		// An untyped constant binds a generic parameter at its default type: `$T`
 		// stands for a real type, and `untyped int` is not one a body could use.
-		// `nil` has no default type, so it binds nothing.
+		// `nil` has no default type, so it binds nothing. A constant filling a
+		// parameter written `$T` is held back first (`hold_unfixed_constant`).
 		bound := default_type(k.c, actual)
 		if bound == INVALID_TYPE {
 			return false
@@ -1698,6 +1699,46 @@ Inference_Walk :: struct {
 	scope:    ^Scope,
 	bindings: [dynamic]Generic_Binding,
 	waits:    [dynamic]Waiting_Argument,
+	// Unfixed constants filling a `$T` parameter, until `bind_constants`.
+	constants: [dynamic]Unfixed_Binder,
+}
+
+// An unfixed constant's type, and the `$` name its parameter's type is.
+@(private = "file")
+Unfixed_Binder :: struct {
+	name: Name,
+	type: Type_Id,
+}
+
+// design.md "Procedures with inferred generic parameters": an unfixed constant
+// filling a parameter or pack element written `$T` leaves `T` to the typed
+// arguments, and is ranked against what they bind. `nil` has no default type to
+// fall back on, so it is matched as any argument is. Whether this one was held.
+@(private = "file")
+hold_unfixed_constant :: proc(k: ^Checker, walk: ^Inference_Walk, written: Expr, arg: Arg_Info) -> bool {
+	poly, bare := written.(^Type_Poly)
+	if !bare || arg.mode == .Spread || !type_is_untyped(k.c, arg.type) || arg.type == TYPE_UNTYPED_NIL {
+		return false
+	}
+	append(&walk.constants, Unfixed_Binder{poly.name, arg.type})
+	return true
+}
+
+// Binds the `$` names only held constants fill, at their default type. A
+// floating constant is bound first, so `pick(1, 2.5)` is of `f64` as `1 + 2.5`
+// is; any other mix keeps the first, and ranking refuses the rest.
+@(private = "file")
+bind_constants :: proc(k: ^Checker, walk: ^Inference_Walk) {
+	for floating in ([2]bool{true, false}) {
+		for constant in walk.constants {
+			if (constant.type == TYPE_UNTYPED_FLOAT) == floating {
+				// A name already bound stays as it is.
+				arg := Generic_Arg{is_type = true, type = default_type(k.c, constant.type)}
+				bind_pattern_name(k, constant.name, arg, walk.scope, &walk.bindings)
+			}
+		}
+	}
+	clear(&walk.constants)
 }
 
 @(private = "file")
@@ -1739,6 +1780,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		scope    = scope,
 		bindings = make([dynamic]Generic_Binding, 0, 4, context.temp_allocator),
 		waits    = make([dynamic]Waiting_Argument, 0, 2, context.temp_allocator),
+		constants = make([dynamic]Unfixed_Binder, 0, 2, context.temp_allocator),
 	}
 	result.compile_time = make([]bool, len(args), k.c.semantic_allocator)
 	result.compile_targets = make([]Type_Id, len(args), k.c.semantic_allocator)
@@ -1764,6 +1806,10 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		}
 		for entry in names {
 			position += 1
+			// A `$` parameter's type and default may name what is bound so far.
+			if entry.is_poly {
+				bind_constants(k, &walk)
+			}
 			index, found := claim_argument(args, entry.name.id, &walk.next, walk.claimed)
 			if !found {
 				if parameter.default == nil {
@@ -1795,6 +1841,9 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			if !entry.is_poly {
 				// An ordinary runtime parameter, whose written type may still be a
 				// pattern binding parts of the argument's type.
+				if hold_unfixed_constant(k, &walk, parameter.type, arg) {
+					continue
+				}
 				if !match_type_pattern(k, parameter.type, arg.type, scope, &walk.bindings) &&
 				   !match_array_as_view(k, parameter.type, arg.type, scope, &walk.bindings) {
 					if arg.type == TYPE_UNTYPED_NIL {
@@ -1822,6 +1871,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			return result
 		}
 	}
+	bind_constants(k, &walk)
 	if reason, waiting := unbound_wait_reason(k, literal, walk.waits[:], walk.bindings[:]); reason != "" {
 		result.reason = reason
 		result.unbound_wait = true
@@ -1843,8 +1893,8 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 }
 
 // The rest of the arguments, into a variadic pack. A pattern in the element type
-// binds from the first that does not wait; the rest are ranked, not matched. Why
-// not, or empty.
+// binds from the first that neither waits nor is held as an unfixed constant;
+// the rest are ranked, not matched. Why not, or empty.
 @(private = "file")
 infer_variadic_pack :: proc(k: ^Checker, walk: ^Inference_Walk, element: Expr, label: string) -> string {
 	matched_one := false
@@ -1857,7 +1907,7 @@ infer_variadic_pack :: proc(k: ^Checker, walk: ^Inference_Walk, element: Expr, l
 			append(&walk.waits, Waiting_Argument{index, element, label})
 			continue
 		}
-		if matched_one {
+		if matched_one || hold_unfixed_constant(k, walk, element, walk.args[index]) {
 			continue
 		}
 		matched_one = true
