@@ -34,6 +34,8 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	c.weak_symbol = bootstrap_symbol(k, pkg, "Weak", .Type)
 	c.shared_construct_symbol = bootstrap_symbol(k, pkg, "shared", .Proc_Group)
 	c.try_shared_symbol = bootstrap_symbol(k, pkg, "try_shared", .Proc_Group)
+	// design.md "Uninitialized capacity".
+	c.uninit_symbol = bootstrap_symbol(k, pkg, "Uninit", .Type)
 	if sym := symbol_of(c, unit); sym != nil {
 		c.unit_type = sym.type
 	}
@@ -113,6 +115,24 @@ shared_payload_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	return info.instance_args[0].type
 }
 
+// design.md "Uninitialized capacity": the field of an `Uninit(T)`, whose type is
+// the `T` its storage is for, or nil for any other type. The storage holds no
+// value, so the field takes no part in what is generated for the record.
+uninit_storage_field :: proc(c: ^Compiler, id: Type_Id) -> ^Symbol {
+	info := underlying_info(c, id)
+	return type_info_is_uninit(c, info) ? symbol_of(c, info.fields[0]) : nil
+}
+
+type_is_uninit :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	return type_info_is_uninit(c, underlying_info(c, id))
+}
+
+// An instance of `Uninit(T)`, given its underlying info.
+type_info_is_uninit :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	return info != nil && info.kind == .Struct && info.instance_of != INVALID_SYMBOL &&
+	       info.instance_of == c.uninit_symbol && len(info.fields) == 1
+}
+
 // `shared(value)` or `try_shared(value)`: the payload it takes, and whether its
 // result is a `Result`. Nil for any other call.
 shared_constructor_payload :: proc(c: ^Compiler, v: ^Expr_Call) -> (payload: Expr, fallible: bool) {
@@ -178,16 +198,14 @@ memory_order_type :: proc(k: ^Checker) -> Type_Id {
 	return type
 }
 
-// The public `Type_Kind` and `Member_Kind`, in the order `base:runtime`
-// declares them. The emitter writes their values as these indices.
+// The public `Type_Kind`, in the order `base:runtime` declares it. The emitter
+// writes its values as these indices.
 Runtime_Type_Kind :: enum {
 	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
 	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
 	Struct, Enum, Union, Proc, String, String_View, CString_View,
 	Typeid, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
 }
-
-Runtime_Member_Kind :: enum { Field, Enum_Value, Union_Variant, Parameter, Result }
 
 Runtime_Field :: struct {
 	name, type: string,
@@ -199,13 +217,7 @@ SOURCE_CODE_LOCATION_LAYOUT := [?]Runtime_Field {
 
 TYPE_INFO_LAYOUT := [?]Runtime_Field {
 	{"id", "typeid"}, {"kind", "Type_Kind"}, {"name", "string_view"}, {"size", "int"},
-	{"align", "int"}, {"bits", "int"}, {"signed", "bool"}, {"element", "typeid"},
-	{"key", "typeid"}, {"count", "int"}, {"members", "[]Member_Info"},
-}
-
-MEMBER_INFO_LAYOUT := [?]Runtime_Field {
-	{"kind", "Member_Kind"}, {"name", "string_view"}, {"type", "typeid"},
-	{"offset", "int"}, {"value_low", "u64"}, {"value_high", "u64"},
+	{"align", "int"}, {"element", "typeid"}, {"key", "typeid"}, {"count", "int"},
 }
 
 // Does a `base:runtime` enum declare exactly `E`'s members, by name, in order,
@@ -241,15 +253,8 @@ runtime_layout_matches :: proc(k: ^Checker, type: Type_Id, layout: []Runtime_Fie
 		if kind := type_of(c, sym.type); kind != nil && kind.kind == .Enum {
 			resolve_symbol_signature_in_place(k, kind.symbol)
 		}
-		switch layout[index].type {
-		case "Type_Kind":
-			if !runtime_enum_matches(c, sym.type, Runtime_Type_Kind) {
-				return false
-			}
-		case "Member_Kind":
-			if !runtime_enum_matches(c, sym.type, Runtime_Member_Kind) {
-				return false
-			}
+		if layout[index].type == "Type_Kind" && !runtime_enum_matches(c, sym.type, Runtime_Type_Kind) {
+			return false
 		}
 	}
 	return true

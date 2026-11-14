@@ -298,8 +298,13 @@ CTFE to cooperate until selection stabilizes.
 
 `bootstrap.odin` binds ordinary `base:runtime` declarations into the predeclared
 universe instead of synthesizing duplicate types. These include `Unit`,
-`Option`, `Result`, `Shared`, `Weak`, and the constructor groups `shared` and
-`try_shared`.
+`Option`, `Result`, `Shared`, `Weak`, `Uninit`, and the constructor groups
+`shared` and `try_shared`. `Uninit(T)` is an ordinary record of one private
+field that the compiler knows by name (`type_info_is_uninit`): lifecycle, zero
+values, equality, hashing, and constants leave the field out, the borrow
+analysis sees it as the field it is, and `check_storage_builtin` and
+`check_capacity_builtin` write its selection into the typed AST, since no
+source can.
 
 ### Checking and overload resolution
 
@@ -1369,12 +1374,20 @@ Object, and the harness gives every launch a deadline, `DEADLINE` in
 with every process it started, and its case fails with `Timeout` rather than
 hanging the gate.
 
+The interactive LSP and Windows debugger harnesses also enforce a deadline for
+the whole child process: five minutes for LSP and one minute for the debugger.
+An LSP server that stops reading cannot hold a pipe write indefinitely, and
+repeated debug events do not extend a debuggee's run.
+The generated borrow and store matrices require the expected compiler exit
+status as well as the expected diagnostics; unrelated or unmatched errors fail
+the matrices. Concurrent example tests use separate build outputs.
+
 For individual suites:
 
 ```powershell
-odin test src -vet-unused -vet-shadowing -vet-packages:lokec
+odin test src -vet-unused -vet-shadowing -vet-packages:lokec -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true
 odin build src -out:lokec.exe -vet-unused -vet-shadowing (.\build-stamp.ps1)
-odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp
+odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true
 odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing (.\build-stamp.ps1)
 odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -vet-unused -vet-shadowing -vet-packages:tests
 ```
@@ -1390,10 +1403,12 @@ For direct optimization runs, set `$env:LOKE_TEST_FLAGS = "-opt=speed"`, then
 restore/remove it afterward. Run/trap, package, example, and tutorial
 compilations honor it; `test-all.ps1` manages it itself.
 
-Unit tests track allocations. Build with `-define:LOKE_TRACK_MEMORY=true` to
-report whole-compilation leaks and bad frees. `-vet-packages` confines test
-vetting to the repository package. `test-all.ps1` judges each tool by its exit
-code alone, so it also runs under Windows PowerShell 5.1 with its output
+Unit tests track allocations and fail on leaks and bad frees through
+`-define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true`. Build with
+`-define:LOKE_TRACK_MEMORY=true` to report whole-compilation leaks and bad frees.
+`-vet-packages` confines test vetting to the repository package.
+`test-all.ps1` rejects tool launch failures and judges a launched tool by its
+exit code, so it also runs under Windows PowerShell 5.1 with its output
 redirected (`*>`, `2>&1`, `Tee-Object`); there the first stderr line of a tool
 is shown as a `NativeCommandError` block, which is noise, not a failure. Running
 a suite directly in 5.1 with `2>&1` and `$ErrorActionPreference = 'Stop'` stops

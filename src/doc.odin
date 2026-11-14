@@ -659,7 +659,7 @@ attribute_refs :: proc(w: ^Ref_Walk, attributes: []Attribute) {
 	for attribute in attributes {
 		if len(attribute.path) == 1 {
 			switch attribute.path[0].text {
-			case "zero", "failure", "initialized", "escape":
+			case "zero", "failure", "escape":
 				continue
 			}
 		}

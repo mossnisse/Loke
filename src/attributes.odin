@@ -91,9 +91,6 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Struct_Decl}, .None, {}}, true
 	case "align":
 		return {{.Struct_Decl, .Union_Decl}, .Deferred, {}}, true
-	case "initialized":
-		// A sibling field name, checked by `resolve_uninitialized_fields`.
-		return {{.Struct_Field}, .Deferred, {}}, true
 	case "required":
 		return {{.Struct_Field}, .None, {}}, true
 	case "synchronized":

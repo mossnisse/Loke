@@ -367,6 +367,8 @@ Compiler :: struct {
 	weak_symbol:              Symbol_Id,
 	shared_construct_symbol:  Symbol_Id,
 	try_shared_symbol:        Symbol_Id,
+	// design.md "Uninitialized capacity": the record template `Uninit` binds to.
+	uninit_symbol:            Symbol_Id,
 	// The one call expression the compiler installs as the omitted allocator
 	// argument of every lifecycle hook.
 	default_allocator_arg:    Expr,

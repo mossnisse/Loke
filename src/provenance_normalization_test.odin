@@ -682,6 +682,45 @@ main :: proc() {}`) { return }
 	testing.expect(t, is_symbol && identifier_text(&p.c, symbol_of(&p.c, pointer.symbol).name) == "pair", "a dereference's operand is not the pointer's value")
 }
 
+// design.md "Uninitialized capacity": storage is a borrow of the hidden field,
+// including when the pointer it receives is itself borrowed from a caller.
+@(test)
+normalization_storage_builtin_is_a_borrow :: proc(t: ^testing.T) {
+	root := session_fixture(t, "storage-borrow")
+	if root == "" { return }
+	defer remove_tree(root)
+	path := join_path({root, "main.loke"}, context.temp_allocator)
+	if !write_session_source(t, path, `package main;
+import "core:unsafe";
+read_only :: proc(storage: ^Uninit(int)) -> ^int { return unsafe.storage(storage); }
+mutable :: proc(storage: ^mut Uninit(int)) -> ^mut int { return unsafe.storage(storage); }
+main :: proc() {}`) { return }
+	s: Compilation_Session
+	defer destroy_session(&s)
+	if !testing.expect(t, init_session(&s, session_test_config())) { return }
+	if !testing.expect(t, check_session(&s, path)) { report(&s.compiler); return }
+	k := Checker{c = &s.compiler}
+	found := 0
+	for body in s.compiler.checked_bodies {
+		name := identifier_text(&s.compiler, symbol_of(&s.compiler, body.literal.symbol).name)
+		if name != "read_only" && name != "mutable" { continue }
+		found += 1
+		graph := build_flow_graph(&k, body.literal, .Prov_Diagnose)
+		ret := body.literal.body.stmts[0].(^Stmt_Return)
+		call := ret.value.expr.(^Expr_Call)
+		value := prov_input_value(graph, call)
+		testing.expect_value(t, value, prov_input_value(graph, call.bound[0]))
+		form, borrows := prov_value(graph, value).form.(Prov_Form_Unary)
+		testing.expect(t, borrows && form.op == .Amp, "storage must retain its checked borrow form")
+		_, called := graph.input.calls[Prov_Call_Key{&call.base, graph.expansion}]
+		testing.expect(t, !called, "a storage borrow must not record ordinary call effects")
+		summary, summarized := s.compiler.result_summaries[body.literal.symbol]
+		testing.expect(t, summarized && result_uses_param(summary.dependencies, 0) && !summary.local && !summary.unknown,
+		               "the storage borrow lost its parameter dependency")
+	}
+	testing.expect_value(t, found, 2)
+}
+
 // A user operator's form records the value of the call it stands for, and a
 // call's form the values of a pack built from separate arguments.
 @(test)

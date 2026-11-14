@@ -12,8 +12,9 @@ Lifecycle :: struct {
 	// The contributed public copy entry points.
 	clone:            Symbol_Id,
 	try_clone:        Symbol_Id,
-	// `@(move_only)`, a provider, holding a move-only part, or an instance whose
-	// `hook(copy)` its `where` clause excluded: no copy exists.
+	// `@(move_only)`, a provider, holding a move-only part, an instance whose
+	// `hook(copy)` its `where` clause excluded, or an `Uninit(T)` of a managed
+	// `T` that no `hook(copy)` of its holder copies: no copy exists.
 	clone_disabled:   bool,
 	// Has a hook, is move-only, or has a managed part.
 	managed:          bool,
@@ -99,7 +100,7 @@ lifecycle_parts :: proc(c: ^Compiler, type: Type_Id) -> []Type_Id {
 	info := underlying_info(c, type)
 	// A type that contains itself by value is already `L0364`, and walking its
 	// parts would not end.
-	if info == nil || info.size_state == .Cyclic {
+	if info == nil || info.size_state == .Cyclic || type_info_is_uninit(c, info) {
 		return nil
 	}
 	parts := make([dynamic]Type_Id, 0, 4, context.temp_allocator)
@@ -212,10 +213,17 @@ collect_hooks :: proc(c: ^Compiler, info: ^Type_Info, entry: ^Lifecycle) {
 	}
 }
 
+// The parts a copy or a drop of the value reaches. design.md "Uninitialized
+// capacity": an `Uninit(T)` holds no value, so it has none.
+@(private = "file")
+lifecycle_owned_parts :: proc(c: ^Compiler, info: ^Type_Info) -> []Type_Id {
+	return type_info_is_uninit(c, info) ? nil : type_owned_parts(c, info)
+}
+
 // Asked only of what is not managed for itself, as a container or box already is.
 @(private = "file")
 has_managed_part :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
-	for part in type_owned_parts(c, info) {
+	for part in lifecycle_owned_parts(c, info) {
 		if type_is_managed(c, part) {
 			return true
 		}
@@ -292,7 +300,7 @@ type_hooks_walk :: proc(c: ^Compiler, type: Type_Id, role: Hook_Kind, visiting: 
 	if info.kind == .Array && info.count == 0 {
 		return
 	}
-	for part in type_owned_parts(c, info) {
+	for part in lifecycle_owned_parts(c, info) {
 		type_hooks_walk(c, part, role, visiting, hooks)
 	}
 }
@@ -318,12 +326,44 @@ has_move_only_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> boo
 
 @(private = "file")
 has_move_only_part_walk :: proc(c: ^Compiler, info: ^Type_Info, visiting: ^map[Type_Id]bool) -> bool {
-	for part in type_owned_parts(c, info) {
+	// design.md "Uninitialized capacity": a record's own `hook(copy)` copies the
+	// storage it holds, which has no copy of its own.
+	copies_storage := copy_hook_state(c, info) == .Usable
+	for part in lifecycle_owned_parts(c, info) {
+		if copies_storage && type_is_uninit_storage(c, part) {
+			continue
+		}
 		if type_clone_disabled_walk(c, part, visiting) {
 			return true
 		}
 	}
 	return false
+}
+
+// An `Uninit(T)`, or a fixed array of it.
+@(private = "file")
+type_is_uninit_storage :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	info := underlying_info(c, type)
+	for info != nil && info.kind == .Array {
+		info = underlying_info(c, info.element)
+	}
+	return type_info_is_uninit(c, info)
+}
+
+// design.md "Uninitialized capacity": the bits of an `Uninit(T)` are a copy only
+// where `T` has a trivial lifecycle.
+@(private = "file")
+uninit_has_no_copy :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	if !type_info_is_uninit(c, info) {
+		return false
+	}
+	payload := type_underlying(c, symbol_of(c, info.fields[0]).type)
+	// An entry still being built is a `T` that reaches this storage through
+	// itself, so through a container, which is managed.
+	if existing, found := c.lifecycles[payload]; found && existing.state != .Finite {
+		return true
+	}
+	return lifecycle_of(c, payload).managed
 }
 
 @(private = "file")
@@ -352,21 +392,35 @@ type_clone_disabled_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Typ
 // What has no copy whatever its parts hold.
 @(private = "file")
 type_itself_move_only :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
-	return info.provider || info.move_only || has_excluded_copy_hook(c, info)
+	return info.provider || info.move_only || copy_hook_state(c, info) == .Excluded || uninit_has_no_copy(c, info)
 }
 
-// design.md "Lifecycle hooks and resource types": an instance that fails its
-// `hook(copy)`'s bound has no copy, rather than a bitwise one its drop hook would
-// release twice.
 @(private = "file")
-has_excluded_copy_hook :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+Copy_Hook_State :: enum {
+	None,
+	Usable,
+	// design.md "Lifecycle hooks and resource types": an instance that fails its
+	// `hook(copy)`'s bound has no copy, rather than a bitwise one its drop hook
+	// would release twice.
+	Excluded,
+}
+
+// The hand-written `hook(copy)` of `info`, if it has one. One its bound
+// excluded decides, whatever else is declared.
+@(private = "file")
+copy_hook_state :: proc(c: ^Compiler, info: ^Type_Info) -> Copy_Hook_State {
+	state := Copy_Hook_State.None
 	for member in info.members {
 		sym := symbol_of(c, member)
-		if sym != nil && sym.synth == .None && sym.hook == .Copy && sym.bound_excluded {
-			return true
+		if sym == nil || sym.synth != .None || sym.hook != .Copy {
+			continue
 		}
+		if sym.bound_excluded {
+			return .Excluded
+		}
+		state = .Usable
 	}
-	return false
+	return state
 }
 
 // ------------------------------------------------- generated copy members --
@@ -504,7 +558,7 @@ clone_part_count :: proc(c: ^Compiler, type: Type_Id) -> int {
 	case .Array:
 		return int(info.count)
 	case .Struct:
-		return len(info.fields)
+		return type_info_is_uninit(c, info) ? 0 : len(info.fields)
 	}
 	return 0
 }

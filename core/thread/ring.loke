@@ -19,8 +19,9 @@ import "core:unsafe";
 */
 @(move_only) Ring :: struct($T: type) {
 	// `size` slots, one more than the capacity: the spare slot tells a full
-	// ring from an empty one. Only queued slots hold an item.
-	@(private, required) slots: [dynamic]Ring_Slot(T),
+	// ring from an empty one. Only queued slots hold an item (design.md
+	// "Uninitialized capacity"), so no slot needs `T`'s zero.
+	@(private, required) slots: [dynamic]Uninit(T),
 	@(private) size: uint,
 	// Keeps the read-only fields above, and whatever precedes the ring, off the
 	// line `tail` is on.
@@ -46,13 +47,6 @@ CACHE_LINE_BYTES :: 128;
 
 @(private)
 MAX_INT :: 0x7FFF_FFFF_FFFF_FFFF;
-
-// One slot: capacity unless `live`, so no slot needs `T`'s zero.
-@(private)
-Ring_Slot :: struct($T: type) {
-	@(initialized = live) item: [1]T,
-	live: int,
-}
 
 /// Sends into the ring it borrows. Move-only, and the only sender.
 @(move_only, wakes_on_drop) Ring_Sender :: struct($T: type) {
@@ -98,8 +92,7 @@ impl Ring($T) {
 
 	// Both endpoints are gone, and the joins that ended their borrows order
 	// everything they did before this. An item's drop that panics leaves the
-	// rest queued, and the unwind goes on dropping them oldest first, before
-	// the slots' own drop would release them in index order.
+	// rest queued, and the unwind goes on dropping them oldest first.
 	@(private)
 	drain :: hook(drop) proc(self: inout) {
 		finished := false;
@@ -115,9 +108,7 @@ impl Ring($T) {
 		for (self.head.value != self.tail.value) {
 			at := self.head.value;
 			self.head.value = self.next(at);
-			slot := &mut self.slots[int(at)];
-			slot.live = 0;
-			dropped := unsafe.take(slot.item[0]);
+			dropped := unsafe.take(self.slots[int(at)]);
 		}
 	}
 }
@@ -127,8 +118,8 @@ impl Ring($T) {
 // carries no borrow shorter than the process, as `try_send`'s
 // `@(escape=static)` says.
 @(private)
-slot_at :: proc(ring: ^Ring($T), index: uint) -> ^mut Ring_Slot(T) {
-	return (^mut Ring_Slot(T))(rawptr(&ring.slots[int(index)]));
+slot_at :: proc(ring: ^Ring($T), index: uint) -> ^mut Uninit(T) {
+	return (^mut Uninit(T))(rawptr(&ring.slots[int(index)]));
 }
 
 impl Ring_Sender($T) {
@@ -150,8 +141,7 @@ impl Ring_Sender($T) {
 			}
 		}
 		slot := slot_at(ring, at);
-		unsafe.write(slot^.item[0], move(value));
-		slot^.live = 1;
+		unsafe.write(slot^, move(value));
 		ring.tail.store(after, sync.Memory_Order.Release);
 		self.tail = after;
 		return .ok;
@@ -184,8 +174,7 @@ impl Ring_Receiver($T) {
 		}
 		after := ring.next(at);
 		slot := slot_at(ring, at);
-		slot^.live = 0;
-		item := unsafe.take(slot^.item[0]);
+		item := unsafe.take(slot^);
 		ring.head.store(after, sync.Memory_Order.Release);
 		self.head = after;
 		return .item(move(item));

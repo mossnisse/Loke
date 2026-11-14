@@ -55,13 +55,16 @@ type_is_hashable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 		if info.packed || type_is_capture_record(c, under) {
 			return false
 		}
+		// design.md "Uninitialized capacity": storage holding no value has no hash.
+		if type_info_is_uninit(c, info) {
+			return false
+		}
 		if !type_walk_enter(seen, under, info) {
 			return true
 		}
 		for field in info.fields {
 			sym := symbol_of(c, field)
-			// design.md "Uninitialized capacity": a counted prefix is no structural part.
-			if sym == nil || sym.initialized_by != INVALID_SYMBOL || !type_is_hashable_walk(c, sym.type, seen) {
+			if sym == nil || !type_is_hashable_walk(c, sym.type, seen) {
 				return false
 			}
 		}

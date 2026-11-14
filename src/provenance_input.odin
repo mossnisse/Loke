@@ -239,7 +239,10 @@ prov_input_value :: proc(graph: ^Flow_Graph, e: Expr) -> Value_Id {
 }
 
 @(private)
-prov_intern_value :: proc(graph: ^Flow_Graph, e: Expr, repr: Prov_Repr) -> Value_Id {
+prov_intern_value :: proc(graph: ^Flow_Graph, expression: Expr, repr: Prov_Repr) -> Value_Id {
+	// design.md "Uninitialized capacity": `unsafe.storage(pointer)` is the borrow
+	// it stands for, so what is stored or read through it is that field's.
+	e := storage_borrow(graph.k.c, expression)
 	key := Prov_Value_Key{expr_base(e), repr, graph.expansion}
 	if id, found := graph.input.value_ids[key]; found { return id }
 	prov_writable_input(graph)

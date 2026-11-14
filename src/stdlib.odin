@@ -50,10 +50,11 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "default_allocator", .Default_Allocator, public = false)
 		contribute_builtin(c, pkg, "unsafe_free", .Unsafe_Free, public = false)
 		contribute_builtin(c, pkg, "unsafe_try_new", .Unsafe_Try_New, public = false)
-		// The payload is capacity inside that block, so it arrives and leaves the way
-		// a container element does, without asking `T` for a zero.
+		// The payload is an `Uninit(T)` inside that block, so it arrives and leaves
+		// the way a container element does, without asking `T` for a zero.
 		contribute_builtin(c, pkg, "unsafe_write", .Unsafe_Write, public = false)
 		contribute_builtin(c, pkg, "unsafe_take", .Unsafe_Take, public = false)
+		contribute_builtin(c, pkg, "unsafe_storage", .Unsafe_Storage, public = false)
 		// The control block is atomic, and `core:sync` is a package every program
 		// would then have to load — `Shared` and `Weak` are universe names.
 		contribute_atomic_intrinsics(c, pkg)
@@ -88,6 +89,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// so (design.md "Uninitialized capacity"):
 		contribute_builtin(c, pkg, "take", .Unsafe_Take)
 		contribute_builtin(c, pkg, "write", .Unsafe_Write)
+		contribute_builtin(c, pkg, "storage", .Unsafe_Storage)
 		// And the source type's claim about the destination representation
 		// (design.md "`unsafe.transmute`"):
 		contribute_builtin(c, pkg, "transmute", .Unsafe_Transmute)

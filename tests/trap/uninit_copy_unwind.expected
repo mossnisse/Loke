@@ -1,8 +1,11 @@
 copy 1
+copy 5
 copy 6
 copy 7
 drop 106
+drop 105
 drop 101
 drop 7
 drop 6
+drop 5
 drop 1

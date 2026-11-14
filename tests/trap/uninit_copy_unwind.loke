@@ -1,9 +1,10 @@
-// design.md "What the unwind runs, and what it does not": a generated clone
-// that panics inside an `@(initialized)` field drops the elements of the
-// prefix it already copied and the parts before that field.
+// design.md "Uninitialized capacity": the storage has no copy of its own, so
+// the record's `hook(copy)` clones what it holds. A clone that panics partway
+// leaves the copy built so far to the unwind, whose drop hook releases the
+// elements it counts ("What the unwind runs, and what it does not").
 package main;
+import "core:container";
 import "core:fmt";
-import "core:unsafe";
 Tracked :: struct { id: int }
 impl Tracked {
     copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
@@ -15,11 +16,11 @@ impl Tracked {
         if (self.id != 0) { fmt.println("drop", self.id); }
     }
 }
-Holder :: struct { first: Tracked, count: int, @(initialized=count) live: [4]Tracked }
+Holder :: struct { first: Tracked, live: container.Small_Array(Tracked, 4) }
 main :: proc() {
     source := Holder{ first = Tracked{1} };
-    unsafe.write(source.live[0], Tracked{6});
-    unsafe.write(source.live[1], Tracked{7});
-    source.count = 2;
+    source.live.append(Tracked{5});
+    source.live.append(Tracked{6});
+    source.live.append(Tracked{7});
     cloned := source.clone();
 }

@@ -2097,7 +2097,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			walk_flow_expr(graph, v.bound[1])
 		}
 		return nil
-	case .Unsafe_Take, .Unsafe_Write:
+	case .Unsafe_Take, .Unsafe_Write, .Unsafe_Storage:
 		walk_flow_each(graph, v.bound)
 		return nil
 	case .Drop:

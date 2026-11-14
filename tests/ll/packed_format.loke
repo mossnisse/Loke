@@ -1,19 +1,17 @@
 package main;
 
-import "core:fmt"; import "core:unsafe";
+import "core:fmt";
 
 // design.md "@(packed)" and standard-library.md "Printed forms": a type's formatter reads
 // its value at the type's alignment, so the record formatter hands a packed
-// field's formatter an aligned copy, and reads a live-prefix count with
-// `align 1`.
+// field's formatter an aligned copy.
 @(packed) Packed :: struct {
 	@(public) tag: u8,
 	@(public) value: u64,
-	@(public) count: int,
-	@(public, initialized=count) items: [2]int,
+	@(public) items: [2]int,
 }
 
 main :: proc() {
-	value := Packed{1, 123, 0, {}};
+	value := Packed{1, 123, {}};
 	fmt.println(value);
 }

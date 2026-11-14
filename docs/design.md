@@ -210,7 +210,7 @@ name. They are:
   `string`, `string_view`, `cstring_view`, `rawptr`, `typeid`, `Allocator`,
   and `Allocator_Error`;
 - generic and marker types: `Unit`, `Option`, `Result`, `Status`, `Range`,
-  `Simd`, `Box`, `Shared`, and `Weak`;
+  `Simd`, `Box`, `Shared`, `Weak`, and `Uninit`;
 - operations: `assert`, `panic`, `static_assert`, `build_config`,
   `source_location`, `caller_location`, `size_of`, `align_of`, `offset_of`,
   `is_copyable`, `is_union`, `type_of`, `typeid_of`, `type_info_of`,
@@ -1538,8 +1538,8 @@ with it.
 Generated hashing combines fields in declaration order, or a union's variant
 followed by its payload, just as a fixed array combines its elements. It calls
 each component's hash and is coherent with generated equality. Packed structs,
-structs with an [`@(initialized)`](#uninitialized-capacity) field, and capture
-literal records do not get a generated hash.
+records holding an [`Uninit(T)`](#uninitialized-capacity), and capture literal
+records do not get a generated hash.
 
 ```loke
 Point :: struct { x, y: int }
@@ -2071,8 +2071,7 @@ so `Account{}`, a static-duration `Account` without an initializer, a `make`
 length, and `resize` are rejected too, and so is anything that contains an
 `Account` and would manufacture one. Use it where zero is representable but not
 a valid value of the field: an identifier, a handle whose zero is a live
-resource, a count that must be positive. An [`@(initialized)`](#uninitialized-capacity)
-field holds no value to require, so it cannot be `@(required)`.
+resource, a count that must be positive.
 
 A field that groups values without needing a type of its own is an anonymous
 record; a nested group that needs hooks, privacy, or attributes is a declared
@@ -2887,43 +2886,31 @@ Type_Kind :: enum u8 {
 	Typeid, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
 }
 
-Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
-
-Member_Info :: struct {
-	kind:       Member_Kind,
-	name:       string_view,
-	type:       typeid,
-	offset:     int,
-	value_low:  u64,
-	value_high: u64,
-}
-
 Type_Info :: struct {
 	id:      typeid,
 	kind:    Type_Kind,
 	name:    string_view,
 	size:    int,
 	align:   int,
-	bits:    int,
-	signed:  bool,
 	element: typeid,
 	key:     typeid,
 	count:   int,
-	members: []Member_Info,
 }
 ```
 
 `type_info_of` returns a read-only `^runtime.Type_Info` into shared static
-storage. Member tables expose public fields only and preserve source order. A
-procedure type's members are its parameters in order, each of kind
-`Parameter`, then one of kind `Result` when it has a result; they carry a
-`type` and no `name`.
-Unused fields are zero. Enum values use `value_low` and `value_high`; the owning
-type's `bits` and `signed` fields describe how to interpret them. A `Distinct`
-entry fills only `id`, `kind`, `name`, `size`, and `align`, and its `element` is
-the type it is declared over, whose own entry describes the shape. These record
-layouts are part of the runtime ABI, and the compiler rejects a `base:runtime`
-whose declarations differ from them.
+storage. An entry describes a type's shape, not its members: it lists no
+fields, enum values, union variants, parameters, or result. Those are read
+where the type is known, by [compile-time reflection](#compile-time-reflection).
+
+`element` is the type a pointer, C pointer, or `Box` points at; the element
+type of an array, slice, dynamic array, or `Simd`; a map's value type; and an
+enum's backing type. `key` is a map's key type. `count` is an array's length
+and a `Simd`'s lane count. A `Distinct` entry fills only `id`, `kind`, `name`,
+`size`, and `align`, and its `element` is the type it is declared over, whose
+own entry describes the shape. Every type an entry names has an entry of its
+own. Unused fields are zero. These layouts are part of the runtime ABI, and the
+compiler rejects a `base:runtime` whose declarations differ from them.
 
 ### Compile-time reflection
 
@@ -2981,8 +2968,10 @@ parameters, and iterated by static `foreach`. They cannot be materialized into
 runtime storage: a reflection value is always a constant, so `fields_of(T)[i]`
 needs a constant `i`, and a descriptor cannot be viewed through a `dyn` or bind a
 runtime parameter, including one whose `$T` would infer a descriptor or `type`.
-Runtime tools instead use the less powerful `runtime.Type_Info` reached through
-`type_info_of`.
+Runtime code has only the `runtime.Type_Info` reached through `type_info_of`,
+which describes [shape and not members](#type-and-typeid); code that needs a
+member table when the program runs builds its own from these descriptors in a
+static `foreach`.
 
 # 3. Methods, Operators & Interfaces
 
@@ -8571,18 +8560,16 @@ view := unsafe.cstring_view(raw);    // programmer promises the lifetime
 unsafe.free(block, allocator);       // programmer promises the allocation
 ```
 
-Five unchecked operations are language syntax rather than members, and are valid
+Four unchecked operations are language syntax rather than members, and are valid
 only in a file that imports `core:unsafe`. Three give an unchecked address a
-usable shape, and two trust storage the compiler cannot see filled:
+usable shape, and one trusts storage the compiler cannot see filled:
 
 - an explicit conversion to `^T` or `^mut T` from `rawptr`, from a C pointer, or
   from a pointer to a different pointee;
 - an explicit conversion to a C pointer from `rawptr` or from a C pointer to a
   different element;
 - indexing or slicing a C pointer;
-- leaving a variable uninitialized with [`x: T = ---`](#built-in-values);
-- declaring an [`@(initialized)`](#uninitialized-capacity) field, whose count
-  generated copy and drop trust.
+- leaving a variable uninitialized with [`x: T = ---`](#built-in-values).
 
 A conversion to `^T` or `^mut T` from `rawptr` or a C pointer, and
 `unsafe.cstring_view`, panic when the address is null, so checked code never
@@ -8653,8 +8640,8 @@ storage byte by byte, little-endian, so a constant of any shape the checks admit
 (a scalar of any width, an array, a SIMD vector, or a struct of them) converts.
 Padding between or after fields holds no value, and a result that would read it
 is a compile-time error. A union, whose [layout](#representation) is the
-compiler's, and a record with an [`initialized`](#uninitialized-capacity) field,
-whose capacity holds no value, have no compile-time meaning on either side. Neither does a
+compiler's, and an [`Uninit(T)`](#uninitialized-capacity), whose storage holds
+no value, have no compile-time meaning on either side. Neither does a
 source that is or contains a `typeid_of(T)` constant, which has no number until
 the program's types are numbered ([`type` and `typeid`](#type-and-typeid)); a
 `typeid` built from a bit pattern converts both ways.
@@ -8665,47 +8652,59 @@ suitably aligned, live storage of the destination pointee type.
 
 #### Uninitialized capacity
 
-A fixed-capacity container reserves storage for `N` elements and holds fewer.
-The storage behind what it holds is **capacity**: bytes that have never been a
-value. A `[N]T` field cannot express that on its own: every one of its elements
-is a value, so the record needs a zero for `T` it may have no use for, and its
-generated copy and drop visit all `N`.
+A fixed-capacity container reserves storage for `N` elements and holds fewer,
+and a slot of a queue or of a control block is empty until something is put in
+it. That storage is **capacity**: bytes that hold no value. A field of type `T`
+or `[N]T` cannot express it: every part of such a field is a value, so the
+record needs a zero for `T` it may have no use for, and its generated copy and
+drop visit all of it.
 
-`@(initialized = count)` on a fixed array field says that only its first `count`
-elements are values, naming a sibling field of type `int` that holds how many:
+`Uninit(T)` is storage for a `T` that holds no value. It has `T`'s size and
+alignment, and `T` is any type, a fixed array among them:
 
 ```loke
 Small_Array :: struct($T: type, $N: int) {
-	@(private, initialized = count) items: [N]T,
+	@(private) items: Uninit([N]T),
 	@(private) count: int,
 }
 ```
 
-The field then imposes no zero-value requirement on `T`, so the record has a
-zero value whatever the element is: an empty `Small_Array(T, N)` is as free of
-`T` as an empty `[dynamic]T`. The record's generated copy clones elements
-`0 ..< count` and leaves the capacity uncopied; its generated drop releases
-those same elements and nothing else. A copy that fails partway releases what it
-built, exactly as it does for any other part.
+Whether the storage holds a value, and in which of its parts, is known only to
+the code around it. So an `Uninit(T)` has none of what a value has:
 
-The count's accuracy is the container author's promise, so the attribute is
-valid only in a file that imports [`core:unsafe`](#the-unsafe-package). The
-compiler reads the named field to decide what to copy and what to release, and
-verifies only the shape: the attribute must name a sibling field of the record,
-and that field must be an `int`. Generated copy, drop, equality, and formatting
-[panic](#panics-and-unwinding) on a count outside `0 ..= N` before reading an
-element. That check keeps a wrong count inside the array; it cannot show that
-the prefix it names holds values.
+- It has a zero value whatever `T` is, and `Uninit(T){}` is its only literal. A
+  record holding one imposes no zero-value requirement on `T`: an empty
+  `Small_Array(T, N)` is as free of `T` as an empty `[dynamic]T`.
+- Dropping it does nothing. A value still in the storage is not released.
+- It is copied bit for bit where `T` has a trivial lifecycle, and has no copy
+  otherwise. What holds storage that has no copy has no generated copy either,
+  as with a [move-only](#move_only) part. Unlike one with a move-only part, a
+  record whose field is such storage, or a fixed array of it, may declare a
+  [`hook(copy)`](#lifecycle-hooks-and-resource-types), and is copied by it.
+- It has no `==` and no generated hash, it prints as its type's name with no
+  contents, and it has no [compile-time](#compile-time-procedure-evaluation)
+  value to compare or reinterpret.
+- It carries what `T` borrows and the [allocator
+  regions](#allocator-regions-and-region-provenance) `T` is in, as a field of
+  type `T` does, so a borrow written into it stays tracked.
 
-Two `core:unsafe` operations move values across that boundary, because neither
-[`move`](#assignment-statements) nor [`exchange`](#exchange) can. `move` cannot
-name an element, and `exchange` installs a replacement the element type may not
-have.
+The record around the storage therefore says what it holds: its `hook(drop)`
+releases the values in it, and its `hook(copy)` clones them.
+
+Three `core:unsafe` operations reach the storage, and nothing else does:
 
 ```loke
-unsafe.write(self.items[self.count], move(value)); // storage becomes a value
-taken := unsafe.take(self.items[last]);            // the value leaves the storage
+unsafe.write(self.slot, move(value));       // the storage becomes a value
+taken := unsafe.take(self.slot);            // the value leaves the storage
+items := unsafe.storage(&mut self.items);   // the storage, lent as a `^mut [N]T`
 ```
+
+`unsafe.storage(pointer)` takes a `^Uninit(T)` or a `^mut Uninit(T)` and gives a
+`^T` or a `^mut T` to the same storage. It is the borrow of a field, checked as
+`&place` and `&mut place` are, and it claims nothing about what the storage
+holds: reading a part of it that holds no value is
+[undefined](#invalid-representations), so a container indexes and slices only
+the slots it has written.
 
 `unsafe.write(place, value)` stores into a place holding no value, so nothing is
 dropped first. The value is [taken as an initialization
@@ -8718,15 +8717,21 @@ it was in. Afterwards the
 storage holds the bits of a value that no longer exists, and reading it again as
 one is undefined.
 
-Both refuse a bare variable. A variable's liveness is tracked, so `move` takes
-its value out and an ordinary assignment puts one back; reaching past that with
-an unchecked operation could only contradict what the compiler already knows.
-They apply to a field, an element, or any other place inside an aggregate.
+For both, a place of type `Uninit(T)` stands for its storage: `write` takes a
+`T` into it and `take` gives one. Any other place is itself, so both also reach
+an element of the array `unsafe.storage` lends, and a field or element of an
+ordinary record whose value the code has taken out.
 
-Neither operation adjusts the count. A container writes and then lengthens,
-because a cloning write can fail, and shortens before it drops what it took,
-because a drop hook can panic. That order is what keeps the count accurate at
-every point a panic can unwind from.
+Both refuse a bare variable of any other type. A variable's liveness is tracked,
+so `move` takes its value out and an ordinary assignment puts one back; reaching
+past that with an unchecked operation could only contradict what the compiler
+already knows. A variable of type `Uninit(T)` is live as the storage it is, which
+says nothing of what it holds.
+
+Neither operation keeps a count. A container writes and then lengthens, because
+a cloning write can fail, and shortens before it drops what it took, because a
+drop hook can panic. That order is what keeps its count accurate at every point
+a panic can unwind from, where its `hook(drop)` reads it.
 
 Everything in `unsafe` is a promise by the programmer that the compiler cannot
 verify. It does not make the underlying storage owned or extend its lifetime.
@@ -11016,7 +11021,6 @@ written to its right.
 | `@(default_allocator=<string>)`, `@(default_logger=<string>)` | the root package clause | [select the program's providers](#default_allocatorstring-and-default_loggerstring) |
 | `@(subsystem=<string>)` | the root package clause | [links a console or windowed executable](#subsystemstring) |
 | `@(zero=<variant>)`, `@(failure=<variant>)` | union types | [designate the zero and failure variants](#zerovariant-and-failurevariant) |
-| `@(initialized=<field>)` | a fixed array field of a struct | [only a counted prefix holds values](#initializedfield) |
 | `@(synchronized)` | struct fields, and file-scope and `static` variables | [its package synchronizes every access](#synchronized) |
 | `@(move_only)` | struct and union types | [removes the generated copy operations](#move_only) |
 | `@(thread_affine)` | struct and union types | [values stay on the thread that made them](#thread_affine) |
@@ -11302,13 +11306,6 @@ recognize; see [The failure protocol](#the-failure-protocol-and-failure).
 
 On a struct field, requires every literal of the struct to supply it, and so
 leaves the struct without a zero value. See [Required fields](#required-fields).
-
-#### `@(initialized=<field>)`
-
-On a fixed array field of a struct, names a sibling `int` field that counts how
-many leading elements hold values; the rest is uninitialized capacity. Valid
-only in a file that imports `core:unsafe`. See [Uninitialized
-capacity](#uninitialized-capacity).
 
 #### `@(synchronized)`
 
@@ -11873,6 +11870,7 @@ language definition.
 | Standard interfaces | `base:interfaces` | [interface catalogue](standard-library.md#standard-interface-catalogue) |
 | `meta.Field`, `meta.Enum_Value`, `meta.Variant` | `base:meta` | [compile-time reflection](#compile-time-reflection) |
 | `Result.map_error`, `Option.ok_or` | `base:runtime` | [changing error domains](#changing-error-domains) |
+| `Uninit(T)` | `base:runtime` | [uninitialized capacity](#uninitialized-capacity) |
 | `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | `base:runtime`, `core:mem` | [allocators](#allocators) |
 | `Logger` | `core:log` | [build-selected providers](#build-selected-providers) |
 | `Source_Code_Location` | `base:runtime` | [`caller_location`](#caller_location), [`source_location`](#source_location-or-source_locationentity) |

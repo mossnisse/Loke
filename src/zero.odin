@@ -29,11 +29,14 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk) -> boo
 		// The payload until `check_union_zero_payload` has judged it.
 		return info.zero_designated && type_has_zero_walk(c, info.variants[0], seen)
 	case .Struct:
+		// design.md "Uninitialized capacity": the storage holds no value, so it asks
+		// `T` for no zero.
+		if type_info_is_uninit(c, info) {
+			return true
+		}
 		for field in info.fields {
 			symbol := symbol_of(c, field)
-			// design.md "Uninitialized capacity": storage past the live prefix holds
-			// no values.
-			if symbol == nil || symbol.initialized_by != INVALID_SYMBOL {
+			if symbol == nil {
 				continue
 			}
 			// design.md "Required fields": zero is not a value this field may hold.
@@ -99,16 +102,11 @@ type_requires_results_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk
 	return false
 }
 
-// The all-zero bytes of a fixed array field whose elements are not yet values.
-// Invalid element constants preserve that distinction for the evaluator, while
-// the backend writes their inert representation as `zeroinitializer`.
-capacity_const :: proc(c: ^Compiler, type: Type_Id) -> Const_Value {
-	info := underlying_info(c, type)
-	if info == nil {
-		return {}
-	}
-	elements := make([]Const_Value, info.count, c.semantic_allocator)
-	return aggregate_const(c, type, elements)
+// The constant of an `Uninit(T)`: its storage is the one constant that is no
+// value. That keeps the distinction for the evaluator, while the backend writes
+// the inert representation, `zeroinitializer`.
+uninit_const :: proc(c: ^Compiler, type: Type_Id) -> Const_Value {
+	return aggregate_const(c, type, make([]Const_Value, 1, c.semantic_allocator))
 }
 
 // Constant construction is held to the evaluator's scratch budget, counted as
@@ -234,6 +232,9 @@ zero_value :: proc(c: ^Compiler, type: Type_Id, build: bool) -> (Const_Value, bo
 		if info.size_state == .Cyclic {
 			return Const_Value{}, false
 		}
+		if type_info_is_uninit(c, info) {
+			return build ? uninit_const(c, type) : Const_Value{kind = .Aggregate}, true
+		}
 		// All-zero fields: a nil view, or an empty container.
 		elements: []Const_Value
 		if build {
@@ -243,12 +244,6 @@ zero_value :: proc(c: ^Compiler, type: Type_Id, build: bool) -> (Const_Value, bo
 			symbol := symbol_of(c, field)
 			if symbol == nil {
 				return Const_Value{}, false
-			}
-			if symbol.initialized_by != INVALID_SYMBOL {
-				if build {
-					elements[index] = capacity_const(c, symbol.type)
-				}
-				continue
 			}
 			element, ok := zero_value(c, symbol.type, build)
 			if !ok {

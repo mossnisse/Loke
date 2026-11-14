@@ -107,14 +107,13 @@ impl Thread {
 
 // What a new thread starts from: the entry and its argument, on the heap until
 // the thread takes them. `run` leads so the non-generic `thread_main` can find
-// the instantiation that knows `T`. The argument is capacity (design.md
+// the instantiation that knows `T`. The argument is an `Uninit(T)` (design.md
 // "Uninitialized capacity"), so the block is allocated before it holds one.
 @(private)
 Start :: struct($T: type) {
 	run:   proc(block: rawptr),
 	entry: proc(value: move T),
-	@(initialized = live) arg: [1]T,
-	live:  int,
+	arg:   Uninit(T),
 }
 
 @(private)
@@ -126,8 +125,7 @@ impl Start($T) {
 	begin :: proc(raw: rawptr) {
 		block := (^mut Start(T))(raw);
 		entry := block^.entry;
-		block^.live = 0;
-		arg := unsafe.take(block^.arg[0]);
+		arg := unsafe.take(block^.arg);
 		unsafe.free(block);
 		entry(move(arg));
 	}
@@ -151,16 +149,14 @@ spawn_with :: proc(
 	@(cross_thread, escape=static) arg: move T,
 ) -> Thread {
 	block := (^mut Start(T))(unsafe.new(Start(T){run = Start(T).begin, entry = entry}));
-	unsafe.write(block^.arg[0], move(arg));
-	block^.live = 1;
+	unsafe.write(block^.arg, move(arg));
 	handle := rt_create_thread(nil, 0, thread_main, rawptr(block), 0, nil);
 	if (handle == 0) {
 		// No thread took the block, so it and the argument are still this
 		// call's: the argument comes back out, as `begin` takes it, and the
 		// unwind drops it (design.md "What the unwind runs, and what it does
 		// not").
-		block^.live = 0;
-		unclaimed := unsafe.take(block^.arg[0]);
+		unclaimed := unsafe.take(block^.arg);
 		unsafe.free(block);
 		panic("thread creation failed");
 	}

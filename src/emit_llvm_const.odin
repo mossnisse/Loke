@@ -119,8 +119,8 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	if info == nil {
 		return "0"
 	}
-	// An invalid constant inside `@(initialized)` capacity is not a value, but
-	// still has the inert all-zero representation.
+	// The storage of an `Uninit(T)` is the constant that is no value
+	// (`uninit_const`), and still has the inert all-zero representation.
 	if value.kind == .Invalid {
 		return "zeroinitializer"
 	}

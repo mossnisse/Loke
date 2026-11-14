@@ -35,7 +35,3 @@ L0381
 @51:2
 `Handle` has a lifecycle
 declare it without an initializer, or give it `{}` or `nil`
-!%!(
-L0706
-@67:4
-trusting an `@(initialized)` count is unchecked

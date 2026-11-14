@@ -431,6 +431,7 @@ Builtin_Kind :: enum u8 {
 	// design.md "Uninitialized capacity".
 	Unsafe_Take,
 	Unsafe_Write,
+	Unsafe_Storage,
 	// Releases an allocation whose root the compiler cannot see.
 	Unsafe_Free,
 	// design.md "The `unsafe` package".
@@ -626,10 +627,6 @@ Symbol :: struct {
 	// Field or enum-member position in its owning type; parameter position in
 	// its signature.
 	index:       u32,
-	// design.md "Uninitialized capacity": `@(initialized = count)` names the
-	// sibling field holding how many leading elements are live. The generated
-	// copy and drop visit that prefix only.
-	initialized_by: Symbol_Id,
 
 	kind:        Symbol_Kind,
 	builtin:     Builtin_Kind,

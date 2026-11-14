@@ -483,14 +483,13 @@ emit_type_info_tables :: proc(e: ^Emitter) {
 		return
 	}
 	record, has_record := e.c.runtime_types["Type_Info"]
-	member, has_member := e.c.runtime_types["Member_Info"]
-	if !has_record || !has_member {
+	if !has_record {
 		backend_fail(e, "`type_info_of` was checked without the `base:runtime` layouts")
 		return
 	}
 	entries := make([]string, len(e.c.typeid_order) + 1)
 	for type in e.c.typeid_order {
-		entries[typeid_value(e.c, type)] = type_info_entry(e, record, member, type)
+		entries[typeid_value(e.c, type)] = type_info_entry(e, record, type)
 	}
 	append_constant_array(e, generated_name(e, TYPE_INFO_TABLE), struct_name(e, record), entries)
 }
@@ -507,28 +506,20 @@ append_constant_array :: proc(e: ^Emitter, name, element: string, entries: []str
 	append(&e.globals, strings.to_string(b))
 }
 
+// design.md "`type` and `typeid`": an entry describes a type's shape, not its
+// members.
 @(private = "file")
-type_info_entry :: proc(e: ^Emitter, record, member, type: Type_Id) -> string {
-	id := fmt.aprintf("%d", typeid_value(e.c, type))
-	kind := fmt.aprintf("%d", int(public_type_kind(e.c, type)))
-	name := text_view_constant(e, type_name(e.c, type))
-	size := fmt.aprintf("%d", type_size(e.c, type))
-	align := fmt.aprintf("%d", type_align(e.c, type))
-	// design.md: a `distinct` entry's `element` is the type it is declared over,
-	// and the shape is that type's to report.
-	if info := type_of(e.c, type); info.kind == .Distinct {
-		element := fmt.aprintf("%d", typeid_value(e.c, info.element))
-		return record_constant(e, record, {id, kind, name, size, align, "", "", element, "", "", ""})
-	}
-	shape := underlying_info(e.c, type)
+type_info_entry :: proc(e: ^Emitter, record, type: Type_Id) -> string {
+	element, key, count := type_info_relations(e.c, type)
 	return record_constant(e, record, {
-		id, kind, name, size, align,
-		fmt.aprintf("%d", shape.bits),
-		shape.signed ? "true" : "false",
-		fmt.aprintf("%d", typeid_value(e.c, shape.element)),
-		fmt.aprintf("%d", typeid_value(e.c, shape.key)),
-		fmt.aprintf("%d", shape.count),
-		type_info_members(e, member, type),
+		fmt.aprintf("%d", typeid_value(e.c, type)),
+		fmt.aprintf("%d", int(public_type_kind(e.c, type))),
+		text_view_constant(e, type_name(e.c, type)),
+		fmt.aprintf("%d", type_size(e.c, type)),
+		fmt.aprintf("%d", type_align(e.c, type)),
+		fmt.aprintf("%d", typeid_value(e.c, element)),
+		fmt.aprintf("%d", typeid_value(e.c, key)),
+		fmt.aprintf("%d", count),
 	})
 }
 
@@ -569,87 +560,14 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> Runtime_Type_Kind {
 	return .Invalid
 }
 
-// The `[]Member_Info` of a struct, enum, union, or procedure.
-@(private = "file")
-type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
-	shape := underlying_info(e.c, type)
-	entries := make([dynamic]string)
-	#partial switch shape.kind {
-	case .Struct:
-		for field, index in shape.fields {
-			sym := symbol_of(e.c, field)
-			if sym == nil || !sym.public {
-				continue // design.md: member tables expose public fields only
-			}
-			offset := fmt.aprintf("%d", type_field_offset(e.c, type, index))
-			append(&entries, member_constant(e, member, .Field, field_label(e.c, field), sym.type, offset))
-		}
-	case .Enum:
-		for field in shape.fields {
-			sym := symbol_of(e.c, field)
-			if sym == nil {
-				continue
-			}
-			low, high := enum_raw_words(e.c, sym.const_value)
-			append(&entries, member_constant(e, member, .Enum_Value, identifier_text(e.c, sym.name), type, "", low, high))
-		}
-	case .Union:
-		for variant, index in shape.variants {
-			// A payloadless variant reports `Unit`.
-			payload := payload_value_type(e.c, variant)
-			name := identifier_text(e.c, shape.variant_names[index])
-			append(&entries, member_constant(e, member, .Union_Variant, name, payload, fmt.aprintf("%d", index)))
-		}
-	case .Proc:
-		for parameter in shape.parameters {
-			append(&entries, member_constant(e, member, .Parameter, "", parameter))
-		}
-		if shape.result != INVALID_TYPE {
-			append(&entries, member_constant(e, member, .Result, "", shape.result))
-		}
-	}
-	if len(entries) == 0 {
-		return "zeroinitializer"
-	}
-	name := claim_name(e, fmt.aprintf("@.loke.members.%d", len(e.globals)))
-	append_constant_array(e, name, struct_name(e, member), entries[:])
-	return slice_constant(name, len(entries))
-}
-
-@(private = "file")
-member_constant :: proc(
-	e: ^Emitter, member: Type_Id, kind: Runtime_Member_Kind, name: string, type: Type_Id, offset := "", low := "", high := "",
-) -> string {
-	return record_constant(e, member, {
-		fmt.aprintf("%d", int(kind)), text_view_constant(e, name), fmt.aprintf("%d", typeid_value(e.c, type)), offset, low, high,
-	})
-}
-
-// An enum value's low and high 64-bit words, unnarrowed.
-@(private = "file")
-enum_raw_words :: proc(c: ^Compiler, value: Const_Value) -> (low: string, high: string) {
-	if value.kind != .Integer {
-		return "0", "0"
-	}
-	mask := bi_sub(c, bi_pow2(c, 64), bi_from_i64(c, 1))
-	low_value, _ := bi_to_u64(c, bi_and(c, value.integer, mask))
-	high_value, _ := bi_to_u64(c, bi_and(c, bi_shr(c, value.integer, 64), mask))
-	return fmt.aprintf("%d", low_value), fmt.aprintf("%d", high_value)
-}
-
-// A metadata record from its fields in `TYPE_INFO_LAYOUT` or `MEMBER_INFO_LAYOUT`
-// order, which the checker pinned. An empty value is that field's zero
-// (design.md "Zero values").
+// A metadata record from its fields in `TYPE_INFO_LAYOUT` order, which the
+// checker pinned.
 @(private = "file")
 record_constant :: proc(e: ^Emitter, record: Type_Id, values: []string) -> string {
 	b := strings.builder_make()
 	strings.write_string(&b, "{")
 	for field, index in underlying_info(e.c, record).fields {
-		value := values[index]
-		fmt.sbprintf(
-			&b, "%s %s %s", index > 0 ? "," : "", llvm_type(e, symbol_of(e.c, field).type),
-			value == "" ? "zeroinitializer" : value,
-		)
+		fmt.sbprintf(&b, "%s %s %s", index > 0 ? "," : "", llvm_type(e, symbol_of(e.c, field).type), values[index])
 	}
 	strings.write_string(&b, " }")
 	return strings.to_string(b)

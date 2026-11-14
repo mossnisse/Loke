@@ -388,7 +388,7 @@ bigint_long_division_round_trips :: proc(t: ^testing.T) {
 		q, r := bi_quo(&c, a, b), bi_rem(&c, a, b)
 		testing.expect(t, bi_cmp(bi_add(&c, bi_mul(&c, q, b), r), a) == 0, "a / b does not round-trip")
 		testing.expect(t, bi_sign(r) == -1, "the remainder takes the dividend's sign")
-		testing.expect(t, bi_magnitude_bits(r) <= bi_magnitude_bits(b), "the remainder is below the divisor")
+		testing.expect(t, bi_cmp(bi_neg(&c, r), b) < 0, "the remainder's magnitude is below the divisor")
 	}
 }
 

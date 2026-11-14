@@ -1,26 +1,22 @@
 package main; import "core:unsafe";
 
-// design.md "Uninitialized capacity": the count a field names is the author's
-// promise, and the shape of that promise is what the compiler checks.
+// design.md "Uninitialized capacity": what an `Uninit(T)` does not have, and
+// the shapes its three operations take.
 
-Not_An_Array :: struct {
-	@(initialized = count) items: int,
-	count: int,
+Slot :: struct($T: type) { item: Uninit(T) }
+
+Holder :: struct { items: [dynamic]int }
+
+// The storage is reached through `core:unsafe` and by no other route.
+reach :: proc(slot: inout Slot(int)) -> int {
+	return slot.item.value;
 }
 
-No_Such_Field :: struct {
-	@(initialized = total) items: [4]int,
-	count: int,
-}
-
-Wrong_Count_Type :: struct {
-	@(initialized = count) items: [4]int,
-	count: bool,
-}
-
-Buffer :: struct {
-	@(initialized = count) items: [4][dynamic]int,
-	count: int,
+// It has no `==`, and a managed `T` gives it no copy, as the record holding it
+// has none without a `hook(copy)` of its own.
+whole :: proc(a: Slot(int), b: Slot(int), owned: ^Slot(string)) -> bool {
+	copied := owned^;
+	return a.item == b.item;
 }
 
 // A variable's liveness is tracked, so neither operation may name one: `move`
@@ -32,14 +28,27 @@ variables :: proc() {
 	unsafe.write(ys, [dynamic]int{3});
 }
 
-shapes :: proc(b: inout Buffer) {
-	_ = unsafe.take(b.items[0], 1);
-	unsafe.write(b.items[0]);
+shapes :: proc(h: inout Holder, slot: inout Slot(int)) {
+	_ = unsafe.take(h.items, 1);
+	unsafe.write(h.items);
 	_ = unsafe.take(7);
+	unsafe.write(slot.item, "text");
+	_ = unsafe.storage(slot.item);
+	_ = unsafe.storage(&h.items);
+	_ = unsafe.storage(&slot.item, 1);
+}
+
+// A `^Uninit(T)` lends a `^T`, which writes nothing.
+read_only :: proc(slot: ^Slot(int)) {
+	unsafe.storage(&slot.item)^ = 1;
+	unsafe.write(slot.item, 1);
 }
 
 main :: proc() {
-	b: Buffer = {};
+	h: Holder = {};
+	slot: Slot(int) = {};
 	variables();
-	shapes(inout b);
+	shapes(inout h, inout slot);
+	read_only(&slot);
+	_ = reach(inout slot);
 }

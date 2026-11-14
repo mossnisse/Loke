@@ -80,8 +80,9 @@ members as payloadless variants, without their values, so one generic loop can
 name the alternatives of an enum or a union.
 
 Descriptors cannot be stored in a runtime container or indexed with a runtime
-variable. Runtime inspection has a separate `type_info_of` API; it does not
-make these compile-time descriptors runtime values.
+variable. Runtime inspection has a separate `type_info_of` API, which
+describes a type's kind, size, and element type and lists no members; it does
+not make these compile-time descriptors runtime values.
 
 ## Give a type a printed representation
 

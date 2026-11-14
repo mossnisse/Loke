@@ -1062,10 +1062,21 @@ impl Small_Array($T, $N) {
 	// O(1), at the cost of the order: the last element takes the hole.
 	remove_unordered :: proc(self: inout, index: int) -> T ---;
 
-	// Sets the length to zero, dropping each element.
+	/*
+		Sets the length to zero, dropping each element, last to first. If a drop
+		panics, the remaining elements still drop in the same order.
+	*/
 	clear :: proc(self: inout) ---;
 
+	// Equal lengths and equal elements, in order.
+	equal :: operator(==) proc(left, right: Small_Array(T, N)) -> bool where interfaces.Equatable(T) ---;
+
+	// Prints as an array, in order.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) ---;
+
+	release :: hook(drop) proc(self: inout) ---;
+
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Small_Array(T, N), Allocator_Error) where is_copyable(T) ---;
 }
 
 /*

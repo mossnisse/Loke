@@ -7,8 +7,8 @@
 	check: `raw_data`, `string_view` and `cstring_view` discard or manufacture
 	provenance, `transmute` reinterprets bits, `forget` suppresses cleanup, `new`
 	and `try_new` allocate storage nothing owns, `free` releases storage nothing
-	traced, and `write` and `take` move a value into and out of uninitialized
-	capacity. Importing this package is also what permits the unchecked pointer
+	traced, `write` and `take` move a value into and out of storage that holds
+	none, and `storage` lends the storage of an `Uninit(T)`. Importing this package is also what permits the unchecked pointer
 	conversions and C-pointer indexing and slicing in the importing file.
 */
 package unsafe;
@@ -89,7 +89,8 @@ try_new :: proc(value: $T, allocator: Allocator = {}) -> Result([^]T, Allocator_
 	Reads the value out of `place`, a field or element holding one, and runs no
 	cleanup for what is left behind; the storage then holds the bits of a value
 	that no longer exists. A bare variable is refused, since `move` already
-	takes one's value out.
+	takes one's value out. A `place` of type `Uninit(T)`, a variable among them,
+	gives the `T` its storage holds.
 */
 @(intrinsic)
 take :: proc(place: $T) -> T ---;
@@ -98,10 +99,21 @@ take :: proc(place: $T) -> T ---;
 	Stores `value` into `place`, a field or element holding no value, so nothing
 	is dropped first. The value arrives as an initialization takes it: a
 	borrowed place is cloned, a temporary or a `move` hands ownership over. A
-	bare variable is refused, since an assignment already puts one back.
+	bare variable is refused, since an assignment already puts one back. A
+	`place` of type `Uninit(T)`, a variable among them, takes a `T` into its
+	storage.
 */
 @(intrinsic)
 write :: proc(place: $T, value: T) ---;
+
+/*
+	The storage of an `Uninit(T)`, lent as the `T` it is for: a `^Uninit(T)`
+	gives a `^T` and a `^mut Uninit(T)` a `^mut T`, borrowing what the operand
+	borrows. Reading a part of it that holds no value is undefined, so a
+	container reaches only the slots it has written.
+*/
+@(intrinsic)
+storage :: proc(pointer: ^Uninit($T)) -> ^T ---;
 
 /*
 	Reads the storage of `value` as a `T`, with no addressable operand: the
@@ -120,8 +132,7 @@ write :: proc(place: $T, value: T) ---;
 	constant operand folds, which is how a package builds an infinity or a NaN:
 	neither has a literal spelling. At compile time the storage is read byte by
 	byte, so arrays and structs fold as well, except where the result would read
-	padding. A union and a record with uninitialized capacity have no
-	compile-time meaning.
+	padding. A union and an `Uninit(T)` have no compile-time meaning.
 
 	Pointer destinations are `rawptr` and C pointers only, and the result is
 	unchecked: dereferencing it is valid only when the bits already describe

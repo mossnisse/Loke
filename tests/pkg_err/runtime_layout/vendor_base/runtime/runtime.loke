@@ -1,7 +1,7 @@
 // A replaced runtime whose metadata layouts disagree with the compiler's:
-// `size` and `align` are swapped, `Member_Kind` lists `Result` before
-// `Parameter`, and `Source_Code_Location` puts `column` before `line`. The
-// bootstrap declarations are stubs.
+// `size` and `align` are swapped, `Type_Kind` has no `Box`, and
+// `Source_Code_Location` puts `column` before `line`. The bootstrap
+// declarations are stubs.
 @(public)
 package runtime;
 
@@ -14,31 +14,15 @@ Type_Kind :: enum u8 {
 }
 
 @(public)
-Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Result, Parameter }
-
-@(public)
-Member_Info :: struct {
-	kind:       Member_Kind,
-	name:       string_view,
-	type:       typeid,
-	offset:     int,
-	value_low:  u64,
-	value_high: u64,
-}
-
-@(public)
 Type_Info :: struct {
 	id:      typeid,
 	kind:    Type_Kind,
 	name:    string_view,
 	align:   int,
 	size:    int,
-	bits:    int,
-	signed:  bool,
 	element: typeid,
 	key:     typeid,
 	count:   int,
-	members: []Member_Info,
 }
 
 @(public)
@@ -66,6 +50,9 @@ Shared :: struct($T: type) { @(private) block: rawptr }
 
 @(public)
 Weak :: struct($T: type) { @(private) block: rawptr }
+
+@(public)
+Uninit :: struct($T: type) { @(private) value: T }
 
 @(private)
 shared_stub :: proc(value: $T) -> Shared(T) { return Shared(T){nil}; }

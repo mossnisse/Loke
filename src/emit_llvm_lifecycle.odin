@@ -204,12 +204,6 @@ emit_clone_record_parts :: proc(e: ^Emitter, subject: Type_Id, self, out: string
 		part_operations := emit_lifecycle(e, part)
 		source := element_address(e, subject, self, index)
 		destination := element_address(e, subject, out, index)
-		// An unmanaged `@(initialized)` field is copied whole as bytes below.
-		if field, counter, prefixed := record_prefix_part(e, subject, index); prefixed &&
-		   part_operations.managed {
-			guards[index] = emit_clone_prefix(e, subject, self, out, field, counter, guards[:index], result)
-			continue
-		}
 		if !part_operations.managed {
 			loaded := load_place(e, part, source)
 			store(e, part, loaded, destination)
@@ -248,44 +242,6 @@ drop_built_parts :: proc(e: ^Emitter, record: Type_Id, out: string, guards: []De
 		finish_temporary_drop(e, guards[done])
 		emit_drop_record_part(e, record, out, done)
 	}
-}
-
-// design.md "Uninitialized capacity": `@(initialized = count)` makes only the
-// first `count` elements of a fixed array field values; the capacity behind
-// them is never read as one.
-@(private = "file")
-record_prefix_part :: proc(
-	e: ^Emitter, record: Type_Id, index: int,
-) -> (field: ^Symbol, counter: ^Symbol, prefixed: bool) {
-	info := underlying_info(e.c, record)
-	if info == nil || info.kind != .Struct {
-		return nil, nil, false
-	}
-	field = symbol_of(e.c, info.fields[index])
-	if field == nil || field.initialized_by == INVALID_SYMBOL {
-		return nil, nil, false
-	}
-	counter = symbol_of(e.c, field.initialized_by)
-	return field, counter, counter != nil
-}
-
-// The count of an `@(initialized)` array's live prefix, held by `counter` in the
-// record at `base`, checked against the array's length.
-@(private)
-emit_prefix_count :: proc(e: ^Emitter, record: Type_Id, base: string, counter: ^Symbol, array: Type_Id) -> string {
-	address := element_address(e, record, base, int(counter.index))
-	count := load_place(e, counter.type, address)
-	emit_prefix_count_check(e, count, array)
-	return count
-}
-
-// A count outside `0 ..= N` panics before a traversal reads past the array. It
-// cannot show that the prefix holds values; that stays the author's promise.
-@(private)
-emit_prefix_count_check :: proc(e: ^Emitter, count: string, array: Type_Id) {
-	out_of_range := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", out_of_range, count, underlying_info(e.c, array).count)
-	panic_if(e, out_of_range, "prefix.count", "an `@(initialized)` count is outside its array")
 }
 
 // Drops the first `count` elements, last first. Without `flags`, the unwind still
@@ -355,15 +311,6 @@ record_part_cleanup :: proc(e: ^Emitter, record: Type_Id, base: string, index: i
 	if !emit_lifecycle(e, clone_part(e.c, record, index)).managed {
 		return Deferred{}
 	}
-	if field, counter, prefixed := record_prefix_part(e, record, index); prefixed {
-		// Replay reads the count field itself: the record's drop hook shortens it
-		// as it takes elements out (design.md "Uninitialized capacity").
-		return register_array_cleanup(
-			e, underlying_info(e.c, field.type).element,
-			element_address(e, record, base, int(field.index)), "",
-			element_address(e, record, base, int(counter.index)), field.type,
-		)
-	}
 	return begin_temporary_drop(e, clone_part(e.c, record, index), element_address(e, record, base, index))
 }
 
@@ -392,39 +339,12 @@ guard_record_parts :: proc(e: ^Emitter, record: Type_Id, base: string, hook: boo
 }
 
 @(private = "file")
-emit_drop_prefix :: proc(e: ^Emitter, record: Type_Id, base: string, field, counter: ^Symbol) {
-	element := underlying_info(e.c, field.type).element
-	items := element_address(e, record, base, int(field.index))
-	count := emit_prefix_count(e, record, base, counter, field.type)
-	emit_drop_elements_reversed(e, element, items, count)
-}
-
-@(private = "file")
 emit_drop_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) {
 	part := clone_part(e.c, record, index)
 	if !emit_lifecycle(e, part).managed {
 		return
 	}
-	if field, counter, prefixed := record_prefix_part(e, record, index); prefixed {
-		emit_drop_prefix(e, record, base, field, counter)
-		return
-	}
 	emit_drop_place(e, part, element_address(e, record, base, index))
-}
-
-// Clones the live prefix of an `@(initialized)` field element by element. The
-// full destination count is published first, so a later failure can clean every
-// completed prefix sharing it.
-@(private = "file")
-emit_clone_prefix :: proc(
-	e: ^Emitter, record: Type_Id, self, out: string, field, counter: ^Symbol, built_parts: []Deferred, result: Type_Id,
-) -> Deferred {
-	source := element_address(e, record, self, int(field.index))
-	destination := element_address(e, record, out, int(field.index))
-	built := element_address(e, record, out, int(counter.index))
-	total := emit_prefix_count(e, record, self, counter, field.type)
-	store(e, counter.type, total, built)
-	return emit_clone_elements(e, underlying_info(e.c, field.type).element, source, destination, total, record, out, built_parts, result)
 }
 
 // Clones the first `total` elements from `source` in one runtime loop. A cursor

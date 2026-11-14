@@ -89,8 +89,8 @@ The spec explicitly calls these **undefined behavior**:
 - A build-selected allocator factory returning shorter-lived storage is
   undefined. See [Provider initialization](design.md#provider-initialization).
 - After `unsafe.take(place)`, treating the emptied storage as still holding a
-  value is explicitly undefined. The `@(initialized)` live count is a trusted
-  assertion that its prefix actually contains values. See
+  value is explicitly undefined, and so is reading a part of an `Uninit(T)`'s
+  storage that nothing has written. See
   [Uninitialized capacity](design.md#uninitialized-capacity).
 - A value whose bits are not a representation of its type, a `bool` byte
   other than 0 or 1, an enum value naming no member, a null non-null

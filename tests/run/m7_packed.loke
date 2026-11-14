@@ -1,6 +1,5 @@
 package main; import "core:fmt";
 import "base:runtime";
-import "core:unsafe";
 
 // design.md "Record layout attributes": packed fields load and
 // store unaligned, `@(align=N)` raises alignment, and `offset_of`/`size_of`/
@@ -14,9 +13,9 @@ Outer :: struct { head: u8, inner: Packed }
 Const_Inner :: struct { x: i64, y: i64 }
 @(packed, align=16) Const_Outer :: struct { tag: u8, inner: Const_Inner }
 
-// Equality on a combined record compares only an `@(initialized)` array's live
-// prefix, and keeps a large field an address.
-@(packed, align=8) Buf :: struct { count: int, @(initialized=count) items: [4]int }
+// Equality on a combined record compares an array field element by element,
+// and keeps a large field an address.
+@(packed, align=8) Buf :: struct { count: int, items: [4]int }
 @(packed, align=8) Big :: struct { tag: u8, data: [1024]int }
 
 saved: Const_Outer = { tag = 9, inner = { x = 41, y = 42 } };
@@ -56,11 +55,11 @@ main :: proc() {
 	fmt.println(b == Both{ x = 3, y = 77 }, b == Both{ x = 3, y = 78 });
 	fmt.println(ov == Over{ b = true, n = 123 });
 	left_buf: Buf = {}; right_buf: Buf = {};
-	unsafe.write(left_buf.items[0], 1); left_buf.count = 1;
-	unsafe.write(right_buf.items[0], 2); right_buf.count = 1;
+	left_buf.items[0] = 1; left_buf.count = 1;
+	right_buf.items[0] = 2; right_buf.count = 1;
 	fmt.println(left_buf == right_buf);
-	left_buf.count = 0; right_buf.count = 0;
-	fmt.println(unsafe.take(left_buf.items[0]), unsafe.take(right_buf.items[0]), left_buf == right_buf);
+	right_buf.items[0] = 1;
+	fmt.println(left_buf.items[0], right_buf.items[0], left_buf == right_buf);
 	big: Big = {}; other: Big = {};
 	fmt.println(big == other);
 	other.data[1023] = 1;

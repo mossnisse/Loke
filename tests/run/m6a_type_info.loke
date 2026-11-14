@@ -5,6 +5,9 @@ package main; import "core:fmt"; import "core:unsafe";
 // frozen id, so a lookup is a checked index rather than a runtime call — and a
 // `typeid` is an ordinary scalar, so the check is what makes the zero id and a
 // forged one answer the `Invalid` entry instead of reading past the table.
+// An entry describes shape, not members: it names an element and a key type and
+// gives a count, and a type's fields, values, and variants are read where the
+// type is known, with `fields_of`, `enum_values_of`, and `variants_of`.
 
 import "base:runtime";
 
@@ -17,11 +20,10 @@ Colour :: enum { Red, Green = 5, Blue }
 
 Huge :: enum u128 { Value = 18446744073709551617 }
 
-// A union's members are its variants, in declaration order. The variant's name
-// is its identity, so two variants sharing a payload type are two entries; a
-// payloadless one reports `Unit`, and each entry's `offset` is the declaration
-// index the tag holds.
 Pair :: union { left: i32, right: i32, neither: }
+
+// A procedure type's entry names neither its parameters nor its result.
+Callback :: proc(n: i32) -> f32;
 
 // A distinct entry names the type it is declared over and nothing else; that
 // type's own entry carries the shape, one level at a time.
@@ -39,12 +41,13 @@ forge :: proc(raw: i64) -> typeid {
 main :: proc() {
 	info := type_info_of(typeid_of(Point));
 	fmt.println(info.size);
-	fmt.println(info.members.len());
 	fmt.println(int(info.kind));
 	fmt.println(info.name.len());
+	// A record's entry names no element, key, or count, and neither does a
+	// union's or a procedure type's.
+	fmt.println(info.element == typeid{}, info.key == typeid{}, info.count);
 	u := type_info_of(typeid_of(u8));
-	fmt.println(u.bits);
-	fmt.println(1 if u.signed else 0);
+	fmt.println(u.kind, u.size);
 	empty: typeid = {};
 	fmt.println(int(type_info_of(empty).kind), type_info_of(empty).size);
 	forged := forge(999999);
@@ -52,20 +55,28 @@ main :: proc() {
 	// Every id is a value (design.md "Invalid representations"): a forged one
 	// equals no real id and prints as its number.
 	fmt.println(forged == typeid_of(Point), forged == empty, forged == forge(999999), forged);
+	// An enum's `element` is its backing type, whose entry says how wide and
+	// whether signed.
 	c := type_info_of(typeid_of(Colour));
-	fmt.println(c.members.len());
+	fmt.println(c.kind, c.element == typeid_of(int), type_info_of(c.element).kind);
 	wide := type_info_of(typeid_of(Huge));
-	fmt.println(wide.members[0].value_low, wide.members[0].value_high);
+	fmt.println(wide.size, wide.element == typeid_of(u128), type_info_of(wide.element).kind);
 	pair := type_info_of(typeid_of(Pair));
-	fmt.println(int(pair.kind), pair.members.len());
-	foreach (member in pair.members) {
-		fmt.println(member.name, int(member.kind), member.offset,
-			1 if member.type == typeid_of(i32) else 0);
-	}
+	fmt.println(pair.kind, pair.element == typeid{}, pair.key == typeid{}, pair.count);
+	callback := type_info_of(typeid_of(Callback));
+	fmt.println(callback.kind, callback.element == typeid{}, callback.key == typeid{}, callback.count);
+	// The types an entry names have entries of their own, though nothing else
+	// in the program asks for a `[]string_view` or a `^u16`.
+	table := type_info_of(typeid_of(map[i16][]string_view));
+	fmt.println(table.kind, table.key == typeid_of(i16), type_info_of(table.key).size);
+	values := type_info_of(table.element);
+	fmt.println(values.kind, values.name, type_info_of(values.element).kind);
+	grid := type_info_of(typeid_of([3]^u16));
+	fmt.println(grid.kind, grid.count, type_info_of(grid.element).kind, type_info_of(type_info_of(grid.element).element).size);
 	depth := type_info_of(typeid_of(Depth));
-	fmt.println(int(depth.kind), depth.size, depth.bits, 1 if depth.element == typeid_of(Meters) else 0);
+	fmt.println(int(depth.kind), depth.size, 1 if depth.element == typeid_of(Meters) else 0);
 	meters := type_info_of(depth.element);
 	fmt.println(int(meters.kind), 1 if meters.element == typeid_of(f64) else 0);
 	float := type_info_of(meters.element);
-	fmt.println(int(float.kind), float.bits);
+	fmt.println(int(float.kind), float.size);
 }

@@ -96,10 +96,10 @@ freeze_typeids :: proc(c: ^Compiler) {
 	if c.typeid_frozen {
 		return
 	}
-	// design.md's public metadata names element, key, field, variant, parameter,
-	// and result types, so each must be resolvable through `type_info_of` too.
-	// Closing the set here, before ids are assigned, makes a recursive walk of
-	// the metadata terminate at a real entry rather than nil.
+	// design.md's public metadata names element and key types, and a printed
+	// value's thunk calls those of its parts, so each must have an id too.
+	// Closing the set here, before ids are assigned, makes a walk of the
+	// metadata end at a real entry rather than the `Invalid` one.
 	if c.type_info_requested || c.format_requested {
 		for index := 0; index < len(c.typeid_order); index += 1 {
 			request_referenced_typeids(c, c.typeid_order[index])
@@ -122,9 +122,25 @@ freeze_typeids :: proc(c: ^Compiler) {
 	}
 }
 
-// Every type the public metadata of `type` names. The walk is iterative over
-// `typeid_order`, which this appends to, so a cycle through a record field
-// terminates on the already-requested check.
+// What a `runtime.Type_Info` entry says of `type` beside its size (design.md
+// "`type` and `typeid`"). A `distinct` type names only the type it is declared
+// over, and the `element` and `key` of a record are the compiler's own notes on
+// an iterator, not its shape.
+type_info_relations :: proc(c: ^Compiler, type: Type_Id) -> (element, key: Type_Id, count: u64) {
+	info := type_of(c, type)
+	if info != nil && info.kind != .Distinct {
+		info = underlying_info(c, type)
+	}
+	if info == nil || info.kind == .Struct {
+		return INVALID_TYPE, INVALID_TYPE, 0
+	}
+	return info.element, info.key, info.count
+}
+
+// Every type the public metadata of `type` names and, when values are printed,
+// every part of it. The walk is iterative over `typeid_order`, which this
+// appends to, so a cycle through a record field terminates on the
+// already-requested check.
 @(private = "file")
 request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 	consider :: proc(c: ^Compiler, referenced: Type_Id) {
@@ -136,18 +152,14 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 		}
 		request_typeid(c, referenced)
 	}
-	// A `distinct` entry names only the type it is declared over, whose own entry
-	// carries the shape.
-	if info := type_of(c, type); info != nil && info.kind == .Distinct {
-		consider(c, info.element)
-		return
-	}
-	under := underlying_info(c, type)
-	if under == nil {
-		return
-	}
-	for component in type_components(c, under) {
-		consider(c, component)
+	element, key, _ := type_info_relations(c, type)
+	consider(c, element)
+	consider(c, key)
+	// A `distinct` type's parts are reached through the type it is declared over.
+	if under := underlying_info(c, type); c.format_requested && under != nil && type_kind(c, type) != .Distinct {
+		for component in type_components(c, under) {
+			consider(c, component)
+		}
 	}
 }
 

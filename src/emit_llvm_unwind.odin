@@ -479,9 +479,6 @@ emit_replay_action :: proc(e: ^Emitter, entry: Deferred, env: string) {
 	case .Array:
 		buffer := unwind_env_load(e, env, entry.array_buffer_env)
 		count := load(e, "i64", unwind_env_load(e, env, entry.array_count_env))
-		if entry.array_counted != INVALID_TYPE {
-			emit_prefix_count_check(e, count, entry.array_counted)
-		}
 		flags := entry.array_flags == "" ? "" : unwind_env_load(e, env, entry.array_flags_env)
 		emit_drop_elements_reversed(e, entry.type, buffer, count, flags)
 	case .Written:

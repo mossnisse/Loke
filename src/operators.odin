@@ -1061,7 +1061,9 @@ type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> 
 		return type_is_comparable_walk(c, info.element, seen)
 	case .Struct:
 		// design.md "Capture literals": a callable is called, not compared.
-		if type_is_capture_record(c, under) {
+		// design.md "Uninitialized capacity": storage that holds no value has
+		// nothing to compare.
+		if type_is_capture_record(c, under) || type_info_is_uninit(c, info) {
 			return false
 		}
 		for field in info.fields {

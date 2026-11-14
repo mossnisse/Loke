@@ -60,10 +60,3 @@ main :: proc() {
 	allowed(&mut value);
 	uninitialised();
 }
-
-// Generated copy and drop trust an `@(initialized)` count, so declaring one is
-// unchecked too.
-Counted :: struct {
-	@(initialized = count) items: [1]string,
-	count: int,
-}

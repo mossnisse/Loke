@@ -1073,12 +1073,6 @@ none of which they wait on.
   reason `Deque` has its own field. An `x.allocator()` query would remove it, and
   would help any library container that replaces its storage. Is the query worth
   having for its own sake?
-- **Inline ring storage.** `@(initialized = count)` describes a live prefix, not a
-  wrapped range. A prototype `Small_Deque` works by naming a field that is always
-  `0`, so that the generated copy and drop touch nothing and hooks do the rest, but
-  that stretches the attribute's promise that the first `count` elements are the
-  values. Either bless this as the way to opt out of generated element handling, or
-  give it its own spelling before `Small_Deque` is built.
 
 ## Last-use transfer into a container, `box`, or `shared`
 

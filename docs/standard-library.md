@@ -1076,7 +1076,7 @@ which adopts C++20's.
 
 ```text
 @(move_only) Ring(T) :: struct               // no zero value; cannot move while split
-    slots:         [dynamic]Ring_Slot(T)  // `size` slots; only queued ones hold an item
+    slots:         [dynamic]Uninit(T)     // `size` slots; only queued ones hold an item
     size:          uint                   // requested capacity + 1; immutable after init
     pad_metadata:  [CACHE_LINE_BYTES]u8
     tail:          sync.Atomic(uint)      // next write index; stored by the sender only
@@ -1094,9 +1094,9 @@ which adopts C++20's.
 @(move_only) Ring_Receiver(T) :: struct { ring: ^Ring(T), head: uint, tail_seen: uint }
 ```
 
-A `Ring_Slot(T)` is one item of [uninitialized capacity](design.md#uninitialized-capacity)
-with a count of zero or one, so no slot needs `T`'s zero, and the slots' own
-drop releases only queued items. `CACHE_LINE_BYTES` is a target-specific
+A slot is an [`Uninit(T)`](design.md#uninitialized-capacity), so no slot needs
+`T`'s zero and the slots' own drop releases nothing: the ring's drop releases
+the queued items, which the indices name. `CACHE_LINE_BYTES` is a target-specific
 separation distance, not a universal 64-byte assumption: 128 on x86-64,
 which fetches lines in adjacent pairs, and 128 again on Arm64 should it become
 a target, since some Arm64 cores have 128-byte lines. Padding by that distance
@@ -1299,8 +1299,9 @@ Validation:
      3.9 to 4.3 ns on a send and its receive. Checking `receiver_gone` at the
      start of every send costs 0.55 to 0.8 ns of that. A power-of-two mask in
      place of the end-of-array comparison saves 0 to 0.35 ns, about as much as
-     code layout moves the figures between builds. A 16-byte slot, as
-     `Ring_Slot(int)` is with its `live` count, costs 0.35 ns over an 8-byte one.
+     code layout moves the figures between builds. A 16-byte slot, as one
+     that carried a count of its own beside an `int` was, costs 0.35 ns over
+     the 8-byte `Uninit(int)`.
    - **Between threads.** One producer and one consumer pass an item in 4 to
      30 ns. The figures cluster near 4 ns and near 15 to 30 ns, and the build
      of the program, not the variant, decided where: the unchanged copy
@@ -2606,10 +2607,12 @@ allocating. Operations that exceed `N` panic; their `try_` forms leave the value
 unchanged and return `Status(Capacity_Error)`. Element copying follows the
 ordinary copy rules.
 
-Its inline storage is [capacity](design.md#uninitialized-capacity) rather than `N`
-values, so `T` needs no zero value: an empty `Small_Array(T, N)` imposes exactly
-what an empty `[dynamic]T` does. A copy clones the live elements only, and so
-does a drop.
+Its inline storage is [capacity](design.md#uninitialized-capacity), an
+`Uninit([N]T)`, rather than `N` values, so `T` needs no zero value: an empty
+`Small_Array(T, N)` imposes exactly what an empty `[dynamic]T` does. Its copy
+and drop hooks visit the live elements only, as do `==`, where `T` has one, and
+`format`. The drop hook may read what an element borrows, so an array of views
+is declared after what they view, as any record with a drop hook is.
 
 An invalid insertion index panics in both ordinary and `try_` forms. `pop()`
 returns and removes the last element, or returns `.none` for an empty array.

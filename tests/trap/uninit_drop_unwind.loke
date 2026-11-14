@@ -1,0 +1,42 @@
+// design.md "Uninitialized capacity": nothing drops what the storage holds but
+// the record around it. Its hook shortens the count before it drops what it
+// took, so the count is accurate at the panic, and its deferred drain releases
+// the elements the count still names, not the one whose drop raised it.
+package main;
+import "core:fmt";
+import "core:unsafe";
+@(move_only) Tracked :: struct { id: int }
+impl Tracked {
+    release :: hook(drop) proc(self: inout Tracked) {
+        fmt.println("drop", self.id);
+        if (self.id == 2) { panic("element drop failed"); }
+    }
+}
+@(move_only) Holder :: struct {
+    items: Uninit([4]Tracked),
+    count: int,
+}
+impl Holder {
+    push :: proc(self: inout, @(escape=stored) value: move Tracked) {
+        unsafe.write(unsafe.storage(&mut self.items)[self.count], move(value));
+        self.count += 1;
+    }
+    drain :: proc(self: inout) {
+        for (self.count > 0) {
+            self.count -= 1;
+            taken := unsafe.take(unsafe.storage(&mut self.items)[self.count]);
+            drop(taken);
+        }
+    }
+    release :: hook(drop) proc(self: inout Holder) {
+        defer self.drain();
+        self.drain();
+    }
+}
+main :: proc() {
+    holder := Holder{};
+    holder.push(Tracked{0});
+    holder.push(Tracked{1});
+    holder.push(Tracked{2});
+    holder.push(Tracked{3});
+}

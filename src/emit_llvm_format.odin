@@ -524,13 +524,6 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 		// A formatter reads its value at the type's alignment.
 		record_field_align(e, under, address, slot, sym.type)
 		slot = aligned_copy_if_needed(e, sym.type, slot)
-		// Only the live prefix of an `@(initialized)` array holds values.
-		if counter := symbol_of(e.c, sym.initialized_by); counter != nil {
-			count := emit_prefix_count(e, under, address, counter, sym.type)
-			element := underlying_info(e.c, sym.type).element
-			emit_format_sequence(e, element, slot, count)
-			continue
-		}
 		emit_format_nested(e, sym.type, slot)
 	}
 	emit_format_literal(e, anonymous ? ")" : "}")

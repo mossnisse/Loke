@@ -1288,6 +1288,39 @@ checklist.
   `proc(@(cross_thread) entries: ..proc())` was `L0723` as a type but compiled as a declaration.
   The type form now agrees: the first is `L0648`, and the second compiles. Upgrade by removing
   `@(escape=...)` from a pack whose element type carries no borrow.
+- Runtime reflection describes a type's shape, not its members
+  ([`type` and `typeid`](docs/design.md#type-and-typeid), rationale under
+  ["Runtime reflection describes shape"](docs/comments.md#runtime-reflection-describes-shape)).
+  `runtime.Type_Info` loses `members`, `bits`, and `signed`, and `runtime.Member_Info` and
+  `runtime.Member_Kind` are deleted: reading such a field is `L0363`, and naming either type
+  `L0335`. The specification now says what `element`, `key`, and `count` hold, an enum's backing
+  type among them, and the `element` and `key` of a built-in iterator's record are zero. Upgrade
+  by reading members where the type is known, with `fields_of`, `enum_values_of`, and
+  `variants_of` in a static `foreach`, which can also fill a table of the program's own for code
+  that keeps only a `typeid`; a procedure type's parameters and result have no reflection. For
+  `bits` and `signed`, read `size` and whether `kind` is `Signed_Int`, on an enum through
+  `type_info_of(info.element)`. A replaced `base:runtime` drops the same declarations and
+  fields, or is `L0704`.
+- `Uninit(T)` replaces the `@(initialized = count)` field attribute
+  ([Uninitialized capacity](docs/design.md#uninitialized-capacity), rationale under
+  ["`Uninit(T)` instead of a counted field"](docs/comments.md#uninitt-instead-of-a-counted-field)).
+  The attribute is now an unknown one, `L0606`. `Uninit(T)` is a predeclared type: storage of
+  `T`'s size and alignment that holds no value, with a zero value whatever `T` is, a drop that
+  does nothing, no `==` or hash, and a copy only where `T` has a trivial lifecycle. A record
+  holding one that has no copy has no generated copy, and may declare a `hook(copy)`.
+  `unsafe.write` and `unsafe.take` on an `Uninit(T)` place write and take the `T`, and the new
+  `unsafe.storage(pointer)` lends the storage as a `^T` or `^mut T`. Upgrade a counted array by
+  declaring `items: Uninit([N]T)` beside the count, reaching slots as
+  `unsafe.storage(&mut self.items)[i]` and the live elements as
+  `unsafe.storage(&self.items)^[0:self.count]`, and writing the record's `hook(drop)`, its
+  `hook(copy)` bounded by `where is_copyable(T)`, and any `==` or `format` it needs, since none is
+  generated; a one-slot `@(initialized = live) item: [1]T` becomes `item: Uninit(T)` and loses its
+  `live` field. The count is no longer range-checked by generated code.
+- `container.Small_Array(T, N)` copies, drops, and compares through hooks of its own, so its `==`
+  needs `interfaces.Equatable(T)`, and a `Small_Array` of views is declared after what its elements
+  view: its drop hook may read them, so one that outlives the storage they borrow is `L0513`. Its
+  `clear()` and drop release elements last to first. `thread.Ring`'s slots are `Uninit(T)`, which
+  makes a slot the size of its item.
 
 ### Added
 
@@ -1976,6 +2009,20 @@ checklist.
 
 ### Fixed
 
+- The quick and full test gates fail on unit-test leaks and bad frees, and reject a
+  missing compiler tool instead of accepting a stale successful exit code.
+- Generated borrow and carrier-store matrices check compiler exit status and
+  reject unrelated or unmatched diagnostics. The large-integer division test
+  checks the remainder's magnitude directly rather than comparing bit lengths.
+- Example tests no longer build concurrently to the same output. LSP process
+  tests enforce a lifetime deadline even while writing to a stalled server,
+  and debugger events no longer extend a windowed test's total deadline.
+  Debugger capability probes also handle unavailable Windows app aliases
+  without crashing Odin's test runner.
+- Borrow checking handles `unsafe.storage` as a field borrow before recording
+  call effects, avoiding an internal assertion while compiling programs that
+  use uninitialized storage. The editor grammar highlights the predeclared
+  `Uninit` type.
 - A copy of text made by `text.copy()`, `strings.copy`, `strings.try_copy`, or a
   `String_Builder`'s `copy_string` or `try_copy_string` is in the region of the allocator it was
   copied into, the default provider's when none is named, and in no region of the text it read

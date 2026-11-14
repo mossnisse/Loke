@@ -47,6 +47,8 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_forget_builtin(k, v)
 	case .Unsafe_Take, .Unsafe_Write:
 		check_capacity_builtin(k, v, sym.builtin)
+	case .Unsafe_Storage:
+		check_storage_builtin(k, v)
 	case .Unsafe_Transmute:
 		check_transmute_builtin(k, v, ident)
 	case .Math_Wrap:
@@ -1100,16 +1102,14 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		return
 	}
 	record, resolved := runtime_type_named(k, "Type_Info", TYPE_INFO_LAYOUT[:])
-	// The table's member record is resolved with it, not on first use.
-	members, members_resolved := runtime_type_named(k, "Member_Info", MEMBER_INFO_LAYOUT[:])
-	if !resolved || !members_resolved {
+	if !resolved {
 		errorf(
 			k.c, v.span, "L0575",
 			"`type_info_of` produces a `^runtime.Type_Info`, and this program's `base:runtime` declares none",
 		)
 		return
 	}
-	if record == INVALID_TYPE || members == INVALID_TYPE {
+	if record == INVALID_TYPE {
 		return
 	}
 	operand := check_single_expr(k, v.args[0].value, TYPE_TYPEID)

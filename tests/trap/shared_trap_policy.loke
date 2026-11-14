@@ -7,6 +7,7 @@ import "core:mem";
 // failure policy, as every implicitly allocating operation does. `.Trap`
 // aborts at once, so the `defer` never runs, and the report keeps the size of
 // the refused control block.
+// Its header holds two counts and an allocator: 24 bytes before this payload.
 Payload :: struct { data: [2048]u8 }
 
 main :: proc() {

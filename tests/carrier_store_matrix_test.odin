@@ -134,11 +134,11 @@ carrier_store_matrix :: proc(t: ^testing.T) {
 		append(&names, place.name)
 		append(&sources, store_place_source(place))
 	}
-	errors, compiled := store_matrix_compile(t, names[:], sources[:])
+	first_line := strings.count(STORE_MATRIX_PRELUDE, "\n") + 1
+	errors, compiled := store_matrix_compile(t, names[:], sources[:], first_line)
 	if !compiled {
 		return
 	}
-	first_line := strings.count(STORE_MATRIX_PRELUDE, "\n") + 1
 	for place, index in STORE_PLACES {
 		for entry, at in STORE_CASES {
 			first := first_line + 4 * at
@@ -181,11 +181,11 @@ store_overlapping_matrix :: proc(t: ^testing.T) {
 		append(&names, place.name)
 		append(&sources, store_place_source(place))
 	}
-	errors, compiled := store_matrix_compile(t, names[:], sources[:])
+	first := strings.count(STORE_MATRIX_PRELUDE, "\n") + 1
+	errors, compiled := store_matrix_compile(t, names[:], sources[:], first)
 	if !compiled {
 		return
 	}
-	first := strings.count(STORE_MATRIX_PRELUDE, "\n") + 1
 	for place, index in STORE_OVERLAPPING_PLACES {
 		for entry, at in STORE_CASES {
 			if rejected, settled := store_overlapping_rejected(entry); settled {
@@ -299,7 +299,7 @@ stored_argument_matrix :: proc(t: ^testing.T) {
 		append(&names, place.name)
 		append(&sources, strings.to_string(source))
 	}
-	errors, compiled := store_matrix_compile(t, names[:], sources[:])
+	errors, compiled := store_matrix_compile(t, names[:], sources[:], first)
 	if !compiled {
 		return
 	}
@@ -434,7 +434,7 @@ stored_argument_reach_matrix :: proc(t: ^testing.T) {
 	strings.write_string(&source, "main :: proc() {}\n")
 	names := []string{"stored_reach"}
 	sources := []string{strings.to_string(source)}
-	errors, compiled := store_matrix_compile(t, names, sources)
+	errors, compiled := store_matrix_compile(t, names, sources, first)
 	if !compiled {
 		return
 	}
@@ -585,7 +585,7 @@ call_copy_matrix :: proc(t: ^testing.T) {
 		append(&names, place.name)
 		append(&sources, strings.to_string(source))
 	}
-	errors, compiled := store_matrix_compile(t, names[:], sources[:])
+	errors, compiled := store_matrix_compile(t, names[:], sources[:], first)
 	if !compiled {
 		return
 	}
@@ -664,7 +664,7 @@ read_only_copy_matrix :: proc(t: ^testing.T) {
 	strings.write_string(&source, "main :: proc() {}\n")
 	names := []string{"read_only_copy"}
 	sources := []string{strings.to_string(source)}
-	errors, compiled := store_matrix_compile(t, names, sources)
+	errors, compiled := store_matrix_compile(t, names, sources, first)
 	if !compiled {
 		return
 	}
@@ -762,7 +762,7 @@ walk_reader_matrix :: proc(t: ^testing.T) {
 	strings.write_string(&source, "main :: proc() {}\n")
 	names := []string{"walk_reader"}
 	sources := []string{strings.to_string(source)}
-	errors, compiled := store_matrix_compile(t, names, sources)
+	errors, compiled := store_matrix_compile(t, names, sources, first)
 	if !compiled {
 		return
 	}
@@ -936,7 +936,7 @@ task_lending_matrix :: proc(t: ^testing.T) {
 	strings.write_string(&source, "main :: proc() {}\n")
 	names := []string{"task_lending"}
 	sources := []string{strings.to_string(source)}
-	errors, compiled := store_matrix_compile(t, names, sources)
+	errors, compiled := store_matrix_compile(t, names, sources, first)
 	if !compiled {
 		return
 	}
@@ -1095,7 +1095,7 @@ record_by_value_matrix :: proc(t: ^testing.T) {
 	strings.write_string(&source, "main :: proc() {}\n")
 	names := []string{"record_by_value"}
 	sources := []string{strings.to_string(source)}
-	errors, compiled := store_matrix_compile(t, names, sources)
+	errors, compiled := store_matrix_compile(t, names, sources, first)
 	if !compiled {
 		return
 	}
@@ -1489,7 +1489,7 @@ store_landing_matrix :: proc(t: ^testing.T) {
 	strings.write_string(&source, "main :: proc() {}\n")
 	names := []string{"store_landing"}
 	sources := []string{strings.to_string(source)}
-	errors, compiled := store_matrix_compile(t, names, sources)
+	errors, compiled := store_matrix_compile(t, names, sources, first)
 	if !compiled {
 		return
 	}
@@ -1498,9 +1498,11 @@ store_landing_matrix :: proc(t: ^testing.T) {
 	}
 }
 
-// Compiles each source, and returns the lines each one reports an error at.
+// Compiles each source, preserving every diagnostic. The boolean oracle asks
+// whether ownership rejects a case, so any number of ownership conflicts is
+// legitimate; unrelated parser, type, and internal errors are not.
 @(private = "file")
-store_matrix_compile :: proc(t: ^testing.T, names, sources: []string) -> (errors: [][]int, compiled: bool) {
+store_matrix_compile :: proc(t: ^testing.T, names, sources: []string, first: int) -> (errors: [][]Matrix_Error, compiled: bool) {
 	os.make_directory(TMP)
 	os.make_directory(STORE_MATRIX_DIR)
 	jobs := make([]Exec, len(names), context.temp_allocator)
@@ -1515,22 +1517,31 @@ store_matrix_compile :: proc(t: ^testing.T, names, sources: []string) -> (errors
 		jobs[index] = Exec{command = command}
 	}
 	exec_all(jobs)
-	errors = make([][]int, len(names), context.temp_allocator)
+	errors = make([][]Matrix_Error, len(names), context.temp_allocator)
 	for job, index in jobs {
 		if !testing.expectf(t, job.err == nil, "%s: cannot run lokec: %v", names[index], job.err) {
 			return nil, false
 		}
-		errors[index] = store_matrix_error_lines(string(job.stderr))
+		errors[index] = matrix_errors(string(job.stderr))
+		if !testing.expectf(t, matrix_exit_matches_diagnostics(job.state, errors[index]), "%s: unexpected compiler exit %d:\n%s", names[index], job.state.exit_code, string(job.stderr)) {
+			return nil, false
+		}
+		// Every generated source ends with its one-line main. Anything before
+		// the cases or in that footer belongs to no case, even without a span.
+		last := strings.count(sources[index], "\n")
+		for error in errors[index] {
+			testing.expectf(t, store_matrix_error_in_cases(error, first, last), "%s:%d: unexpected %s:\n%s", names[index], error.line, error.code, string(job.stderr))
+		}
 	}
 	return errors, true
 }
 
 // Whether the four lines of the case at `first` got an error, as `expected` says.
 @(private = "file")
-store_matrix_expect :: proc(t: ^testing.T, place, name: string, first: int, errors: []int, expected: bool) {
+store_matrix_expect :: proc(t: ^testing.T, place, name: string, first: int, errors: []Matrix_Error, expected: bool) {
 	rejected := false
-	for line in errors {
-		rejected ||= line >= first && line < first + 4
+	for error in errors {
+		rejected ||= error.line >= first && error.line < first + 4
 	}
 	testing.expectf(
 		t, rejected == expected, "%s, %s (line %d): expected %s, got %s",
@@ -1538,34 +1549,24 @@ store_matrix_expect :: proc(t: ^testing.T, place, name: string, first: int, erro
 	)
 }
 
-// The lines `stderr` reports an error at.
 @(private = "file")
-store_matrix_error_lines :: proc(stderr: string) -> []int {
-	out := make([dynamic]int, context.temp_allocator)
-	pending := false
-	for text in strings.split_lines(stderr, context.temp_allocator) {
-		trimmed := strings.trim_space(text)
-		if strings.has_prefix(trimmed, "error[") {
-			pending = true
-		} else if pending && strings.has_prefix(trimmed, "-->") {
-			pending = false
-			parts := strings.split(trimmed, ":", context.temp_allocator)
-			if len(parts) >= 3 {
-				append(&out, parse_int_or_zero(parts[len(parts) - 2]))
-			}
-		}
+store_matrix_error_in_cases :: proc(error: Matrix_Error, first, last: int) -> bool {
+	if error.line < first || error.line >= last {
+		return false
 	}
-	return out[:]
+	switch error.code {
+	case "L0511", "L0512", "L0641", "L0646", "L0647", "L0729":
+		return true
+	}
+	return false
 }
 
-@(private = "file")
-parse_int_or_zero :: proc(text: string) -> int {
-	value := 0
-	for digit in text {
-		if digit < '0' || digit > '9' {
-			return 0
-		}
-		value = value * 10 + int(digit - '0')
+@(test)
+store_matrix_rejects_unrelated_diagnostics :: proc(t: ^testing.T) {
+	for code in ([]string{"L0511", "L0512", "L0641", "L0646", "L0647", "L0729"}) {
+		testing.expect(t, store_matrix_error_in_cases({code, 8}, 6, 14))
 	}
-	return value
+	for diagnostic in ([]Matrix_Error{{"L0300", 8}, {"L0405", 8}, {"L0641", 0}, {"L0641", 5}, {"L0641", 14}, {"malformed", 8}}) {
+		testing.expectf(t, !store_matrix_error_in_cases(diagnostic, 6, 14), "accepted unrelated diagnostic %v", diagnostic)
+	}
 }

@@ -261,12 +261,16 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 @(private = "file")
 check_omitted_fields :: proc(k: ^Checker, v: ^Expr_Composite, info: ^Type_Info, seen: []bool) -> bool {
 	ok := true
+	// design.md "Uninitialized capacity": the storage is left as it is.
+	if type_info_is_uninit(k.c, info) {
+		return true
+	}
 	for field, index in info.fields {
 		if seen[index] {
 			continue
 		}
 		symbol := symbol_of(k.c, field)
-		if symbol == nil || symbol.initialized_by != INVALID_SYMBOL {
+		if symbol == nil {
 			continue
 		}
 		// design.md "Required fields".
@@ -553,16 +557,14 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, fields:
 			}
 			element = zero.?
 		}
-	} else {
+	} else if !type_info_is_uninit(k.c, info) {
+		// design.md "Uninitialized capacity": an `Uninit(T)`'s storage stays the
+		// constant that is no value (`uninit_const`).
 		for &element, index in elements {
 			if written[index] {
 				continue
 			}
 			field := symbol_of(k.c, fields[index])
-			if field.initialized_by != INVALID_SYMBOL {
-				element = capacity_const(k.c, field.type)
-				continue
-			}
 			ok: bool
 			if element, ok = zero_const(k.c, field.type); !ok {
 				return

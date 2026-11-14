@@ -865,8 +865,15 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 	cdb := os.get_env("LOKE_CDB", context.temp_allocator)
 	candidates := cdb != "" ? []string{cdb} : []string{"cdb", "cdbX64", `C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe`}
 	cdb = ""
-	for candidate in candidates {
-		if state, _, _, err := exec(os.Process_Desc{command = []string{candidate, "-version"}}, context.allocator); err == nil && state.exit_code == 0 {
+	// Windows app aliases can raise handled exceptions during launch. Odin's
+	// test thread catches those as failures, so probe on the harness workers.
+	probes := make([]Exec, len(candidates), context.temp_allocator)
+	for candidate, i in candidates {
+		probes[i].command = []string{candidate, "-version"}
+	}
+	exec_all(probes)
+	for candidate, i in candidates {
+		if probes[i].err == nil && probes[i].state.exit_code == 0 {
 			cdb = candidate
 			break
 		}
@@ -938,7 +945,7 @@ UNPINNED :: []string {
 	"L0751",
 	// `core:fmt` without its own `Writer`.
 	"L0601",
-	// A `base:runtime` without `Type_Info`/`Member_Info`; the runtime is always loaded.
+	// A `base:runtime` without `Type_Info`; the runtime is always loaded.
 	"L0575",
 }
 
@@ -3264,7 +3271,9 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 
 	for entry in checks {
 		source := fmt.tprintf("examples/%s.loke", entry.name)
-		exe := fmt.tprintf("%s/example-%s.exe", TMP, entry.name)
+		// Driven tests build the same sources concurrently, so keep this
+		// test's executables and intermediate files under a distinct name.
+		exe := fmt.tprintf("%s/example-aggregate-%s.exe", TMP, entry.name)
 		if !compile_example(t, source, exe, nil) {
 			continue
 		}

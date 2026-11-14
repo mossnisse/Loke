@@ -881,69 +881,6 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		info.thread_affine = has_attribute(value.attributes, "thread_affine")
 		info.wakes_on_drop = has_attribute(value.attributes, "wakes_on_drop")
 	}
-	resolve_uninitialized_fields(k, type, value)
-}
-
-// design.md "Uninitialized capacity": `@(initialized = count)` names the sibling
-// `int` field counting a fixed array's live prefix. Only its shape is checked,
-// so declaring one is unchecked.
-@(private = "file")
-resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
-	info := type_of(k.c, type)
-	if info == nil {
-		return
-	}
-	for &field in value.fields {
-		attribute, written := find_attribute(field.attributes, "initialized")
-		if !written {
-			continue
-		}
-		_ = require_unsafe_import(k, attribute.span, "trusting an `@(initialized)` count")
-		// design.md "Required fields".
-		if has_attribute(field.attributes, "required") {
-			errorf(k.c, attribute.span, "L0691", "`@(initialized)` storage is left unset by a literal, so it cannot be `@(required)`")
-		}
-		for binding in field.symbols {
-			symbol := symbol_of(k.c, binding)
-			if symbol == nil {
-				continue
-			}
-			if underlying_kind(k.c, symbol.type) != .Array {
-				errorf(
-					k.c, attribute.span, "L0691",
-					"`@(initialized)` names the live prefix of a fixed array, and `%s` is `%s`",
-					identifier_text(k.c, symbol.name), type_name(k.c, symbol.type),
-				)
-				continue
-			}
-			ident, is_ident := attribute.value.(^Expr_Ident)
-			if !is_ident {
-				errorf(
-					k.c, attribute.span, "L0691",
-					"`@(initialized=...)` names a field of this record holding the live count",
-				)
-				continue
-			}
-			counter := member_named(k.c, info.fields, ident.name_id)
-			counted := symbol_of(k.c, counter)
-			if counted == nil {
-				errorf(
-					k.c, attribute.span, "L0691",
-					"`%s` is not a field of this record", ident.name,
-				)
-				continue
-			}
-			if type_underlying(k.c, counted.type) != TYPE_INT {
-				errorf(
-					k.c, attribute.span, "L0691",
-					"the live count `%s` is `%s`, and must be `int`",
-					ident.name, type_name(k.c, counted.type),
-				)
-				continue
-			}
-			symbol.initialized_by = counter
-		}
-	}
 }
 
 // `(name: Type, ...)`, interned while checking so the type exists before

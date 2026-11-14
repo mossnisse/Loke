@@ -148,6 +148,12 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 				prov_store_value(graph, v.bound[0], v.bound[1], walk_flow_expr(graph, v.bound[1]), v.span)
 			}
 			return nil, true
+		case .Unsafe_Storage:
+			// The borrow the checker bound: `&pointer^.value`.
+			if len(v.bound) == 1 {
+				return walk_flow_expr(graph, v.bound[0]), true
+			}
+			return nil, true
 		case .Unsafe_Forget:
 			if len(v.bound) == 1 {
 				// A borrow of the forgotten value dies here, as at a `drop`.

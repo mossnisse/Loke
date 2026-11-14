@@ -482,9 +482,8 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 }
 
 // Unknown while a part has no compile-time comparison, as a `typeid` awaiting its
-// number (`type_consts_equal`), and then only if no other part already differs;
-// and for a count the run-time comparison panics on. `eval_part_equal` in
-// eval.odin follows the same rule.
+// number (`type_consts_equal`), and then only if no other part already differs.
+// `eval_part_equal` in eval.odin follows the same rule.
 @(private = "file")
 aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.Allocator) -> (equal: bool, known: bool) {
 	if a == nil || b == nil || len(a.elements) != len(b.elements) {
@@ -500,29 +499,8 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 		}
 	}
 	deferred := false
-	info := underlying_info(c, a.type)
 	for element, index in a.elements {
 		other := b.elements[index]
-		field := info != nil && info.kind == .Struct ? symbol_of(c, info.fields[index]) : nil
-		// design.md "Uninitialized capacity": only the live prefix has values.
-		if counter := field != nil ? symbol_of(c, field.initialized_by) : nil; counter != nil {
-			if element.aggregate == nil || other.aggregate == nil {
-				return false, false
-			}
-			live, live_ok := common_live_count(
-				allocator, a.elements[counter.index].integer, b.elements[counter.index].integer,
-				len(element.aggregate.elements), len(other.aggregate.elements),
-			)
-			if !live_ok {
-				return false, false
-			}
-			for at in 0 ..< live {
-				if !part_equal(c, element.aggregate.elements[at], other.aggregate.elements[at], allocator, &deferred) {
-					return false, true
-				}
-			}
-			continue
-		}
 		if !part_equal(c, element, other, allocator, &deferred) {
 			return false, true
 		}
@@ -531,18 +509,6 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 		return false, false
 	}
 	return true, true
-}
-
-// design.md "Uninitialized capacity": how many elements of two `@(initialized)`
-// arrays both hold values, and not `ok` when either count is outside `0 ..= N`,
-// which equality panics on.
-common_live_count :: proc(storage: Value_Storage, a_count, b_count: Big_Int, a_capacity, b_capacity: int) -> (live: int, ok: bool) {
-	a, a_ok := bi_to_i64(storage, a_count)
-	b, b_ok := bi_to_i64(storage, b_count)
-	if !a_ok || !b_ok || a < 0 || b < 0 || a > i64(a_capacity) || b > i64(b_capacity) {
-		return 0, false
-	}
-	return int(min(a, b)), true
 }
 
 // Whether a pair of parts may be equal; a pair with no compile-time comparison
@@ -589,8 +555,8 @@ Const_Pattern :: enum {
 	Invalid,
 	// Reads padding, whose bits no value put there.
 	Padding,
-	// Valid, but with no compile-time storage (a pointer, a union, a record
-	// with uninitialized capacity, or a `typeid_of(T)` not yet numbered).
+	// Valid, but with no compile-time storage (a pointer, a union, an
+	// `Uninit(T)`, or a `typeid_of(T)` not yet numbered).
 	Unfoldable,
 }
 
@@ -610,7 +576,7 @@ transmute_const :: proc(c: ^Compiler, value: Const_Value, source, target: Type_I
 }
 
 // Where the `index`th member of an array, vector, or struct sits in its storage.
-// A field `initialized_by` another has no compile-time storage.
+// design.md "Uninitialized capacity": an `Uninit(T)` has no compile-time storage.
 @(private = "file")
 storage_member :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, index: int) -> (member: Type_Id, at, end: int, ok: bool) {
 	if info.kind != .Struct {
@@ -618,7 +584,7 @@ storage_member :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, index: int
 		return info.element, index * step, (index + 1) * step, true
 	}
 	field := symbol_of(c, info.fields[index])
-	if field == nil || field.initialized_by != INVALID_SYMBOL {
+	if field == nil || type_info_is_uninit(c, info) {
 		return
 	}
 	at = int(type_field_offset(c, type, index))

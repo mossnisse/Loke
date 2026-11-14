@@ -197,7 +197,10 @@ check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 		report_not_assignable(k, base, taking ? "the place `unsafe.take` reads" : "the place `unsafe.write` fills")
 		return
 	}
-	if _, is_ident := v.args[0].value.(^Expr_Ident); is_ident {
+	// design.md "Uninitialized capacity": an `Uninit(T)` is reached as its storage,
+	// which no variable's liveness describes.
+	stored := uninit_storage_place(k, v.args[0].value)
+	if _, is_ident := stored.(^Expr_Ident); is_ident {
 		errorf(
 			k.c, expr_span(v.args[0].value), "L0692",
 			"`%s` reaches storage whose liveness is not tracked, and a variable's is; %s",
@@ -205,8 +208,9 @@ check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 		)
 		return
 	}
+	place = expr_base(stored).type
 	bound := make([]Expr, wanted, k.c.semantic_allocator)
-	bound[0] = v.args[0].value
+	bound[0] = stored
 	if !taking {
 		if !check_value_expr(k, v.args[1].value, place, "write into") {
 			return
@@ -219,6 +223,70 @@ check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 	if taking {
 		contribute_lifecycle_members(k, place)
 	}
+}
+
+// The storage of an `Uninit(T)` place, as the place of a `T`; any other place is
+// itself. The field is private to `base:runtime`, so the selection is written
+// into the typed AST here, as the place every later pass already understands.
+@(private = "file")
+uninit_storage_place :: proc(k: ^Checker, place: Expr) -> Expr {
+	base := expr_base(place)
+	field := uninit_storage_field(k.c, base.type)
+	if field == nil {
+		return place
+	}
+	selected := synth_selector(k.c, place, identifier_text(k.c, field.name), base.span)
+	selected.resolution = Resolution{kind = .Field, symbol = underlying_info(k.c, base.type).fields[0]}
+	selected.type = field.type
+	selected.value_category = .Place
+	inherit_capability(&selected.base, base, false, false)
+	return selected
+}
+
+// design.md "Uninitialized capacity": `unsafe.storage(pointer)` is `&pointer^.value`
+// for the field no source can name, and is checked, emitted, and analysed as that
+// borrow.
+check_storage_builtin :: proc(k: ^Checker, v: ^Expr_Call) {
+	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+		errorf(k.c, v.span, "L0691", "`unsafe.storage` takes one positional argument, a pointer to an `Uninit(T)`")
+		return
+	}
+	operand := v.args[0].value
+	type := check_single_expr(k, operand)
+	if type == INVALID_TYPE {
+		return
+	}
+	pointer := underlying_info(k.c, type)
+	if pointer == nil || pointer.kind != .Pointer || !type_is_uninit(k.c, pointer.element) {
+		errorf(
+			k.c, expr_span(operand), "L0691",
+			"`unsafe.storage` takes a `^Uninit(T)` or a `^mut Uninit(T)`, found `%s`", type_name(k.c, type),
+		)
+		return
+	}
+	// `&place` is the place itself, with no pointer in between.
+	pointee: Expr
+	if address, written := operand.(^Expr_Unary); written && address.op == .Amp {
+		pointee = address.operand
+	} else {
+		pointee = implicit_pointer_deref(k, operand, pointer.element, pointer.mutable)
+	}
+	stored := uninit_storage_place(k, pointee)
+	borrow := synth_address(k.c, stored, pointer.mutable, v.span)
+	borrow.type = pointer_to(k.c, expr_base(stored).type, pointer.mutable)
+	v.bound = bound_exprs(k, borrow)
+	v.type = borrow.type
+}
+
+// The borrow a checked `unsafe.storage(pointer)` stands for; any other
+// expression is itself.
+storage_borrow :: proc(c: ^Compiler, e: Expr) -> Expr {
+	call, is_call := e.(^Expr_Call)
+	if !is_call || len(call.bound) != 1 {
+		return e
+	}
+	sym := symbol_of(c, call.resolution.symbol)
+	return sym != nil && sym.kind == .Builtin && sym.builtin == .Unsafe_Storage ? call.bound[0] : e
 }
 
 // ------------------------------------------------- ownership at the call --

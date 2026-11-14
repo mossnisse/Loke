@@ -49,37 +49,18 @@ Type_Kind :: enum u8 {
 	Typeid, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
 }
 
-@(public)
-Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
-
 /**
-	One member of an aggregate. Names use static storage, so a `Member_Info`
-	owns nothing and needs no cleanup.
-
-	`value_low`/`value_high` carry an enum member's raw value in two words,
-	without narrowing a signed or unsigned 128-bit value; the owning type's
-	`bits` and `signed` say how to read them. Unused fields are zero.
-*/
-@(public)
-Member_Info :: struct {
-	kind:       Member_Kind,
-	name:       string_view,
-	type:       typeid,
-	offset:     int,
-	value_low:  u64,
-	value_high: u64,
-}
-
-/**
-	The runtime half of reflection. A `typeid` is an ordinary scalar, so
+	The runtime half of reflection, which describes a type's shape and not its
+	members: those are read where the type is known, with `fields_of`,
+	`enum_values_of`, and `variants_of`. A `typeid` is an ordinary scalar, so
 	`type_info_of` is a checked lookup rather than a promise that every id is
 	valid.
 
-	Aggregate member tables expose public fields only; procedure entries retain
-	written parameter and result order, and union variants retain declaration
-	order. Unused scalar, relation, and member fields are zero. A `Distinct`
-	entry's `element` is the type it is declared over, and the shape is that
-	type's entry to describe.
+	`element` is what a pointer, C pointer, or `Box` points at, what an array,
+	slice, dynamic array, or `Simd` holds, a map's value type, an enum's
+	backing type, and the type a `Distinct` entry is declared over, whose own
+	entry describes the shape. `key` is a map's key type, and `count` an
+	array's length or a vector's lane count. Unused fields are zero.
 */
 // design.md "`type` and `typeid`".
 @(public)
@@ -89,12 +70,9 @@ Type_Info :: struct {
 	name:    string_view,
 	size:    int,
 	align:   int,
-	bits:    int,
-	signed:  bool,
 	element: typeid,
 	key:     typeid,
 	count:   int,
-	members: []Member_Info,
 }
 
 /// The ordering an atomic operation asks for.
@@ -148,6 +126,29 @@ Result :: union($T, $E: type) { ok: T, err: E }
 // design.md "Typed fallibility" and "Parametric aliases".
 @(public)
 Status :: Result(Unit, $E);
+
+/**
+	Storage for a `T` that holds no value: `T`'s size and alignment, and nothing
+	to copy, drop, compare, or print. It needs no zero value of `T`, so a record
+	holding one has a zero value whatever `T` is.
+
+	A value is written into the storage with `unsafe.write`, read out of it with
+	`unsafe.take`, and reached where it sits through the pointer
+	`unsafe.storage` gives. Whether the storage holds a value at any moment is
+	the record around it to know: that record's `hook(drop)` releases what is
+	there, and its `hook(copy)` copies it.
+
+	An `Uninit(T)` is copied bit for bit where `T` has a trivial lifecycle, and
+	has no copy otherwise.
+*/
+// design.md "Uninitialized capacity". The compiler knows this declaration by
+// name: it gives the field no part in the record's lifecycle, zero value,
+// equality, or constant, and `unsafe.write`, `unsafe.take`, and `unsafe.storage`
+// are the only ways past its privacy.
+@(public)
+Uninit :: struct($T: type) {
+	@(private) value: T,
+}
 
 // design.md "or_return operator": `or_return` rewraps a failure payload only
 // where it is already assignable, so changing error domains is an ordinary

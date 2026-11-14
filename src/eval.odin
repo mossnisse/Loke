@@ -450,19 +450,17 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (out: Eval_Value, success: 
 	case .Array, .Struct, .Dyn:
 		count := info.kind == .Array ? int(info.count) : len(info.fields)
 		kind, element, fields := info.kind, info.element, info.fields
+		// design.md "Uninitialized capacity": an `Uninit(T)`'s storage is no value.
+		if type_info_is_uninit(ev.k.c, info) {
+			return value_from_const(ev, uninit_const(ev.k.c, type), type)
+		}
 		elements := eval_elements(ev, count) or_return
 		for index in 0 ..< count {
 			element_type := element
-			field: ^Symbol
 			if kind != .Array {
-				field = symbol_of(ev.k.c, fields[index])
+				field := symbol_of(ev.k.c, fields[index])
 				if field == nil { return Eval_Value{}, false }
 				element_type = field.type
-			}
-			if field != nil && field.initialized_by != INVALID_SYMBOL {
-				value := value_from_const(ev, capacity_const(ev.k.c, field.type), field.type) or_return
-				elements[index] = value
-				continue
 			}
 			value := zero_value(ev, element_type) or_return
 			elements[index] = value
@@ -1080,29 +1078,9 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (out: 
 			}
 		}
 		known := true
-		info := underlying_info(ev.k.c, a.type)
 		for element, index in a.elements {
-			other := b.elements[index]
-			field := info != nil && info.kind == .Struct ? symbol_of(ev.k.c, info.fields[index]) : nil
-			counter := field != nil ? symbol_of(ev.k.c, field.initialized_by) : nil
-			if counter == nil {
-				if !eval_part_equal(ev, element, other, &known) {
-					return op == .Not_Eq, !ev.failed
-				}
-				continue
-			}
-			count, in_range := common_live_count(
-				ev.alloc, a.elements[counter.index].integer, b.elements[counter.index].integer,
-				len(element.elements), len(other.elements),
-			)
-			if !in_range {
-				eval_fail(ev, ev.origin, "L0343", "an initialized prefix count is out of range")
-				return false, false
-			}
-			for at in 0 ..< count {
-				if !eval_part_equal(ev, element.elements[at], other.elements[at], &known) {
-					return op == .Not_Eq, !ev.failed
-				}
+			if !eval_part_equal(ev, element, b.elements[index], &known) {
+				return op == .Not_Eq, !ev.failed
 			}
 		}
 		return op == .Eq_Eq, known
@@ -2486,6 +2464,10 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Ev
 
 	case .Unsafe_Take, .Unsafe_Write, .Unsafe_Forget, .Unsafe_Transmute:
 		return eval_unsafe_builtin(ev, v, symbol)
+
+	case .Unsafe_Storage:
+		// The borrow the checker bound.
+		return eval_expr(ev, v.bound[0])
 
 	case .Math_Wrap, .Math_Fma_Available, .Math_Fma_Instruction, .Math_Sqrt_Instruction,
 	     .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction,

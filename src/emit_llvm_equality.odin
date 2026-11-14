@@ -180,26 +180,6 @@ emit_elements_equal :: proc(e: ^Emitter, element: Type_Id, left, right, count: s
 	return load(e, "i1", same)
 }
 
-// design.md "Uninitialized capacity": only the live prefix is compared. Unequal
-// counts already differ through the count field, and the loop stops at the
-// shorter one, so neither side's capacity is ever read.
-@(private = "file")
-emit_prefix_equal :: proc(
-	e: ^Emitter, counter: ^Symbol, array: Type_Id, raw_left, raw_right, left, right: string,
-) -> string {
-	count_left := widen_to_i64(e, raw_left, counter.type)
-	count_right := widen_to_i64(e, raw_right, counter.type)
-	emit_prefix_count_check(e, count_left, array)
-	emit_prefix_count_check(e, count_right, array)
-	shorter, total := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", shorter, count_left, count_right)
-	fmt.sbprintfln(
-		&e.b, "  %s = select i1 %s, i64 %s, i64 %s", total, shorter, count_left, count_right,
-	)
-	left_slot, right_slot := spill_equal_operands(e, array, left, right)
-	return emit_elements_equal(e, underlying_info(e.c, array).element, left_slot, right_slot, total)
-}
-
 // Equal tags, then the active variant's payload. Only that variant's comparison
 // runs: another variant's bytes read as a `string` would be arbitrary memory.
 @(private = "file")
@@ -241,8 +221,7 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	return load(e, "i1", answer)
 }
 
-// Field-wise equality, with each field read by `read`. An `@(initialized)` array
-// compares only its live prefix.
+// Field-wise equality, with each field read by `read`.
 @(private = "file")
 emit_fields_equal :: proc(
 	e: ^Emitter, record: Type_Id, info: ^Type_Info, lhs, rhs: string,
@@ -253,14 +232,7 @@ emit_fields_equal :: proc(
 		symbol := symbol_of(e.c, field)
 		left := read(e, record, lhs, index)
 		right := read(e, record, rhs, index)
-		leaf := ""
-		if counter := symbol_of(e.c, symbol.initialized_by); counter != nil {
-			count := int(counter.index)
-			leaf = emit_prefix_equal(e, counter, symbol.type, read(e, record, lhs, count), read(e, record, rhs, count), left, right)
-		} else {
-			leaf = emit_equal(e, symbol.type, left, right)
-		}
-		result = combine_and(e, result, leaf)
+		result = combine_and(e, result, emit_equal(e, symbol.type, left, right))
 	}
 	return result
 }

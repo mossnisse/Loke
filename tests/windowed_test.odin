@@ -9,6 +9,7 @@ import "core:path/filepath"
 import "core:strings"
 import win "core:sys/windows"
 import "core:testing"
+import "core:time"
 
 // The PE optional header's `Subsystem`: 2 is a windowed program, 3 a console one.
 @(private = "file")
@@ -118,33 +119,43 @@ foreign kernel32_debug {
 	// The `Ex` form receives `OutputDebugStringW`'s text as it was written.
 	WaitForDebugEventEx :: proc(event: ^DEBUG_EVENT, milliseconds: u32) -> win.BOOL ---
 	ContinueDebugEvent :: proc(process_id, thread_id: u32, status: u32) -> win.BOOL ---
+	DebugActiveProcessStop :: proc(process_id: u32) -> win.BOOL ---
 }
 
 // Runs `path` with `argument` as a debuggee, as Explorer would start it: no
 // inherited handles, and null standard ones. Each string it sends the debugger,
 // followed by `|`.
 @(private = "file")
-run_debugged :: proc(t: ^testing.T, path, argument: string) -> (exit_code: u32, received: string, ok: bool) {
+run_debugged :: proc(path, argument: string, deadline := time.Minute) -> (exit_code: u32, received: string, err: os.Error) {
+	started_at := time.tick_now()
 	command_line := win.utf8_to_wstring(fmt.tprintf(`"%s" %s`, path, argument), context.temp_allocator)
 	startup := win.STARTUPINFOW{cb = size_of(win.STARTUPINFOW), dwFlags = win.STARTF_USESTDHANDLES}
 	process: win.PROCESS_INFORMATION
-	if !testing.expectf(
-		t,
-		bool(win.CreateProcessW(nil, command_line, nil, nil, false, win.DEBUG_ONLY_THIS_PROCESS, nil, nil, &startup, &process)),
-		"cannot start %s under the debugger: Windows error %d", path, win.GetLastError(),
-	) {
-		return
+	if !win.CreateProcessW(nil, command_line, nil, nil, false, win.DEBUG_ONLY_THIS_PROCESS, nil, nil, &startup, &process) {
+		return 0, "", os.Platform_Error(win.GetLastError())
 	}
 	defer win.CloseHandle(process.hProcess)
 	defer win.CloseHandle(process.hThread)
 
 	sent := strings.builder_make(context.temp_allocator)
 	exited, started := false, false
+	defer if !exited {
+		win.TerminateProcess(process.hProcess, 1)
+		DebugActiveProcessStop(process.dwProcessId)
+	}
 	for !exited {
+		// Debug output and loader events do not renew the process's deadline.
+		remaining := deadline - time.tick_since(started_at)
+		if remaining <= 0 {
+			return 0, strings.to_string(sent), os.General_Error.Timeout
+		}
 		event: DEBUG_EVENT
-		if !testing.expectf(t, bool(WaitForDebugEventEx(&event, 60_000)), "%s %s sent no debug event in a minute", path, argument) {
-			win.TerminateProcess(process.hProcess, 1)
-			return
+		milliseconds := u32((remaining + time.Millisecond - 1) / time.Millisecond)
+		if !WaitForDebugEventEx(&event, milliseconds) {
+			if time.tick_since(started_at) >= deadline {
+				return 0, strings.to_string(sent), os.General_Error.Timeout
+			}
+			return 0, strings.to_string(sent), os.Platform_Error(win.GetLastError())
 		}
 		status: u32 = DBG_CONTINUE
 		switch event.code {
@@ -190,9 +201,11 @@ run_debugged :: proc(t: ^testing.T, path, argument: string) -> (exit_code: u32, 
 			exit_code = event.info.exit_code
 			exited = true
 		}
-		ContinueDebugEvent(event.process_id, event.thread_id, status)
+		if !ContinueDebugEvent(event.process_id, event.thread_id, status) {
+			return 0, strings.to_string(sent), os.Platform_Error(win.GetLastError())
+		}
 	}
-	return exit_code, strings.to_string(sent), true
+	return exit_code, strings.to_string(sent), nil
 }
 
 // Started outside a terminal, a windowed process has no standard handles. What
@@ -222,8 +235,8 @@ a_windowed_process_without_standard_error_reports_to_the_debugger :: proc(t: ^te
 		{"long", 5, fmt.tprintf("err line ö\n|%s|%s\n|", long_start, long_end)},
 	}
 	for c in cases {
-		exit_code, sent, ran := run_debugged(t, path, c.argument)
-		if !ran {
+		exit_code, sent, err := run_debugged(path, c.argument)
+		if !testing.expectf(t, err == nil, "%s %s: debugger run failed: %v", path, c.argument, err) {
 			continue
 		}
 		testing.expectf(t, exit_code == c.exit_code, "%s %s exited %d, not %d", path, c.argument, exit_code, c.exit_code)
@@ -245,11 +258,31 @@ a_windowed_panic_trace_reaches_the_debugger :: proc(t: ^testing.T) {
 		return
 	}
 	path, _ := filepath.abs(windowed, context.temp_allocator)
-	exit_code, sent, ran := run_debugged(t, path, "panic")
-	if !ran {
+	exit_code, sent, err := run_debugged(path, "panic")
+	if !testing.expectf(t, err == nil, "%s panic: debugger run failed: %v", path, err) {
 		return
 	}
 	expected := "err line ö\n|loke: panic: asked to panic\n|loke: stack trace, newest call first:\n|    main at windowed.loke:24\n|loke: panicked\n|"
 	testing.expectf(t, exit_code == 3, "%s panic exited %d, not 3", path, exit_code)
 	testing.expectf(t, sent == expected, "%s panic sent the debugger %q, not %q", path, sent, expected)
+}
+
+@(test)
+debugger_deadline_ends_a_process_sending_events :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so the debugger deadline cannot be exercised")
+		return
+	}
+	os.make_directory(TMP)
+	windowed := fmt.tprintf("%s/windowed-deadline.exe", TMP)
+	if !build_windowed(t, "tests/windowed/windowed.loke", windowed) {
+		return
+	}
+	path, _ := filepath.abs(windowed, context.temp_allocator)
+	started := time.tick_now()
+	// Leave time for a fresh executable to start on a busy integration worker.
+	_, sent, err := run_debugged(path, "forever", 10 * time.Second)
+	testing.expectf(t, err == os.General_Error.Timeout, "event stream did not time out: %v", err)
+	testing.expect(t, strings.contains(sent, "still running"), "the debuggee never reached its event loop")
+	testing.expectf(t, time.tick_since(started) < 30 * time.Second, "debug events renewed the deadline")
 }

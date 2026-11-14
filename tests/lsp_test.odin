@@ -11,6 +11,7 @@ import "core:strconv"
 import "core:strings"
 import win32 "core:sys/windows"
 import "core:testing"
+import "core:thread"
 import "core:time"
 
 LOKE_LSP_DEFAULT :: "loke-lsp.exe"
@@ -55,11 +56,16 @@ Lsp_Process :: struct {
 	input:   ^os.File, // the server's stdin
 	output:  ^os.File, // the server's stdout
 	pending: [dynamic]byte,
+	watchdog: ^thread.Thread,
+	timed_out: bool, // written by the watchdog, read only after it is joined
 }
 
 @(private = "file")
-lsp_start :: proc(p: ^Lsp_Process, t: ^testing.T) -> bool {
+lsp_start :: proc(p: ^Lsp_Process, t: ^testing.T, command: []string = nil, deadline := DEADLINE) -> bool {
 	p.t = t
+	started := time.tick_now()
+	launch := command
+	if launch == nil { launch = {lsp_path()} }
 	stdin_r, stdin_w, in_err := os.pipe()
 	if !testing.expect(t, in_err == nil) { return false }
 	stdout_r, stdout_w, out_err := os.pipe()
@@ -72,16 +78,33 @@ lsp_start :: proc(p: ^Lsp_Process, t: ^testing.T) -> bool {
 	// write end would never see the input end.
 	win32.SetHandleInformation(win32.HANDLE(os.fd(stdin_w)), win32.HANDLE_FLAG_INHERIT, 0)
 	win32.SetHandleInformation(win32.HANDLE(os.fd(stdout_r)), win32.HANDLE_FLAG_INHERIT, 0)
-	process, err := os.process_start(os.Process_Desc{command = {lsp_path()}, stdin = stdin_r, stdout = stdout_w})
+	process, err := os.process_start(os.Process_Desc{command = launch, stdin = stdin_r, stdout = stdout_w})
 	// The child has its own copies of these ends.
 	os.close(stdin_r)
 	os.close(stdout_w)
-	if !testing.expectf(t, err == nil, "cannot start %s: %v", lsp_path(), err) {
+	if !testing.expectf(t, err == nil, "cannot start %s: %v", launch[0], err) {
 		os.close(stdin_w)
 		os.close(stdout_r)
 		return false
 	}
 	p.process, p.input, p.output = process, stdin_w, stdout_r
+	// A receive timeout cannot interrupt a write to a full stdin pipe. Watch the
+	// whole conversation independently, so even that write ends at the deadline.
+	remaining := max(deadline - time.tick_since(started), 0)
+	p.watchdog = thread.create_and_start_with_poly_data2(p, remaining, proc(watched: ^Lsp_Process, limit: time.Duration) {
+		if win32.WaitForSingleObject(win32.HANDLE(watched.process.handle), u32(limit / time.Millisecond)) == win32.WAIT_TIMEOUT {
+			watched.timed_out = true
+			_ = os.process_kill(watched.process)
+		}
+	})
+	if !testing.expect(t, p.watchdog != nil, "cannot create the server's deadline watchdog") {
+		_ = os.process_kill(p.process)
+		_, _ = os.process_wait(p.process)
+		os.close(p.input)
+		os.close(p.output)
+		p.input, p.output = nil, nil
+		return false
+	}
 	return true
 }
 
@@ -90,19 +113,34 @@ lsp_start :: proc(p: ^Lsp_Process, t: ^testing.T) -> bool {
 // cannot pass by stopping at the end of its input instead.
 @(private = "file")
 lsp_finish :: proc(p: ^Lsp_Process, end_input := false) -> (exit_code: int, exited: bool) {
+	if p.watchdog == nil { return 0, false }
 	if end_input && p.input != nil {
 		os.close(p.input)
 		p.input = nil
 	}
-	state, err := os.process_wait(p.process, 30 * time.Second)
-	if err != nil || !state.exited {
+	stopped := win32.WaitForSingleObject(win32.HANDLE(p.process.handle), 30_000) == win32.WAIT_OBJECT_0
+	if !stopped {
 		_ = os.process_kill(p.process)
-		_, _ = os.process_wait(p.process)
 	}
+	// Both waits use this handle; only os.process_wait closes it, after the
+	// watchdog has stopped using it. Joining also makes timed_out safe to read.
+	thread.join(p.watchdog)
+	thread.destroy(p.watchdog)
+	p.watchdog = nil
+	state, err := os.process_wait(p.process)
 	if p.input != nil { os.close(p.input) }
 	os.close(p.output)
 	delete(p.pending)
-	return state.exit_code, err == nil && state.exited
+	p.input, p.output, p.pending = nil, nil, nil
+	return state.exit_code, stopped && err == nil && state.exited && !p.timed_out
+}
+
+// An early return also ends the server. Normal completion already finished it.
+@(private = "file")
+lsp_destroy :: proc(p: ^Lsp_Process) {
+	if p.watchdog == nil { return }
+	_ = os.process_kill(p.process)
+	_, _ = lsp_finish(p)
 }
 
 @(private = "file")
@@ -149,6 +187,25 @@ json_quoted :: proc(text: string) -> string {
 	return string(data)
 }
 
+// The child writes once and never reads stdin. A write larger than the pipe's
+// capacity must still finish when the conversation's deadline kills the child.
+@(test)
+lsp_deadline_unblocks_a_full_input_pipe :: proc(t: ^testing.T) {
+	p: Lsp_Process
+	started := time.tick_now()
+	if !lsp_start(&p, t, {"cmd.exe", "/d", "/c", "echo ready& for /l %i in (0,0,1) do @rem"}, 3 * time.Second) { return }
+	defer lsp_destroy(&p)
+	ready: [64]byte
+	count, read_err := os.read(p.output, ready[:])
+	if !testing.expectf(t, read_err == nil && strings.contains(string(ready[:count]), "ready"), "the stalled child did not start: %v", read_err) { return }
+	message := make([]byte, 64 * 1024, context.temp_allocator)
+	written, write_err := os.write(p.input, message)
+	code, exited := lsp_finish(&p)
+	testing.expectf(t, write_err != nil && written < len(message), "a child that never reads accepted %d bytes: %v", written, write_err)
+	testing.expect(t, p.timed_out && !exited && code != 0, "the lifetime deadline did not end the stalled child")
+	testing.expectf(t, time.tick_since(started) < 15 * time.Second, "the blocked write outlived its deadline: %v", time.tick_since(started))
+}
+
 @(test)
 lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 	root := fmt.tprintf("%s/lsp-process-%d", TMP, os.get_pid())
@@ -161,6 +218,7 @@ lsp_publishes_diagnostics_and_exits_cleanly :: proc(t: ^testing.T) {
 
 	p: Lsp_Process
 	if !lsp_start(&p, t) { return }
+	defer lsp_destroy(&p)
 	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
 	reply, ok := lsp_receive(&p)
 	capabilities := json_member(json_member(reply, "result"), "capabilities")
@@ -236,6 +294,7 @@ lsp_rapid_edits_end_with_the_final_text :: proc(t: ^testing.T) {
 
 	p: Lsp_Process
 	if !lsp_start(&p, t) { return }
+	defer lsp_destroy(&p)
 	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
 	_, ok := lsp_receive(&p)
 	testing.expect(t, ok)
@@ -297,6 +356,7 @@ lsp_rapid_edits_end_with_the_final_text :: proc(t: ^testing.T) {
 lsp_input_ending_without_shutdown_is_an_error_exit :: proc(t: ^testing.T) {
 	p: Lsp_Process
 	if !lsp_start(&p, t) { return }
+	defer lsp_destroy(&p)
 	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
 	_, ok := lsp_receive(&p)
 	testing.expect(t, ok)
@@ -349,6 +409,7 @@ lsp_formats_and_documents_like_lokec :: proc(t: ^testing.T) {
 
 	p: Lsp_Process
 	if !lsp_start(&p, t) { return }
+	defer lsp_destroy(&p)
 	lsp_send(&p, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
 	reply, ok := lsp_reply(&p, 1)
 	capabilities := json_member(json_member(reply, "result"), "capabilities")

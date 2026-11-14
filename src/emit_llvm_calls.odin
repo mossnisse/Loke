@@ -150,6 +150,9 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		value := emit_copied_expr(e, v.bound[1], written, copies)
 		store(e, written, value, address)
 		return "0"
+	case .Unsafe_Storage:
+		// The checker bound the borrow it stands for.
+		return emit_expr(e, v.bound[0])
 	case .Unsafe_Forget:
 		// Skips the drop an owned temporary would get; `emit_move` still kills a
 		// `move(place)` source.

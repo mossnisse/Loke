@@ -146,8 +146,7 @@ fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Cons
 
 // Enum members carry no visibility of their own: the grammar has no
 // `@(private)` on one, and an importer that can name the enum can name `.Red`.
-// Filtering them would disagree with both name lookup and the runtime
-// `type_info_of` table, which lists every member.
+// Filtering them would disagree with name lookup.
 @(private = "file")
 enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Const_Value, bool) {
 	info := underlying_info(k.c, subject)

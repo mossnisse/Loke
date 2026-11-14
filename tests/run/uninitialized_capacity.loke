@@ -3,13 +3,12 @@ package main;
 import "core:fmt";
 import "core:unsafe";
 
-// design.md "Uninitialized capacity": a fixed array field whose live prefix
-// another field counts, and the two `core:unsafe` operations that move values
-// across that boundary.
+// design.md "Uninitialized capacity": `Uninit(T)` is storage for a `T` that
+// holds no value, and the three `core:unsafe` operations that reach it.
 //
-// The element is a managed owner, so every claim here is observable: a slot
-// behind the count is never cloned and never released, and one in front of it
-// is cloned and released exactly once.
+// The element is a managed owner, so every claim here is observable: the
+// storage is never cloned and never released for itself, and the record around
+// it clones and releases exactly what it says it holds.
 
 @(fieldwise_copy) Tracked :: struct { id: int }
 impl Tracked {
@@ -21,40 +20,62 @@ impl Tracked {
 @(move_only) Held :: struct { id: int }
 Sealed :: union { first: Held, second: Held }
 
+// The storage of all `N` slots, of which the first `count` hold a value. The
+// record says how it is copied and dropped, since the storage does neither.
 Buffer :: struct($T: type, $N: int) {
-	@(public, initialized = count) items: [N]T,
-	@(public) count: int,
-}
-
-Counter_First :: struct($T: type, $N: int) {
-	@(public) count: int,
-	@(public, initialized = count) items: [N]T,
+	@(private) items: Uninit([N]T),
+	@(private) count: int,
 }
 
 impl Buffer($T, $N) {
-	len :: proc(self) -> int { return self.count; }
+	len :: proc(self: ^) -> int { return self.count; }
 
 	push :: proc(self: inout, @(escape=stored) value: move T) {
-		unsafe.write(self.items[self.count], move(value));
+		unsafe.write(unsafe.storage(&mut self.items)[self.count], move(value));
 		self.count += 1;
 	}
 
 	// The copying way in: a borrowed value is cloned into the storage, exactly
 	// as an initialization takes it.
 	put :: proc(self: inout, value: T) where is_copyable(T) {
-		unsafe.write(self.items[self.count], value);
+		unsafe.write(unsafe.storage(&mut self.items)[self.count], value.clone());
 		self.count += 1;
 	}
 
-	// The count shortens first, so the slot the value leaves is capacity again
-	// by the time anything could unwind through it.
+	// The count shortens first, so the slot the value leaves holds nothing
+	// again by the time anything could unwind through it.
 	pop :: proc(self: inout) -> T {
 		self.count -= 1;
-		return unsafe.take(self.items[self.count]);
+		return unsafe.take(unsafe.storage(&mut self.items)[self.count]);
 	}
 
-	view :: proc(self: ^) -> []T { return self.items[0:self.count]; }
+	view :: proc(self: ^) -> []T { return unsafe.storage(&self.items)^[0:self.count]; }
+
+	release :: hook(drop) proc(self: inout) {
+		for (self.count > 0) { _ = self.pop(); }
+	}
+
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Buffer(T, N), Allocator_Error) where is_copyable(T) {
+		out: Buffer(T, N) = {};
+		foreach (item in self.view()) {
+			copied := item.try_clone(allocator) or_return;
+			out.push(move(copied));
+		}
+		return .ok(move(out));
+	}
+
+	equal :: operator(==) proc(left, right: Buffer(T, N)) -> bool {
+		if (left.count != right.count) { return false; }
+		foreach (i in 0 ..< left.count) {
+			if (left.view()[i] != right.view()[i]) { return false; }
+		}
+		return true;
+	}
 }
+
+// One slot that may be empty, with nothing beside it to say so: a copy is the
+// bits where `T` is plain, and there is none where `T` is managed.
+Slot :: struct($T: type) { item: Uninit(T) }
 
 id_of :: proc(value: Sealed) -> int {
 	switch (value) {
@@ -65,13 +86,11 @@ id_of :: proc(value: Sealed) -> int {
 }
 
 capacity_round_trip :: proc() -> int {
-	buffer: Buffer(int, 2) = {};
-	unsafe.write(buffer.items[0], 7);
-	buffer.count = 1;
-	value := unsafe.take(buffer.items[0]);
-	buffer.count = 0;
-	assert(buffer == Buffer(int, 2){});
-	return value;
+	slot: Slot(int) = {};
+	unsafe.write(slot.item, 7);
+	doubled := unsafe.storage(&mut slot.item);
+	doubled^ *= 2;
+	return unsafe.take(slot.item);
 }
 
 CAPACITY_ROUND_TRIP :: capacity_round_trip();
@@ -83,22 +102,27 @@ Huge :: struct { pad: [576460752303423488]u8 }
 Fallible :: struct { id: int }
 impl Fallible {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Fallible, Allocator_Error) {
-		_ = try_make([dynamic]Huge, 0, 1, allocator) or_return;
-		return .ok(Fallible{self.id});
+		if (self.id == 2) { _ = try_make([dynamic]Huge, 0, 1, allocator) or_return; }
+		return .ok(Fallible{self.id + 10});
 	}
 	release :: hook(drop) proc(self: inout Fallible) { fmt.println("fallible drop", self.id); }
 }
 
 main :: proc() {
-	// Both operations are phase-neutral when the storage is evaluator-owned.
-	fmt.println(CAPACITY_ROUND_TRIP);
+	// The operations are phase-neutral when the storage is evaluator-owned.
+	fmt.println(CAPACITY_ROUND_TRIP, capacity_round_trip());
 
-	// The empty record is all-zero even when a capacity element's own type has no
-	// zero. This is compiled under every optimization mode by the run corpus.
-	codes: Buffer(No_Zero, 2) = {};
-	fmt.println(codes.count, codes.count == 0);
+	// The storage has its `T`'s size and alignment and nothing more.
+	fmt.println(size_of(Uninit(u8)), size_of(Uninit([3]u16)), align_of(Uninit(i64)), size_of(Slot(string)) == size_of(string));
 
-	// A record holding capacity has a zero value whatever the element is.
+	// It has a zero value even where `T` has none, and so does a record of it.
+	// This is compiled under every optimization mode by the run corpus.
+	code: Uninit(No_Zero) = {};
+	codes: [2]Uninit(No_Zero) = {};
+	unsafe.write(code, No_Zero.Two);
+	unsafe.write(codes[1], No_Zero.One);
+	fmt.println(unsafe.take(code), unsafe.storage(&codes[1])^);
+
 	sealed: Buffer(Sealed, 4) = {};
 	fmt.println(sealed.len());
 	one: Sealed = .first(Held{1});
@@ -109,9 +133,32 @@ main :: proc() {
 	taken := sealed.pop();
 	fmt.println(id_of(taken), sealed.len());
 
+	// A copy of the storage is its bits where `T` has a trivial lifecycle, and
+	// there is none otherwise unless the record around it writes one.
+	fmt.println(
+		is_copyable(Uninit(int)), is_copyable(Uninit(Tracked)), is_copyable(Uninit(Held)),
+		is_copyable(Slot(int)), is_copyable(Slot(string)),
+		is_copyable(Buffer(Tracked, 4)), is_copyable(Buffer(Held, 4)),
+	);
+	plain := Slot(int){};
+	unsafe.write(plain.item, 41);
+	bits := plain;
+	fmt.println(unsafe.take(bits.item) + 1);
+
+	// Nothing drops what the storage holds: a value written and never taken is
+	// leaked, and one taken is dropped as the value it then is.
+	{
+		leaked: Slot(Tracked) = {};
+		unsafe.write(leaked.item, Tracked{30});
+		kept: Slot(Tracked) = {};
+		unsafe.write(kept.item, Tracked{40});
+		fmt.println("held", unsafe.storage(&kept.item).id);
+		out := unsafe.take(kept.item);
+	}
+
 	// A managed element: two pushed, one retired. The retired slot keeps the
 	// bits of a value that no longer exists, and neither the copy below nor the
-	// drop at the end of the scope may read them.
+	// drop at the end of the scope reads them.
 	owners: Buffer(Tracked, 4) = {};
 	first := Tracked{10};
 	second := Tracked{20};
@@ -121,11 +168,11 @@ main :: proc() {
 	fmt.println("retired", retired.id, owners.len());
 	drop(retired);
 
-	copied := owners;
+	copied := owners.clone();
 	fmt.println("copied", copied.len(), copied.view()[0].id);
 
-	// The capacity a retired element left behind is not part of the value, so
-	// equality and formatting stop at the count as the copy and the drop do.
+	// What a retired element left behind is not part of the value, so the
+	// record's `==` stops at the count as its copy and its drop do.
 	left: Buffer(int, 4) = {};
 	right: Buffer(int, 4) = {};
 	left.put(1);
@@ -134,15 +181,14 @@ main :: proc() {
 	_ = left.pop();
 	right.put(1);
 	right.put(2);
-	fmt.println(left == right, left);
+	fmt.println(left == right, left.view());
 
-	// A count declared before its array is already copied when the first element
-	// clone fails. Partial cleanup must still use the local progress of zero.
+	// A copy that fails partway drops what it built, through the copy's own
+	// drop hook, and leaves the source as it was.
 	{
-		source: Counter_First(Fallible, 2) = {};
-		failing := Fallible{1};
-		unsafe.write(source.items[0], move(failing));
-		source.count = 1;
+		source: Buffer(Fallible, 2) = {};
+		source.push(Fallible{1});
+		source.push(Fallible{2});
 		switch (source.try_clone()) {
 		case .ok: fmt.println("unexpected clone");
 		case .err: fmt.println("clone failed");

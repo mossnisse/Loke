@@ -55,10 +55,6 @@ Deferred :: struct {
 	array_buffer_env: int,
 	array_flags_env:  int,
 	array_count_env:  int,
-	// The `@(initialized)` array whose count field `array_count` addresses, which
-	// replay reads when it runs and range-checks; INVALID_TYPE for a count the
-	// compiler keeps itself.
-	array_counted: Type_Id,
 	// Index + 1 in the procedure's registration state; 0 when not registered,
 	// as under `-panic=abort`.
 	slot: int,
@@ -145,7 +141,7 @@ begin_box_release :: proc(e: ^Emitter, payload: Type_Id, block: string) -> Defer
 
 @(private)
 register_array_cleanup :: proc(
-	e: ^Emitter, element: Type_Id, buffer, flags, count: string, counted := INVALID_TYPE,
+	e: ^Emitter, element: Type_Id, buffer, flags, count: string,
 ) -> Deferred {
 	entry := Deferred {
 		kind          = .Array,
@@ -153,7 +149,6 @@ register_array_cleanup :: proc(
 		array_buffer  = buffer,
 		array_flags   = flags,
 		array_count   = count,
-		array_counted = counted,
 		order         = next_id(e),
 	}
 	if !unwind_enabled(e) {

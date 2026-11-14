@@ -323,6 +323,11 @@ prov_bound_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, input: Prov_Call
 @(private)
 prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	c := graph.k.c
+	// design.md "Uninitialized capacity": normalization describes storage as
+	// its checked borrow, so evaluate that borrow without recording call effects.
+	if borrow := storage_borrow(c, v); expr_base(borrow) != &v.base {
+		return walk_flow_expr(graph, borrow)
+	}
 	input := prov_input_call(graph, v)
 	defer prov_call_written_aliases(graph, prov_input_value(graph, v))
 	held := len(graph.held_owners)

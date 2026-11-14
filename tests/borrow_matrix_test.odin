@@ -457,34 +457,72 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 
 // The lines of `stderr` that an `error[Lxxxx]` diagnostic is reported at,
 // with its code.
-@(private = "file")
+@(private)
 Matrix_Error :: struct {
 	code: string,
 	line: int,
 }
 
-@(private = "file")
+@(private)
 matrix_errors :: proc(stderr: string) -> []Matrix_Error {
 	out := make([dynamic]Matrix_Error, context.temp_allocator)
-	code := ""
+	pending := -1
 	for text in strings.split_lines(stderr, context.temp_allocator) {
 		trimmed := strings.trim_space(text)
 		if strings.has_prefix(trimmed, "error[") {
-			code = trimmed[len("error["):strings.index_byte(trimmed, ']')]
+			code := trimmed[len("error["):]
+			if end := strings.index_byte(code, ']'); end >= 0 {
+				code = code[:end]
+			}
+			// Keep even an unlocated or malformed diagnostic: dropping it could
+			// turn an internal compiler error into a passing positive case.
+			append(&out, Matrix_Error{code = code})
+			pending = len(out) - 1
 			continue
 		}
-		if code == "" || !strings.has_prefix(trimmed, "-->") {
+		if pending < 0 || !strings.has_prefix(trimmed, "-->") {
 			continue
 		}
 		parts := strings.split(trimmed, ":", context.temp_allocator)
 		if len(parts) >= 3 {
 			if at, ok := strconv.parse_int(parts[len(parts) - 2]); ok {
-				append(&out, Matrix_Error{code, at})
+				out[pending].line = at
 			}
 		}
-		code = ""
+		pending = -1
 	}
 	return out[:]
+}
+
+@(private)
+matrix_exit_matches_diagnostics :: proc(state: os.Process_State, errors: []Matrix_Error) -> bool {
+	return state.exited && state.exit_code == (len(errors) == 0 ? 0 : 1)
+}
+
+@(test)
+matrix_results_preserve_compiler_failures :: proc(t: ^testing.T) {
+	errors := matrix_errors(`error[L0641]: conflict
+  --> C:\work\case.loke:12:3
+error[L0405]: internal error without a location
+error[L0300]: bad location
+  --> case.loke:no-line:1
+error[malformed
+`)
+	testing.expect(t, len(errors) == 4)
+	if len(errors) != 4 {
+		return
+	}
+	testing.expect(t, errors[0] == Matrix_Error{"L0641", 12})
+	testing.expect(t, errors[1] == Matrix_Error{"L0405", 0})
+	testing.expect(t, errors[2] == Matrix_Error{"L0300", 0})
+	testing.expect(t, errors[3] == Matrix_Error{"malformed", 0})
+	testing.expect(t, matrix_exit_matches_diagnostics({exited = true, exit_code = 0}, nil))
+	testing.expect(t, matrix_exit_matches_diagnostics({exited = true, exit_code = 1}, errors))
+	testing.expect(t, !matrix_exit_matches_diagnostics({exited = true, exit_code = 99}, nil))
+	testing.expect(t, !matrix_exit_matches_diagnostics({exited = true, exit_code = 99}, errors))
+	testing.expect(t, !matrix_exit_matches_diagnostics({exited = true, exit_code = 1}, nil))
+	testing.expect(t, !matrix_exit_matches_diagnostics({exited = true, exit_code = 0}, errors))
+	testing.expect(t, !matrix_exit_matches_diagnostics({}, nil))
 }
 
 @(test)
@@ -521,6 +559,7 @@ borrow_matrix :: proc(t: ^testing.T) {
 			continue
 		}
 		errors := matrix_errors(string(job.stderr))
+		testing.expectf(t, matrix_exit_matches_diagnostics(job.state, errors), "%s: unexpected compiler exit %d:\n%s", path, job.state.exit_code, string(job.stderr))
 		for entry in program.cases {
 			expected := matrix_expected(program.place, program.take, entry.use, entry.shape, entry.later)
 			code := ""
@@ -540,11 +579,14 @@ borrow_matrix :: proc(t: ^testing.T) {
 		}
 		// An error outside every case is a mistake in the generated program.
 		for e in errors {
-			inside := false
+			expected := ""
 			for entry in program.cases {
-				inside ||= e.line >= entry.first_line && e.line <= entry.last_line
+				if e.line >= entry.first_line && e.line <= entry.last_line {
+					expected = matrix_expected(program.place, program.take, entry.use, entry.shape, entry.later)
+					break
+				}
 			}
-			testing.expectf(t, inside, "%s:%d: %s outside every case:\n%s", path, e.line, e.code, string(job.stderr))
+			testing.expectf(t, expected != "" && e.code == expected, "%s:%d: unexpected %s:\n%s", path, e.line, e.code, string(job.stderr))
 		}
 	}
 }
@@ -743,6 +785,7 @@ reserved_matrix :: proc(t: ^testing.T) {
 			continue
 		}
 		errors := matrix_errors(string(job.stderr))
+		testing.expectf(t, matrix_exit_matches_diagnostics(job.state, errors), "%s: unexpected compiler exit %d:\n%s", path, job.state.exit_code, string(job.stderr))
 		for entry in program.cases {
 			expected := reserved_expected(program.place, program.lend, entry.later)
 			code := ""
@@ -762,11 +805,14 @@ reserved_matrix :: proc(t: ^testing.T) {
 		}
 		// An error outside every case is a mistake in the generated program.
 		for e in errors {
-			inside := false
+			expected := ""
 			for entry in program.cases {
-				inside ||= e.line >= entry.first_line && e.line <= entry.last_line
+				if e.line >= entry.first_line && e.line <= entry.last_line {
+					expected = reserved_expected(program.place, program.lend, entry.later)
+					break
+				}
 			}
-			testing.expectf(t, inside, "%s:%d: %s outside every case:\n%s", path, e.line, e.code, string(job.stderr))
+			testing.expectf(t, expected != "" && e.code == expected, "%s:%d: unexpected %s:\n%s", path, e.line, e.code, string(job.stderr))
 		}
 	}
 }

@@ -22,6 +22,7 @@
 @(public)
 package container;
 
+import "base:interfaces";
 import "core:fmt";
 import "core:unsafe";
 
@@ -54,11 +55,15 @@ impl Capacity_Error {
 // `N > 0` because a zero-capacity growable array can only panic, and a caller
 // who wants no storage wants no container.
 Small_Array :: struct($T: type, $N: int) where N > 0 {
-	// design.md "Uninitialized capacity": elements at `count ..< N` are capacity
-	// rather than values. Nothing reads them, the generated copy and drop stop at
-	// `count`, and the element type therefore needs no zero value -- an empty
-	// `Small_Array(T, N)` is as free of `T` as an empty `[dynamic]T` is.
-	@(private, initialized = count) items: [N]T,
+	// design.md "Uninitialized capacity": the storage holds a value in slots
+	// `0 ..< count` and nothing behind them, so the element type needs no zero
+	// value -- an empty `Small_Array(T, N)` is as free of `T` as an empty
+	// `[dynamic]T` is. The storage has no copy, drop, or `==` of its own; the
+	// hooks below visit the elements.
+	//
+	// Every update writes and then lengthens, or shortens and then takes, so
+	// `count` is accurate wherever a panic can unwind from.
+	@(private) items: Uninit([N]T),
 	@(private) count: int,
 }
 
@@ -86,12 +91,12 @@ impl Small_Array($T, $N) {
 	// design.md "where clauses".
 	get :: operator([]) proc(self: ^, index: int) -> T where is_copyable(T) {
 		self.check_index(index);
-		return self.items[index].clone();
+		return self.view()[index].clone();
 	}
 
 	get_mut :: operator([]) proc(self: inout, index: int) -> inout T {
 		self.check_index(index);
-		return inout self.items[index];
+		return inout unsafe.storage(&mut self.items)[index];
 	}
 
 	/**
@@ -101,19 +106,19 @@ impl Small_Array($T, $N) {
 	// This is why it is not the built-in fixed array's own slicing.
 	span :: operator([:]) proc(self: ^, low: int, high: int) -> []T {
 		self.check_span(low, high);
-		return self.items[low:high];
+		return self.view()[low:high];
 	}
 
 	/// The writable subrange, which `&mut x[a:b]` selects.
 	// design.md "Indexing and slicing".
 	span_mut :: operator([:]) proc(self: inout, low: int, high: int) -> []mut T {
 		self.check_span(low, high);
-		return &mut self.items[low:high];
+		return &mut self.slice()[low:high];
 	}
 
 	/// The whole live prefix as one mutable view.
 	slice :: proc(self: inout) -> []mut T {
-		return &mut self.items[0:self.count];
+		return &mut unsafe.storage(&mut self.items)^[0:self.count];
 	}
 
 	// ----------------------------------------------------------- iteration --
@@ -126,7 +131,7 @@ impl Small_Array($T, $N) {
 	// a view of its inline storage is derived from the caller's root and needs no
 	// `inout`.
 	view :: proc(self: ^) -> []T {
-		return self.items[0:self.count];
+		return unsafe.storage(&self.items)^[0:self.count];
 	}
 
 	/**
@@ -175,10 +180,7 @@ impl Small_Array($T, $N) {
 		if (wanted > N) {
 			return .err(Capacity_Error{wanted, N});
 		}
-		foreach (value in values) {
-			unsafe.write(self.items[self.count], value.clone());
-			self.count += 1;
-		}
+		foreach (value in values) { self.put(value.clone()); }
 		return .ok;
 	}
 
@@ -204,8 +206,7 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		unsafe.write(self.items[self.count], value.clone());
-		self.count += 1;
+		self.put(value.clone());
 		self.move_last_to(index);
 		return .ok;
 	}
@@ -223,8 +224,7 @@ impl Small_Array($T, $N) {
 		self: inout, @(escape=stored) value: move T,
 	) -> Status(Capacity_Error) {
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		unsafe.write(self.items[self.count], move(value));
-		self.count += 1;
+		self.put(move(value));
 		return .ok;
 	}
 
@@ -235,8 +235,7 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		unsafe.write(self.items[self.count], move(value));
-		self.count += 1;
+		self.put(move(value));
 		self.move_last_to(index);
 		return .ok;
 	}
@@ -253,8 +252,7 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { panic("Small_Array is full"); }
-		unsafe.write(self.items[self.count], move(value));
-		self.count += 1;
+		self.put(move(value));
 		self.move_last_to(index);
 	}
 
@@ -276,16 +274,17 @@ impl Small_Array($T, $N) {
 	pop :: proc(self: inout) -> Option(T) {
 		if (self.count == 0) { return .none; }
 		self.count -= 1;
-		return unsafe.take(self.items[self.count]);
+		return unsafe.take(unsafe.storage(&mut self.items)[self.count]);
 	}
 
 	/// Order-preserving: each following element moves down into the vacant slot.
 	remove :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
-		removed := unsafe.take(self.items[index]);
+		slots := unsafe.storage(&mut self.items);
+		removed := unsafe.take(slots[index]);
 		at := index;
 		for (at + 1 < self.count) {
-			unsafe.write(self.items[at], unsafe.take(self.items[at + 1]));
+			unsafe.write(slots[at], unsafe.take(slots[at + 1]));
 			at += 1;
 		}
 		self.count -= 1;
@@ -295,33 +294,60 @@ impl Small_Array($T, $N) {
 	/// O(1), at the cost of the order: the last element takes the hole.
 	remove_unordered :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
-		removed := unsafe.take(self.items[index]);
+		slots := unsafe.storage(&mut self.items);
+		removed := unsafe.take(slots[index]);
 		self.count -= 1;
 		if (index != self.count) {
-			unsafe.write(self.items[index], unsafe.take(self.items[self.count]));
+			unsafe.write(slots[index], unsafe.take(slots[self.count]));
 		}
 		return removed;
 	}
 
-	/// Sets the length to zero, dropping each element.
-	// Each retired element is taken out and dropped as the discarded value it is;
-	// the storage behind the new length is capacity again.
+	/**
+		Sets the length to zero, dropping each element, last to first. If a drop
+		panics, the remaining elements still drop in the same order.
+	*/
+	// A hook that panics is not invoked again, and the storage has no cleanup of
+	// its own, so the deferred drain is what releases the rest under unwind.
+	// After a normal drain it has nothing left to do. A second panic aborts:
+	// design.md "Panic during unwinding".
 	clear :: proc(self: inout) {
-		for (self.count > 0) {
-			self.count -= 1;
-			_ = unsafe.take(self.items[self.count]);
-		}
+		defer self.drain();
+		self.drain();
 	}
 
-	// --------------------------------------------------------- diagnostics --
+	// ------------------------------------------------------- whole values --
 
+	/// Equal lengths and equal elements, in order.
+	equal :: operator(==) proc(left, right: Small_Array(T, N)) -> bool where interfaces.Equatable(T) {
+		if (left.count != right.count) { return false; }
+		foreach (i in 0 ..< left.count) {
+			if (left.view()[i] != right.view()[i]) { return false; }
+		}
+		return true;
+	}
+
+	/// Prints as an array, in order.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, "[");
 		foreach (i in 0 ..< self.count) {
 			if (i > 0) { fmt.format_to(writer, ", "); }
-			fmt.format_to(writer, self.items[i]);
+			fmt.format_to(writer, self.view()[i]);
 		}
 		fmt.format_to(writer, "]");
+	}
+
+	release :: hook(drop) proc(self: inout) { self.clear(); }
+
+	// Clones in order. What it has cloned so far is dropped with `out` if a later
+	// element fails.
+	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Small_Array(T, N), Allocator_Error) where is_copyable(T) {
+		out: Small_Array(T, N) = {};
+		foreach (item in self.view()) {
+			copied := item.try_clone(allocator) or_return;
+			out.put(move(copied));
+		}
+		return .ok(move(out));
 	}
 
 	// ---------------------------------------------------------------- guts --
@@ -333,13 +359,27 @@ impl Small_Array($T, $N) {
 		}
 	}
 
+	// Writes `value` behind the last element, which the caller has checked there
+	// is room for, and then lengthens.
+	@(private)
+	put :: proc(self: inout, @(escape=stored) value: move T) {
+		unsafe.write(unsafe.storage(&mut self.items)[self.count], move(value));
+		self.count += 1;
+	}
+
+	// The count is accurate before each user drop hook runs.
+	@(private)
+	drain :: proc(self: inout) {
+		for (self.count > 0) { _ = self.pop(); }
+	}
+
 	// The appended last element moves down to `index`. Every slot is live before
 	// the first swap, so the operation never reads raw capacity as a value.
 	@(private)
 	move_last_to :: proc(self: inout, index: int) {
 		at := self.count - 1;
 		for (at > index) {
-			(&mut self.items[:]).swap(at, at - 1);
+			self.slice().swap(at, at - 1);
 			at -= 1;
 		}
 	}

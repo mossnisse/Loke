@@ -32,6 +32,8 @@ main :: proc() -> i32 {
 			fmt.eprint("x");
 			for (i := 0; i < 300; i += 1) { fmt.eprint("ö"); }
 			fmt.eprintln();
+		case "forever":
+			for (true) { fmt.eprintln("still running"); }
 		case:
 		}
 	}

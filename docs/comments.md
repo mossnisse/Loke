@@ -1810,6 +1810,33 @@ parameters, requirements, and attributes would need more descriptors and lookup
 rules without a demonstrated consumer.
 Additional reflection can be introduced when an actual tool needs it.
 
+### Runtime reflection describes shape
+
+`runtime.Type_Info` once carried a `members` table of `Member_Info` records: a
+struct's public fields, an enum's values, a union's variants, and a procedure
+type's parameters and result. It also carried `bits` and `signed`.
+[`type` and `typeid`](design.md#type-and-typeid) now keeps only what printing a
+`typeid` and sizing erased storage need.
+
+No value carries a `typeid`, since `any_view` is gone, so every `typeid` is
+written as `typeid_of(T)` where `T` is known. There `fields_of`,
+`enum_values_of`, and `variants_of` give the same members with their types
+usable, which a `typeid` in a table never was. A table reached from an id alone
+serves only code that kept the id and discarded the type, such as a registry,
+and a registry is filled by a call that has the type: it can store what it
+needs, built from `fields_of` in a static `foreach`. Printing never read the
+table; a printed value goes through its type's `format`. Meanwhile every
+program that called `type_info_of` paid for the tables of every type its
+entries named, with their field names, whether or not it read them.
+
+`bits` and `signed` repeated what `kind` and `size` say of an integer, and an
+enum's entry now names its backing type in `element`, as a `distinct` type's
+names the type it is declared over. `type_info_of` itself stays, because
+printing a `typeid` by its name needs a table by id.
+
+What is lost is the only reflection of a procedure type's parameter and result
+types, which nothing used.
+
 ### Associated interface members use expressions
 
 `T.NAME -> Type;` is an expression requirement. Associated types use the same
@@ -2152,13 +2179,54 @@ result.
 
 `core:unsafe` is the visible review boundary for operations that discard
 lifetime or initialization guarantees. The file using unchecked pointer
-conversions, C-pointer access, `---`, or `@(initialized=...)` must import it.
+conversions, C-pointer access, or `---` must import it.
 Converting to raw storage alone does not grant checked access back into it.
 
 A file-level gate makes these operations searchable without adding an unsafe
 expression language. `base:` packages are exempt because they implement runtime
-facilities and cannot import `core:`. Generated traversal checks bound an
-initialized prefix, but cannot prove those slots contain valid values.
+facilities and cannot import `core:`.
+
+### `Uninit(T)` instead of a counted field
+
+[Uninitialized capacity](design.md#uninitialized-capacity) was once an
+attribute: `@(initialized = count)` on a fixed array field named a sibling `int`,
+and the generated copy, drop, `==`, and `format` visited that many leading
+elements, each after checking the count against the array's length. It met the
+need in one shape. `Small_Array` was the only record that counted a prefix. A
+ring slot, a thread's start block, and the `Shared(T)` control block each wrote
+`@(initialized = live) item: [1]T, live: int`, a one-element array and a word
+that repeated what a strong count or a pair of indices already said. `Deque`
+could not use it at all, because its live elements wrap.
+
+The need under all of them is storage for a `T` that holds no value, which is
+what `Uninit(T)` says, like Rust's `MaybeUninit`. Three rules make it sound,
+and each is the smallest that does. It has no copy where `T` has a lifecycle,
+because copying the bits of a `string` and releasing both would release it
+twice. Its drop does nothing, because only the record around it knows what is
+there. It carries what `T` borrows, because a container of views must still
+end with what they view; that is why a `[^]T` could not stand in for it.
+
+A record holding such storage may write a `hook(copy)`, where a record with a
+move-only field may not. A move-only part is a value that promises it is the
+only one, and no hook of the holder's can copy it honestly. Storage promises
+nothing, and the holder is the one party that knows what it holds.
+
+`unsafe.storage` takes a pointer and gives one, so the mutability of the
+result is the operand's and its borrow is the ordinary borrow of a field: the
+compiler lowers it to `&pointer^.value` for the one field no source can name.
+A form that retyped a `[]Uninit(T)` as a `[]T` would have needed a rule of its
+own in the borrow analysis, so a container holds `Uninit([N]T)` and slices the
+array it is lent. The operation is named for what it gives and not
+`initialized`, since a container asks for the storage as often to write a slot
+as to read one.
+
+What it costs is the generated operations. `Small_Array` writes `hook(copy)`,
+`hook(drop)`, `==`, and `format` by hand, and a hand-written `hook(drop)` may
+read what an element borrows, so an array of views must be declared after what
+they view, where the generated drop of a counted prefix was known not to read
+them. `Deque` has always had that rule. That is one type's convenience against
+an attribute every reader of a record had to know, a count check in every
+generated traversal, and a fifth unchecked syntax form.
 
 An invalid representation is undefined behavior rather than a bounded outcome
 because a bound would be paid for everywhere and used nowhere. A `bool` is

@@ -1,24 +1,42 @@
-L0691
-@7:4
-`@(initialized)` names the live prefix of a fixed array
-L0691
-@12:4
-`total` is not a field of this record
-L0691
-@17:4
-the live count `count` is `bool`, and must be `int`
+L0471
+@12:9
+field `value` of `Uninit(int)` is not public
+L0503
+@18:12
+`Slot(string)` is move-only, so this binding cannot copy it
+L0355
+@19:16
+`Uninit(int)` is not comparable
 L0692
-@31:18
+@27:18
 `unsafe.take` reaches storage whose liveness is not tracked
 L0692
-@32:15
+@28:15
 `unsafe.write` reaches storage whose liveness is not tracked
 L0692
-@36:6
+@32:6
 `unsafe.take` takes one argument
 L0692
-@37:2
+@33:2
 `unsafe.write` takes the place and the value written into it
 L0359
-@38:18
+@34:18
 this expression cannot be the place `unsafe.take` reads
+L0310
+@35:26
+this constant is not a value of `int`
+L0691
+@36:21
+`unsafe.storage` takes a `^Uninit(T)` or a `^mut Uninit(T)`, found `Uninit(int)`
+L0691
+@37:21
+`unsafe.storage` takes a `^Uninit(T)` or a `^mut Uninit(T)`, found `^[dynamic]int`
+L0691
+@38:6
+`unsafe.storage` takes one positional argument
+L0640
+@43:2
+reached through a read-only `^T` and cannot be an assignment destination
+L0640
+@44:15
+reached through a read-only `^T` and cannot be the place `unsafe.write` fills

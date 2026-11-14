@@ -25,7 +25,11 @@ $ErrorActionPreference = 'Stop'
 # 7, which CI uses, passes stderr through untouched.
 function Invoke-Native([string]$Failure, [scriptblock]$Command) {
     $ErrorActionPreference = 'Continue'
+    # Native commands set the global automatic variable. Clear it so a failed
+    # launch cannot reuse the preceding command's successful exit code.
+    $global:LASTEXITCODE = $null
     & $Command
+    if ($null -eq $LASTEXITCODE) { throw "$Failure (command did not start)" }
     if ($LASTEXITCODE -ne 0) { throw "$Failure ($LASTEXITCODE)" }
 }
 
@@ -96,7 +100,7 @@ try {
     # Memory tracking stays on here: the unit tests are where a leak in the
     # compiler shows up, and it costs a fraction of a second. Vet covers the test
     # code too; `-vet-packages` keeps it out of Odin's own `core:testing`.
-    Invoke-Native 'compiler unit tests failed' { odin test src -vet-unused -vet-shadowing -vet-packages:lokec }
+    Invoke-Native 'compiler unit tests failed' { odin test src -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -vet-unused -vet-shadowing -vet-packages:lokec }
 
     # An unused local or a shadowed name is how a rename or a deleted branch goes
     # quiet instead of failing, so the shipped binary is built under both vets.
@@ -110,7 +114,7 @@ try {
 
     # The language server compiles in the whole compiler, so it is rebuilt with
     # it; the integration harness talks to the binary over real pipes.
-    Invoke-Native 'language server unit tests failed' { odin test lsp -vet-unused -vet-shadowing -vet-packages:lsp }
+    Invoke-Native 'language server unit tests failed' { odin test lsp -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true -vet-unused -vet-shadowing -vet-packages:lsp }
     Invoke-Native 'language server build failed' { odin build lsp -out:loke-lsp.exe -vet-unused -vet-shadowing $optimization $stamp }
 
     # Both report the stamp they were given as compiler-guide.md "Inspecting a

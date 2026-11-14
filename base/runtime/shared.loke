@@ -40,17 +40,16 @@ package runtime;
 // which is the classic arrangement: the payload dies when `strong` reaches
 // zero, and the block itself is released when `weak` does.
 //
-// The payload is capacity (design.md "Uninitialized capacity"), so the block
-// is allocated before it holds a value: `live` says whether it does, and the
-// payload is written in and taken out without a zero `T` ever standing in for
-// it.
+// The payload is an `Uninit(T)` (design.md "Uninitialized capacity"), so the
+// block is allocated before it holds a value, and the payload is written in and
+// taken out without a zero `T` ever standing in for it. It holds one while
+// `strong` is above zero.
 @(private)
 Shared_Block :: struct($T: type) {
 	strong:    int,
 	weak:      int,
 	allocator: Allocator,
-	@(initialized = live) payload: [1]T,
-	live:      int,
+	payload:   Uninit(T),
 }
 
 /**
@@ -119,8 +118,7 @@ try_shared_from_move :: proc(
 ) -> Result(Shared(T), Allocator_Error) {
 	raw := unsafe_try_new(Shared_Block(T){strong = 1, weak = 1, allocator = allocator}, allocator) or_return;
 	block := (^mut Shared_Block(T))(raw);
-	unsafe_write(block^.payload[0], move(value));
-	block^.live = 1;
+	unsafe_write(block^.payload, move(value));
 	return .ok(Shared(T){rawptr(block)});
 }
 
@@ -143,7 +141,7 @@ impl Shared($T) {
 	// borrows the caller's handle.
 	get :: proc(self: ^) -> ^T {
 		block := (^mut Shared_Block(T))(self.block);
-		return &block^.payload[0];
+		return unsafe_storage(&block^.payload);
 	}
 
 	/**
@@ -209,13 +207,11 @@ impl Shared($T) {
 		fence(Memory_Order.Acquire);
 		// Taking the payload out and dropping it is what drops it exactly once:
 		// the block itself outlives this whenever a weak handle still names it, so
-		// the payload cannot be destroyed by freeing the block. The block stops
-		// claiming a value first, because the drop hook can panic, and the strong
-		// group's weak reference is given back by a `defer`, so a panicking hook
-		// still returns the block to its allocator during the unwind (design.md
-		// "What the unwind runs, and what it does not").
-		block^.live = 0;
-		retired := unsafe_take(block^.payload[0]);
+		// the payload cannot be destroyed by freeing the block. The strong group's
+		// weak reference is given back by a `defer`, so a panicking hook still
+		// returns the block to its allocator during the unwind (design.md "What
+		// the unwind runs, and what it does not").
+		retired := unsafe_take(block^.payload);
 		defer release_block(block, block^.allocator);
 		drop(retired);
 	}

@@ -1,18 +1,18 @@
 16
-2
 14
 5
-8
-0
+true true 0
+Unsigned_Int 1
 0 0
 0 0
 false false true 999999
-3
-1 1
-16 3
-left 2 0 1
-right 2 1 1
-neither 2 2 0
-23 8 0 1
+Enum true Signed_Int
+16 true Unsigned_Int
+Union true true 0
+Proc true true 0
+Map true 2
+Slice []string_view String_View
+Array 3 Pointer 2
+23 8 1
 23 1
-5 64
+5 8

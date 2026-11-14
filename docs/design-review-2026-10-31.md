@@ -8,7 +8,7 @@ compatibility is not a constraint. Each proposal says what it would cost, so
 that it can be judged on its merits for a general-purpose language and not by
 how often the repository happens to use what it removes.
 
-This file holds only what is still open, as it stands on 2026-11-11 after
+This file holds only what is still open, as it stands on 2026-11-14 after
 several passes over the proposals and reviews of the steps taken. Proposals
 that landed are described by the specification, [CHANGELOG.md](../CHANGELOG.md),
 and [comments.md](comments.md); earlier drafts and their reasoning are in git.
@@ -31,7 +31,7 @@ no specified behavior are in the
 
 Loke's individual decisions are well argued, and comments.md records the
 argument for nearly every one. The problem is the sum: a specification of about
-11,700 lines with 30 attributes, 21 implicit conversions, and 16 contextual
+11,700 lines with 29 attributes, 21 implicit conversions, and 16 contextual
 keywords. The pairs that said one thing twice, such as `Status` beside
 `Result(Unit, E)` and `any_view` beside `dyn`, are gone. The pairs that remain
 differ in ways that matter ([The shape of the
@@ -43,16 +43,14 @@ is independent of the others unless noted.
 
 | Step | Proposal | Removes | Loses | Verdict |
 | --- | --- | --- | --- | --- |
-| 1 | [`Uninit(T)` in place of `@(initialized)`](#uninitt-in-place-of-initialized) | An attribute, its count check in every generated operation, the `live` fields, one unchecked syntax form | `Small_Array`'s generated copy, drop, `==`, `hash`, and `format` | Recommended |
-| 1 | [Runtime reflection describes shape](#runtime-reflection-describes-shape) | `Member_Info`, `Member_Kind`, `bits`, `signed` | Run-time member tables, including a procedure type's parameters and result | Recommended |
-| 2 | [Mutable slicing as `a[mut lo:hi]`](#mutable-slicing-as-amut-lohi) | The `&mut`-before-slice grammar rule | The resemblance to `&mut x` | Recommended; needs `lokec -migrate` |
-| 2 | [Reserve `static` and `thread_local`](#reserve-static-and-thread_local) | A four-case disambiguation rule | Those two words as names | Recommended; needs `lokec -migrate` |
-| 3 | [Predeclare the interface catalogue](#predeclare-the-interface-catalogue) | `interfaces.` in every bound | Nothing; the names stay shadowable | Recommended |
-| 3 | [`some I`](#some-i-the-static-twin-of-dyn-i), after the catalogue | The longest repeated `where` clause | One more contextual keyword; a generic procedure without a `$` | Judgment call, judged after the catalogue |
-| 4 | [Alias facts as scoped metadata](#alias-facts-from-the-one-rule) | Reloads and runtime overlap checks | Nothing, if the borrow checker is sound | Measure first |
-| 5 | [Narrow the splat](#the-splat-of-a-typed-scalar) | One conversion and two exceptions | A typed scalar as a vector argument, initializer, or result | Weakest; an exchange of rules |
-| 6 | [Delete success returns](#success-returns) | A rule that decides by syntactic form | Four characters per return | Judgment call; this review would delete |
-| 7 | [Fold `inout` into `^mut T`](#inout-and-mut-t) | A parameter mode and a receiver form | The marker on every mutated argument; carets on scalar writes | Judgment call; leaning against |
+| 1 | [Mutable slicing as `a[mut lo:hi]`](#mutable-slicing-as-amut-lohi) | The `&mut`-before-slice grammar rule | The resemblance to `&mut x` | Recommended; needs `lokec -migrate` |
+| 1 | [Reserve `static` and `thread_local`](#reserve-static-and-thread_local) | A four-case disambiguation rule | Those two words as names | Recommended; needs `lokec -migrate` |
+| 2 | [Predeclare the interface catalogue](#predeclare-the-interface-catalogue) | `interfaces.` in every bound | Nothing; the names stay shadowable | Recommended |
+| 2 | [`some I`](#some-i-the-static-twin-of-dyn-i), after the catalogue | The longest repeated `where` clause | One more contextual keyword; a generic procedure without a `$` | Judgment call, judged after the catalogue |
+| 3 | [Alias facts as scoped metadata](#alias-facts-from-the-one-rule) | Reloads and runtime overlap checks | Nothing, if the borrow checker is sound | Measure first |
+| 4 | [Narrow the splat](#the-splat-of-a-typed-scalar) | One conversion and two exceptions | A typed scalar as a vector argument, initializer, or result | Weakest; an exchange of rules |
+| 5 | [Delete success returns](#success-returns) | A rule that decides by syntactic form | Four characters per return | Judgment call; this review would delete |
+| 6 | [Fold `inout` into `^mut T`](#inout-and-mut-t) | A parameter mode and a receiver form | The marker on every mutated argument; carets on scalar writes | Judgment call; leaning against |
 
 One finding is independent of any proposal: the standard library attaches
 provenance to a rebuilt pointer by calling through a plain procedure type, using
@@ -71,7 +69,7 @@ An inventory, counted from design.md and grammar.md on 2026-11-11:
 | --- | --- | --- |
 | Reserved words | 32 | [Keywords](grammar.md#keywords) |
 | Contextual keywords, each with a disambiguation rule | 16 | [Keywords](grammar.md#keywords) |
-| Attributes | 30 | [Attribute categories](design.md#attribute-categories) |
+| Attributes | 29 | [Attribute categories](design.md#attribute-categories) |
 | Implicit conversions | 21 | [Implicit type conversions](design.md#implicit-type-conversions) |
 | Spellings of a sum type | 3 | `enum`, `union`, `(a: A \| b: B)` |
 | Spellings of a product type | 3 | `struct`, `(a: A, b: B)`, `(A, B)` |
@@ -113,73 +111,6 @@ two spellings. The places left are not that:
   construction with an allocator does not ([Not recommended](#not-recommended)).
 
 ## Recommended
-
-### `Uninit(T)` in place of `@(initialized)`
-
-[Uninitialized capacity](design.md#uninitialized-capacity) couples a fixed
-array field to a sibling `int` by attribute, so that the generated copy, drop,
-equality, and formatting visit a counted prefix. Its uses show that the
-language has one need, storage for a `T` that may hold no value, and that the
-attribute meets it in only one shape:
-
-- `Small_Array` is the only declaration that counts a prefix.
-- `Ring_Slot` in `core:thread`, the thread `Start` block, and `Shared_Block` in
-  `base:runtime` each write `@(initialized = live) item: [1]T, live: int`: a
-  one-element array and a count of 0 or 1, to say that one slot may be empty.
-  The `live` word is redundant beside a strong count or a pair of ring indices.
-- `Deque` cannot use the attribute, since its live elements wrap, and holds
-  them in the capacity of a dynamic array whose length stays zero.
-
-**Proposal.** A type `Uninit(T)`, like Rust's `MaybeUninit`: storage of `T`'s
-size and alignment that holds no value, written and read only through
-`unsafe.write` and `unsafe.take`. A container holds `items: [N]Uninit(T)` and
-writes its own hooks. Three rules make it sound:
-
-- It is copyable only where `T` has a trivial lifecycle. Otherwise a record
-  holding `[N]Uninit(string)` would copy its owners bit for bit and release them
-  twice; such a record has no generated copy and says how it is copied, by the
-  rule that [a record with a drop hook says
-  so](design.md#lifecycle-hooks-and-resource-types).
-- Its drop does nothing.
-- It carries what `T` borrows and the regions `T` is in, so a stored borrow
-  stays tracked. That is why `Deque` could not hold a `[^]T` instead.
-
-**What it removes.** The attribute, its count check in every generated
-operation, the `live` fields, and one of the five unchecked syntax forms of
-[The `unsafe` package](design.md#the-unsafe-package), since writing, taking,
-and viewing initialized slots become named operations on a type. It also serves
-an inline hash set or ring.
-
-**What is lost.** `Small_Array` writes five members by hand, `hook(copy)`,
-`hook(drop)`, `==`, `hash`, and `format`, each a loop over a view of the live
-prefix, with the copy's cleanup in an `errdefer`. That is one type's
-convenience against an attribute every reader of a record must know.
-
-### Runtime reflection describes shape
-
-`runtime.Type_Info` carries a `members` table of fields, enum values, union
-variants, and a procedure type's parameters and result. Since `any_view` was
-deleted, no value carries a `typeid`: every `typeid` was written as
-`typeid_of(T)` where `T` was known, and there `fields_of`, `enum_values_of`, and
-`variants_of` give the same members with their types usable. A table reached
-from an id alone serves only code that kept the id and discarded the type, such
-as a registry, and a registry is filled by a call that has the type. Printing
-does not read the table: the printers call each view's `format` slot.
-
-**Proposal.** Keep `id`, `kind`, `name`, `size`, `align`, `element`, `key`, and
-`count`, which printing a `typeid` and sizing erased storage need. Delete
-`members`, `Member_Info`, and `Member_Kind`, and with them `bits` and `signed`,
-which `kind` and `size` already say for an integer. State that runtime
-reflection describes shape, not members. [`type` and
-`typeid`](design.md#type-and-typeid) fixes the table's layout in the runtime
-ABI, so the change shrinks that too. `type_info_of` itself stays: `fmt` prints a
-`typeid` by its name, which only a table by id supplies.
-
-**What is lost.** The only reflection of a procedure type's parameter and result
-types, which comments.md
-["Reflection beyond fields and enum values"](comments.md#reflection-beyond-fields-and-enum-values)
-says no tool has needed. A serializer that needs run-time member tables can
-build them from `fields_of` in a static `foreach`.
 
 ### Mutable slicing as `a[mut lo:hi]`
 
@@ -540,7 +471,7 @@ parallel numeric kernel before deciding.
 The [unsafe boundary](design.md#the-unsafe-package) is a file import: once a
 file imports `core:unsafe`, every unchecked pointer conversion and C-pointer
 access in it is permitted, not only the one that needed it. Most unchecked
-operations are named at their use (`unsafe.raw_data`, `unsafe.take`); five
+operations are named at their use (`unsafe.raw_data`, `unsafe.take`); four
 syntax forms are the exception. The review proposed two changes, and neither is
 recommended as written:
 
@@ -548,11 +479,11 @@ recommended as written:
   meaning that its caller owes a stated precondition. Its one use that the file
   import cannot serve is a caller-owed precondition, and no library exports one;
   the files that import `core:unsafe` are mostly OS wrappers that would wrap
-  nearly every procedure. The smaller step is to shrink what the import
-  licenses. `Uninit(T)` turns the `@(initialized)` field into named operations,
-  leaving three pointer forms and `x: T = ---`, each of which shows a C pointer,
-  a `rawptr`, or `---` at its use. A file-wide permission over four forms that
-  are visible where they occur is close to what the block would give.
+  nearly every procedure. The smaller step was to shrink what the import
+  licenses, and `Uninit(T)` took it: the import now licenses three pointer forms
+  and `x: T = ---`, each of which shows a C pointer, a `rawptr`, or `---` at its
+  use. A file-wide permission over four forms that are visible where they occur
+  is close to what the block would give.
 - *Raw pointer constness*, `[^]T` for read-only foreign access and `[^]mut T`
   for writing. `^T` and `^mut T` are already foreign-ABI-safe and lower to C
   pointers, with `Option` for a nullable one
