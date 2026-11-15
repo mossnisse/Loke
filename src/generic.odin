@@ -1761,63 +1761,10 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		}
 		for entry in names {
 			position += 1
-			// A `$` parameter's type and default may name what is bound so far.
-			if entry.is_poly {
-				bind_constants(k, &walk)
-			}
-			index, found := claim_argument(args, entry.name.id, &walk.next, walk.claimed)
-			if !found {
-				if parameter.default == nil {
-					return refuse(k, &result, "it needs more arguments than were supplied")
-				}
-				// An omitted `$` default is bound, since it selects the instance.
-				if !entry.is_poly {
-					continue
-				}
-				result.compile_omitted += 1
-				result.reason = bind_default_compile_time_argument(k, entry.name, parameter.default, parameter.type, scope, &walk.bindings)
-				if result.reason != "" {
-					return result
-				}
-				continue
-			}
-			arg := args[index]
-			if arg.waiting {
-				// A `$` argument selects the instance, so it cannot wait for one.
-				if entry.is_poly {
-					return refuse(
-						k, &result, "argument %d needs its parameter's type, which the `$` parameter `%s` does not give",
-						index + 1, entry.name.text,
-					)
-				}
-				append(&walk.waits, Waiting_Argument{index, parameter.type, entry.name.text})
-				continue
-			}
-			if !entry.is_poly {
-				// An ordinary runtime parameter, whose written type may still be a
-				// pattern binding parts of the argument's type.
-				if hold_unfixed_constant(k, &walk, parameter.type, arg) {
-					continue
-				}
-				if !match_type_pattern(k, parameter.type, arg.type, scope, &walk.bindings) &&
-				   !match_array_as_view(k, parameter.type, arg.type, scope, &walk.bindings) {
-					if arg.type == TYPE_UNTYPED_NIL {
-						return refuse(k, &result, "`nil` has no type to infer parameter %d from", position)
-					}
-					return refuse(k, &result, "`%s` does not match the shape of parameter %d", type_name(k.c, arg.type), position)
-				}
-				continue
-			}
-			result.compile_time[index] = true
-			wanted: Type_Id
-			wanted, result.reason = poly_parameter_type(k, parameter.type, arg.type, scope, &walk.bindings)
-			if result.reason == "" {
-				result.reason = bind_compile_time_argument(k, entry.name, arg, wanted, scope, &walk.bindings)
-			}
+			result.reason = infer_parameter_argument(k, &walk, &result, parameter, entry, position)
 			if result.reason != "" {
 				return result
 			}
-			result.compile_targets[index] = wanted != INVALID_TYPE ? wanted : default_type(k.c, arg.type)
 		}
 	}
 	for _, index in args {
@@ -1845,6 +1792,68 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	result.runtime_args = runtime_args[:]
 	result.ok = true
 	return result
+}
+
+// The argument one named parameter claims, matched against its written type or
+// bound to its `$` name, or an omitted `$` parameter's default bound. Why not, or
+// empty.
+@(private = "file")
+infer_parameter_argument :: proc(
+	k: ^Checker, walk: ^Inference_Walk, result: ^Inference, parameter: Parameter, entry: Param_Name, position: int,
+) -> string {
+	// A `$` parameter's type and default may name what is bound so far.
+	if entry.is_poly {
+		bind_constants(k, walk)
+	}
+	index, found := claim_argument(walk.args, entry.name.id, &walk.next, walk.claimed)
+	if !found {
+		if parameter.default == nil {
+			return "it needs more arguments than were supplied"
+		}
+		// An omitted `$` default is bound, since it selects the instance.
+		if !entry.is_poly {
+			return ""
+		}
+		result.compile_omitted += 1
+		return bind_default_compile_time_argument(k, entry.name, parameter.default, parameter.type, walk.scope, &walk.bindings)
+	}
+	arg := walk.args[index]
+	if arg.waiting {
+		// A `$` argument selects the instance, so it cannot wait for one.
+		if entry.is_poly {
+			return fmt.aprintf(
+				"argument %d needs its parameter's type, which the `$` parameter `%s` does not give",
+				index + 1, entry.name.text, allocator = k.c.semantic_allocator,
+			)
+		}
+		append(&walk.waits, Waiting_Argument{index, parameter.type, entry.name.text})
+		return ""
+	}
+	if !entry.is_poly {
+		// An ordinary runtime parameter, whose written type may still be a
+		// pattern binding parts of the argument's type.
+		if hold_unfixed_constant(k, walk, parameter.type, arg) ||
+		   match_type_pattern(k, parameter.type, arg.type, walk.scope, &walk.bindings) ||
+		   match_array_as_view(k, parameter.type, arg.type, walk.scope, &walk.bindings) {
+			return ""
+		}
+		if arg.type == TYPE_UNTYPED_NIL {
+			return fmt.aprintf("`nil` has no type to infer parameter %d from", position, allocator = k.c.semantic_allocator)
+		}
+		return fmt.aprintf(
+			"`%s` does not match the shape of parameter %d", type_name(k.c, arg.type), position,
+			allocator = k.c.semantic_allocator,
+		)
+	}
+	result.compile_time[index] = true
+	wanted, reason := poly_parameter_type(k, parameter.type, arg.type, walk.scope, &walk.bindings)
+	if reason == "" {
+		reason = bind_compile_time_argument(k, entry.name, arg, wanted, walk.scope, &walk.bindings)
+	}
+	if reason == "" {
+		result.compile_targets[index] = wanted != INVALID_TYPE ? wanted : default_type(k.c, arg.type)
+	}
+	return reason
 }
 
 // The rest of the arguments, into a variadic pack. A pattern in the element type

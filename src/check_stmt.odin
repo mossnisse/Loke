@@ -1194,25 +1194,7 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 	}
 	if s.value == nil {
 		if k.result_type != INVALID_TYPE {
-			errorf(
-				k.c, s.span, "L0326",
-				"this procedure returns `%s`, so `return` needs a value; a result is anonymous and has no local to fill",
-				type_name(k.c, k.result_type),
-			)
-			if shape, fallible := fallible_of(k.c, k.result_type); fallible && !k.result_inout {
-				name := union_variant_name(k.c, k.result_type, shape.success)
-				if shape.success_type == k.c.unit_type {
-					add_notef(
-						k.c, s.span, "`.%s` carries `Unit` here only through a generic argument, so `return;` cannot build it; write `return .%s;`",
-						name, name,
-					)
-				} else {
-					add_notef(
-						k.c, s.span, "only a success that carries nothing or `Unit`, as `Status(E)`'s does, returns with `return;`; write `return .%s(value);`",
-						name,
-					)
-				}
-			}
+			report_missing_return_value(k, s.span)
 		}
 		return terminated
 	}
@@ -1270,6 +1252,31 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		classify_return_value(k, value, k.result_type)
 	}
 	return terminated
+}
+
+@(private = "file")
+report_missing_return_value :: proc(k: ^Checker, span: Span) {
+	errorf(
+		k.c, span, "L0326",
+		"this procedure returns `%s`, so `return` needs a value; a result is anonymous and has no local to fill",
+		type_name(k.c, k.result_type),
+	)
+	shape, fallible := fallible_of(k.c, k.result_type)
+	if !fallible || k.result_inout {
+		return
+	}
+	name := union_variant_name(k.c, k.result_type, shape.success)
+	if shape.success_type == k.c.unit_type {
+		add_notef(
+			k.c, span, "`.%s` carries `Unit` here only through a generic argument, so `return;` cannot build it; write `return .%s;`",
+			name, name,
+		)
+	} else {
+		add_notef(
+			k.c, span, "only a success that carries nothing or `Unit`, as `Status(E)`'s does, returns with `return;`; write `return .%s(value);`",
+			name,
+		)
+	}
 }
 
 @(private = "file")
