@@ -60,6 +60,29 @@ same_binding :: proc(session: ^lokec.Compilation_Session, handle: lokec.Symbol_H
 @(private = "file")
 Found_Location :: struct { key, path: string, lo: u32, range: Range }
 
+// Whether the location, by path key and offset, is new to `seen`, which marks it.
+@(private = "file")
+first_sighting :: proc(seen: ^map[string]bool, key: string, lo: u32) -> bool {
+	identity := fmt.tprintf("%s\x00%d", key, lo)
+	if seen[identity] { return false }
+	seen[identity] = true
+	return true
+}
+
+@(private = "file")
+sort_locations :: proc(locations: []Found_Location) {
+	slice.sort_by(locations, proc(a, b: Found_Location) -> bool {
+		if a.key != b.key { return a.key < b.key }
+		return a.lo < b.lo
+	})
+}
+
+// "path:line", one-based, for a refusal.
+@(private = "file")
+written_at :: proc(source: lokec.Query_Source, offset: u32) -> string {
+	return fmt.tprintf("%s:%d", source.path, offset_to_position(source.text, source.line_starts, offset, true).line + 1)
+}
+
 // Every recorded use of the binding, in every root, once each and in order.
 references :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file: u32, text: string, position: Position, include_declaration: bool) -> string {
 	target, found := find_target(s, session, snapshot, file, text, position)
@@ -76,10 +99,9 @@ references :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 			path, range, placed := place(s, &root.session, root_snapshot, use, context.temp_allocator)
 			if !placed { continue }
 			key := lokec.dir_key(path)
-			identity := fmt.tprintf("%s\x00%d", key, use.span.lo)
-			if seen[identity] { continue }
-			seen[identity] = true
-			append(&locations, Found_Location{key, path, use.span.lo, range})
+			if first_sighting(&seen, key, use.span.lo) {
+				append(&locations, Found_Location{key, path, use.span.lo, range})
+			}
 		}
 	}
 	sort_locations(locations[:])
@@ -91,14 +113,6 @@ references :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 	}
 	strings.write_byte(&b, ']')
 	return strings.to_string(b)
-}
-
-@(private = "file")
-sort_locations :: proc(locations: []Found_Location) {
-	slice.sort_by(locations, proc(a, b: Found_Location) -> bool {
-		if a.key != b.key { return a.key < b.key }
-		return a.lo < b.lo
-	})
 }
 
 // The name's range and spelling, when a rename could start here.
@@ -137,8 +151,6 @@ renameable :: proc(s: ^Server, target: Target) -> string {
 	return ""
 }
 
-@(private = "file")
-Edit :: struct { key, path: string, lo: u32, range: Range }
 
 // One rename request: what each root's program is checked against, and the
 // edits found so far.
@@ -151,7 +163,7 @@ Renaming :: struct {
 	// a value or type, so scope cannot capture them; their type's other
 	// members can.
 	member:        bool,
-	edits:         [dynamic]Edit,
+	edits:         [dynamic]Found_Location,
 	seen:          map[string]bool,
 	// Each source's tokens by path key, so a package several roots load is
 	// lexed and parsed once.
@@ -182,7 +194,7 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	}
 	r := Renaming {
 		s = s, target = target, old = old, new_name = new_name, member = member,
-		edits = make([dynamic]Edit, context.temp_allocator),
+		edits = make([dynamic]Found_Location, context.temp_allocator),
 		seen = make(map[string]bool, context.temp_allocator),
 		parsed = make(map[string]Parsed_Source, context.temp_allocator),
 	}
@@ -190,11 +202,13 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	for _, root in s.roots {
 		if failure = rename_in_root(&r, root); failure != "" { return }
 	}
-	edits := r.edits[:]
-	slice.sort_by(edits, proc(a, b: Edit) -> bool {
-		if a.key != b.key { return a.key < b.key }
-		return a.lo < b.lo
-	})
+	sort_locations(r.edits[:])
+	return workspace_edit(s, r.edits[:], new_name), ""
+}
+
+// `{"changes":{uri:[edit,...],...}}`, with `edits` sorted by file.
+@(private = "file")
+workspace_edit :: proc(s: ^Server, edits: []Found_Location, new_name: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `{"changes":{`)
 	for edit, index in edits {
@@ -213,7 +227,7 @@ rename :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.
 	}
 	if len(edits) > 0 { strings.write_byte(&b, ']') }
 	strings.write_string(&b, "}}")
-	return strings.to_string(b), ""
+	return strings.to_string(b)
 }
 
 // Checks the rename against one root's program and adds the edits its
@@ -243,7 +257,7 @@ program_error :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compi
 		if diagnostic.severity != .Error { continue }
 		at := ""
 		if source, placed := lokec.query_source(session, snapshot, diagnostic.location.span.file); placed {
-			at = fmt.tprintf(" (%s:%d)", source.path, offset_to_position(source.text, source.line_starts, diagnostic.location.span.lo, true).line + 1)
+			at = fmt.tprintf(" (%s)", written_at(source, diagnostic.location.span.lo))
 		}
 		return fmt.tprintf("Rename needs every program that loads the binding to check without errors first: %s%s", first_line(diagnostic.message), at)
 	}
@@ -260,10 +274,8 @@ binding_refusal :: proc(r: ^Renaming, session: ^lokec.Compilation_Session, snaps
 	uses, _ := lokec.query_references(session, handle)
 	defer delete(uses)
 	for use in uses {
-		source, _ := lokec.query_source(session, snapshot, use.span.file)
-		if source.bundled {
-			line := offset_to_position(source.text, source.line_starts, use.span.lo, true).line + 1
-			return fmt.tprintf("`%s` is used by the library bundled with the compiler, at %s:%d.", r.old, source.path, line)
+		if source, _ := lokec.query_source(session, snapshot, use.span.file); source.bundled {
+			return fmt.tprintf("`%s` is used by the library bundled with the compiler, at %s.", r.old, written_at(source, use.span.lo))
 		}
 	}
 	if !r.member { return "" }
@@ -318,7 +330,7 @@ rename_in_source :: proc(r: ^Renaming, rs: ^lokec.Compilation_Session, snapshot:
 		if index > 0 && (tokens[index - 1].kind == .Package || tokens[index - 1].kind == .Import) { continue }
 		at, recorded := lokec.query_at(rs, snapshot, source_file, token.lo)
 		resolved := recorded && at.symbol.id != lokec.INVALID_SYMBOL
-		where_written := fmt.tprintf("%s:%d", source.path, offset_to_position(source.text, source.line_starts, token.lo, true).line + 1)
+		where_written := written_at(source, token.lo)
 		if word == old {
 			if !resolved {
 				return fmt.tprintf("`%s` at %s has no binding the compiler recorded, as in an inactive `when` branch, a generic that is never instantiated, or an interface slot, so rename cannot tell what it names.", old, where_written)
@@ -336,31 +348,15 @@ rename_in_source :: proc(r: ^Renaming, rs: ^lokec.Compilation_Session, snapshot:
 					return fmt.tprintf("`%s` already names %s where `%s` appears, at %s.", new_name, describe(rs, other), old, where_written)
 				}
 			}
-			// design.md "Methods and implementation blocks": the operand's fields
-			// and methods share one lookup. The operand is the
-			// selector's own, not whatever ends at the token before the `.`: in
-			// `(outer).old` that is a `)`. A `.Member` with no operand takes its
-			// type from context.
+			// The operand is the selector's own, not whatever ends at the token
+			// before the `.`: in `(outer).old` that is a `)`. A `.Member` with no
+			// operand takes its type from context.
 			if member && qualified && index >= 2 && ends_operand(tokens[index - 2].kind) {
-				operand, typed := lokec.query_selector_operand(rs, snapshot, source_file, token.lo)
-				if !typed {
-					return fmt.tprintf("At %s, rename cannot tell what `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
-				}
-				members, listed := lokec.query_members(rs, operand, source_file, context.temp_allocator)
-				if !listed {
-					return fmt.tprintf("At %s, rename cannot list the members `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, old, new_name)
-				}
-				for candidate in members {
-					if candidate.name == new_name {
-						return fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, new_name, new_name)
-					}
-				}
+				if failure := selection_conflict(r, rs, snapshot, source_file, token.lo, where_written); failure != "" { return failure }
 			}
-			identity := fmt.tprintf("%s\x00%d", key, token.lo)
-			if r.seen[identity] { continue }
-			r.seen[identity] = true
+			if !first_sighting(&r.seen, key, token.lo) { continue }
 			path, range, _ := place(r.s, rs, snapshot, at.location, context.temp_allocator)
-			append(&r.edits, Edit{lokec.dir_key(path), path, token.lo, range})
+			append(&r.edits, Found_Location{lokec.dir_key(path), path, token.lo, range})
 			append(&edited, token.lo)
 		} else if !member && resolved && same {
 			if conflict := local_conflict(rs, snapshot, source_file, at, handle, target); conflict != "" {
@@ -369,8 +365,28 @@ rename_in_source :: proc(r: ^Renaming, rs: ^lokec.Compilation_Session, snapshot:
 		}
 	}
 	if at, keyword := reads_as_keyword(source.text, edited[:], old, new_name); keyword {
-		line := offset_to_position(source.text, source.line_starts, at, true).line + 1
-		return fmt.tprintf("At %s:%d, `%s` would be read as a keyword there, not as the renamed name.", source.path, line, new_name)
+		return fmt.tprintf("At %s, `%s` would be read as a keyword there, not as the renamed name.", written_at(source, at), new_name)
+	}
+	return ""
+}
+
+// Why `.new_name` would select something else from the operand of the selector
+// at the offset, or "". design.md "Methods and implementation blocks": the
+// operand's fields and methods share one lookup.
+@(private = "file")
+selection_conflict :: proc(r: ^Renaming, rs: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file, offset: u32, where_written: string) -> string {
+	operand, typed := lokec.query_selector_operand(rs, snapshot, file, offset)
+	if !typed {
+		return fmt.tprintf("At %s, rename cannot tell what `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, r.old, r.new_name)
+	}
+	members, listed := lokec.query_members(rs, operand, file, context.temp_allocator)
+	if !listed {
+		return fmt.tprintf("At %s, rename cannot list the members `.%s` is selected from, so it cannot check what `.%s` would select.", where_written, r.old, r.new_name)
+	}
+	for candidate in members {
+		if candidate.name == r.new_name {
+			return fmt.tprintf("At %s, `.%s` would select the existing member `%s` instead.", where_written, r.new_name, r.new_name)
+		}
 	}
 	return ""
 }
@@ -501,6 +517,5 @@ describe :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_Symbol
 	if definition.file == lokec.NO_FILE { return fmt.tprintf("the predeclared `%s`", symbol.name) }
 	source, found := lokec.query_source(session, lokec.Compilation_Snapshot{symbol.definition.snapshot}, definition.file)
 	if !found { return fmt.tprintf("`%s`", symbol.name) }
-	line := offset_to_position(source.text, source.line_starts, definition.lo, true).line + 1
-	return fmt.tprintf("`%s` declared at %s:%d", symbol.name, source.path, line)
+	return fmt.tprintf("`%s` declared at %s", symbol.name, written_at(source, definition.lo))
 }
