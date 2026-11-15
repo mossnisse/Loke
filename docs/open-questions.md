@@ -893,10 +893,26 @@ bits. The checked operators panic on overflow
 keeps the optimizer from vectorizing the loop, even where the induction
 variable and the bound make an overflow impossible. A library kernel can write
 the wrapping operators once it has checked its extents. A program's own
-two-dimensional loop over a slice pays the cost, and bounds checks add to it.
-Open: whether the compiler should prove the common shapes overflow-free (an
-index affine in loop variables whose ranges are known before the loop), or
-whether a checked-once form of indexing belongs in the language.
+two-dimensional loop over a slice pays the cost.
+
+Measured again on 2026-11-15 over slices
+([Checked arithmetic and bounds in loops](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops)):
+`hand_multiply` in `bench/dense.loke` runs 3.8 times slower with `i + j*n`
+than with `i +% j*%n`. Bounds checks add nothing to it, since the optimizer
+vectorizes with them in place. The checked `+` in `xs[i + offset]` is the
+cause, and at `-opt=speed` so is a checked `*` that does not vary in the
+inner loop. A program avoids both with every check kept by slicing once and
+indexing from zero: `column := out[mut j*n : j*n + n]`, then `column[i]`,
+which runs as fast as the wrapping form. That is a checked-once form of
+indexing, and the language already has it.
+
+Open: whether the direct form should be made as fast. The cheapest candidate
+lets the bounds check stand in for the overflow check of an index addition
+with a non-negative operand, which needs no loop analysis. Proving the common
+shapes overflow-free (an index affine in loop variables whose ranges are
+known before the loop) does not reach `hand_multiply`, where nothing bounds
+`n` before the loops; versioning the loop would, at the cost of a second copy
+of it.
 
 ### Slots through a record's bound
 

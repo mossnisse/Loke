@@ -73,8 +73,9 @@ Checked `+`, `-`, `*` lower to `llvm.*.with.overflow` plus a branch, weighted
 unlikely, to a call of the `cold noreturn` panic entry. The measured cost is
 in [Overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic):
 3.5 to 5.7 times on a column-major product, because the branch per element
-blocks vectorization. Three steps keep the semantics and remove most of the
-cost:
+blocks vectorization.
+
+**The original proposal** was three steps that keep the semantics:
 
 - **Find out why LLVM does not already remove the checks.** It folds an
   overflow intrinsic whose operands it can bound (IndVarSimplify through
@@ -104,6 +105,55 @@ cost:
   but not for overflow intrinsics, so it is the compiler's to do, at the cost
   of a second copy of the loop.
 
+**What the first step found** (2026-11-15,
+[Probes](#probes)) changes the other two:
+
+- **Bounds checks do not block vectorization.** LLVM removes the check on
+  `xs[i]` in a loop over `0 ..< xs.len()`. Where the bound is a separate `n`,
+  or a second slice is indexed, it vectorizes up to the smallest of the bounds
+  and leaves the panic to the scalar remainder. The slice header is one value
+  at each access, so a reassigned slice is handled without the emitter
+  tracking anything. The bounds half of the range-facts step, and the
+  invalidation it needs, would buy nothing.
+- **The checked addition in `xs[i + offset]` blocks it**, even when `offset`
+  is computed before the loop. Nothing bounds `offset`, so LLVM cannot fold the
+  intrinsic, and it takes no trip count from an overflow bit.
+- **A checked multiplication invariant in the inner loop**, the `j*n` of
+  `xs[i + j*n]`, blocks it at `-opt=speed` and not at `-opt=aggressive`. LLVM
+  hoists the multiplication but leaves the branch on its overflow bit in the
+  loop, behind an earlier bounds check, and unswitches that only at `-O3`. The
+  multiplication is half of the obstacle, not the whole of it as the first
+  step guessed.
+- **The range facts as described do not reach the measured kernel.**
+  `hand_multiply` in `bench/dense.loke` takes `n` as a parameter and never
+  computes `n*n`, so no fact available before its loops bounds `i + j*n`. Only
+  loop versioning would cover it.
+- **A program can already write the fast form with every check kept**: slice
+  once and index from zero, `column := out[mut j*n : j*n + n]` and then
+  `column[i]`. The checked arithmetic runs once per column, and the loop is
+  the first case above.
+
+At `-opt=speed`, the same work takes 134 ms as written, 36 ms with wrapping
+index arithmetic, and 33 ms with each column sliced once.
+
+**What is recommended instead**, cheapest first:
+
+1. Teach the slice-once form where users will find it. It needs no compiler
+   change.
+2. Let the bounds check stand in for the addition's overflow check. In
+   `xs[a + b]` where one operand is known non-negative (a range binding whose
+   start is non-negative, a length, a non-negative constant), the sum can
+   overflow only upward, and the wrapped sum is then negative and fails the
+   unsigned bounds comparison. So the emitter can add without a check, and
+   test for overflow only in the cold block the bounds comparison already
+   branches to, to choose between the two panic messages. This needs no loop
+   analysis, no invalidation, and no second copy of a loop. It is not
+   implemented; the probe's `+%` row stands for it, and shows it reaching full
+   speed at `-opt=aggressive` and, at `-opt=speed`, only once the invariant
+   multiplication is also written before the loop.
+3. Leave range facts for arithmetic and loop versioning until a kernel is
+   measured that neither of those covers.
+
 ## Small values and the existing ABI
 
 The earlier claim that slices and `Option(^T)` need a new register-passing ABI
@@ -131,10 +181,10 @@ reduction, a separately named operation says so, for example
 
 ## Suggested order
 
-1. Range facts and loop versioning for checked arithmetic
-   ([Checked arithmetic and bounds in loops](#checked-arithmetic-and-bounds-in-loops)),
-   with bounds proofs that account for reassigned slices, aliases, and calls.
-   Then measure the dense kernels again.
+1. The index addition whose overflow check the bounds check covers
+   ([Checked arithmetic and bounds in loops](#checked-arithmetic-and-bounds-in-loops)).
+   Then measure the dense kernels again. Range facts and loop versioning, which
+   stood here, wait for a kernel that this and slicing once do not cover.
 
 The language review's [alias proposal](design-review-2026-10-31.md#alias-facts-from-the-one-rule)
 would be measured after that, once its language and correctness prerequisites
@@ -166,7 +216,45 @@ and measurements are retained from that review, except the last entry's.
 
 The emitted-IR and reassigned-slice probes were run again on 2026-11-01 with
 `lokec.exe` built from the sources at `4173b622`. The register-passing
-observation is from 2026-10-31.
+observation is from 2026-10-31. The index-arithmetic probe is from 2026-11-15,
+at `b96b045f` with Clang 22.1.8.
+
+**Which checks block vectorization.** Each loop below was compiled as its own
+procedure with `-emit-ll` and optimized with `clang -O2`. `out` is a
+`[]mut f64`, `a` a `[]f64`, and every other name an `int` parameter.
+
+| Loop | Checks left | Vectorized |
+| --- | --- | --- |
+| `i in 0 ..< out.len()`: `out[i] = out[i]*f` | none | yes |
+| `i in 0 ..< out.len()`: `out[i] = out[i] + a[i]*f` | bounds on `a`, in the scalar remainder | yes |
+| `i in 0 ..< n`: `out[i] = out[i] + a[i]*f` | both bounds, in the scalar remainder | yes |
+| `i in 0 ..< n`: `out[i + j*n] = out[i + j*n] + a[i + k*n]*f` | bounds and checked arithmetic | no |
+| the same, with `j*n` and `k*n` computed before the loop | bounds and two checked additions | no |
+| the same, with `+%` and `*%` | bounds | yes |
+| the same, over `out[mut j*n : j*n + n]` and `a[k*n : k*n + n]` taken before the loop | bounds | yes |
+| `c in 0 ..< columns`, inside `r in 0 ..< rows`: `out[r*columns + c] = 1.0` | bounds and checked arithmetic | no |
+
+**What they cost.** `hand_multiply` from `bench/dense.loke` in four forms,
+eight products of 256 by 256 matrices with `n` read at run time, in
+milliseconds, each the fastest of seven runs. The timings repeat to within a
+few milliseconds, and sizes of 64 and 512 give the same ratios at
+`-opt=speed`:
+
+| Form | `-opt=speed` | `-opt=speed -cpu=x86-64-v3` | `-opt=aggressive` |
+| --- | --- | --- | --- |
+| As written: `out[i + j*n]` | 134 | 118 | 119 |
+| Checked `*`, wrapping `+%` | 103 | 91 | 36 |
+| `+%` and `*%` | 36 | 37 | 35 |
+| Checked, each column sliced once | 33 | 32 | 35 |
+
+`bench/dense.loke` run with `-times` agrees: `Hand_Multiply 512` takes 134 ms,
+and `Multiply 512`, the library's kernel, 21 ms.
+
+One result is not explained. With `n` computed in the caller as
+`511 + os.args.len()` rather than `64*os.args.len()`, and the kernels
+inlined, the form as written ran as fast as the wrapping one, so LLVM can
+remove these checks from some fact about `n`. A test of `n <= 1 << 30` before
+the loops is not that fact: it changed nothing.
 
 **Emitted IR carries no alias attributes.** For
 
