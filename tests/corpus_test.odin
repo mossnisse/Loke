@@ -2917,7 +2917,7 @@ scratch_paths_leave_existing_data_alone :: proc(t: ^testing.T) {
 		testing.expectf(t, expected_err == nil, "%s: missing %s", c.source, c.expected)
 		for run in runs[2 * i:][:2] {
 			testing.expectf(t, run.err == nil && run.state.exit_code == 0, "%s: exited with %d\n%s", c.source, run.state.exit_code, string(run.stderr))
-			testing.expectf(t, normalise(string(run.stdout)) == normalise(string(expected)), "%s: expected %q, got %q", c.source, normalise(string(expected)), normalise(string(run.stdout)))
+			testing.expectf(t, normalise(string(run.stdout)) == normalise(string(expected)), "%s: expected %q, got %q\n%s", c.source, normalise(string(expected)), normalise(string(run.stdout)), string(run.stderr))
 		}
 		kept, kept_err := os.read_entire_file(sentinels[i], context.temp_allocator)
 		testing.expectf(t, kept_err == nil && string(kept) == "precious", "%s: did not leave %s alone", c.source, c.taken)
@@ -2995,10 +2995,11 @@ run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
 			testing.expectf(
 				t,
 				normalise(string(run.stdout)) == normalise(string(expected)),
-				"%s: expected %q, got %q",
+				"%s: expected %q, got %q\n%s",
 				c.path,
 				normalise(string(expected)),
 				normalise(string(run.stdout)),
+				string(run.stderr),
 			)
 		}
 

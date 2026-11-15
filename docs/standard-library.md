@@ -3456,7 +3456,10 @@ was made but could not be made durable, in which case it holds the new content.
 The data is first written and flushed to a new file in the target's directory,
 named `.replace-<process>-<attempt>.tmp` so that a target name of any valid
 length leaves room for it, and that file then takes the target's name; only a
-rename within one volume can be atomic. A failure removes
+rename within one volume can be atomic. Where the volume supports POSIX rename
+semantics, as NTFS does, another program holding the target open with delete
+sharing, as a virus scanner does, does not stop the switch; it goes on reading
+the previous file. A failure removes
 the temporary file, but a crash before the switch can leave it behind. Each
 call writes the whole file, so a program that keeps large state in several
 files replaces a small manifest naming them last.
@@ -3517,7 +3520,11 @@ The name is consumed before the next step, and `or_return` propagates errors.
 
 `rename` replaces an existing file at the new path. It refuses a move across
 volumes rather than copying, so a rename that succeeds is atomic, and on `.ok`
-it is durable as far as the device honors flush requests.
+it is durable as far as the device honors flush requests. Where the volume
+supports POSIX rename semantics, as NTFS does, a file replaces one that another
+program holds open with delete sharing, as
+[atomic replacement](#atomic-replacement) does. A directory never replaces a
+directory.
 
 `create_directories` succeeds when the path ends up naming a directory, so an
 existing directory and a volume root such as `C:\` are not failures, while an

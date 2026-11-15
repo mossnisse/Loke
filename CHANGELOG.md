@@ -2009,6 +2009,14 @@ checklist.
 
 ### Fixed
 
+- `fs.replace_atomic`, `fs.replace_atomic_text`, and `fs.rename` replace a
+  target file that another process holds open with delete sharing, as a virus
+  scanner or search indexer briefly does to a file just written
+  ([Atomic replacement](docs/standard-library.md#atomic-replacement)). The
+  rename failed then with `Permission_Denied`, intermittently. A file is now
+  renamed with POSIX semantics, falling back to the classic rename on a volume
+  or Windows version without them; a directory keeps the classic rename, so it
+  still never replaces a directory.
 - The quick and full test gates fail on unit-test leaks and bad frees, and reject a
   missing compiler tool instead of accepting a stale successful exit code.
 - Generated borrow and carrier-store matrices check compiler exit status and

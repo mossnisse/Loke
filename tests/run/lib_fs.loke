@@ -17,13 +17,16 @@ import "core:time";
 // nothing depends on the repository working directory or on a developer's machine,
 // and the directory is removed at the end.
 
-// Every `Status(io.Error)` below is only ever asked which variant it is.
+// Most `Status(io.Error)` results below are only asked which variant they are.
+// The error still goes to stderr, which the harness shows when the output
+// differs, so an unexpected failure names its cause.
 succeeded :: proc(outcome: Status(io.Error)) -> bool {
 	switch (outcome) {
 	case .ok:  return true;
-	case .err: return false;
+	case .err(error):
+		fmt.eprintln(error);
+		return false;
 	}
-	return false;
 }
 
 // And these want the failure itself.
@@ -280,9 +283,12 @@ main :: proc() {
 	fmt.println(count_entries(path.volume(directory)) or_else -1);
 	fmt.println(succeeded(os.set_working_directory(previous)));
 
-	// Renaming replaces an existing file.
+	// Renaming replaces an existing file, even one another program holds open,
+	// as a virus scanner or search indexer briefly holds a file just written.
 	fmt.println(succeeded(fs.write_text(file, "ersatt")));
+	held_target := fs.open_read(renamed) or_else panic("a file the test just wrote could not be opened");
 	fmt.println(succeeded(fs.rename(file, renamed)));
+	fmt.println(succeeded(held_target.close()));
 	fmt.println(fs.read_text(renamed) or_else panic("a file the test just wrote could not be read"));
 	fmt.println(fs.exists(file) or_else true);
 
@@ -321,6 +327,12 @@ main :: proc() {
 	case .err: fmt.println(false);
 	}
 	fmt.println((count_entries(directory) or_else -1) == before + 1);
+	// A target another program holds open, as a virus scanner or search indexer
+	// briefly holds a file just written, is replaced all the same.
+	held := fs.open_read(saved) or_else panic("a file the test just wrote could not be opened");
+	fmt.println(succeeded(fs.replace_atomic_text(saved, "while held")));
+	fmt.println(succeeded(held.close()));
+	fmt.println(fs.read_text(saved) or_else panic("a file the test just wrote could not be read"));
 	// A name near the filesystem's 255-unit limit on one name leaves no room for
 	// a suffix, so the temporary name must not be built from it. The whole path
 	// passes 260 units, hence the extended-length prefix.
