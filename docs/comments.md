@@ -4257,8 +4257,7 @@ can point at the import responsible.
 Rust and Go specialize `append` and a map lookup for the element and key
 type; Loke's were calls into `runtime/container.c` through a table of function
 pointers, with the key's `hash` and `==` called indirectly on every probe. The
-[2026-10-31 compiler review](compiler-optimizations-2026-10-31.md#container-fast-paths)
-proposed emitting the fast paths as LLVM IR per element type, the way a generic
+2026-10-31 compiler review proposed emitting the fast paths as LLVM IR per element type, the way a generic
 procedure is instantiated.
 
 That would put a second probe sequence in the emitter, to agree for ever with

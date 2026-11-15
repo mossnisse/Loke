@@ -13,9 +13,10 @@ several passes over the proposals and reviews of the steps taken. Proposals
 that landed are described by the specification, [CHANGELOG.md](../CHANGELOG.md),
 and [comments.md](comments.md); earlier drafts and their reasoning are in git.
 [Open items from the 2026-10-03 review](#open-items-from-the-2026-10-03-review)
-carries what remains of the review this one built on. Optimizations that change
-no specified behavior are in the
-[compiler optimization review](compiler-optimizations-2026-10-31.md#compiler-context).
+carries what remains of the review this one built on. The compiler optimization
+review that was split from this one is in git, last at `057b4ad2` as
+`docs/compiler-optimizations-2026-10-31.md`; what it left open is
+[Overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic).
 
 ## Contents
 
@@ -136,8 +137,7 @@ language otherwise does not have.
 ### Alias facts from the one rule
 
 The emitter writes `nonnull` on pointer parameters and nothing else, and a
-slice parameter carries no attribute at all
-([compiler review probes](compiler-optimizations-2026-10-31.md#probes)). Yet the
+slice parameter carries no attribute at all ([Probes](#probes)). Yet the
 one rule promises a great deal: while a borrow is live its root is not written
 through any other path, and a mutable borrow excludes every other access. So
 for the duration of a call:
@@ -180,8 +180,8 @@ Loke procedure is `internal` and LLVM already infers `readonly` and
 
 **Proposal.**
 
-1. Measure first. After the compiler review's
-   [checked-arithmetic work](compiler-optimizations-2026-10-31.md#checked-arithmetic-and-bounds-in-loops),
+1. Measure first. After the work on
+   [overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic),
    whose branches block vectorization before aliasing does, add the metadata by
    hand to the `bench/` kernels' IR. In the probe's kernel it let LLVM load a
    pointee once instead of after every store and vectorize the loop. On slices
@@ -500,7 +500,7 @@ specified result:
   are inlined from the runtime's C into the program, where the key's `hash` and
   `==` are direct calls. Emitting them as IR per element type would have added
   a second implementation of the probe sequence
-  ([compiler review](compiler-optimizations-2026-10-31.md#container-fast-paths)).
+  ([Container fast paths stay in the C runtime](comments.md#container-fast-paths-stay-in-the-c-runtime)).
 
 Some transformations are forbidden outright: reordering floating-point
 additions into another tree, fusing `a*b + c`, or hoisting a possible panic
@@ -683,8 +683,9 @@ followed as a procedure-typed one is. Three conservative limits remain:
 ## Probes
 
 Programs run to confirm claims this review still depends on, with the compiler
-each ran against. Emitted-IR and register-passing observations are in the
-compiler review's [Probes](compiler-optimizations-2026-10-31.md#probes).
+each ran against. The emitted-IR and register-passing observations, among them
+that a slice parameter carries no alias attribute, are in the compiler
+review's probes, in git at `057b4ad2`.
 
 **Comparing addresses retains no borrow** (2026-11-01, `lokec` at `4173b622`).
 This prints `true false`; the comparison observes addresses without retaining a
