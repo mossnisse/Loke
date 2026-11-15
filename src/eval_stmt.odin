@@ -56,9 +56,7 @@ run_defers :: proc(ev: ^Evaluator, frame: ^Eval_Frame, mark: int, flow: Eval_Flo
 @(private)
 eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 	result := eval_stmt_inner(ev, stmt)
-	if !eval_memory_ok(ev) {
-		return .Fail
-	}
+	if !eval_memory_ok(ev) { return .Fail }
 	// The signal of an `or_return` or an `or_else` exit is spent here, so a later
 	// failure is not one (design.md "or_else expression").
 	if frame := current_frame(ev); result == .Fail && frame.exiting != .Normal && !ev.failed {
@@ -71,9 +69,7 @@ eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 
 @(private = "file")
 eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
-	if !eval_step(ev, stmt_span(stmt)) {
-		return .Fail
-	}
+	if !eval_step(ev, stmt_span(stmt)) { return .Fail }
 	switch s in stmt {
 	case ^Stmt_Error:
 		return .Normal
@@ -102,9 +98,7 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 			}
 		}
 		cond, ok := eval_expr(ev, s.cond)
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		if cond.boolean {
 			return eval_block(ev, s.then)
 		}
@@ -165,13 +159,9 @@ eval_local_decl :: proc(ev: ^Evaluator, d: ^Decl) -> Eval_Flow {
 	}
 	if d.destructure.active {
 		values, ok := eval_destructure(ev, &d.destructure, d.values[0])
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		for symbol_id, index in d.symbols {
-			if !eval_bind_local(ev, frame, symbol_id, values[index]) {
-				return .Fail
-			}
+			if !eval_bind_local(ev, frame, symbol_id, values[index]) { return .Fail }
 		}
 		return .Normal
 	}
@@ -259,9 +249,7 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	}
 	if s.destructure.active {
 		values, ok := eval_destructure(ev, &s.destructure, s.rhs[0])
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		defer delete(values, ev.alloc)
 		// design.md "Destructuring": a narrower union widens to its destination's.
 		for target, index in s.lhs {
@@ -278,9 +266,7 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	defer delete(values, ev.alloc)
 	for value, index in s.rhs {
 		copied, ok := eval_copied(ev, value)
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		values[index] = copied
 	}
 	return eval_write_targets(ev, s.lhs, values)
@@ -294,16 +280,12 @@ eval_write_targets :: proc(ev: ^Evaluator, targets: []Expr, values: []Eval_Value
 	defer delete(destinations, ev.alloc)
 	for target, index in targets {
 		destination, ok := eval_destination(ev, target)
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		destinations[index] = destination
 	}
 	for destination, index in destinations {
 		slot, ok := destination_slot(ev, destination)
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		retyped := values[index]
 		retyped.type = slot.type != INVALID_TYPE ? slot.type : retyped.type
 		slot^ = retyped
@@ -351,13 +333,9 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 		return ok ? .Normal : .Fail
 	}
 	slot, ok := eval_place(ev, s.lhs[0])
-	if !ok {
-		return .Fail
-	}
+	if !ok { return .Fail }
 	operand, operand_ok := eval_expr(ev, s.rhs[0])
-	if !operand_ok {
-		return .Fail
-	}
+	if !operand_ok { return .Fail }
 	// design.md "Evaluation order": the destination is read after the right operand.
 	result: Eval_Value
 	switch {
@@ -371,9 +349,7 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	case:
 		result, ok = eval_scalar_binary(ev, compound_operator(s.op), s.op_span, slot^, operand, slot.type, slot.type)
 	}
-	if !ok {
-		return .Fail
-	}
+	if !ok { return .Fail }
 	slot^ = result
 	return .Normal
 }
@@ -386,14 +362,10 @@ eval_for :: proc(ev: ^Evaluator, s: ^Stmt_For) -> Eval_Flow {
 		}
 	}
 	for {
-		if !eval_step(ev, s.span) {
-			return .Fail
-		}
+		if !eval_step(ev, s.span) { return .Fail }
 		if s.cond != nil {
 			cond, ok := eval_expr(ev, s.cond)
-			if !ok {
-				return .Fail
-			}
+			if !ok { return .Fail }
 			if !cond.boolean {
 				return .Normal
 			}
@@ -437,15 +409,11 @@ eval_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 		// slice is a view of that storage, whichever expression made it.
 		if s.kind != .Slice && (foreach_is_place_loop(s) || s.borrows && eval_frame_place(ev, s.iterable)) {
 			container, ok := eval_place(ev, s.iterable)
-			if !ok {
-				return .Fail
-			}
+			if !ok { return .Fail }
 			return eval_sequence_foreach(ev, s, container.elements)
 		}
 		container, ok := eval_expr(ev, s.iterable)
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		return eval_sequence_foreach(ev, s, container.elements)
 
 	case .Text:
@@ -539,13 +507,9 @@ eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 @(private = "file")
 eval_text_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 	subject, ok := eval_expr(ev, s.iterable)
-	if !ok {
-		return .Fail
-	}
+	if !ok { return .Fail }
 	elements, allocated := eval_elements(ev, utf8.rune_count_in_string(subject.text))
-	if !allocated {
-		return .Fail
-	}
+	if !allocated { return .Fail }
 	next := 0
 	for point in subject.text {
 		elements[next] = Eval_Value{
@@ -573,12 +537,8 @@ eval_sequence_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, elements: []Eval
 // `continue` ends only the step.
 @(private = "file")
 eval_foreach_step :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value, index: int) -> Eval_Flow {
-	if !eval_step(ev, s.span) {
-		return .Fail
-	}
-	if !bind_foreach_element(ev, s, element, index) {
-		return .Fail
-	}
+	if !eval_step(ev, s.span) { return .Fail }
+	if !bind_foreach_element(ev, s, element, index) { return .Fail }
 	flow := eval_block(ev, s.body)
 	return flow == .Continue ? .Normal : flow
 }
@@ -647,15 +607,11 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 	// and so does any binding over a place (design.md "Switch ownership").
 	if switch_binds_place(s) || s.kind == .Pattern && eval_frame_place(ev, s.subject) {
 		place, ok := eval_place(ev, s.subject)
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		return eval_variant_switch(ev, s, place^, place)
 	}
 	subject, ok := eval_expr(ev, s.subject)
-	if !ok {
-		return .Fail
-	}
+	if !ok { return .Fail }
 	if s.kind == .Pattern {
 		return eval_variant_switch(ev, s, subject)
 	}
@@ -667,9 +623,7 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 		}
 		for value in entry.values {
 			matched, match_ok := eval_case_matches(ev, subject, value)
-			if !match_ok {
-				return .Fail
-			}
+			if !match_ok { return .Fail }
 			if matched {
 				return eval_stmts(ev, s.cases[index].stmts, true)
 			}
@@ -862,22 +816,16 @@ eval_return :: proc(ev: ^Evaluator, s: ^Stmt_Return) -> Eval_Flow {
 	computed: Eval_Value
 	if s.value.is_inout {
 		place, place_ok := eval_place(ev, s.value.expr)
-		if !place_ok {
-			return .Fail
-		}
+		if !place_ok { return .Fail }
 		frame.result_place = place
 		computed = place^
 	} else {
 		value, ok := eval_expr(ev, s.value.expr)
-		if !ok {
-			return .Fail
-		}
+		if !ok { return .Fail }
 		computed = value
 	}
 	copied, copied_ok := copy_value(ev, computed)
-	if !copied_ok {
-		return .Fail
-	}
+	if !copied_ok { return .Fail }
 	frame.result = copied
 	return .Return
 }

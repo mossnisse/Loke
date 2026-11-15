@@ -165,13 +165,9 @@ check_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) {
 	if reject_negative_count_lanes(k, v.op, v.rhs) || constant_zero_divisor(k, v.op, v.op_span, v.rhs) {
 		return
 	}
-	#partial switch v.op {
-	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
-		// A mask, not a `bool`: not an `if` condition until `simd.any` reduces it.
-		v.type = simd_of(k.c, TYPE_BOOL, info.count)
-	case:
-		v.type = vector
-	}
+	// A comparison makes a mask, not a `bool`: not an `if` condition until
+	// `simd.any` reduces it.
+	v.type = comparison_operator(v.op) ? simd_of(k.c, TYPE_BOOL, info.count) : vector
 	fold_simd_binary(k, v)
 }
 
@@ -210,21 +206,20 @@ fold_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary) {
 	elements := make([]Const_Value, info.count, k.c.semantic_allocator)
 	for index in 0 ..< int(info.count) {
 		a, b := left.const_value.aggregate.elements[index], right.const_value.aggregate.elements[index]
-		#partial switch v.op {
-		case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
+		if comparison_operator(v.op) {
 			result, ok := fold_comparison(k.c, v.op, a, b)
 			if !ok {
 				return
 			}
 			elements[index] = bool_const(result)
-		case:
-			folded, ok := fold_arithmetic(k.c, v.op, v.op_span, a, b, info.element)
-			if !ok {
-				v.type = INVALID_TYPE
-				return
-			}
-			elements[index] = folded
+			continue
 		}
+		folded, ok := fold_arithmetic(k.c, v.op, v.op_span, a, b, info.element)
+		if !ok {
+			v.type = INVALID_TYPE
+			return
+		}
+		elements[index] = folded
 	}
 	set_simd_const(k, &v.base, elements)
 }
