@@ -276,18 +276,6 @@ group_member :: proc(c: ^Compiler, names: ^Package_Names, block: ^Item_Impl, nam
 	return nil
 }
 
-// `Name` of `impl Name`, `impl Name($T)`, and `impl ^Name`, and otherwise the
-// subject as written, as `pkg.Name` or `[]Name`.
-subject_name :: proc(c: ^Compiler, e: Expr) -> string {
-	#partial switch v in e {
-	case ^Expr_Call:
-		return subject_name(c, v.callee)
-	case ^Type_Pointer:
-		return subject_name(c, v.elem)
-	}
-	return source_text(c, e)
-}
-
 @(private = "file")
 qualified :: proc(subject, name: string) -> string {
 	return name if subject == "" else strings.concatenate({subject, ".", name}, context.temp_allocator)

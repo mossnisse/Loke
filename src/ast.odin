@@ -1328,6 +1328,18 @@ Item_Impl :: struct {
 	template:   Symbol_Id,
 }
 
+// `Name` of `impl Name`, `impl Name($T)`, and `impl ^Name`, and otherwise the
+// subject as written, as `pkg.Name` or `[]Name`.
+subject_name :: proc(c: ^Compiler, e: Expr) -> string {
+	#partial switch v in e {
+	case ^Expr_Call:
+		return subject_name(c, v.callee)
+	case ^Type_Pointer:
+		return subject_name(c, v.elem)
+	}
+	return source_text(c, e)
+}
+
 // `delegate(+, -);` inside an `impl` body.
 Item_Delegate :: struct {
 	using base: Node_Base,

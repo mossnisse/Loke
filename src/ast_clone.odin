@@ -46,7 +46,7 @@ clone_block :: proc(c: ^Compiler, b: ^Block, rewrite := Clone_Rewrite{}) -> ^Blo
 
 clone_stmts :: proc(c: ^Compiler, list: []Stmt) -> []Stmt {
 	cloner := Cloner{compiler = c}
-	return clone_stmts_with(&cloner, list)
+	return clone_each(&cloner, list, clone_stmt)
 }
 
 clone_decl :: proc(c: ^Compiler, d: ^Decl) -> ^Decl {
@@ -75,6 +75,16 @@ clone_slice :: proc(c: ^Cloner, list: []$T) -> []T {
 	return make([]T, len(list), c.semantic_allocator)
 }
 
+// Each entry of `list` as `clone_one` clones it; empty stays nil.
+@(private = "file")
+clone_each :: proc(c: ^Cloner, list: []$T, clone_one: proc(c: ^Cloner, entry: T) -> T) -> []T {
+	out := clone_slice(c, list)
+	for entry, index in list {
+		out[index] = clone_one(c, entry)
+	}
+	return out
+}
+
 @(private = "file")
 new_clone :: proc(c: ^Cloner, src: ^$T) -> ^T {
 	node := new(T, c.semantic_allocator)
@@ -96,24 +106,6 @@ clone_attributes :: proc(c: ^Cloner, list: []Attribute) -> []Attribute {
 	for entry, index in list {
 		out[index] = entry
 		out[index].value = clone_expr_with(c, entry.value)
-	}
-	return out
-}
-
-@(private = "file")
-clone_exprs :: proc(c: ^Cloner, list: []Expr) -> []Expr {
-	out := clone_slice(c, list)
-	for entry, index in list {
-		out[index] = clone_expr_with(c, entry)
-	}
-	return out
-}
-
-@(private = "file")
-clone_stmts_with :: proc(c: ^Cloner, list: []Stmt) -> []Stmt {
-	out := clone_slice(c, list)
-	for entry, index in list {
-		out[index] = clone_stmt(c, entry)
 	}
 	return out
 }
@@ -253,15 +245,6 @@ clone_requirement_with :: proc(c: ^Cloner, requirement: Requirement) -> Requirem
 	return out
 }
 
-@(private = "file")
-clone_requirements :: proc(c: ^Cloner, list: []Requirement) -> []Requirement {
-	out := clone_slice(c, list)
-	for entry, index in list {
-		out[index] = clone_requirement_with(c, entry)
-	}
-	return out
-}
-
 // ------------------------------------------------------------ expressions --
 
 @(private = "file")
@@ -294,7 +277,7 @@ clone_expr_with :: proc(c: ^Cloner, e: Expr) -> Expr {
 	case ^Expr_Index:
 		n := new_clone(c, v)
 		n.operand = clone_expr_with(c, v.operand)
-		n.indices = clone_exprs(c, v.indices)
+		n.indices = clone_each(c, v.indices, clone_expr_with)
 		return n
 
 	case ^Expr_Slice:
@@ -384,7 +367,7 @@ clone_expr_with :: proc(c: ^Cloner, e: Expr) -> Expr {
 		inner := without_capture(c)
 		n := new_clone(c, v)
 		n.signature = clone_expr_with(&inner, v.signature).(^Type_Proc)
-		n.where_clauses = clone_exprs(&inner, v.where_clauses)
+		n.where_clauses = clone_each(&inner, v.where_clauses, clone_expr_with)
 		n.body = clone_block_with(&inner, v.body)
 		n.bodiless = v.bodiless
 		return n
@@ -472,7 +455,7 @@ clone_expr_with :: proc(c: ^Cloner, e: Expr) -> Expr {
 		n.move_only = v.move_only
 		n.generic_params = clone_generic_params(c, v.generic_params)
 		n.attributes = clone_attributes(c, v.attributes)
-		n.where_clauses = clone_exprs(c, v.where_clauses)
+		n.where_clauses = clone_each(c, v.where_clauses, clone_expr_with)
 		n.body_lo = v.body_lo
 		n.fields = clone_fields(c, v.fields)
 		n.variants = clone_variants(c, v.variants)
@@ -497,8 +480,8 @@ clone_expr_with :: proc(c: ^Cloner, e: Expr) -> Expr {
 	case ^Type_Interface:
 		n := new_clone(c, v)
 		n.generic_params = clone_generic_params(c, v.generic_params)
-		n.where_clauses = clone_exprs(c, v.where_clauses)
-		n.requirements = clone_requirements(c, v.requirements)
+		n.where_clauses = clone_each(c, v.where_clauses, clone_expr_with)
+		n.requirements = clone_each(c, v.requirements, clone_requirement_with)
 		return n
 	}
 	return nil
@@ -512,7 +495,7 @@ clone_block_with :: proc(c: ^Cloner, b: ^Block) -> ^Block {
 		return nil
 	}
 	n := new_node_clone(c, b)
-	n.stmts = clone_stmts_with(c, b.stmts)
+	n.stmts = clone_each(c, b.stmts, clone_stmt)
 	return n
 }
 
@@ -532,14 +515,14 @@ clone_stmt :: proc(c: ^Cloner, s: Stmt) -> Stmt {
 
 	case ^Stmt_Expr:
 		n := new_node_clone(c, v)
-		n.exprs = clone_exprs(c, v.exprs)
+		n.exprs = clone_each(c, v.exprs, clone_expr_with)
 		return n
 
 	case ^Stmt_Assign:
 		n := new_node_clone(c, v)
 		n.op, n.op_span = v.op, v.op_span
-		n.lhs = clone_exprs(c, v.lhs)
-		n.rhs = clone_exprs(c, v.rhs)
+		n.lhs = clone_each(c, v.lhs, clone_expr_with)
+		n.rhs = clone_each(c, v.rhs, clone_expr_with)
 		return n
 
 	case ^Stmt_If:
@@ -582,8 +565,8 @@ clone_stmt :: proc(c: ^Cloner, s: Stmt) -> Stmt {
 		for entry, index in written {
 			n.cases[index] = Switch_Case {
 				span    = entry.span,
-				values  = clone_exprs(c, entry.values),
-				stmts   = clone_stmts_with(c, entry.stmts),
+				values  = clone_each(c, entry.values, clone_expr_with),
+				stmts   = clone_each(c, entry.stmts, clone_stmt),
 				binding = entry.binding,
 				binding_ref = entry.binding_ref,
 				fields  = clone_case_fields(c, entry.fields),
@@ -647,7 +630,7 @@ clone_decl_with :: proc(c: ^Cloner, d: ^Decl) -> ^Decl {
 	n.duration = d.duration
 	n.declared_type = clone_expr_with(c, d.declared_type)
 	n.via = clone_expr_with(c, d.via)
-	n.values = clone_exprs(c, d.values)
+	n.values = clone_each(c, d.values, clone_expr_with)
 	n.top_level = d.top_level
 	return n
 }
@@ -667,7 +650,7 @@ clone_item_with :: proc(c: ^Cloner, item: Item) -> Item {
 		n := new_node_clone(c, v)
 		n.kind = v.kind
 		n.type = clone_expr_with(c, v.type)
-		n.members = clone_items(c, v.members)
+		n.members = clone_each(c, v.members, clone_item_with)
 		return n
 
 	case ^Item_Delegate:
@@ -679,15 +662,6 @@ clone_item_with :: proc(c: ^Cloner, item: Item) -> Item {
 		unreachable()
 	}
 	return nil
-}
-
-@(private = "file")
-clone_items :: proc(c: ^Cloner, list: []Item) -> []Item {
-	out := clone_slice(c, list)
-	for entry, index in list {
-		out[index] = clone_item_with(c, entry)
-	}
-	return out
 }
 
 // A binding pattern is a tree (design.md "Element bindings").
