@@ -1327,43 +1327,22 @@ match_type_pattern :: proc(
 		return bind_pattern_name(k, v.name, Generic_Arg{is_type = true, type = bound}, scope, out)
 
 	case ^Type_Pointer:
-		if info.kind != .Pointer {
-			return false
-		}
 		// A `^mut E` argument reaches a `^$E` parameter through capability
 		// weakening, but not the reverse. Slices follow the same rule, so one
 		// helper written on the read-only spelling serves both capabilities.
-		if v.mutable && !info.mutable {
-			return false
-		}
-		return match_type_pattern(k, v.elem, info.element, scope, out)
+		return info.kind == .Pointer && (!v.mutable || info.mutable) && match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Type_C_Pointer:
-		if info.kind != .C_Pointer {
-			return false
-		}
-		return match_type_pattern(k, v.elem, info.element, scope, out)
+		return info.kind == .C_Pointer && match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Type_Slice:
-		if info.kind != .Slice {
-			return false
-		}
-		if v.mutable && !info.mutable {
-			return false
-		}
-		return match_type_pattern(k, v.elem, info.element, scope, out)
+		return info.kind == .Slice && (!v.mutable || info.mutable) && match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Type_Dynamic_Array:
-		if info.kind != .Dynamic_Array {
-			return false
-		}
-		return match_type_pattern(k, v.elem, info.element, scope, out)
+		return info.kind == .Dynamic_Array && match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Type_Distinct:
-		if info.kind != .Distinct {
-			return false
-		}
-		return match_type_pattern(k, v.elem, info.element, scope, out)
+		return info.kind == .Distinct && match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Type_Dyn:
 		// `dyn proc(...)` is the callable view: its one argument is the
@@ -1388,43 +1367,28 @@ match_type_pattern :: proc(
 		return match_generic_args(k, args, info.dyn_args, scope, out)
 
 	case ^Type_Map:
-		if info.kind != .Map {
-			return false
-		}
-		return match_type_pattern(k, v.key, info.key, scope, out) &&
+		return info.kind == .Map && match_type_pattern(k, v.key, info.key, scope, out) &&
 		       match_type_pattern(k, v.value, info.element, scope, out)
 
 	case ^Type_Array:
-		if info.kind != .Array {
-			return false
-		}
-		return bind_count_pattern(k, v.length, info.count, scope, out) &&
+		return info.kind == .Array && bind_count_pattern(k, v.length, info.count, scope, out) &&
 		       match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Expr_Call:
 		// design.md "Owned values": `Box($T)` matches a box and binds its element.
 		if predeclared_callee(k, v.callee, "Box") {
-			if info.kind != .Box || len(v.args) != 1 {
-				return false
-			}
-			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
+			return info.kind == .Box && len(v.args) == 1 && match_type_pattern(k, v.args[0].value, info.element, scope, out)
 		}
 		// design.md "SIMD vectors": `Simd($T, $N)` is written like a generic
 		// application but is a predeclared type constructor, so its parts come
 		// from the type itself rather than from a template's bound arguments.
 		if predeclared_callee(k, v.callee, "Simd") {
-			if info.kind != .Simd || len(v.args) != 2 {
-				return false
-			}
-			return bind_count_pattern(k, v.args[1].value, info.count, scope, out) &&
+			return info.kind == .Simd && len(v.args) == 2 && bind_count_pattern(k, v.args[1].value, info.count, scope, out) &&
 			       match_type_pattern(k, v.args[0].value, info.element, scope, out)
 		}
 		// `Range($T)` is the same shape: one part, taken from the type itself.
 		if predeclared_callee(k, v.callee, "Range") {
-			if !info.is_range || len(v.args) != 1 {
-				return false
-			}
-			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
+			return info.is_range && len(v.args) == 1 && match_type_pattern(k, v.args[0].value, info.element, scope, out)
 		}
 		// design.md "Specialization": `Status($E)` matches what its body does.
 		if template := generic_template_of_callee(k, v.callee, {.Alias}); template != nil {
