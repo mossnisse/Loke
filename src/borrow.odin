@@ -1454,6 +1454,9 @@ read_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8,
 	if event.through_element {
 		named = carriers_element(state, event.into, reach)
 	}
+	// Without places of its own, the load reads `path`.
+	whole := [1][]Proj_Step{event.path}
+	places := event.load_places if event.load_places != nil else whole[:]
 	for carrier in event.into {
 		row := reach_row(state, reach, carrier)
 		for index in 0 ..< state.loans {
@@ -1467,13 +1470,7 @@ read_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8,
 			if narrowed, known := view_element_loan(graph, event.element, index); known {
 				lent = narrowed.path
 			}
-			if event.load_places == nil {
-				if !load_through_loan(state, index, event.path, reach, &loss, reads, elements, lent) {
-					loss |= state.precision[carrier]
-				}
-				continue
-			}
-			for place in event.load_places {
+			for place in places {
 				if !load_through_loan(state, index, place, reach, &loss, reads, elements, lent) {
 					loss |= state.precision[carrier]
 				}
