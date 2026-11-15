@@ -35,6 +35,29 @@ standard_package :: proc(c: ^Compiler, key: string) -> ^Package {
 	return found ? package_of(c, id) : nil
 }
 
+// What `pkg` declares by `name`. A package that is absent or not yet scoped
+// declares nothing.
+package_symbol_named :: proc(c: ^Compiler, pkg: ^Package, name: string) -> Symbol_Id {
+	if pkg == nil || pkg.scope == nil {
+		return INVALID_SYMBOL
+	}
+	return pkg.scope.names[intern_identifier(c, name)]
+}
+
+// A type `pkg` declares by `name`, directly or as an alias such as
+// `Writer :: dyn mut Sink` — a constant whose value is a type.
+package_type_named :: proc(k: ^Checker, pkg: ^Package, name: string) -> (Type_Id, bool) {
+	symbol_id := package_symbol_named(k.c, pkg, name)
+	symbol := symbol_of(k.c, symbol_id)
+	if symbol != nil && symbol.kind == .Type {
+		resolve_symbol_signature_in_place(k, symbol_id)
+		symbol = symbol_of(k.c, symbol_id)
+		return symbol.type, symbol.type != INVALID_TYPE
+	}
+	named := const_type_value(k, symbol_id)
+	return named, named != INVALID_TYPE
+}
+
 // Called once per package, right after its scope exists and before any of its
 // own declarations are collected, so a source declaration colliding with a
 // contributed name is reported as the ordinary redeclaration it is.

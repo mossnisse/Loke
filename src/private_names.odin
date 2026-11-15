@@ -476,13 +476,7 @@ read_record :: proc(x: ^Exposure, record: ^Type_Record) {
 	owner := x.owner
 	mark := len(x.bound)
 	defer resize(&x.bound, mark)
-	bind_generic_params(&x.bound, record.generic_params)
-	for parameter in record.generic_params {
-		walk(x, parameter.type, .Type)
-	}
-	for clause in record.where_clauses {
-		walk(x, clause, .Where)
-	}
+	read_generics(x, record.generic_params, record.where_clauses)
 	for variant in record.variants {
 		walk(x, variant.type, .Type)
 	}
@@ -503,13 +497,7 @@ read_record :: proc(x: ^Exposure, record: ^Type_Record) {
 read_interface :: proc(x: ^Exposure, v: ^Type_Interface) {
 	mark := len(x.bound)
 	defer resize(&x.bound, mark)
-	bind_generic_params(&x.bound, v.generic_params)
-	for parameter in v.generic_params {
-		walk(x, parameter.type, .Type)
-	}
-	for clause in v.where_clauses {
-		walk(x, clause, .Where)
-	}
+	read_generics(x, v.generic_params, v.where_clauses)
 	for requirement in v.requirements {
 		inner := len(x.bound)
 		for group in requirement.bindings {
@@ -524,6 +512,19 @@ read_interface :: proc(x: ^Exposure, v: ^Type_Interface) {
 		walk(x, requirement.result, .Type)
 		walk(x, requirement.slot_type, .Type)
 		resize(&x.bound, inner)
+	}
+}
+
+// Binds a definition's generic parameters for the caller to unbind, and reads
+// their types and its `where` clauses.
+@(private = "file")
+read_generics :: proc(x: ^Exposure, parameters: []Generic_Param, clauses: []Expr) {
+	bind_generic_params(&x.bound, parameters)
+	for parameter in parameters {
+		walk(x, parameter.type, .Type)
+	}
+	for clause in clauses {
+		walk(x, clause, .Where)
 	}
 }
 
