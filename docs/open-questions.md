@@ -24,6 +24,15 @@ including the test's two concurrent runs in a private temporary directory.
 The full-gate failure's cause is unresolved: `succeeded` discards the
 underlying `io.Error`, so the output alone does not identify it.
 
+## Compiler test coverage
+
+The [2026-11-15 coverage review](compiler-test-coverage.md) found strong
+independent borrow/store models but less systematic coverage of generic and
+operator interactions. The new borrow-result matrix covers 230 combinations;
+owner/allocator-region interactions and an independent overload-ranking matrix
+remain priorities. Two reproduced precision failures are in
+[known-gaps.md](known-gaps.md#a-returned-mutable-carrier-keeps-sibling-borrows).
+
 ## Provenance architecture
 
 A review of the root and region provenance checker on 2026-11-01 asked where its

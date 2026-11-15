@@ -7,6 +7,58 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
+### A returned mutable carrier keeps sibling borrows
+
+[Procedure result contracts](design.md#procedure-result-contracts) require a
+result read from a parameter's field to name that field's roots. Returning the
+first of two mutable pointers by value also keeps the second pointer's root
+borrowed:
+
+```loke
+package main;
+Pair :: struct { first, second: ^mut int }
+first :: proc(pair: Pair) -> ^mut int { return pair.first; }
+main :: proc() {
+    left := 1; right := 2;
+    pair := Pair{&mut left, &mut right};
+    held := first(pair);
+    right = 3;  // L0512, should be accepted
+    _ = held^;
+}
+```
+
+The same happens with `Option(^mut int)` fields, a generic `Pair($T)`, and a
+generic indexing operator returning its first field, including through a
+forwarding call or method. Direct field access accepts the write, as it should.
+The sibling-root cases for these call forms are reserved in
+[generic_provenance_test.odin](../src/generic_provenance_test.odin).
+
+### Delegated indexing keeps sibling slice borrows
+
+[Operator declarations](design.md#operator-declarations) and [Procedure result
+contracts](design.md#procedure-result-contracts) make the result of an indexing
+call depend on the fields the callee reads. Delegating an indexing operator
+through a distinct wrapper retains a sibling slice's root too:
+
+```loke
+package main;
+Box :: struct($T: type) { first, second: T }
+get :: operator([]) proc(box: Box($T), index: int) -> T { return box.first; }
+Wrapped :: distinct Box([]int);
+impl Wrapped { delegate([]); }
+main :: proc() {
+    left := [2]int{1, 2}; right := [2]int{3, 4};
+    box := Box([]int){left[:], right[:]};
+    wrapped := Wrapped(box);
+    held := wrapped[0];
+    right[0] = 5;  // L0511, should be accepted
+    _ = held[0];
+}
+```
+
+Taking `held` with `box[0]` accepts the write. The delegated sibling-slice case
+is reserved in [generic_provenance_test.odin](../src/generic_provenance_test.odin).
+
 ### A switch over a place whose index calls suspends the whole view
 
 [Switch ownership](design.md#switch-ownership) has a switch over a place borrow

@@ -1342,6 +1342,8 @@ are reported as skips. `-RequireTools`, or `LOKE_TEST_REQUIRE_TOOLS=1`, turns
 those skips into failures; CI uses both switches.
 
 Unit tests live beside the compiler implementation in `src/*_test.odin`.
+The [coverage review](compiler-test-coverage.md) maps borrow/provenance,
+generics, and operator risks to their behavioral oracles and known omissions.
 `session_test.odin` and `incremental_test.odin` compare diagnostics, semantic
 registries, and IR with fresh batch checks, and verify invalidation and memory
 reclamation. The integration harness is in `tests/`:

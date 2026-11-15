@@ -748,10 +748,12 @@ session_body_effect_changes_match_fresh_checks :: proc(t: ^testing.T) {
 	defer destroy_session(&s)
 	config := session_test_config()
 	if !testing.expect(t, init_session(&s, config)) { return }
-	for scenario in 0 ..< 3 {
+	Scenario :: enum { Global_Write, Returned_View, Global_Read, Stored_Carrier }
+	for scenario in Scenario {
 		for edit in 0 ..< 3 {
 			text := ""
-			if scenario == 2 {
+			switch scenario {
+			case .Global_Read:
 				// design.md "Global write effects": a body that starts reading the
 				// global a mutable borrow of it is live across.
 				result := edit == 1 ? "value" : "1"
@@ -761,7 +763,7 @@ peek :: proc() -> int { return RESULT; }
 bump :: proc(p: ^mut int) { p^ = peek(); }
 main :: proc() { bump(&mut value); assert(value == 1); }`
 				text, _ = strings.replace_all(template, "RESULT", result, context.temp_allocator)
-			} else if scenario == 0 {
+			case .Global_Write:
 				body := edit == 1 ? "values.clear();" : ""
 				template := `package main;
 values: [dynamic]int;
@@ -769,7 +771,7 @@ reset :: proc() { BODY }
 first :: proc(input: []int) -> int { reset(); return input[0]; }
 main :: proc() { values.append(1); assert(first(values) == 1); }`
 				text, _ = strings.replace_all(template, "BODY", body, context.temp_allocator)
-			} else if scenario == 2 {
+			case .Stored_Carrier:
 				body := edit == 1 ? "pair^.a = pair^.b;" : ""
 				template := `package main;
 Pair :: struct { a: ^mut int, b: ^mut int }
@@ -783,7 +785,7 @@ main :: proc() {
     held^ = 4;
 }`
 				text, _ = strings.replace_all(template, "BODY", body, context.temp_allocator)
-			} else {
+			case .Returned_View:
 				result := edit == 1 ? "b" : "a"
 				template := `package main;
 choose :: proc(a, b: []int) -> []int { return RESULT; }
@@ -799,7 +801,7 @@ main :: proc() {
 			if edit == 1 {
 				diagnostics, captured := query_diagnostics(&s, snapshot)
 				found_borrow_error := false
-				for diagnostic in diagnostics { found_borrow_error ||= diagnostic.code == (scenario == 2 ? "L0511" : "L0512") }
+				for diagnostic in diagnostics { found_borrow_error ||= diagnostic.code == (scenario == .Global_Read ? "L0511" : "L0512") }
 				testing.expect(t, captured && found_borrow_error)
 			}
 		}
