@@ -289,25 +289,7 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 		identity := strings.to_string(b)
 		if seen[identity] { continue }
 		seen[identity] = true
-		// Text `lokec` prints beside the source line goes into the message;
-		// a client without related information gets the notes there too.
-		message := d.message if d.label == "" else fmt.tprintf("%s\n%s", d.message, d.label)
-		related := make([dynamic]Related, allocator)
-		for note in d.notes {
-			path, range, placed := place(s, &root.session, snapshot, note.location, allocator)
-			switch {
-			case placed && s.related_information:
-				append(&related, Related{path, range, strings.clone(note.message, allocator)})
-			case placed:
-				message = fmt.tprintf("%s\nnote: %s:%d:%d: %s", message, path, range.start.line + 1, range.start.character + 1, note.message)
-			case:
-				message = fmt.tprintf("%s\nnote: %s", message, note.message)
-			}
-		}
-		out := Lsp_Diagnostic{
-			severity = d.severity, code = strings.clone(d.code, allocator),
-			message = strings.clone(message, allocator), related = related[:],
-		}
+		out := client_diagnostic(s, &root.session, snapshot, d, allocator)
 		path, range, placed := place(s, &root.session, snapshot, d.location, allocator)
 		out.range = range
 		if !placed {
@@ -321,6 +303,30 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 			file = &root.files[key]
 		}
 		append(&file.diagnostics, out)
+	}
+}
+
+// The diagnostic as the client shows it, without its range. Text `lokec`
+// prints beside the source line goes into the message; a client without
+// related information gets the notes there too.
+@(private = "file")
+client_diagnostic :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, d: lokec.Query_Diagnostic, allocator := context.allocator) -> Lsp_Diagnostic {
+	message := d.message if d.label == "" else fmt.tprintf("%s\n%s", d.message, d.label)
+	related := make([dynamic]Related, allocator)
+	for note in d.notes {
+		path, range, placed := place(s, session, snapshot, note.location, allocator)
+		switch {
+		case placed && s.related_information:
+			append(&related, Related{path, range, strings.clone(note.message, allocator)})
+		case placed:
+			message = fmt.tprintf("%s\nnote: %s:%d:%d: %s", message, path, range.start.line + 1, range.start.character + 1, note.message)
+		case:
+			message = fmt.tprintf("%s\nnote: %s", message, note.message)
+		}
+	}
+	return Lsp_Diagnostic{
+		severity = d.severity, code = strings.clone(d.code, allocator),
+		message = strings.clone(message, allocator), related = related[:],
 	}
 }
 

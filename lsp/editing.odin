@@ -56,36 +56,17 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 		if token.hi > start { break }
 		before = index
 	}
-	items := make([dynamic]Completion_Item, context.temp_allocator)
+	items: []Completion_Item
+	found: bool
 	if before >= 0 && tokens[before].kind == .Period {
 		// `.Member` with no operand takes its type from context, which no
 		// query records.
 		if before == 0 || !ends_operand(tokens[before - 1].kind) { return EMPTY_COMPLETION }
-		operand, found := lokec.query_at(session, snapshot, file, tokens[before - 1].hi - 1)
-		if !found { return EMPTY_COMPLETION }
-		members, listed := lokec.query_members(session, operand, file, context.temp_allocator)
-		if !listed { return EMPTY_COMPLETION }
-		for member in members {
-			item := Completion_Item{label = member.name, kind = .Enum_Member}
-			if member.variant {
-				if type, typed := lokec.query_type(session, member.type); typed { item.detail = type.name }
-			} else if symbol, known := lokec.query_symbol(session, member.symbol); known {
-				item.kind, item.detail, item.symbol = completion_kind(session, symbol, member = true), symbol_detail(session, symbol), member.symbol
-			}
-			append(&items, item)
-		}
+		items, found = member_items(session, snapshot, file, tokens[before - 1].hi - 1)
 	} else {
-		visible, found := lokec.query_visible(session, snapshot, file, start, context.temp_allocator)
-		if !found { return EMPTY_COMPLETION }
-		for handle in visible {
-			symbol, known := lokec.query_symbol(session, handle)
-			if !known { continue }
-			append(&items, Completion_Item{symbol.name, completion_kind(session, symbol, member = false), symbol_detail(session, symbol), handle})
-		}
-		for keyword in lokec.keyword_table {
-			append(&items, Completion_Item{label = keyword.text, kind = .Keyword})
-		}
+		items, found = scope_items(session, snapshot, file, start)
 	}
+	if !found { return EMPTY_COMPLETION }
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `{"isIncomplete":false,"items":[`)
 	for item, index in items {
@@ -111,6 +92,40 @@ completion :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lo
 	}
 	strings.write_string(&b, "]}")
 	return strings.to_string(b)
+}
+
+// What the operand ending at `operand_offset` offers after a `.`.
+@(private = "file")
+member_items :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file, operand_offset: u32) -> (items: []Completion_Item, found: bool) {
+	operand := lokec.query_at(session, snapshot, file, operand_offset) or_return
+	members := lokec.query_members(session, operand, file, context.temp_allocator) or_return
+	list := make([dynamic]Completion_Item, context.temp_allocator)
+	for member in members {
+		item := Completion_Item{label = member.name, kind = .Enum_Member}
+		if member.variant {
+			if type, typed := lokec.query_type(session, member.type); typed { item.detail = type.name }
+		} else if symbol, known := lokec.query_symbol(session, member.symbol); known {
+			item.kind, item.detail, item.symbol = completion_kind(session, symbol, member = true), symbol_detail(session, symbol), member.symbol
+		}
+		append(&list, item)
+	}
+	return list[:], true
+}
+
+// Every binding an unqualified name reaches at the offset, then the keywords.
+@(private = "file")
+scope_items :: proc(session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, file, offset: u32) -> (items: []Completion_Item, found: bool) {
+	visible := lokec.query_visible(session, snapshot, file, offset, context.temp_allocator) or_return
+	list := make([dynamic]Completion_Item, context.temp_allocator)
+	for handle in visible {
+		symbol, known := lokec.query_symbol(session, handle)
+		if !known { continue }
+		append(&list, Completion_Item{symbol.name, completion_kind(session, symbol, member = false), symbol_detail(session, symbol), handle})
+	}
+	for keyword in lokec.keyword_table {
+		append(&list, Completion_Item{label = keyword.text, kind = .Keyword})
+	}
+	return list[:], true
 }
 
 // A token that can end the operand of a selector.
@@ -189,17 +204,8 @@ signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot
 	tokens := lokec.lex_text(text, &comments)
 	defer delete(tokens)
 	if inside_comment_or_literal(text, tokens, comments[:], offset) { return "null" }
-	open := make([dynamic]int, context.temp_allocator)
-	for token, index in tokens {
-		if token.lo >= offset { break }
-		#partial switch token.kind {
-		case .Lparen, .Lbracket, .Lbrace: append(&open, index)
-		case .Rparen, .Rbracket, .Rbrace: if len(open) > 0 { pop(&open) }
-		}
-	}
-	if len(open) == 0 || tokens[open[len(open) - 1]].kind != .Lparen { return "null" }
-	paren := open[len(open) - 1]
-	if paren == 0 || tokens[paren - 1].kind != .Ident { return "null" }
+	paren, in_call := open_call(tokens, offset)
+	if !in_call || paren == 0 || tokens[paren - 1].kind != .Ident { return "null" }
 	callee, found := lokec.query_at(session, snapshot, file, tokens[paren - 1].lo)
 	if !found { return "null" }
 	symbol, known := lokec.query_symbol(session, callee.symbol)
@@ -207,6 +213,8 @@ signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot
 	signatures, signed := lokec.query_signatures(session, callee.symbol)
 	if !signed { return "null" }
 
+	// The commas at the call's own depth before the cursor, and where the
+	// argument after the last of them starts.
 	active, argument, depth := 0, paren + 1, 0
 	for index in paren + 1 ..< len(tokens) {
 		token := tokens[index]
@@ -258,6 +266,22 @@ signature_help :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot
 	}
 	fmt.sbprintf(&b, `],"activeSignature":%d,"activeParameter":%d}}`, max(chosen, 0), chosen_parameter)
 	return strings.to_string(b)
+}
+
+// The `(` of the innermost bracket still open before the offset, when that
+// bracket is a parenthesis.
+@(private = "file")
+open_call :: proc(tokens: []lokec.Token, offset: u32) -> (int, bool) {
+	open := make([dynamic]int, context.temp_allocator)
+	for token, index in tokens {
+		if token.lo >= offset { break }
+		#partial switch token.kind {
+		case .Lparen, .Lbracket, .Lbrace: append(&open, index)
+		case .Rparen, .Rbracket, .Rbrace: if len(open) > 0 { pop(&open) }
+		}
+	}
+	if len(open) == 0 || tokens[open[len(open) - 1]].kind != .Lparen { return 0, false }
+	return open[len(open) - 1], true
 }
 
 // Each parameter as its name's place in the label, found in order among the

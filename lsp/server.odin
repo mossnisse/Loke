@@ -243,27 +243,22 @@ client_value_set :: proc(capability: json.Value, default_last: int) -> (kinds: b
 @(private = "file")
 initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 	capabilities := member(params, "capabilities")
-	for encoding in member_array(member(capabilities, "general"), "positionEncodings") {
-		if name, ok := encoding.(json.String); ok && name == "utf-8" { s.utf8_positions = true }
-	}
-	s.related_information = member_bool(member(member(capabilities, "textDocument"), "publishDiagnostics"), "relatedInformation")
+	document := member(capabilities, "textDocument")
+	s.utf8_positions = lists(member_array(member(capabilities, "general"), "positionEncodings"), "utf-8")
+	s.related_information = member_bool(member(document, "publishDiagnostics"), "relatedInformation")
 	s.watch_files = member_bool(member(member(capabilities, "workspace"), "didChangeWatchedFiles"), "dynamicRegistration")
-	for format in member_array(member(member(capabilities, "textDocument"), "hover"), "contentFormat") {
-		if name, ok := format.(json.String); ok && name == "markdown" { s.markdown_hover = true }
-	}
-	symbols := member(member(capabilities, "textDocument"), "documentSymbol")
+	s.markdown_hover = lists(member_array(member(document, "hover"), "contentFormat"), "markdown")
+	symbols := member(document, "documentSymbol")
 	s.hierarchical_symbols = member_bool(symbols, "hierarchicalDocumentSymbolSupport")
 	// Without a list, a client is only known to show `File` through `Array`.
 	s.symbol_kinds = client_value_set(member(symbols, "symbolKind"), 18)
-	completion := member(member(capabilities, "textDocument"), "completion")
-	for format in member_array(member(completion, "completionItem"), "documentationFormat") {
-		if name, ok := format.(json.String); ok && name == "markdown" { s.markdown_completion = true }
-	}
+	completion := member(document, "completion")
+	s.markdown_completion = lists(member_array(member(completion, "completionItem"), "documentationFormat"), "markdown")
 	// Without a list, `Text` through `Reference`.
 	s.completion_kinds = client_value_set(member(completion, "completionItemKind"), 18)
-	signature := member(member(member(member(capabilities, "textDocument"), "signatureHelp"), "signatureInformation"), "parameterInformation")
+	signature := member(member(member(document, "signatureHelp"), "signatureInformation"), "parameterInformation")
 	s.label_offsets = member_bool(signature, "labelOffsetSupport")
-	s.prepare_rename = member_bool(member(member(capabilities, "textDocument"), "rename"), "prepareSupport")
+	s.prepare_rename = member_bool(member(document, "rename"), "prepareSupport")
 
 	folder := ""
 	if folders := member_array(params, "workspaceFolders"); len(folders) > 0 {
@@ -282,6 +277,15 @@ initialize :: proc(s: ^Server, id: json.Value, params: json.Value) {
 		s.utf8_positions ? "utf-8" : "utf-16", SYNC_FULL, s.prepare_rename ? `{"prepareProvider":true}` : "true", DOCUMENTATION_COMMAND, SERVER_NAME, lokec.VERSION_WITH_REVISION,
 	)
 	send_result(s, id, strings.to_string(b))
+}
+
+// Whether a capability's list of strings holds `wanted`.
+@(private = "file")
+lists :: proc(list: json.Array, wanted: string) -> bool {
+	for entry in list {
+		if text, ok := entry.(json.String); ok && text == wanted { return true }
+	}
+	return false
 }
 
 // `initializationOptions` carry what `lokec` takes as `-collection` and
