@@ -5,6 +5,7 @@
 // events are built in cfg_provenance.odin.
 package lokec
 
+import "base:runtime"
 import "core:mem"
 import "core:slice"
 
@@ -289,22 +290,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 	graph.literal = literal
 	graph.alloc = allocator
 	graph.mode = mode
-	graph.blocks = make([dynamic]^Flow_Block, allocator)
-	graph.tracked = make([dynamic]Tracked_Local, allocator)
-	graph.by_symbol = make(map[Symbol_Id]int, allocator)
-	graph.scopes = make([dynamic]int, allocator)
-	graph.in_scope = make([dynamic]Flow_Cleanup, allocator)
-	graph.held = make([dynamic]int, allocator)
-	graph.lent = make(map[int]bool, allocator)
-	graph.last_uses = make([dynamic]Last_Use, allocator)
-	graph.operands = make([dynamic]Operand_Site, allocator)
-	graph.required = make([dynamic]Required_Write, allocator)
-	graph.temp_roots = make([dynamic]Root_Id, allocator)
-	graph.held_owners = make([dynamic]Expr, allocator)
-	graph.panic_free = make(map[^Node_Base]bool, allocator)
-	graph.extended_content = make(map[^Expr_Base][]int, allocator)
-	graph.aliased_moves = make(map[rawptr]bool, allocator)
-	graph.propagated_errors = make(map[^Expr_Postfix][]int, allocator)
+	use_allocator(graph, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new_prov_state(allocator, normalized_input != nil ? normalized_input : new_prov_input(allocator))
 		if literal.signature != nil {
@@ -319,6 +305,27 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 	graph.current = new_flow_block(graph)
 
 	return graph
+}
+
+// Points every map and dynamic array in `value`, and in the records it holds
+// inline, at `allocator`, where each then grows when first used.
+@(private)
+use_allocator :: proc(value: ^$T, allocator: mem.Allocator) {
+	set_container_allocators(value, type_info_of(T), allocator)
+}
+
+@(private = "file")
+set_container_allocators :: proc(data: rawptr, info: ^runtime.Type_Info, allocator: mem.Allocator) {
+	#partial switch v in runtime.type_info_base(info).variant {
+	case runtime.Type_Info_Map:
+		(^runtime.Raw_Map)(data).allocator = allocator
+	case runtime.Type_Info_Dynamic_Array:
+		(^runtime.Raw_Dynamic_Array)(data).allocator = allocator
+	case runtime.Type_Info_Struct:
+		for index in 0 ..< int(v.field_count) {
+			set_container_allocators(rawptr(uintptr(data) + v.offsets[index]), v.types[index], allocator)
+		}
+	}
 }
 
 @(private)

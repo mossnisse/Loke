@@ -7,7 +7,6 @@
 // incoming value out there (`prov_received_replaced`, `prov_received_region`).
 package lokec
 
-import "core:mem"
 import "core:slice"
 
 // A place in a parameter's storage that a direct assignment wrote: a whole parameter
@@ -39,15 +38,6 @@ Prov_Overwrites :: struct {
 	reading: Maybe(Prov_Read_Point),
 	// Set once the walk is done (`prov_end_overwrites`).
 	walked:  bool,
-}
-
-@(private)
-new_prov_overwrites :: proc(allocator: mem.Allocator) -> Prov_Overwrites {
-	return Prov_Overwrites {
-		places = make([dynamic]Prov_Overwrite, allocator),
-		entry = make(map[Block_Id][]int, allocator),
-		wrote = make(map[Block_Id][dynamic]int, allocator),
-	}
 }
 
 // A finished assignment's direct writes. They take effect once all of its

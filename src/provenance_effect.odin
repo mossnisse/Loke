@@ -61,10 +61,7 @@ build_provenance_replay :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mod
 	started := time.tick_now()
 	initial_bytes := scratch_arena_used(&k.c.analysis_arena)
 	program := new(Prov_Effect_Program, allocator)
-	program.operations = make([dynamic]Prov_Effect_Site, allocator)
-	program.events = make([dynamic]Prov_Event_Site, allocator)
-	program.root_regions = make([dynamic]Prov_Root_Region, allocator)
-	program.borrowed_owners = make(map[Value_Id]bool, allocator)
+	use_allocator(program, allocator)
 	initial := build_flow_pass(k, literal, allocator, mode, program)
 	initial.effect_program = nil
 	program.input, program.construction = initial.input, initial
@@ -139,12 +136,12 @@ prov_copy_map :: proc(into: ^$M/map[$K]$V, from: M) {
 	for key, value in from { into[key] = value }
 }
 
-// A replay round starts from the ordinary constructor, so every map exists, and
-// takes the body's topology: its storage roots, provider tokens, user-operator
-// calls, and block count. A query there may still number a temporary provider the
-// walk never named, so the round has its own copy of all but the operator calls,
-// which it only reads (`prov_operator_call`). The caller seeds its facts; its loan
-// and lifecycle buffers stay empty.
+// A replay round starts from the ordinary constructor, so every map grows in its
+// arena, and takes the body's topology: its storage roots, provider tokens,
+// user-operator calls, and block count. A query there may still number a
+// temporary provider the walk never named, so the round has its own copy of all
+// but the operator calls, which it only reads (`prov_operator_call`). The caller
+// seeds its facts; its loan and lifecycle buffers stay empty.
 @(private)
 prov_fact_graph :: proc(k: ^Checker, literal: ^Expr_Proc, mode: Flow_Mode, program: ^Prov_Effect_Program, allocator: mem.Allocator) -> ^Flow_Graph {
 	graph := new_flow_graph(k, literal, allocator, mode, normalized_input = program.input)

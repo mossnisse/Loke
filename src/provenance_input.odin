@@ -117,14 +117,7 @@ prov_writable_input :: proc(graph: ^Flow_Graph) {
 
 new_prov_input :: proc(allocator: mem.Allocator) -> ^Prov_Input {
 	input := new(Prov_Input, allocator)
-	input.storages = make([dynamic]Prov_Storage, allocator)
-	input.storage_ids = make(map[Written_Storage]Storage_Id, allocator)
-	input.values = make([dynamic]Prov_Value, allocator)
-	input.value_ids = make(map[Prov_Value_Key]Value_Id, allocator)
-	input.calls = make(map[Prov_Call_Key]Prov_Call_Input, allocator)
-	input.captures = make(map[Prov_Call_Key]Value_Id, allocator)
-	input.synthetic_calls = make(map[Prov_Synthetic_Call_Key]^Expr_Call, allocator)
-	input.map_key_entries = make(map[Prov_Map_Key]int, allocator)
+	use_allocator(input, allocator)
 	append(&input.storages, Prov_Storage{})
 	append(&input.values, Prov_Value{})
 	return input

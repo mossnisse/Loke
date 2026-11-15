@@ -22,18 +22,6 @@ Prov_Reborrow_Cursor :: struct {
 	before:    int,
 }
 
-@(private)
-new_prov_reborrow_chains :: proc(allocator: mem.Allocator) -> Prov_Reborrow_Chains {
-	return Prov_Reborrow_Chains {
-		derived_first = make([dynamic]int, allocator),
-		derived_last  = make([dynamic]int, allocator),
-		source_first  = make([dynamic]int, allocator),
-		source_last   = make([dynamic]int, allocator),
-		derived_next  = make([dynamic]int, allocator),
-		source_next   = make([dynamic]int, allocator),
-	}
-}
-
 // The one way a reborrow is made, which chains it by its slots.
 @(private)
 prov_add_reborrow :: proc(graph: ^Flow_Graph, reborrow: Prov_Reborrow) {
