@@ -164,6 +164,50 @@ reproduction before a change.
   rule would remove the differences, but each is a precision choice that needs
   a probe program before it changes.
 
+## Compiler simplifications not yet made
+
+A behavior-preserving cleanup of the compiler, cut on 2026-11-08 and replayed
+onto `main` on 2026-11-15, found these and left them, because each changes a
+diagnostic, needs a decision, or reaches further than such a cleanup should.
+
+- **One way to report an unresolved type argument (P3).** `resolve_type_reporting`
+  in [check_types.odin](../src/check_types.odin) reports only when resolving
+  added no error, and `resolve_simd_application` ([simd.odin](../src/simd.odin))
+  uses it. `resolve_box_application` ([box.odin](../src/box.odin)),
+  `resolve_range_application` ([iterate.odin](../src/iterate.odin)) and the
+  `[?]T` element in `check_composite`
+  ([check_composite.odin](../src/check_composite.odin)) call
+  `report_unresolved_type` unconditionally after `resolve_type_syntax`.
+  Switching them would drop a second report where resolution already reported
+  one; decide with a review of the affected diagnostics corpus.
+- **The temporary that holds a place (P3).** `extended_temporary`
+  ([cfg_provenance.odin](../src/cfg_provenance.odin)) and
+  `mark_borrowed_temporary`
+  ([extended_temporaries.odin](../src/extended_temporaries.odin)) each follow a
+  selector, a non-operator index, or a boxed postfix up to the temporary that
+  holds the place, and `place_in_temporary` ([parallel.odin](../src/parallel.odin))
+  follows the same steps while asking that none goes through a pointer or slice.
+  Their selector tests differ: `.Field` in `extended_temporary` and
+  `place_in_temporary`, `!= .Value` in `mark_borrowed_temporary`. Decide whether
+  that difference is intended; if not, one shared step procedure serves all
+  three.
+- **Semantic stores on one allocator (P3).** `init_semantic_stores`
+  ([semantic.odin](../src/semantic.odin)) points about 90 containers at
+  `semantic_allocator` one `make` at a time, and they are spread through
+  `Compiler`. Gathered into one embedded (`using`) record, `use_allocator`
+  ([cfg.odin](../src/cfg.odin)) would set them in one call, though the few that
+  reserve a capacity would start empty. What `destroy_compilation` deletes one
+  by one, such as `parsed_files` and `diagnostics`, is not in the semantic
+  arena and stays out of that record.
+- **One reference walk over public declarations (P3).** `Ref_Walk`/`api_refs`
+  in [doc.odin](../src/doc.odin) and `Exposure`/`walk` in
+  [private_names.odin](../src/private_names.odin) both walk public declaration
+  syntax by written name and keep the `$` and parameter names in scope; they
+  already share `bind_signature` and `bind_generic_params`
+  ([ast.odin](../src/ast.odin)). A shared walker that lets each caller decide
+  what a reached name means, and where a value position stops the walk, would
+  remove the parallel traversal.
+
 ## Literal elements that lend a temporary to a call
 
 A `[dynamic]T` or map literal hands each element to the container as soon as
