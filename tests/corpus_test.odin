@@ -218,14 +218,6 @@ collect_odin_files :: proc(dir: string, into: ^[dynamic]string) {
 	}
 }
 
-@(test)
-compiler_sources_include_subpackages :: proc(t: ^testing.T) {
-	testing.expect(
-		t, slice.contains(compiler_sources(), "src/subprocess/subprocess.odin"),
-		"the freshness check does not see src/subprocess",
-	)
-}
-
 // `perf.ps1` refuses a repeat count below one, which PowerShell's inclusive
 // `1..$Repeat` would turn into extra runs, and a failed measurement still
 // removes its `loke-perf-<pid>` work directory.

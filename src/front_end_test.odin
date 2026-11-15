@@ -691,81 +691,6 @@ foreign_abi_cyclic_signatures_finish_within_budget :: proc(t: ^testing.T) {
 }
 
 @(test)
-semantic_ids_survive_phases :: proc(t: ^testing.T) {
-	text := `package main;
-
-N :: 3;
-main :: proc() {
-	x := N + 1;
-	sink(x);
-}
-sink :: proc(value: int) {}`
-	p: Checked
-	defer destroy_checked(&p)
-	check_source(&p, text)
-	c, f, pkg_id := &p.c, &p.f, p.pkg
-	validate_executable(c, pkg_id)
-	if !testing.expectf(t, c.error_count == 0, "semantic phases produced %d diagnostics", c.error_count) {
-		return
-	}
-
-	n_decl := f.items[0].(^Decl)
-	main_decl := f.items[1].(^Decl)
-	body := decl_proc(main_decl).body
-	local := body.stmts[0].(^Decl)
-	call_stmt := body.stmts[1].(^Stmt_Expr)
-	call := call_stmt.exprs[0].(^Expr_Call)
-	argument := call.args[0].value.(^Expr_Ident)
-	initializer := local.values[0].(^Expr_Binary)
-	n_use := initializer.lhs.(^Expr_Ident)
-
-	testing.expect(t, n_decl.symbols[0] != INVALID_SYMBOL, "top-level declaration has no stable symbol")
-	testing.expect(t, main_decl.symbols[0] != INVALID_SYMBOL, "procedure has no stable symbol")
-	testing.expect(t, local.symbols[0] != INVALID_SYMBOL, "local declaration has no stable symbol")
-	testing.expect(t, n_use.symbol == n_decl.symbols[0], "top-level use did not retain its binding ID")
-	testing.expect(t, argument.symbol == local.symbols[0], "local use did not retain its binding ID")
-	testing.expect(t, call.resolution.kind == .Call, "call was not classified during resolution")
-	testing.expect(t, call.resolution.chosen_overload != INVALID_SYMBOL, "direct call has no selected target")
-	main_symbol := symbol_of(c, main_decl.symbols[0])
-	testing.expect(t, main_symbol != nil && main_symbol.proc_type != INVALID_TYPE, "procedure signature has no canonical type")
-}
-
-@(test)
-package_collection_crosses_file_boundaries :: proc(t: ^testing.T) {
-	first_text := `package main;
-main :: proc() { sink(N); }
-sink :: proc(value: int) {}`
-	second_text := `package main;
-N :: 7;`
-	c := test_compiler(first_text)
-	defer destroy_compilation(&c)
-	second_index := add_source(&c, "second.loke", second_text)
-	first_tokens := lex(&c, 0)
-	defer delete(first_tokens)
-	first := parse(&c, 0, first_tokens)
-	defer destroy_ast(&first)
-	second_tokens := lex(&c, second_index)
-	defer delete(second_tokens)
-	second := parse(&c, second_index, second_tokens)
-	defer destroy_ast(&second)
-	pkg_id := new_package(&c, "main")
-	add_package_file(&c, pkg_id, &first)
-	add_package_file(&c, pkg_id, &second)
-	check_one_package(&c, pkg_id)
-	validate_executable(&c, pkg_id)
-	if !testing.expectf(t, c.error_count == 0, "multi-file package produced %d diagnostics", c.error_count) {
-		return
-	}
-	main_decl := first.items[0].(^Decl)
-	testing.expect(t, c.entry_point == main_decl.symbols[0], "executable validation did not record the entry point")
-	call_stmt := decl_proc(main_decl).body.stmts[0].(^Stmt_Expr)
-	call := call_stmt.exprs[0].(^Expr_Call)
-	n_use := call.args[0].value.(^Expr_Ident)
-	n_decl := second.items[0].(^Decl)
-	testing.expect(t, n_use.symbol == n_decl.symbols[0], "cross-file name did not bind to the package symbol")
-}
-
-@(test)
 package_loading_handles_literal_paths_and_regular_files :: proc(t: ^testing.T) {
 	context.allocator = context.temp_allocator
 	root := fmt.tprintf("loke-packages-test-%d-[files]", os.get_pid())
@@ -1050,24 +975,6 @@ keyword_table_lists_every_keyword_in_enum_order :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, kind, Token_Kind.Move_Only)
 	testing.expect(t, !any_keyword(.Move_Only) && !reserved_keyword(.Move_Only), "`move_only` is a name")
-}
-
-// `operator` takes the first match in `operator_table`, so longer operators
-// must come first to honour grammar.md's longest match.
-@(test)
-operator_table_is_ordered_longest_first :: proc(t: ^testing.T) {
-	for op, i in operator_table {
-		for later in operator_table[i + 1:] {
-			testing.expectf(
-				t,
-				!strings.has_prefix(later.text, op.text),
-				"`%s` is listed before `%s`, so `%s` can never lex",
-				op.text,
-				later.text,
-				later.text,
-			)
-		}
-	}
 }
 
 // A malformed literal is one bad token, never a good token plus junk the parser

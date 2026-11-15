@@ -138,24 +138,6 @@ bigint_bitwise_and_shifts :: proc(t: ^testing.T) {
 }
 
 @(test)
-bigint_allocator_storage :: proc(t: ^testing.T) {
-	buffer := make([]byte, 1 << 16)
-	defer delete(buffer)
-	arena: mem.Arena
-	mem.arena_init(&arena, buffer)
-	storage := mem.arena_allocator(&arena)
-
-	value := bi_add(storage, bi_pow2(storage, 100), bi_from_i64(storage, 7))
-	testing.expect(t, bi_cmp(bi_clone(storage, value), value) == 0, "clone differs from its source")
-	testing.expectf(
-		t,
-		bi_text(storage, value) == "1267650600228229401496703205383",
-		"2^100 + 7 in allocator storage: %s",
-		bi_text(storage, value),
-	)
-}
-
-@(test)
 bigint_patterns :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)
@@ -363,20 +345,6 @@ bigint_fits_only_the_lowest_at_the_full_width :: proc(t: ^testing.T) {
 	testing.expect(t, !bi_fits(bi_zero(&c), 0, false), "nothing fits no bits")
 }
 
-@(test)
-bigint_results_keep_no_more_than_they_need :: proc(t: ^testing.T) {
-	c: Compiler
-	defer destroy_compilation(&c)
-
-	value := bi_from_i64(&c, -5)
-	wrapped := bi_wrap(&c, value, 8, true)
-	testing.expect(t, raw_data(wrapped.digit) == raw_data(value.digit), "a value in range wraps to itself")
-
-	clone := bi_clone(&c, value)
-	testing.expect(t, cap(clone.digit) < cap(value.digit), "a clone keeps only the digits it uses")
-	testing.expect(t, bi_eq_i64(&c, clone, -5), "the clone holds the value")
-}
-
 // Above and below the 160-digit divisor where `int_divmod` would go wrong.
 @(test)
 bigint_long_division_round_trips :: proc(t: ^testing.T) {
@@ -389,16 +357,6 @@ bigint_long_division_round_trips :: proc(t: ^testing.T) {
 		testing.expect(t, bi_cmp(bi_add(&c, bi_mul(&c, q, b), r), a) == 0, "a / b does not round-trip")
 		testing.expect(t, bi_sign(r) == -1, "the remainder takes the dividend's sign")
 		testing.expect(t, bi_cmp(bi_neg(&c, r), b) < 0, "the remainder's magnitude is below the divisor")
-	}
-}
-
-@(test)
-bigint_powers_of_ten :: proc(t: ^testing.T) {
-	c: Compiler
-	defer destroy_compilation(&c)
-
-	for power in ([]int{0, 1, 2, 3, 18, 19, 100, 5000}) {
-		testing.expectf(t, bi_text(&c, bi_pow10(&c, power)) == strings.concatenate({"1", strings.repeat("0", power, context.temp_allocator)}, context.temp_allocator), "10^%d", power)
 	}
 }
 

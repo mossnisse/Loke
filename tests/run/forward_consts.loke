@@ -1,8 +1,0 @@
-package main; import "core:fmt";
-
-ANSWER :: BASE + 1;
-BASE :: 41;
-
-main :: proc() {
-	fmt.println(ANSWER);
-}

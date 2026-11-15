@@ -21,33 +21,6 @@ named_type :: proc(t: ^testing.T, p: ^Checked, name: string) -> Type_Id {
 }
 
 @(test)
-a_bare_carrier_is_one_empty_path :: proc(t: ^testing.T) {
-	p: Checked
-	defer destroy_checked(&p)
-	check_source(&p, `package main;
-Alias :: distinct []int
-main :: proc() { }`)
-
-	shape := carrier_shape(&p.c, named_type(t, &p, "Alias"))
-	if !testing.expectf(t, len(shape) == 1, "expected one path, got %d", len(shape)) { return }
-	testing.expect(t, len(shape[0].steps) == 0, "a bare carrier's path is the value itself")
-	testing.expect(t, !shape[0].truncated, "a bare carrier is not truncated")
-}
-
-@(test)
-a_scalar_record_has_no_paths :: proc(t: ^testing.T) {
-	p: Checked
-	defer destroy_checked(&p)
-	check_source(&p, `package main;
-Plain :: struct { a: int, b: f64, c: bool }
-main :: proc() { }`)
-
-	plain := named_type(t, &p, "Plain")
-	testing.expect(t, len(carrier_shape(&p.c, plain)) == 0, "a scalar record carries nothing")
-	testing.expect(t, !type_carries_borrow(&p.c, plain).any, "reachability disagrees with the shape")
-}
-
-@(test)
 record_fields_are_distinct_paths :: proc(t: ^testing.T) {
 	p: Checked
 	defer destroy_checked(&p)

@@ -12,6 +12,18 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 2026-10-31, and the proposals from them not yet decided, are in
 [design-review-2026-10-31.md](design-review-2026-10-31.md).
 
+## Intermittent long-name filesystem replacement in tests
+
+During test cleanup on 2026-11-15, `.\test-all.ps1` failed in
+`scratch_paths_leave_existing_data_alone`: the atomic replacement of a file
+with a 250-character name in [lib_fs.loke](../tests/run/lib_fs.loke) returned
+failure and left `"old"` instead of `"new"`. The other integration tests passed.
+An isolated rerun with `odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
+-define:ODIN_TEST_NAMES=tests.scratch_paths_leave_existing_data_alone` passed,
+including the test's two concurrent runs in a private temporary directory.
+The full-gate failure's cause is unresolved: `succeeded` discards the
+underlying `io.Error`, so the output alone does not identify it.
+
 ## Provenance architecture
 
 A review of the root and region provenance checker on 2026-11-01 asked where its
