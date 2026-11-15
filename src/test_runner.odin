@@ -96,19 +96,7 @@ test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_O
 		fmt.printf("%s%s\n", listed > 0 ? "\n" : "", display_path(dir))
 		listed += 1
 		exe := tree_output_path(dir, parent, output)
-		status := 0 if checked else 1
-		if checked && exe == "" {
-			// Only a root, as `C:\`, has no name, and with a tree `-o` cannot give it one.
-			fmt.eprintfln("error: `%s` is a root directory, which names no test executable", display_path(dir))
-			status = 2
-		} else if checked {
-			if output != "" {
-				os.make_directory_all(path_dir(exe, context.temp_allocator))
-			}
-			opts := emission
-			opts.output = exe
-			status = emit_session(&s, opts)
-		}
+		status := build_tree_tests(&s, dir, exe, emission) if checked else 1
 		report(c)
 		if status != 0 {
 			fmt.println("not built")
@@ -137,6 +125,23 @@ test_tree :: proc(root: string, config: Compilation_Config, emission: Emission_O
 	}
 	fmt.println()
 	return code
+}
+
+// Builds a checked package's test executable at `exe`, with the status
+// `emit_session` gives.
+@(private = "file")
+build_tree_tests :: proc(s: ^Compilation_Session, dir, exe: string, emission: Emission_Options) -> int {
+	if exe == "" {
+		// Only a root, as `C:\`, has no name, and with a tree `-o` cannot give it one.
+		fmt.eprintfln("error: `%s` is a root directory, which names no test executable", display_path(dir))
+		return 2
+	}
+	if emission.output != "" {
+		os.make_directory_all(path_dir(exe, context.temp_allocator))
+	}
+	opts := emission
+	opts.output = exe
+	return emit_session(s, opts)
 }
 
 // Where `-test` alone would write `dir`'s executable, or, with `output`, that

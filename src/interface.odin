@@ -245,58 +245,21 @@ interface_arguments_for :: proc(
 	bindings := interface_scope(k, info, erased_subject[:first])
 	out := make([]Generic_Arg, len(written), k.c.semantic_allocator)
 
-	use_scope := k.scope
-	defer k.scope = use_scope
 	for arg, index in written {
 		parameter := info.params[first + index]
-		// As for a record's: `$F: dyn Scaled(T, 0)` applies this interface again.
-		_, names_type := parameter.type_syntax.(^Type_Type)
-		if !names_type {
-			named := make([]Generic_Binding, index, context.temp_allocator)
-			for &binding, at in named {
-				binding.arg = out[at]
-			}
-			if !push_application_frame(k, arg.span, info.symbol, named, report) {
-				return nil, false
-			}
-		}
-		k.scope = bindings
-		errors := k.c.error_count
-		wanted := resolve_type_syntax(k, parameter.type_syntax)
-		k.scope = use_scope
-		if !names_type {
-			pop(&k.c.instantiation_stack)
-		}
+		wanted := interface_parameter_type(k, info, bindings, parameter, out[:index], arg.span, code, report)
 		if wanted == INVALID_TYPE {
-			if report && k.c.error_count == errors {
-				errorf(k.c, parameter.span, code, "this interface parameter's type does not resolve")
-			}
 			return nil, false
 		}
-
-		value := Generic_Arg{}
+		value: Generic_Arg
+		ok: bool
 		if wanted == TYPE_TYPE {
-			errors = k.c.error_count
-			denoted := resolve_type_syntax(k, arg.value)
-			if denoted == INVALID_TYPE {
-				if report && k.c.error_count == errors {
-					errorf(k.c, arg.span, code, "%s of type `type` needs a type", description)
-				}
-				return nil, false
-			}
-			// design.md "Maps": key policies are settled where the map type is
-			// named. Requirement checks on it contribute members whose bodies
-			// need one, even when no value of the type is ever declared.
-			if !require_nested_map_key_policies(k, denoted, arg.span) {
-				return nil, false
-			}
-			value = Generic_Arg{is_type = true, type = denoted}
+			value, ok = type_interface_argument(k, arg, code, description, report)
 		} else {
-			constant, ok := constant_interface_argument(k, arg, parameter, wanted, code, description, report)
-			if !ok {
-				return nil, false
-			}
-			value = constant
+			value, ok = constant_interface_argument(k, arg, parameter, wanted, code, description, report)
+		}
+		if !ok {
+			return nil, false
 		}
 		out[index] = value
 		bind_generic_name(k, bindings, Generic_Binding {
@@ -306,6 +269,64 @@ interface_arguments_for :: proc(
 		})
 	}
 	return out, true
+}
+
+// The type of `parameter`, resolved in `bindings`, which binds the parameters
+// before it to `earlier`.
+@(private = "file")
+interface_parameter_type :: proc(
+	k: ^Checker,
+	info: ^Interface_Info,
+	bindings: ^Scope,
+	parameter: Generic_Param_Decl,
+	earlier: []Generic_Arg,
+	at: Span,
+	code: string,
+	report: bool,
+) -> Type_Id {
+	// As for a record's: `$F: dyn Scaled(T, 0)` applies this interface again.
+	_, names_type := parameter.type_syntax.(^Type_Type)
+	if !names_type {
+		named := make([]Generic_Binding, len(earlier), context.temp_allocator)
+		for &binding, index in named {
+			binding.arg = earlier[index]
+		}
+		if !push_application_frame(k, at, info.symbol, named, report) {
+			return INVALID_TYPE
+		}
+	}
+	use_scope := k.scope
+	k.scope = bindings
+	errors := k.c.error_count
+	wanted := resolve_type_syntax(k, parameter.type_syntax)
+	k.scope = use_scope
+	if !names_type {
+		pop(&k.c.instantiation_stack)
+	}
+	if wanted == INVALID_TYPE && report && k.c.error_count == errors {
+		errorf(k.c, parameter.span, code, "this interface parameter's type does not resolve")
+	}
+	return wanted
+}
+
+// A type for a parameter of type `type`.
+@(private = "file")
+type_interface_argument :: proc(k: ^Checker, arg: Argument, code, description: string, report: bool) -> (Generic_Arg, bool) {
+	errors := k.c.error_count
+	denoted := resolve_type_syntax(k, arg.value)
+	if denoted == INVALID_TYPE {
+		if report && k.c.error_count == errors {
+			errorf(k.c, arg.span, code, "%s of type `type` needs a type", description)
+		}
+		return {}, false
+	}
+	// design.md "Maps": key policies are settled where the map type is named.
+	// Requirement checks on it contribute members whose bodies need one, even
+	// when no value of the type is ever declared.
+	if !require_nested_map_key_policies(k, denoted, arg.span) {
+		return {}, false
+	}
+	return Generic_Arg{is_type = true, type = denoted}, true
 }
 
 // A compile-time value for a parameter of type `wanted`, converted to it.
