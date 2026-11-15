@@ -33,47 +33,52 @@ register_project :: proc(c: ^Compiler, input: string) -> bool {
 		if !os.exists(path) {
 			continue
 		}
-		file, loaded := load_source(c, strings.clone(path, c.semantic_allocator))
-		if !loaded {
-			continue
-		}
-		text := c.sources[file].text
-		for offset := 0; offset < len(text); {
-			end := strings.index_byte(text[offset:], '\n')
-			end = end < 0 ? len(text) : offset + end
-			line := strings.trim_space(text[offset:end])
-			span := Span{file = file, lo = u32(offset), hi = u32(end)}
-			offset = end + 1
-			if line == "" || line[0] == '#' {
-				continue
-			}
-			name, written, well_formed := parse_require_line(line)
-			if !well_formed {
-				errorf(c, span, "L0398", "a `%s` line is `require <name> <path>`, and a name has no `:`", PROJECT_FILE)
-				continue
-			}
-			target := canonical_dir(join_path({project, written}, context.temp_allocator))
-			switch {
-			case is_bundled_collection(name):
-				errorf(c, span, "L0399", "`%s` is the library bundled with the compiler; a project cannot require it", name)
-			case name in required_by:
-				if dir_key(c.collections[name]) != dir_key(target) {
-					errorf(c, span, "L0399", "`%s` is already required as another directory; one name names one directory, and `-collection %s=<path>` chooses it for the whole program", name, name)
-					add_notef(c, required_by[name], "`%s` is first required here", name)
-				}
-			case name in c.collections:
-				// A `-collection`, which no manifest replaces.
-				append(&pending, canonical_dir(c.collections[name]))
-			case !is_source_directory(c, target):
-				errorf(c, span, "L0399", "dependency `%s` names `%s`, which is not a directory", name, written)
-			case:
-				c.collections[name] = strings.clone(target, c.semantic_allocator)
-				required_by[name] = span
-				append(&pending, target)
-			}
+		if file, loaded := load_source(c, strings.clone(path, c.semantic_allocator)); loaded {
+			register_requirements(c, project, file, &required_by, &pending)
 		}
 	}
 	return c.error_count == 0
+}
+
+// Registers what one `loke.project` in `project` requires, and queues each
+// dependency's directory for its own.
+@(private = "file")
+register_requirements :: proc(c: ^Compiler, project: string, file: u32, required_by: ^map[string]Span, pending: ^[dynamic]string) {
+	text := c.sources[file].text
+	for offset := 0; offset < len(text); {
+		end := strings.index_byte(text[offset:], '\n')
+		end = end < 0 ? len(text) : offset + end
+		line := strings.trim_space(text[offset:end])
+		span := Span{file = file, lo = u32(offset), hi = u32(end)}
+		offset = end + 1
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		name, written, well_formed := parse_require_line(line)
+		if !well_formed {
+			errorf(c, span, "L0398", "a `%s` line is `require <name> <path>`, and a name has no `:`", PROJECT_FILE)
+			continue
+		}
+		target := canonical_dir(join_path({project, written}, context.temp_allocator))
+		switch {
+		case is_bundled_collection(name):
+			errorf(c, span, "L0399", "`%s` is the library bundled with the compiler; a project cannot require it", name)
+		case name in required_by:
+			if dir_key(c.collections[name]) != dir_key(target) {
+				errorf(c, span, "L0399", "`%s` is already required as another directory; one name names one directory, and `-collection %s=<path>` chooses it for the whole program", name, name)
+				add_notef(c, required_by[name], "`%s` is first required here", name)
+			}
+		case name in c.collections:
+			// A `-collection`, which no manifest replaces.
+			append(pending, canonical_dir(c.collections[name]))
+		case !is_source_directory(c, target):
+			errorf(c, span, "L0399", "dependency `%s` names `%s`, which is not a directory", name, written)
+		case:
+			c.collections[name] = strings.clone(target, c.semantic_allocator)
+			required_by[name] = span
+			append(pending, target)
+		}
+	}
 }
 
 // The directory of the nearest `loke.project` at or above `input`.
