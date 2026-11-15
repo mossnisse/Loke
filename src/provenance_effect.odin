@@ -2,6 +2,7 @@
 // saturation replays these operations without evaluating source operands.
 package lokec
 
+import "core:math/bits"
 import "core:mem"
 import "core:slice"
 import "core:time"
@@ -128,6 +129,99 @@ prov_freeze_input :: proc(graph: ^Flow_Graph) {
 	for index := 1; index < len(graph.input.values); index += 1 {
 		_ = prov_value_transfer(graph, Value_Id(index))
 	}
+}
+
+// Starts a pass from carried facts, copied so this pass's merges leave them
+// alone and the round that produced them can be reclaimed.
+@(private)
+prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
+	for id, set in seed.region_of {
+		prov_merge_region_of(graph, id, set, written = false)
+	}
+	for id in seed.restored {
+		graph.restored[id] = true
+	}
+	for id, set in seed.provider_parents {
+		prov_merge_parent(graph, id, set)
+	}
+	for id in seed.lent_locals {
+		graph.lent_locals[id] = true
+	}
+	for id, aliases in seed.written_aliases {
+		for alias in aliases {
+			prov_add_written_alias(graph, id, alias)
+		}
+	}
+	for id, content in seed.region_content {
+		graph.region_content[id] = prov_clone_region_contents(content[:], graph.alloc)
+	}
+	for id, merged in seed.merged_regions {
+		prov_note_merged_region(graph, id, merged.region, merged.precision)
+	}
+}
+
+// A round's facts alone, deep-copied into `allocator` to seed the next round
+// after this one's graph is reclaimed.
+@(private)
+prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_Facts {
+	carry := new(Prov_Facts, allocator)
+	use_allocator(carry, allocator)
+	prov_copy_map(&carry.region_of, graph.region_of)
+	prov_copy_map(&carry.provider_parents, graph.provider_parents)
+	prov_copy_map(&carry.lent_locals, graph.lent_locals)
+	prov_copy_map(&carry.restored, graph.restored)
+	prov_copy_map(&carry.merged_regions, graph.merged_regions)
+	reserve(&carry.written_aliases, len(graph.written_aliases))
+	for id, aliases in graph.written_aliases {
+		carry.written_aliases[id] = prov_clone_written_aliases(aliases[:], allocator)
+	}
+	reserve(&carry.region_content, len(graph.region_content))
+	for id, content in graph.region_content {
+		carry.region_content[id] = prov_clone_region_contents(content[:], allocator)
+	}
+	return carry
+}
+
+// How many facts a round holds. They only grow, so a round that ends with as
+// many as it was seeded with read every one at its final value.
+@(private)
+prov_fact_weight :: proc(facts: ^Prov_Facts) -> int {
+	weight := 0
+	for _, set in facts.region_of {
+		weight += region_weight(set)
+	}
+	for _, set in facts.provider_parents {
+		weight += region_weight(set)
+	}
+	for _, content in facts.region_content {
+		for entry in content {
+			weight += 1 + region_weight(entry.region)
+		}
+	}
+	// An alias read at a load below a parameter is a fact of its own, which a replay
+	// that only sets `loaded` grows by, and so is one found without a budget.
+	for _, aliases in facts.written_aliases {
+		weight += len(aliases)
+		for alias in aliases {
+			weight += int(alias.loaded) + int(alias.precision == {})
+		}
+	}
+	for _, merged in facts.merged_regions {
+		weight += 1 + region_weight(merged.region) + card(merged.precision)
+	}
+	return weight + len(facts.lent_locals) + len(facts.restored)
+}
+
+@(private = "file")
+param_reads_weight :: proc(reads: Param_Reads) -> int {
+	return int(bits.count_ones(reads.handles)) + int(bits.count_ones(reads.viewed))
+}
+
+@(private = "file")
+region_weight :: proc(set: Region_Set) -> int {
+	return int(bits.count_ones(set.locals)) + int(bits.count_ones(set.params)) + int(bits.count_ones(set.loaded)) +
+		param_reads_weight(set.named) + param_reads_weight(set.below) +
+		int(set.default) + int(set.unknown) + int(set.crowded) + int(set.crowded_params)
 }
 
 @(private = "file")

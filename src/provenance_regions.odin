@@ -5,7 +5,6 @@ package lokec
 
 import "core:mem"
 import "core:slice"
-import "core:math/bits"
 
 @(private)
 prov_result_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
@@ -254,13 +253,6 @@ prov_merge_region_of :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set,
 	graph.region_of[id] = existing
 }
 
-@(private)
-prov_merge_parent :: proc(graph: ^Flow_Graph, id: Symbol_Id, set: Region_Set) {
-	parent := graph.provider_parents[id]
-	region_merge(&parent, set)
-	graph.provider_parents[id] = parent
-}
-
 // An assigned value's regions join a local's, or the parents a provider depends
 // on, since a provider's own region stays its token.
 @(private)
@@ -284,35 +276,6 @@ prov_forget_region_binding :: proc(graph: ^Flow_Graph, symbol: Symbol_Id) {
 	delete_key(&graph.region_aliases, symbol)
 }
 
-// Starts a pass from carried facts, copied so this pass's merges leave them
-// alone and the round that produced them can be reclaimed.
-@(private)
-prov_seed_regions :: proc(graph: ^Flow_Graph, seed: ^Prov_Facts) {
-	for id, set in seed.region_of {
-		prov_merge_region_of(graph, id, set, written = false)
-	}
-	for id in seed.restored {
-		graph.restored[id] = true
-	}
-	for id, set in seed.provider_parents {
-		prov_merge_parent(graph, id, set)
-	}
-	for id in seed.lent_locals {
-		graph.lent_locals[id] = true
-	}
-	for id, aliases in seed.written_aliases {
-		for alias in aliases {
-			prov_add_written_alias(graph, id, alias)
-		}
-	}
-	for id, content in seed.region_content {
-		graph.region_content[id] = prov_clone_region_contents(content[:], graph.alloc)
-	}
-	for id, merged in seed.merged_regions {
-		prov_note_merged_region(graph, id, merged.region, merged.precision)
-	}
-}
-
 // Records that a store left `region` in `storage` only through a target the
 // budgets in `precision` merged in, so a reset it blocks says it may
 // (design.md "Minimum provenance precision").
@@ -325,74 +288,6 @@ prov_note_merged_region :: proc(graph: ^Flow_Graph, storage: Storage_Id, region:
 	region_merge(&merged.region, region)
 	merged.precision |= precision
 	graph.merged_regions[storage] = merged
-}
-
-// A round's facts alone, deep-copied into `allocator` to seed the next round
-// after this one's graph is reclaimed.
-@(private)
-prov_carry_facts :: proc(graph: ^Flow_Graph, allocator: mem.Allocator) -> ^Prov_Facts {
-	carry := new(Prov_Facts, allocator)
-	carry.region_of = make(map[Symbol_Id]Region_Set, len(graph.region_of), allocator)
-	for id, set in graph.region_of { carry.region_of[id] = set }
-	carry.provider_parents = make(map[Symbol_Id]Region_Set, len(graph.provider_parents), allocator)
-	for id, set in graph.provider_parents { carry.provider_parents[id] = set }
-	carry.lent_locals = make(map[Symbol_Id]bool, len(graph.lent_locals), allocator)
-	for id in graph.lent_locals { carry.lent_locals[id] = true }
-	carry.restored = make(map[Symbol_Id]bool, len(graph.restored), allocator)
-	for id in graph.restored { carry.restored[id] = true }
-	carry.written_aliases = make(map[Storage_Id][dynamic]Written_Alias, len(graph.written_aliases), allocator)
-	for id, aliases in graph.written_aliases {
-		carry.written_aliases[id] = prov_clone_written_aliases(aliases[:], allocator)
-	}
-	carry.region_content = make(map[Storage_Id][dynamic]Prov_Region_Content, len(graph.region_content), allocator)
-	for id, content in graph.region_content {
-		carry.region_content[id] = prov_clone_region_contents(content[:], allocator)
-	}
-	carry.merged_regions = make(map[Storage_Id]Prov_Merged_Region, len(graph.merged_regions), allocator)
-	for id, merged in graph.merged_regions { carry.merged_regions[id] = merged }
-	return carry
-}
-
-// How many facts a round holds. They only grow, so a round that ends with as
-// many as it was seeded with read every one at its final value.
-@(private)
-prov_fact_weight :: proc(facts: ^Prov_Facts) -> int {
-	weight := 0
-	for _, set in facts.region_of {
-		weight += region_weight(set)
-	}
-	for _, set in facts.provider_parents {
-		weight += region_weight(set)
-	}
-	for _, content in facts.region_content {
-		for entry in content {
-			weight += 1 + region_weight(entry.region)
-		}
-	}
-	// An alias read at a load below a parameter is a fact of its own, which a replay
-	// that only sets `loaded` grows by, and so is one found without a budget.
-	for _, aliases in facts.written_aliases {
-		weight += len(aliases)
-		for alias in aliases {
-			weight += int(alias.loaded) + int(alias.precision == {})
-		}
-	}
-	for _, merged in facts.merged_regions {
-		weight += 1 + region_weight(merged.region) + card(merged.precision)
-	}
-	return weight + len(facts.lent_locals) + len(facts.restored)
-}
-
-@(private = "file")
-param_reads_weight :: proc(reads: Param_Reads) -> int {
-	return int(bits.count_ones(reads.handles)) + int(bits.count_ones(reads.viewed))
-}
-
-@(private = "file")
-region_weight :: proc(set: Region_Set) -> int {
-	return int(bits.count_ones(set.locals)) + int(bits.count_ones(set.params)) + int(bits.count_ones(set.loaded)) +
-		param_reads_weight(set.named) + param_reads_weight(set.below) +
-		int(set.default) + int(set.unknown) + int(set.crowded) + int(set.crowded_params)
 }
 
 // Every region dependency of a symbol, including its field facts. A carrier's
@@ -731,28 +626,6 @@ prov_define_stored_content :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Pr
 	if region_merge(&handles, region) {
 		prov_define_region_content(graph, root, path, region, handle = true, own = own)
 	}
-}
-
-// The name of the one local region a set names, or "".
-prov_region_name :: proc(graph: ^Flow_Graph, set: Region_Set) -> string {
-	if set.crowded {
-		return ""
-	}
-	found := ""
-	for id, index in graph.provider_symbols {
-		if set.locals & (u64(1) << u64(index)) == 0 {
-			continue
-		}
-		name := ""
-		if sym := symbol_of(graph.k.c, id); sym != nil {
-			name = identifier_text(graph.k.c, sym.name)
-		}
-		if found != "" && found != name {
-			return ""
-		}
-		found = name
-	}
-	return found
 }
 
 // A `leaf` type, or an `Option`/`Result`-style union around one: the wrapper
@@ -1325,146 +1198,6 @@ prov_bind_traversal_aliases :: proc(graph: ^Flow_Graph, id: Symbol_Id, iterable:
 	graph.region_aliases[id] = aliases[:]
 }
 
-// The region an `arena.allocator()` names; unknown unless the receiver is a
-// named provider.
-@(private)
-prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id) -> (Region_Set, bool) {
-	if call_provider_op(graph.k.c, v) != .Handle || len(v.bound) == 0 {
-		return Region_Set{}, false
-	}
-	id := receiver
-	receiver := prov_value(graph, id)
-	if ident, is_ident := receiver.form.(Prov_Form_Symbol); is_ident {
-		if set, found := graph.region_of[ident.symbol]; found {
-			return set, true
-		}
-	} else if receiver.temporary {
-		return prov_temp_provider_region(graph, v), true
-	} else if root, path, ok := prov_root_place(graph, receiver.place); ok {
-		// A provider inside a local record or container: the token of its position.
-		if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
-			return prov_provider_region_at(graph, descriptor.symbol, path), true
-		}
-	}
-	if set, known := prov_provider_through_carrier(graph, id); known {
-		return set, true
-	}
-	return Region_Set{unknown = true}, true
-}
-
-// A provider reached through a carrier, when that names one: what a local pointer
-// points at, or what a call's result does, which for a handle's `get()` is the
-// handle, whose end ends the provider (design.md "Shared ownership"). What a received
-// carrier reaches is its argument's, which the parameter's position names.
-@(private = "file")
-prov_provider_through_carrier :: proc(graph: ^Flow_Graph, id: Value_Id) -> (Region_Set, bool) {
-	value := prov_value(graph, id)
-	carrier := id
-	if base, indirect := value.place.base.(Value_Id); indirect { carrier = base }
-	if !prov_type_is_view_carrier(graph.k.c, prov_value(graph, carrier).type) { return {}, false }
-	aliases := prov_value_aliases(graph, carrier)
-	if len(aliases) == 0 { return {}, false }
-	set := Region_Set{}
-	// A place reached through the carrier is that part of what it views.
-	viewed := underlying_info(graph.k.c, prov_value(graph, carrier).type).element
-	below: []Proj_Step
-	if carrier != id { viewed, below = value.type, value.place.path }
-	for alias in aliases {
-		at := alias
-		at.at = prov_concat_path(graph, alias.at, below)
-		if !prov_merge_provider_viewed(graph, at, viewed, &set, 0) { return {}, false }
-	}
-	return set, true
-}
-
-// Merges the regions of the providers a value of type `viewed` at `alias` reaches: those
-// it owns, and those the carriers it holds point at, as the elements of a `[]^mut Arena`
-// do, or an arena beside a pointer to another. False when one of them names no provider
-// this body knows.
-@(private = "file")
-prov_merge_provider_viewed :: proc(graph: ^Flow_Graph, alias: Written_Alias, viewed: Type_Id, set: ^Region_Set, depth: int) -> bool {
-	c := graph.k.c
-	if alias.target == 0 || depth >= CARRIER_DEPTH { return false }
-	// Named apart: asking may add the root.
-	root := prov_root_for_storage(graph, alias.target)
-	descriptor := graph.roots[int(root)]
-	holder := symbol_of(c, descriptor.symbol)
-	if holder != nil && holder.kind == .Parameter {
-		received, seeded := graph.region_of[descriptor.symbol]
-		if !seeded || !prov_type_is_view_carrier(c, holder.type) { return false }
-		region_merge(set, received)
-		return true
-	}
-	named := false
-	for carrier in carrier_shape(c, viewed) {
-		if !prov_view_reaches_provider(c, carrier.type) { continue }
-		held := prov_written_aliases_of(graph, alias.target, prov_concat_path(graph, alias.at, carrier.steps))
-		if len(held) == 0 { return false }
-		element := underlying_info(c, carrier.type).element
-		for loaded in held {
-			if !prov_merge_provider_viewed(graph, loaded, element, set, depth + 1) { return false }
-		}
-		named = true
-	}
-	if type_carries_provider(c, viewed) {
-		if descriptor.kind != .Local || holder == nil || holder.kind != .Var { return false }
-		region_merge(set, prov_provider_region_at(graph, descriptor.symbol, alias.at))
-		named = true
-	}
-	return named
-}
-
-// The regions of the providers a carrier argument reaches, which a callee naming its
-// parameter's region may have drawn from: unknown when the carrier names no one of them.
-@(private)
-prov_provider_viewed_by :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
-	c := graph.k.c
-	type := prov_value(graph, id).type
-	if !prov_view_reaches_provider(c, type) {
-		return {}
-	}
-	if set, known := prov_provider_through_carrier(graph, id); known {
-		return set
-	}
-	return Region_Set{unknown = true}
-}
-
-// Whether a carrier views a provider, directly or through a carrier held in what it
-// views, at any place there. A shape cut short may hold anything, so it may reach one.
-@(private = "file")
-prov_view_reaches_provider :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	if cached, found := c.view_reaches_provider[type]; found {
-		return cached
-	}
-	visited := make(map[Type_Id]bool, 8, context.temp_allocator)
-	reaches := prov_view_reach_walk(c, type, &visited)
-	c.view_reaches_provider[type] = reaches
-	return reaches
-}
-
-@(private = "file")
-prov_view_reach_walk :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type_Id]bool) -> bool {
-	if visited[type] || !prov_type_is_view_carrier(c, type) {
-		return false
-	}
-	visited[type] = true
-	viewed := underlying_info(c, type).element
-	if type_carries_provider(c, viewed) {
-		return true
-	}
-	for carrier in carrier_shape(c, viewed) {
-		if .Width in carrier.precision || .Depth in carrier.precision || prov_view_reach_walk(c, carrier.type, visited) {
-			return true
-		}
-	}
-	return false
-}
-
-Temp_Provider :: struct {
-	bit:  u64,
-	span: Span,
-}
-
 // The value a `return` hands back, or the error an `or_return` propagates into
 // `result`; its region is read where a deferred reset needs it.
 Prov_Returning :: struct {
@@ -1472,33 +1205,6 @@ Prov_Returning :: struct {
 	propagated: Maybe(Prov_Form_Error),
 	result:     Type_Id,
 	span:       Span,
-}
-
-// design.md "Allocator regions and region provenance": a temporary provider is
-// a local region that ends with its statement, so its handle gets a token of
-// its own, ended there. Unknown once the tokens run out.
-@(private = "file")
-prov_temp_provider_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Region_Set {
-	set := Region_Set{}
-	bit, found := graph.temp_provider_bits[v]
-	if !found {
-		if len(graph.provider_symbols) >= REGION_LOCAL_LIMIT {
-			set.unknown = true
-			return set
-		}
-		bit = u64(1) << u64(len(graph.provider_symbols))
-		append(&graph.provider_symbols, INVALID_SYMBOL)
-		graph.temp_provider_bits[v] = bit
-	}
-	set.locals = bit
-	return set
-}
-
-@(private)
-prov_temp_provider_end :: proc(graph: ^Flow_Graph, provider: Temp_Provider, live: Reset_Liveness) {
-	set := Region_Set{}
-	set.locals = provider.bit
-	prov_reset(graph, set, provider.span, true, nil, live, ends = "this temporary allocator, which ends with its statement,", provider_end = true)
 }
 
 // Exact constructor facts: backing storage is separate from payload fields,
