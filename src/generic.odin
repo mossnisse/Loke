@@ -6,6 +6,7 @@ package lokec
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:reflect"
 import "core:slice"
 import "core:strings"
 
@@ -208,7 +209,7 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 			rejected |= reject_reserved_name(k, name.id, name.span)
 		}
 	}
-	if record, is_record := d.values[0].(^Type_Record); is_record {
+	if record := decl_record(d); record != nil {
 		stand_ins := new_scope(k.c, k.scope, .Local)
 		for group in record.generic_params {
 			for name in group.names {
@@ -345,7 +346,7 @@ declaration_generic_kind :: proc(d: ^Decl) -> Generic_Kind {
 	if literal := decl_proc_literal(d); literal != nil {
 		return proc_signature_is_generic(literal) ? .Procedure : .None
 	}
-	if record, is_record := d.values[0].(^Type_Record); is_record && len(record.generic_params) > 0 {
+	if record := decl_record(d); record != nil && len(record.generic_params) > 0 {
 		return .Record
 	}
 	// design.md "Parametric aliases": `Status :: Result(Unit, $E);`.
@@ -426,38 +427,15 @@ pattern_relation :: proc(a, b: Expr) -> Pattern_Relation {
 	}
 
 	#partial switch left in a {
-	case ^Type_Pointer:
-		right, ok := b.(^Type_Pointer)
-		if !ok { return .Crossed }
-		return merge_pattern_relation(capability_relation(left.mutable, right.mutable), pattern_relation(left.elem, right.elem))
-	case ^Type_C_Pointer:
-		right, ok := b.(^Type_C_Pointer)
-		return ok ? pattern_relation(left.elem, right.elem) : .Crossed
-	case ^Type_Slice:
-		right, ok := b.(^Type_Slice)
-		if !ok { return .Crossed }
-		return merge_pattern_relation(capability_relation(left.mutable, right.mutable), pattern_relation(left.elem, right.elem))
-	case ^Type_Dynamic_Array:
-		right, ok := b.(^Type_Dynamic_Array)
-		return ok ? pattern_relation(left.elem, right.elem) : .Crossed
-	case ^Type_Distinct:
-		right, ok := b.(^Type_Distinct)
-		return ok ? pattern_relation(left.elem, right.elem) : .Crossed
-	case ^Type_Dyn:
-		right, ok := b.(^Type_Dyn)
-		if !ok { return .Crossed }
-		return merge_pattern_relation(capability_relation(left.mutable, right.mutable), pattern_relation(left.interface_expr, right.interface_expr))
-	case ^Type_Array:
-		right, ok := b.(^Type_Array)
-		if !ok { return .Crossed }
-		return merge_pattern_relation(pattern_relation(left.length, right.length), pattern_relation(left.elem, right.elem))
-	case ^Type_Map:
-		right, ok := b.(^Type_Map)
-		if !ok { return .Crossed }
-		return merge_pattern_relation(pattern_relation(left.key, right.key), pattern_relation(left.value, right.value))
-	case ^Expr_Call:
-		right, ok := b.(^Expr_Call)
-		return ok ? pattern_relations(argument_values(left.args), argument_values(right.args)) : .Crossed
+	case ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Distinct, ^Type_Dyn, ^Type_Array, ^Type_Map,
+	     ^Expr_Call:
+		// Same constructor: its parts relate pairwise, and a `mut` capability
+		// is one more part.
+		if reflect.union_variant_typeid(a) != reflect.union_variant_typeid(b) {
+			return .Crossed
+		}
+		parts := pattern_relations(type_pattern_parts(a), type_pattern_parts(b))
+		return merge_pattern_relation(capability_relation(written_mutable(a), written_mutable(b)), parts)
 	case ^Type_Proc:
 		right, ok := b.(^Type_Proc)
 		if !ok || (left.result == nil) != (right.result == nil) {
@@ -516,13 +494,15 @@ pattern_relations :: proc(left, right: []Expr) -> Pattern_Relation {
 	return relation
 }
 
+// Whether a pointer, slice or `dyn` is written `mut`; false for any other syntax.
 @(private = "file")
-argument_values :: proc(args: []Argument) -> []Expr {
-	values := make([]Expr, len(args), context.temp_allocator)
-	for arg, index in args {
-		values[index] = arg.value
+written_mutable :: proc(e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Type_Pointer: return v.mutable
+	case ^Type_Slice:   return v.mutable
+	case ^Type_Dyn:     return v.mutable
 	}
-	return values
+	return false
 }
 
 // A signature's parameter types one per name, `a, b: T` as two.

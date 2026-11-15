@@ -408,11 +408,8 @@ declared_written_hooks :: proc(k: ^Checker, info: ^Type_Info) -> Written_Hooks {
 // answer reads the declaration and its hooks only: what its fields make it does
 // not count, so a generic record has one answer for all of its instances.
 check_copy_decision :: proc(k: ^Checker, d: ^Decl) {
-	if d.kind != .Const || len(d.values) != 1 || len(d.symbols) != 1 || decl_is_intrinsic(d) {
-		return
-	}
-	record, is_record := d.values[0].(^Type_Record)
-	if !is_record || record.kind != .Struct {
+	record := decl_record(d)
+	if d.kind != .Const || record == nil || record.kind != .Struct || len(d.symbols) != 1 || decl_is_intrinsic(d) {
 		return
 	}
 	symbol_id := d.symbols[0]

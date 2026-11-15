@@ -824,25 +824,17 @@ report_unresolved_call :: proc(k: ^Checker, call: ^Expr_Call) {
 // The component of a composed type that did not resolve, or nil.
 @(private = "file")
 unresolved_component :: proc(k: ^Checker, syntax: Expr) -> Expr {
-	failed :: proc(k: ^Checker, part: Expr) -> bool {
-		return part != nil && resolve_type_syntax(k, part) == INVALID_TYPE
-	}
-	#partial switch value in syntax {
-	case ^Type_Pointer:
-		if failed(k, value.elem) { return value.elem }
-	case ^Type_C_Pointer:
-		if failed(k, value.elem) { return value.elem }
-	case ^Type_Slice:
-		if failed(k, value.elem) { return value.elem }
-	case ^Type_Dynamic_Array:
-		if failed(k, value.elem) { return value.elem }
-	case ^Type_Array:
-		if failed(k, value.elem) { return value.elem }
-	case ^Type_Distinct:
-		if failed(k, value.elem) { return value.elem }
-	case ^Type_Map:
-		if failed(k, value.key) { return value.key }
-		if failed(k, value.value) { return value.value }
+	#partial switch _ in syntax {
+	case ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array, ^Type_Array, ^Type_Distinct, ^Type_Map:
+		for part in type_pattern_parts(syntax) {
+			// An array's length is a value, not a component type.
+			if array, is_array := syntax.(^Type_Array); is_array && part == array.length {
+				continue
+			}
+			if part != nil && resolve_type_syntax(k, part) == INVALID_TYPE {
+				return part
+			}
+		}
 	}
 	return nil
 }

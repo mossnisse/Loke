@@ -28,14 +28,7 @@ check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 // instance's, so one instance's answer says nothing about another's.
 @(private = "file")
 report_local_copy_decisions :: proc(k: ^Checker, stmts: []Stmt) {
-	for_each_sequence_decl(k, stmts, proc(k: ^Checker, d: ^Decl) {
-		if d.kind != .Const || len(d.values) != 1 {
-			return
-		}
-		if _, is_record := d.values[0].(^Type_Record); is_record {
-			check_copy_decision(k, d)
-		}
-	})
+	for_each_sequence_decl(k, stmts, check_copy_decision)
 }
 
 // Each declaration of a sequence, in source order: one written in it, one a

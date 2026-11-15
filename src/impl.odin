@@ -578,12 +578,12 @@ member_named :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) ->
 // (`declare_local_impl_hooks`). A local name is never shadowed in its body, so the
 // names it goes by say which blocks are its own.
 hoist_local_lifecycle_hooks :: proc(k: ^Checker, d: ^Decl) {
-	if d.kind != .Const || len(d.values) != 1 || len(d.symbols) != 1 || k.body.following == nil {
+	record := decl_record(d)
+	if d.kind != .Const || record == nil || record.kind != .Struct || len(d.symbols) != 1 || k.body.following == nil {
 		return
 	}
-	record, is_record := d.values[0].(^Type_Record)
 	sym := symbol_of(k.c, d.symbols[0])
-	if !is_record || record.kind != .Struct || sym == nil || sym.kind != .Type {
+	if sym == nil || sym.kind != .Type {
 		return
 	}
 	subject := sym.type
