@@ -359,12 +359,7 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 		graph.view_borrowed[graph.roots[int(loan.root)].symbol] = true
 	}
 	width := (bits + 7) / 8
-	entry := make([][]u8, len(graph.blocks), graph.alloc)
-	exit := make([][]u8, len(graph.blocks), graph.alloc)
-	for id in 0 ..< len(graph.blocks) {
-		entry[id] = make([]u8, width, graph.alloc)
-		exit[id] = make([]u8, width, graph.alloc)
-	}
+	entry, exit := block_rows(graph, width), block_rows(graph, width)
 	visited := make([]bool, len(graph.blocks), graph.alloc)
 	queue := block_queue_from_entry(graph)
 	row := make([]u8, width, graph.alloc)

@@ -29,16 +29,11 @@ task_window :: proc(state: ^Prov_Solve) -> [][]u8 {
 @(private = "file")
 solve_window :: proc(state: ^Prov_Solve) -> [][]u8 {
 	graph := state.graph
-	entry := make([][]u8, max(len(graph.blocks), 1), graph.alloc)
 	if !graph.has_window_event {
-		return entry
+		return make([][]u8, max(len(graph.blocks), 1), graph.alloc)
 	}
 	width := (len(graph.task_sites) + 7) / 8
-	exit := make([][]u8, len(graph.blocks), graph.alloc)
-	for id in 0 ..< len(graph.blocks) {
-		entry[id] = make([]u8, width, graph.alloc)
-		exit[id] = make([]u8, width, graph.alloc)
-	}
+	entry, exit := block_rows(graph, width), block_rows(graph, width)
 	// A block not visited yet adds nothing to its successors' entry.
 	visited := make([]bool, len(graph.blocks), graph.alloc)
 	mask := make([]u8, width, graph.alloc)

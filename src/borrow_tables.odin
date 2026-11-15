@@ -265,3 +265,13 @@ bytes_or :: proc(into: []u8, from: []u8) {
 		into[index] |= value
 	}
 }
+
+// A zeroed row of `width` bytes per block, as a bit-vector analysis's entry or exit.
+@(private)
+block_rows :: proc(graph: ^Flow_Graph, width: int) -> [][]u8 {
+	rows := make([][]u8, len(graph.blocks), graph.alloc)
+	for &row in rows {
+		row = make([]u8, width, graph.alloc)
+	}
+	return rows
+}
