@@ -7,6 +7,7 @@ import "base:intrinsics"
 import "core:fmt"
 import "core:math"
 import "core:mem"
+import "core:slice"
 import "core:strings"
 import "core:unicode/utf8"
 
@@ -281,6 +282,14 @@ fold_bool :: proc(op: Token_Kind, x, y: bool) -> (bool, bool) {
 		return x && !y, true
 	}
 	return false, false
+}
+
+comparison_operator :: proc(op: Token_Kind) -> bool {
+	#partial switch op {
+	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
+		return true
+	}
+	return false
 }
 
 @(private = "file")
@@ -601,21 +610,8 @@ const_storage :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, bytes: []
 	}
 	pattern: u128
 	#partial switch info.kind {
-	case .Float:
-		if value.kind != .Float {
-			return false
-		}
-		pattern = u128(const_float_pattern(value, info.bits))
-	case .Bool:
-		if value.kind != .Boolean {
-			return false
-		}
-		pattern = value.boolean ? 1 : 0
-	case .Int, .Rune, .Enum:
-		if value.kind != .Integer && value.kind != .Rune {
-			return false
-		}
-		pattern = bi_pattern(value.integer, len(bytes) * 8)
+	case .Float, .Bool, .Int, .Rune, .Enum:
+		pattern = scalar_const_pattern(value, info, len(bytes) * 8) or_return
 	case .Typeid:
 		// design.md "`type` and `typeid`": a `typeid_of(T)` has no number until
 		// `freeze_typeids` gives it one, and folding it now would fix one that
@@ -640,11 +636,36 @@ const_storage :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, bytes: []
 	case:
 		return false
 	}
-	for index in 0 ..< len(bytes) {
-		bytes[index], written[index] = u8(pattern), true
-		pattern >>= 8
-	}
+	write_pattern_bytes(bytes, pattern)
+	slice.fill(written, true)
 	return true
+}
+
+// The bits a scalar constant of `info`'s kind stores, `bits` wide; not `ok` when
+// `value` is not one.
+scalar_const_pattern :: proc(value: Const_Value, info: ^Type_Info, bits: int) -> (pattern: u128, ok: bool) {
+	#partial switch info.kind {
+	case .Float:
+		if value.kind == .Float {
+			return u128(const_float_pattern(value, info.bits)), true
+		}
+	case .Bool:
+		if value.kind == .Boolean {
+			return value.boolean ? 1 : 0, true
+		}
+	case .Int, .Rune, .Enum:
+		if const_is_integral(value) {
+			return bi_pattern(value.integer, bits), true
+		}
+	}
+	return 0, false
+}
+
+// `pattern` in `out`, little-endian like every target.
+write_pattern_bytes :: proc(out: []u8, pattern: u128) {
+	for _, index in out {
+		out[index] = u8(pattern >> uint(index * 8))
+	}
 }
 
 @(private = "file")

@@ -350,8 +350,9 @@ diagnostics and dependencies are retained.
 ### Compile-time execution and generics
 
 `const_ops.odin` supplies shared constant semantics. `eval.odin` interprets
-already typed AST with bounded frames, mutation, calls, loops, containers, and
-`defer`. Aggregate assignment deep-copies, except that slices share elements
+already typed AST with bounded frames, mutation, and calls;
+`eval_containers.odin` adds containers, and `eval_stmt.odin` statements, loops,
+and `defer`. Aggregate assignment deep-copies, except that slices share elements
 and pointers share targets. `eval_memory.odin` charges each block to the memory
 limit until it is released and reuses released blocks by size class. Returned
 frames, assignment scratch, and integer temporaries are released; a value is
@@ -1206,7 +1207,7 @@ be file-private. Paths below are relative to `src/`.
 | `generic_alias.odin` | Parametric aliases: the rules on their declarations, and what an application denotes and how a pattern written through one matches. |
 | `generic_impl.odin` | Generic `impl` blocks: installing them on each instance, settling members two blocks supply, and checking their bodies once a package is finished. |
 | `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, slot lookup contexts, composition walks, `Callable`'s built-in rule, and what a bare bound grants. |
-| `eval.odin`, `eval_memory.odin` | Bounded typed-AST interpreter for compile-time execution, and the storage its memory limit charges. |
+| `eval.odin`, `eval_containers.odin`, `eval_stmt.odin`, `eval_memory.odin` | Bounded typed-AST interpreter for compile-time execution: values, expressions, and calls; container operations; statements; and the storage its memory limit charges. |
 | `expand.odin`, `reflect.odin` | Static `foreach`, expanded switch cases and union argument expansion, reflection descriptors, `type_of`, and `typeid_of`. |
 | `typeid.odin` | `typeid` constants, type-ID freezing, and the canonical key types sort by. |
 | `materialize.odin` | Read-only storage for address-requiring constants. |

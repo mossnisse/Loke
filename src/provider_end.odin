@@ -114,7 +114,7 @@ provider_place_root :: proc(graph: ^Flow_Graph, place: Expr) -> Symbol_Id {
 // owner's storage. Two walks look alike but differ in rule, so they stay apart:
 // `place_root_symbol` in `ownership_forms.odin` names the variable a field or
 // index path starts at, through pointers too, and `eval_frame_place` in
-// `eval.odin` asks whether a place is an evaluator frame's own, through fields
+// `eval_stmt.odin` asks whether a place is an evaluator frame's own, through fields
 // and fixed-array elements only.
 @(private = "file")
 place_is_direct :: proc(c: ^Compiler, place: Expr) -> bool {
