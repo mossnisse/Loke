@@ -1052,26 +1052,19 @@ parse_declaration :: proc(p: ^Parser, attributes: []Attribute, start: Token, in_
 	d.names, _ = parse_name_list(p, "L0207", "a name", false)
 	advance(p) // `:`
 
-	switch {
-	case allow(p, .Colon):
-		return finish_constant(p, d, start, in_header)
-	case allow(p, .Assign):
-		return finish_variable(p, d, start, in_header)
-	}
-
-	parse_storage_modifiers(p, d)
-	if allow(p, .Assign) {
-		return finish_variable(p, d, start, in_header)
-	}
-
-	d.declared_type = parse_type(p)
-	if expr_has_error(d.declared_type) {
-		return nil
-	}
-	// grammar.md "Resolved ambiguities": no name can follow a declared type.
-	if contextual_at(p, 0, .Via, "via") {
-		take_as(p, .Via)
-		d.via = parse_unary(p) // grammar.md: exactly one unary expression
+	if !at(p, .Colon) && !at(p, .Assign) {
+		parse_storage_modifiers(p, d)
+		if !at(p, .Assign) {
+			d.declared_type = parse_type(p)
+			if expr_has_error(d.declared_type) {
+				return nil
+			}
+			// grammar.md "Resolved ambiguities": no name can follow a declared type.
+			if contextual_at(p, 0, .Via, "via") {
+				take_as(p, .Via)
+				d.via = parse_unary(p) // grammar.md: exactly one unary expression
+			}
+		}
 	}
 
 	switch {
