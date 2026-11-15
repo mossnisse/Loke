@@ -115,15 +115,9 @@ check_box_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		classify_copy_cost(k, argument, payload, site)
 	}
 
-	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
-	bound[0] = argument
-	if len(v.args) == 2 {
-		if !check_allocator_argument(k, v.args[1].value) {
-			return
-		}
-		bound[1] = v.args[1].value
+	if !bind_with_allocator(k, v, argument) {
+		return
 	}
-	v.bound = bound
 	v.operation = Call_Allocation{type = payload, fallible = fallible}
 	made := is_box ? box_of(k.c, payload) : c_pointer_to(k.c, payload)
 	contribute_lifecycle_members(k, is_box ? made : payload)

@@ -230,12 +230,7 @@ check_or_return_failure :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) 
 @(private = "file")
 failure_return :: proc(k: ^Checker, target: Fallible, value: Expr, span: Span) -> ^Stmt_Return {
 	wrap := synth_call(k.c, variant_selector(k, target.union_type, target.failure, span), {value}, span)
-	exit := new(Stmt_Return, k.c.semantic_allocator)
-	exit.span = span
-	exit.value = new(Return_Value, k.c.semantic_allocator)
-	exit.value.span = span
-	exit.value.expr = wrap
-	return exit
+	return synth_return(k.c, synth_return_value(k.c, wrap, span), span)
 }
 
 // The payload of `.name` when it names a variant of the failure payload type
@@ -331,9 +326,7 @@ implicit_success :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol) -> b
 	end := literal.body.span
 	end.lo = max(end.hi, 1) - 1
 	end.hi = end.lo
-	exit := new(Stmt_Return, k.c.semantic_allocator)
-	exit.span = end
-	exit.value = bare_success_value(k, symbol.result, end)
+	exit := synth_return(k.c, bare_success_value(k, symbol.result, end), end)
 	stmts := make([]Stmt, len(literal.body.stmts) + 1, k.c.semantic_allocator)
 	copy(stmts, literal.body.stmts)
 	stmts[len(stmts) - 1] = exit
@@ -345,10 +338,7 @@ implicit_success :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol) -> b
 // The returned value that a body's bare success stands for, at an empty span.
 bare_success_value :: proc(k: ^Checker, result: Type_Id, at: Span) -> ^Return_Value {
 	shape, _ := fallible_of(k.c, result)
-	value := new(Return_Value, k.c.semantic_allocator)
-	value.span = at
-	value.expr = variant_selector(k, result, shape.success, at)
-	return value
+	return synth_return_value(k.c, variant_selector(k, result, shape.success, at), at)
 }
 
 // The unchecked `.name` of `result`'s variant `index`, as a compiler-written

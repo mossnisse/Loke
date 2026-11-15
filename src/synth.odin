@@ -75,6 +75,20 @@ synth_expr_stmt :: proc(c: ^Compiler, value: Expr, span: Span) -> Stmt {
 	return s
 }
 
+synth_return :: proc(c: ^Compiler, value: ^Return_Value, span: Span) -> ^Stmt_Return {
+	exit := new(Stmt_Return, c.semantic_allocator)
+	exit.span = span
+	exit.value = value
+	return exit
+}
+
+synth_return_value :: proc(c: ^Compiler, value: Expr, span: Span) -> ^Return_Value {
+	returned := new(Return_Value, c.semantic_allocator)
+	returned.span = span
+	returned.expr = value
+	return returned
+}
+
 synth_block :: proc(c: ^Compiler, stmts: []Stmt, span: Span) -> ^Block {
 	block := new(Block, c.semantic_allocator)
 	block.span = span

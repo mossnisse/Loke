@@ -286,6 +286,20 @@ argument_count_is :: proc(k: ^Checker, v: ^Expr_Call, count: int, code, name, wa
 	return false
 }
 
+// Binds `first` and, when the call writes one, a trailing allocator argument.
+bind_with_allocator :: proc(k: ^Checker, v: ^Expr_Call, first: Expr) -> bool {
+	if len(v.args) == 2 && !check_allocator_argument(k, v.args[1].value) {
+		return false
+	}
+	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
+	bound[0] = first
+	if len(v.args) == 2 {
+		bound[1] = v.args[1].value
+	}
+	v.bound = bound
+	return true
+}
+
 // A call's operands, in the order the backend reads them.
 bound_exprs :: proc(k: ^Checker, operands: ..Expr) -> []Expr {
 	bound := make([]Expr, len(operands), k.c.semantic_allocator)
@@ -666,16 +680,9 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		}
 	}
 
-	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
-	bound[0] = v.args[0].value
-	if len(v.args) == 2 {
-		if !check_allocator_argument(k, v.args[1].value) {
-			return
-		}
-		bound[1] = v.args[1].value
+	if bind_with_allocator(k, v, v.args[0].value) {
+		v.type = TYPE_VOID
 	}
-	v.bound = bound
-	v.type = TYPE_VOID
 }
 
 // `unsafe.free` releases the allocation a typed address names: a `[^]T` from
