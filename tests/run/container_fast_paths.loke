@@ -1,0 +1,183 @@
+package main; import "core:fmt";
+
+// compiler-architecture.md "Container fast paths": `append`, a map lookup, and
+// a map's inserting index each run a short path in front of the general one in
+// `runtime/container.c`, and must answer what the general one alone would. The
+// cases here sit on the boundary between the two.
+
+next :: proc(state: inout u64) -> u64 {
+	state ~= state << 13;
+	state ~= state >> 7;
+	state ~= state << 17;
+	return state;
+}
+
+@(move_only) Counted :: struct { id: int }
+counted_drops: static int = 0;
+impl Counted {
+	release :: hook(drop) proc(self: inout Counted) { counted_drops += 1; }
+}
+
+@(move_only) Token :: struct {};
+token_drops: static int = 0;
+impl Token {
+	release :: hook(drop) proc(self: inout Token) { token_drops += 1; }
+}
+
+// A key whose `hash` collides heavily, so probes run past other keys and the
+// tombstones removals leave.
+Crowded :: distinct int;
+impl Crowded {
+	hash :: proc(self, seed: uint) -> uint { return (int(self) % 4).hash(seed); }
+	same :: operator(==) proc(a, b: Crowded) -> bool { return int(a) == int(b); }
+}
+
+KEYS :: 97;
+
+main :: proc() {
+	appends();
+	moved_elements();
+	fmt.println("drops:", counted_drops, token_drops);
+	churn();
+	crowded();
+	text_keys();
+}
+
+// Spare capacity takes an element without growing; a full array grows and keeps
+// what it held; `clear` and `pop` hand capacity back to the short path.
+appends :: proc() {
+	xs: [dynamic]int = {};
+	xs.reserve(5);
+	foreach (i in 0 ..< 5) { xs.append(i * i); }
+	fmt.println("filled:", xs.len(), xs.cap(), xs[0], xs[4]);
+	xs.append(25);
+	fmt.println("grown:", xs.len(), xs.cap() > 5, xs[4], xs[5]);
+
+	held := xs.cap();
+	xs.clear();
+	foreach (i in 0 ..< held) { xs.append(i + 1); }
+	fmt.println("refilled:", xs.len() == held, xs.cap() == held, xs[0], xs[held - 1]);
+	xs.pop();
+	xs.append(-7);
+	fmt.println("popped:", xs.len() == held, xs.cap() == held, xs[held - 1]);
+
+	// Each append of a long run lands where the last one ended.
+	total := 0;
+	ys: [dynamic]int = {};
+	foreach (i in 0 ..< 10_000) { ys.append(i); }
+	foreach (i in 0 ..< ys.len()) {
+		assert(ys[i] == i);
+		total += ys[i];
+	}
+	fmt.println("run:", ys.len(), total);
+}
+
+// A moved element is not cloned on the way in, so each is dropped once, and a
+// zero-sized one is counted although nothing is stored for it.
+moved_elements :: proc() {
+	{
+		items: [dynamic]Counted = {};
+		foreach (i in 0 ..< 100) { items.append(Counted{i}); }
+		foreach (i in 0 ..< 100) { assert(items[i].id == i); }
+		tokens: [dynamic]Token = {};
+		foreach (_ in 0 ..< 100) { tokens.append(Token{}); }
+		fmt.println("moved:", items.len(), tokens.len());
+	}
+}
+
+// Every way a map entry appears, changes, and leaves, against two arrays that
+// say what the map must hold.
+churn :: proc() {
+	state: u64 = 0x9E3779B97F4A7C15;
+	present: [KEYS]bool = {};
+	expected: [KEYS]int = {};
+	live := 0;
+	m: map[int]int = {};
+	assert(!(3 in m));
+
+	foreach (step in 0 ..< 20_000) {
+		key := int(next(inout state) % KEYS);
+		switch (next(inout state) % 5) {
+		case 0, 1:
+			m[key] = step;
+			if (!present[key]) { live += 1; }
+			present[key], expected[key] = true, step;
+		case 2:
+			switch (m.remove(key)) {
+			case .some(taken):
+				assert(present[key] && taken == expected[key]);
+				live -= 1;
+			case .none:
+				assert(!present[key]);
+			}
+			present[key] = false;
+		case 3:
+			if (key in m) {
+				m[key] += 1;
+				expected[key] += 1;
+			}
+		case:
+			slot := m.find_or_insert(key, -step);
+			if (!present[key]) {
+				live += 1;
+				present[key], expected[key] = true, -step;
+			}
+			assert(slot^ == expected[key]);
+		}
+		assert((key in m) == present[key]);
+		assert(m.len() == live);
+		if (step % 1000 == 0) { check(m, present[:], expected[:]); }
+	}
+	check(m, present[:], expected[:]);
+	fmt.println("churn:", m.len(), live);
+
+	// An emptied map keeps its table and finds nothing in it.
+	foreach (key in 0 ..< KEYS) { m.remove(key); }
+	assert(m.len() == 0 && !(5 in m));
+	m[5] = 50;
+	fmt.println("emptied:", m.len(), m[5]);
+}
+
+check :: proc(m: map[int]int, present: []bool, expected: []int) {
+	foreach (key in 0 ..< KEYS) {
+		assert((key in m) == present[key]);
+		if (present[key]) { assert(m[key] == expected[key]); }
+	}
+}
+
+crowded :: proc() {
+	m: map[Crowded]int = {};
+	foreach (key in 0 ..< 200) { m[Crowded(key)] = key; }
+	foreach (key in 0 ..< 200) {
+		if (key % 3 == 0) { m.remove(Crowded(key)); }
+	}
+	// These reuse the slots the removals left, and none is entered twice.
+	foreach (key in 0 ..< 200) {
+		if (key % 6 == 0) { m[Crowded(key)] = -key; }
+	}
+	sum := 0;
+	foreach (key in 0 ..< 200) {
+		assert((Crowded(key) in m) == (key % 3 != 0 || key % 6 == 0));
+		if (Crowded(key) in m) { sum += m[Crowded(key)]; }
+	}
+	fmt.println("crowded:", m.len(), sum);
+}
+
+// A managed key is cloned once, when its entry is made, and a hit on it stores
+// through the entry that is there.
+text_keys :: proc() {
+	NAMES :: [5]string{"ash", "birch", "cedar", "dogwood", "elm"};
+	counts: map[string]int = {};
+	foreach (round in 0 ..< 40) {
+		name := NAMES[round % 5];
+		if (name in counts) {
+			counts[name] += round;
+		} else {
+			counts[name] = round;
+		}
+		if (round % 7 == 6) { counts.remove(NAMES[(round + 1) % 5]); }
+	}
+	sum := 0;
+	foreach (name in NAMES) { sum += counts.lookup_value(name) or_else 0; }
+	fmt.println("text:", counts.len(), sum);
+}

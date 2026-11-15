@@ -1,0 +1,11 @@
+filled: 5 5 0 16
+grown: 6 true 16 25
+refilled: true true 1 10
+popped: true true -7
+run: 10000 49995000
+moved: 100 100
+drops: 100 100
+churn: 67 67
+emptied: 1 50
+crowded: 167 9901
+text: 5 561

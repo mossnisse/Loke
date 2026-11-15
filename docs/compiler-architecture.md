@@ -973,10 +973,8 @@ and the runtime are optimized together. `cpu.c` stays machine code, compiled by
 a second command into the same set, so that nothing compiled for the level is
 inlined into the startup check. A `-runtime=<dir>` build, a build whose cache
 failed, an `-opt=none` build, and a machine without lld-link link machine code
-as before. Linking bitcode does not inline the container operations into a
-program's loops: `dyn_append` and `map_find` stay out of line, and `map_find`
-still reaches `hash` and `==` through the operation table
-([Performance opportunities and actual semantic limits](design-review-2026-10-31.md#performance-opportunities-and-actual-semantic-limits)).
+as before. Bitcode is what lets the hot container operations become code for
+their element type ([Container fast paths](#container-fast-paths)).
 
 The runtime entries that end the program (`loke_rt_v1_panic`, `panic_end`,
 `abort`, `alloc_failed`, `container_fault`) are declared `cold noreturn` in
@@ -1007,6 +1005,38 @@ literal's hidden array, and the built prefix of a dynamic array or map.
 `finish_temporary_drop` ends both when the finished value owns the part. A
 synthesized body, which evaluates no expression of the program's, registers
 its parts for the unwind alone (`guard_built_element`, `guard_record_part`).
+
+### Container fast paths
+
+Every container operation is a call into `runtime/container.c` with the
+container's operation table, a `private constant` holding the element's size
+and its clone, drop, `hash`, and `==` thunks (`container_ops_global`). Once a
+runtime function is inlined into the module, those loads fold: the copy has a
+constant size, and the thunks are direct calls the optimizer can inline in
+turn. So the specialization is LLVM's, from the one C implementation, and the
+emitter writes none
+([Container fast paths stay in the C runtime](comments.md#container-fast-paths-stay-in-the-c-runtime)).
+
+The inliner takes only what is small, so `container.c` splits each hot
+operation into a `LOKE_RT_FAST_PATH` (`always_inline`) and a
+`LOKE_RT_SLOW_PATH` (`noinline`):
+
+| Entry | Fast path | Slow path |
+| --- | --- | --- |
+| `loke_rt_v1_dyn_append` | One element whose clone is its bytes, into spare capacity of an array that has its provider. | `loke_rt_v1_dyn_append_owned`: binding, growth, cloning, runs. |
+| `loke_rt_v1_map_find` | The whole probe, `map_probe`. | None. |
+| `loke_rt_v1_map_entry` | The probe, answering an entry that is there. | `map_insert_missing`, given the vacant slot the probe found: growth, rehash, the key's clone. |
+
+A fast path must answer exactly what its slow path alone would, and there is
+one probe, `map_probe`, shared by lookup, insertion, and removal.
+`tests/run/container_fast_paths.loke` runs the cases on the boundary between
+the two against a model. To add a fast path, keep it free of allocation and of
+any loop but the probe, since it is copied into every call site, and measure
+with `perf.ps1`: the cost model already inlines a path as small as `append`'s
+without the attribute, and does not inline the probe.
+
+This reaches only builds that link the runtime as bitcode. Elsewhere the same
+functions are ordinary calls, as they were.
 
 ### CPU dispatch
 

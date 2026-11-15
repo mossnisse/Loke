@@ -1923,6 +1923,13 @@ checklist.
   longer for the smallest). `-opt=none` builds, `-runtime=<dir>` builds, and
   machines without lld-link link machine code as before
   ([Common options](docs/compiler-guide.md#common-options)).
+- In such a build, `append` of one element into spare capacity and a map's
+  lookup are inlined into the program, specialized for the element and key:
+  the key's `hash` and `==` are called directly instead of through a table.
+  Appending `int`s runs 17 percent faster, `map[int]int` lookups and updates
+  19 percent, `map[string]int` 5 percent, and `bench/collections.loke` 9 to 15
+  percent, for executables at most 3 KB larger
+  ([Container fast paths](docs/compiler-architecture.md#container-fast-paths)).
 - Under `-panic=unwind`, a procedure publishes to its unwind frame only the
   locals its cleanups read, and a procedure that registers no cleanup keeps
   no frame, live flags, or env at all. The other locals' addresses no longer

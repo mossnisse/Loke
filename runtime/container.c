@@ -18,6 +18,21 @@
 
 #include <string.h>
 
+/* compiler-architecture.md "Container fast paths": an optimized build links
+ * this file as bitcode, and an operation inlined into a program reads its
+ * element's size and thunks out of a constant table, so it becomes code for that
+ * element. The optimizer inlines only what is small. Each hot operation is
+ * therefore a `LOKE_RT_FAST_PATH` in front of a `LOKE_RT_SLOW_PATH` holding
+ * everything that allocates, clones, or rebuilds, and it must answer exactly
+ * what the slow path alone would. */
+#if defined(__GNUC__) || defined(__clang__)
+#define LOKE_RT_FAST_PATH __attribute__((always_inline))
+#define LOKE_RT_SLOW_PATH __attribute__((noinline))
+#else
+#define LOKE_RT_FAST_PATH
+#define LOKE_RT_SLOW_PATH
+#endif
+
 /* ----------------------------------------------------------- checked math -- */
 
 int32_t loke_rt_v1_checked_add(int64_t a, int64_t b, int64_t *out) {
@@ -315,12 +330,23 @@ static int32_t dyn_fill(
 	return 1;
 }
 
-int32_t loke_rt_v1_dyn_append(
+/* One element whose clone is its bytes, into spare capacity of an array that
+ * already has its provider: the general append below would bind nothing, grow
+ * nothing, and make this one copy. */
+LOKE_RT_FAST_PATH int32_t loke_rt_v1_dyn_append(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const void *src, int64_t count) {
+	if (count == 1 && ops->elem_clone == 0 && self->len < self->cap && self->allocator != 0) {
+		/* A zero-sized element has capacity and no storage to copy into. */
+		if (ops->elem_size != 0) {
+			memcpy(dyn_at(self, ops, self->len), src, (size_t)ops->elem_size);
+		}
+		self->len += 1;
+		return 1;
+	}
 	return loke_rt_v1_dyn_append_owned(self, ops, src, 0, count);
 }
 
-int32_t loke_rt_v1_dyn_append_owned(
+LOKE_RT_SLOW_PATH int32_t loke_rt_v1_dyn_append_owned(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
 	const void *src, const uint8_t *owned, int64_t count) {
 	dyn_grow_undo undo;
@@ -532,7 +558,7 @@ static uint64_t map_next_seed(const void *block) {
  * upward, so keys differing only in their high bits, as small floats' bit
  * patterns do, hash alike in every low bit. The mix brings every bit of the hash
  * into the bits the mask keeps. */
-static uint64_t map_home(
+LOKE_RT_FAST_PATH static uint64_t map_home(
 	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key, uint64_t mask) {
 	return map_mix(ops->key_hash(key, t->seed)) & mask;
 }
@@ -800,8 +826,11 @@ void loke_rt_v1_map_bind(loke_rt_map_v1 *self) {
  * a tombstone is skipped, because an entry inserted after a removal may lie
  * beyond it. When `key` is absent and `vacant` is not NULL, it receives the slot
  * an insertion takes: the first tombstone the probe passed, else the empty slot
- * that ended it, else -1 for a probe that crossed the whole table. */
-static int64_t map_probe(
+ * that ended it, else -1 for a probe that crossed the whole table.
+ *
+ * This is the only probe for a key, and it is inlined into each operation that
+ * looks one up, so a program's lookup calls its key's `hash` and `==` directly. */
+LOKE_RT_FAST_PATH static int64_t map_probe(
 	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key,
 	int64_t *vacant) {
 	uint64_t mask = (uint64_t)t->slot_count - 1;
@@ -832,7 +861,7 @@ static int64_t map_probe(
 	return -1;
 }
 
-void *loke_rt_v1_map_find(
+LOKE_RT_FAST_PATH void *loke_rt_v1_map_find(
 	const loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key) {
 	const loke_rt_map_table_v1 *t = (const loke_rt_map_table_v1 *)self->table;
 	int64_t slot;
@@ -843,34 +872,22 @@ void *loke_rt_v1_map_find(
 	return slot < 0 ? 0 : map_value_at(t, ops, slot);
 }
 
-/* Finds or inserts the raw slot shared by inserting indexes and explicit map
- * insertion. A new slot starts as zeroed inert bytes; the caller uses `inserted`
- * to avoid dropping them and commits a live supplied value before any hook can
- * observe the entry, including by unwinding. NULL is allocation or key
- * clone failure, before any new entry is published. */
-void *loke_rt_v1_map_entry(
-	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, int32_t *inserted) {
-	const loke_rt_allocator_v1 *allocator;
+/* Inserts `key`, which a probe of the current table did not find, at the
+ * `vacant` slot that probe answered; -1 when there is no table or no vacancy.
+ * NULL is allocation or key clone failure, before any new entry is published. */
+LOKE_RT_SLOW_PATH static void *map_insert_missing(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, int64_t vacant,
+	int32_t *inserted) {
+	const loke_rt_allocator_v1 *allocator = self->allocator == 0 ? loke_rt_v1_selected_allocator() : self->allocator;
 	loke_rt_map_table_v1 shape;
 	loke_rt_map_table_v1 *fresh = 0;
-	loke_rt_map_table_v1 *old;
-	loke_rt_map_table_v1 *t;
+	loke_rt_map_table_v1 *old = (loke_rt_map_table_v1 *)self->table;
+	loke_rt_map_table_v1 *t = old;
 	uint8_t *controls;
 	uint64_t index;
-	int64_t slot, slots;
-	int64_t vacant = -1;
+	int64_t slots;
 	int32_t replacing = 0, reusing;
 
-	*inserted = 0;
-	allocator = self->allocator == 0 ? loke_rt_v1_selected_allocator() : self->allocator;
-	old = (loke_rt_map_table_v1 *)self->table;
-	t = old;
-	if (t != 0) {
-		slot = map_probe(t, ops, key, &vacant);
-		if (slot >= 0) {
-			return map_value_at(t, ops, slot);
-		}
-	}
 	/* A growth is built off to the side. Its entries are representation moves
 	 * that still alias `old`, so failure can release the fresh raw block without
 	 * dropping anything and leave every old header/table byte untouched. Below
@@ -953,6 +970,25 @@ void *loke_rt_v1_map_entry(
 	self->len += 1;
 	*inserted = 1;
 	return map_value_at(t, ops, (int64_t)index);
+}
+
+/* Finds or inserts the raw slot shared by inserting indexes and explicit map
+ * insertion. A new slot starts as zeroed inert bytes; the caller uses `inserted`
+ * to avoid dropping them and commits a live supplied value before any hook can
+ * observe the entry, including by unwinding. NULL is a failed insertion. */
+LOKE_RT_FAST_PATH void *loke_rt_v1_map_entry(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, int32_t *inserted) {
+	const loke_rt_map_table_v1 *t = (const loke_rt_map_table_v1 *)self->table;
+	int64_t vacant = -1;
+
+	*inserted = 0;
+	if (t != 0) {
+		int64_t slot = map_probe(t, ops, key, &vacant);
+		if (slot >= 0) {
+			return map_value_at(t, ops, slot);
+		}
+	}
+	return map_insert_missing(self, ops, key, vacant, inserted);
 }
 
 /* Drops the stored key, moves the stored value to `out`, and answers 0 when the

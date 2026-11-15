@@ -4252,6 +4252,44 @@ object's `/DEFAULTLIB` directives, which is what the linker itself acts on,
 rather than from the executable's imports after the link, so the warning
 can point at the import responsible.
 
+### Container fast paths stay in the C runtime
+
+Rust and Go specialize `append` and a map lookup for the element and key
+type; Loke's were calls into `runtime/container.c` through a table of function
+pointers, with the key's `hash` and `==` called indirectly on every probe. The
+[2026-10-31 compiler review](compiler-optimizations-2026-10-31.md#container-fast-paths)
+proposed emitting the fast paths as LLVM IR per element type, the way a generic
+procedure is instantiated.
+
+That would put a second probe sequence in the emitter, to agree for ever with
+the one the runtime's growth and rehash use; a disagreement corrupts a map
+silently. The runtime boundary was drawn to avoid exactly that: textual LLVM
+does not duplicate the hash table. And the emitted copy is unnecessary. The
+operation table is a constant of the module, and an optimized build already
+links the runtime as bitcode, so a runtime function inlined into a program has
+a constant element size and direct calls to the thunks. What stopped it was
+size: `dyn_append` carried growth and rollback, and the probe is a loop with
+two calls, over the inliner's threshold.
+
+So the runtime splits each hot operation into a small inlined path and an
+out-of-line remainder ([Container fast paths](compiler-architecture.md#container-fast-paths)).
+Measured on 2026-11-15 at `-opt=speed`, medians of nine interleaved runs: 40
+million appends of an `int` 17% faster, 20 million `map[int]int` lookups and
+updates 19%, the same over `map[string]int` 5%, and `bench/collections.loke` 9%
+(15% in `perf.ps1`, whose other benchmarks drifted up to 5% the same way).
+Executables grew by at most 3 KB, 1%.
+
+The probe is `always_inline` because the cost model declines it; the append
+path is small enough to be taken without the attribute and carries it only so
+that a later LLVM does not decide otherwise. The price is the probe loop at
+each `in`, `m[k]`, and `find` in the program. If that grows a program with many
+such sites, the emitter can route them through one function per map type and
+let the cost model choose again; nothing measured asks for it yet.
+
+Emitted IR would also reach the builds bitcode does not: `-opt=none`, which
+inlines nothing anyway, and an optimized build with `-runtime=<dir>` or without
+`lld-link`, which keeps the calls it had.
+
 ### The evaluator's memory limit counts what it holds
 
 [Compile-time evaluation](design.md#compile-time-procedure-evaluation) has a

@@ -495,13 +495,12 @@ specified result:
   faster order.
 - **Copy elision.** Which implicit copies of a type with a custom clone or
   drop may be elided is unspecified, so none is.
-- **Container fast paths.** An optimized build links the runtime as bitcode,
-  but in `bench/collections.loke` LLVM still calls `dyn_append`, `dyn_reserve`,
-  and `map_find` out of line from the hot loops, and `map_find` calls the key's
-  `hash` and `==` through the operation table. Fast paths emitted per element
-  type would remove those calls, at the cost of a second implementation of the
-  probe sequence
-  ([compiler review](compiler-optimizations-2026-10-31.md#container-operations-in-ir-not-through-an-operation-table)).
+- **Container fast paths.** Adopted on 2026-11-15: in an optimized build that
+  links the runtime as bitcode, `append` into spare capacity and a map's probe
+  are inlined from the runtime's C into the program, where the key's `hash` and
+  `==` are direct calls. Emitting them as IR per element type would have added
+  a second implementation of the probe sequence
+  ([compiler review](compiler-optimizations-2026-10-31.md#container-fast-paths)).
 
 Some transformations are forbidden outright: reordering floating-point
 additions into another tree, fusing `a*b + c`, or hoisting a possible panic

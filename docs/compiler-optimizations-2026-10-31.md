@@ -15,7 +15,7 @@ further niches waits on a measurement.
 ## Contents
 
 - [Compiler context](#compiler-context)
-- [Container operations in IR, not through an operation table](#container-operations-in-ir-not-through-an-operation-table)
+- [Container fast paths](#container-fast-paths)
 - [Checked arithmetic and bounds in loops](#checked-arithmetic-and-bounds-in-loops)
 - [Small values and the existing ABI](#small-values-and-the-existing-abi)
 - [Semantic constraints](#semantic-constraints)
@@ -29,37 +29,43 @@ The emitter produces one textual LLVM module for the whole program and hands
 it to Clang at `-O0` through `-O3`, so cross-package inlining is free. Above
 `-opt=none`, where `lld-link` sits beside Clang, the runtime is linked as
 bitcode with `-flto`, so the optimizer sees it too. Within that design these
-are the remaining opportunities, largest first.
+were the remaining opportunities, largest first; the first has since landed in
+another form.
 
-## Container operations in IR, not through an operation table
+## Container fast paths
 
-`x.append(v)` on a `[dynamic]int` lowers to a call of
+`x.append(v)` on a `[dynamic]int` lowered to a call of
 `loke_rt_v1_dyn_append` with a table of function pointers for the element's
-clone and drop, and a map lookup calls `loke_rt_v1_map_find` with `key_hash`
+clone and drop, and a map lookup called `loke_rt_v1_map_find` with `key_hash`
 and `key_equal` through pointers on every probe. Rust and Go both specialize
-these; it is the single largest difference between Loke's collections and
-theirs.
+these; it was the single largest difference between Loke's collections and
+theirs. Linking the runtime as bitcode
+([Adopted optimizations](#adopted-optimizations)) made `bench/collections.loke`
+9% faster, but LLVM still called `dyn_append` and `map_find` out of line from
+its hot loops.
 
-Linking the runtime as bitcode in optimized builds
-([Adopted optimizations](#adopted-optimizations)) made `bench/collections.loke` 9%
-faster, but LLVM still calls `dyn_append`, `dyn_reserve`, and `map_find` out of
-line from its hot loops, and `map_find` still reaches the key's `hash` and `==`
-through the operation table
-([Performance opportunities and actual semantic limits](design-review-2026-10-31.md#performance-opportunities-and-actual-semantic-limits)).
+**The original proposal** was to emit the fast paths in the module as IR,
+specialized per element type: `append` as "if `len < cap` store and increment,
+else call grow", and map probing with the key's `hash` and `==` called
+directly. Its cost was a second implementation of the probe sequence, in the
+emitter, to agree with the runtime's growth and rehash forever.
 
-**Proposal.** Emit the fast paths in the module, specialized per element type
-as every generic procedure already is: `append` as "if `len < cap` store and
-increment, else call grow"; map probing with the key's `hash` and `==` called
-directly, so an `int` key hashes and compares inline. The runtime keeps growth,
-rehashing, and the generic clone/drop loops, and the operation table stays for
-the paths that remain in C.
+**What landed** (2026-11-15) gets the specialization without that copy. The
+operation table is a constant of the module, so a runtime function inlined
+into a program already has a constant element size and direct thunk calls; only
+their size kept LLVM from inlining them. `runtime/container.c` now splits
+`dyn_append`, `map_find`, and `map_entry` into a small `always_inline` path
+and an out-of-line remainder, with one probe shared by every map operation
+([Container fast paths](compiler-architecture.md#container-fast-paths),
+rationale under
+[Container fast paths stay in the C runtime](comments.md#container-fast-paths-stay-in-the-c-runtime)).
+The emitter is unchanged.
 
-**What it costs.** The probe sequence then has two implementations, one in the
-emitted IR and one in the runtime's growth and rehash, which must agree
-forever; a disagreement corrupts a map silently rather than crashing. At the
-default `-opt=none` nothing inlines, so emit the specialized fast paths only
-when optimizing, or a debug build pays their IR for every element type and
-gains nothing.
+**What is left.** `dyn_reserve`, `pop`, `insert`, `remove`, and map removal
+are still calls; none has been measured as hot. An optimized build that does
+not link bitcode gains nothing. A program with very many lookup sites carries
+the probe loop at each, which one emitted function per map type would bound if
+it is ever measured to matter.
 
 ## Checked arithmetic and bounds in loops
 
@@ -129,30 +135,32 @@ reduction, a separately named operation says so, for example
    ([Checked arithmetic and bounds in loops](#checked-arithmetic-and-bounds-in-loops)),
    with bounds proofs that account for reassigned slices, aliases, and calls.
    Then measure the dense kernels again.
-2. Container fast paths in IR, emitted only when optimizing
-   ([Container operations in IR, not through an operation table](#container-operations-in-ir-not-through-an-operation-table)).
-   Measure `bench/collections.loke` with `perf.ps1` before and after.
 
 The language review's [alias proposal](design-review-2026-10-31.md#alias-facts-from-the-one-rule)
-would be measured after step 1, once its language and correctness prerequisites
+would be measured after that, once its language and correctness prerequisites
 hold.
 
 ## Adopted optimizations
 
 These were proposed by the original review and have landed. Commit references
-and measurements are retained from that review.
+and measurements are retained from that review, except the last entry's.
 
 - **The program-ending runtime entries are `cold noreturn`**, and the branch
   to a checked operation's panic carries weights (`9e0c7f4f`). No run-time
   change beyond noise; it states what LLVM had inferred.
 - **The runtime is linked as bitcode** in optimized builds where `lld-link` is
   available (`5b6a4da6`): run time 2 to 9% lower at `-opt=speed`, executables
-  5 to 30% smaller, optimized builds 6 to 12% longer. The container fast paths
-  remain ([Container operations in IR, not through an operation table](#container-operations-in-ir-not-through-an-operation-table)).
+  5 to 30% smaller, optimized builds 6 to 12% longer.
 - **Unwind bookkeeping publishes only the locals a replay reads**
   (`c43c7e20`), so a procedure that registers nothing keeps no frame, live
   flags, or environment: `bench/dense.loke` 14% faster, within 5% of
   `-panic=abort`.
+- **The container fast paths are inlined from the runtime**
+  ([Container fast paths](#container-fast-paths)), in C rather than as emitted
+  IR: at `-opt=speed`, appending `int`s 17% faster, `map[int]int` lookups and
+  updates 19%, `map[string]int` 5%, `bench/collections.loke` 9% (medians of
+  nine interleaved runs) and 15% in `perf.ps1`, executables at most 3 KB
+  larger.
 
 ## Probes
 
