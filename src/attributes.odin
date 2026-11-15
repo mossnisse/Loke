@@ -322,10 +322,8 @@ validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Glob
 	if literal := decl_proc_literal(d); literal != nil {
 		validate_param_attributes(k, literal.signature.params)
 	}
-	if len(d.values) == 1 {
-		if record, ok := d.values[0].(^Type_Record); ok {
-			validate_record_attributes(k, record)
-		}
+	if record := decl_record(d); record != nil {
+		validate_record_attributes(k, record)
 	}
 }
 
@@ -404,10 +402,8 @@ record_attr_position :: proc(record: ^Type_Record) -> Attr_Pos {
 
 @(private = "file")
 decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
-	if len(d.values) == 1 {
-		if record, is_record := d.values[0].(^Type_Record); is_record {
-			return record_attr_position(record)
-		}
+	if record := decl_record(d); record != nil {
+		return record_attr_position(record)
 	}
 	// A generic `impl`'s member has symbols only in its instances. Whether a bare
 	// name there is a type or a constant is unknown, and a type allows more: its

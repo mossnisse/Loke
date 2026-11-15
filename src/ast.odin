@@ -1234,6 +1234,15 @@ decl_proc_literal :: proc(d: ^Decl) -> ^Expr_Proc {
 	return literal
 }
 
+// The record of `Name :: struct {...}` or `union {...}`, or nil.
+decl_record :: proc(d: ^Decl) -> ^Type_Record {
+	if len(d.values) != 1 {
+		return nil
+	}
+	record, _ := d.values[0].(^Type_Record)
+	return record
+}
+
 decl_is_lifecycle_hook :: proc(d: ^Decl) -> bool {
 	role := decl_hook_kind(d)
 	return role == .Drop || role == .Copy

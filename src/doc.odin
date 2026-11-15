@@ -345,9 +345,7 @@ api_impl :: proc(b: ^Api_Builder, v: ^Item_Impl, out: ^[dynamic]Api_Item) {
 	source := &b.c.sources[v.span.file]
 	impl := Api_Item{kind = .Impl}
 	impl.text = shown_text(b, source, v.span.lo, expr_span(v.type).hi)
-	w := Ref_Walk{b = b}
-	api_refs(&w, v.type)
-	impl.refs, impl.qualifiers = w.refs[:], text_qualifiers(b.a, impl.text)
+	impl.refs, impl.qualifiers = refs_of(b, v.type), text_qualifiers(b.a, impl.text)
 	// design.md "Private names in public declarations": a block written through
 	// a private alias of a public type is on the public type.
 	if name := subject_name(b.c, v.type); name in b.private_names && !subject_type_is_public(b.c, v) {
@@ -384,9 +382,7 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 		head := shown_text(b, source, node.span.lo, node.then.span.lo)
 		branch := Api_Branch{head = strings.concatenate({prefix, head}), taken = node.state == .Taken && !selected}
 		selected ||= node.state == .Taken
-		w := Ref_Walk{b = b}
-		api_refs(&w, node.cond)
-		branch.refs, branch.qualifiers = w.refs[:], text_qualifiers(b.a, head)
+		branch.refs, branch.qualifiers = refs_of(b, node.cond), text_qualifiers(b.a, head)
 		api_items(b, node.then.items, &branch.items, in_when = true)
 		append(&chosen.branches, branch)
 		#partial switch next in node.otherwise {
@@ -431,10 +427,8 @@ api_decl :: proc(
 	append(&w.bound, ..bound)
 	// `@(align=N)` may name a generic parameter of the record it describes.
 	mark := len(w.bound)
-	if len(d.values) == 1 {
-		if record, is_record := d.values[0].(^Type_Record); is_record {
-			bind_generic_params(&w.bound, record.generic_params)
-		}
+	if record := decl_record(d); record != nil {
+		bind_generic_params(&w.bound, record.generic_params)
 	}
 	attribute_refs(&w, d.attributes)
 	resize(&w.bound, mark)
@@ -452,7 +446,7 @@ api_decl :: proc(
 	} else {
 		written := shown_text(b, source, lo, d.span.hi)
 		item.text = strings.trim_right(written, ";")
-		if record := decl_struct(d); record != nil {
+		if record := decl_record(d); record != nil && record.kind == .Struct {
 			item.text = public_struct(b, record, lo)
 		}
 		for value in d.values {
@@ -500,16 +494,6 @@ proc_interface_text :: proc(b: ^Api_Builder, d: ^Decl, literal: ^Expr_Proc, bloc
 		return fmt.aprintf("%s %s %s", text[:at], source_text(b.c, convention.value), rest)
 	}
 	return text
-}
-
-@(private = "file")
-decl_struct :: proc(d: ^Decl) -> ^Type_Record {
-	if len(d.values) == 1 {
-		if record, is_record := d.values[0].(^Type_Record); is_record && record.kind == .Struct {
-			return record
-		}
-	}
-	return nil
 }
 
 // `Name :: struct { ... }`, written at `lo`, with only its public fields, one
@@ -608,13 +592,7 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		}
 		return
 	case ^Type_Record:
-		bind_generic_params(&w.bound, v.generic_params)
-		for parameter in v.generic_params {
-			api_refs(w, parameter.type)
-		}
-		for clause in v.where_clauses {
-			api_refs(w, clause)
-		}
+		generic_refs(w, v.generic_params, v.where_clauses)
 		for &field in v.fields {
 			if field_is_exported(w.b.c, w.b.file, &field) {
 				api_refs(w, field.type)
@@ -629,13 +607,7 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 			api_refs(w, field.value)
 		}
 	case ^Type_Interface:
-		bind_generic_params(&w.bound, v.generic_params)
-		for parameter in v.generic_params {
-			api_refs(w, parameter.type)
-		}
-		for clause in v.where_clauses {
-			api_refs(w, clause)
-		}
+		generic_refs(w, v.generic_params, v.where_clauses)
 		for requirement in v.requirements {
 			for group in requirement.bindings {
 				api_refs(w, group.type)
@@ -649,6 +621,27 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		api_refs((^Ref_Walk)(data), child)
 		return false
 	})
+}
+
+// What a generic definition's parameters and `where` clauses refer to, with
+// its parameters bound for the rest of the definition.
+@(private = "file")
+generic_refs :: proc(w: ^Ref_Walk, parameters: []Generic_Param, clauses: []Expr) {
+	bind_generic_params(&w.bound, parameters)
+	for parameter in parameters {
+		api_refs(w, parameter.type)
+	}
+	for clause in clauses {
+		api_refs(w, clause)
+	}
+}
+
+// The declarations of the package outside any `impl` that `e` refers to.
+@(private = "file")
+refs_of :: proc(b: ^Api_Builder, e: Expr) -> []string {
+	w := Ref_Walk{b = b}
+	api_refs(&w, e)
+	return w.refs[:]
 }
 
 // The values of `attributes` that are expressions, as `N` in `@(align=N)`.
