@@ -607,6 +607,26 @@ prov_add_region_content :: proc(graph: ^Flow_Graph, storage: Storage_Id, entry: 
 	append(content, prov_clone_region_content(entry, region, graph.alloc))
 }
 
+// Whether two entries record the same kind of fact at the same path, so one
+// merges into the other.
+prov_same_region_content :: proc(a, b: Prov_Region_Content) -> bool {
+	if a.handle != b.handle || a.own != b.own || !prov_same_path(a.path, b.path) { return false }
+	from_a, copied_a := a.from.?
+	from_b, copied_b := b.from.?
+	return copied_a == copied_b && (!copied_a || from_a.query == from_b.query && prov_same_path(from_a.path, from_b.path))
+}
+
+// `entry` with its paths in `allocator` and `region` in place of its own.
+prov_clone_region_content :: proc(entry: Prov_Region_Content, region: Region_Set, allocator: mem.Allocator) -> Prov_Region_Content {
+	out := entry
+	out.path = slice.clone(entry.path, allocator)
+	out.region = region
+	if from, copied := entry.from.?; copied {
+		out.from = Prov_Region_Source{slice.clone(from.path, allocator), from.query}
+	}
+	return out
+}
+
 // Deep copies of `content`'s entries, in `allocator`.
 @(private)
 prov_clone_region_contents :: proc(content: []Prov_Region_Content, allocator: mem.Allocator) -> [dynamic]Prov_Region_Content {

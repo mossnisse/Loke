@@ -198,6 +198,25 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 	return root
 }
 
+@(private)
+prov_storage_for_root :: proc(graph: ^Flow_Graph, root: Root_Id) -> Storage_Id {
+	if root == NO_ROOT { return 0 }
+	return graph.roots[int(root)].storage
+}
+
+// The root of `storage`, made on first use.
+@(private)
+prov_root_for_storage :: proc(graph: ^Flow_Graph, storage: Storage_Id) -> Root_Id {
+	if storage == 0 { return NO_ROOT }
+	entry := prov_storage(graph, storage)
+	if entry.key.symbol != INVALID_SYMBOL { return prov_root_for_symbol(graph, entry.key.symbol) }
+	if root, found := graph.root_by_storage[storage]; found { return root }
+	root := prov_new_root(graph, entry.kind, entry.span, "this temporary")
+	graph.roots[int(root)].storage = storage
+	graph.root_by_storage[storage] = root
+	return root
+}
+
 // A carrier variable's slot. A static-duration one starts holding whatever
 // another body may have stored there, as a global's content slots do.
 @(private)

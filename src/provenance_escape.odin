@@ -5,7 +5,6 @@
 package lokec
 
 import "core:fmt"
-import "core:mem"
 import "core:slice"
 
 // A borrow stored where it outlives the statement, resolved as a place so fields,
@@ -364,26 +363,6 @@ prov_define_copied_content :: proc(graph: ^Flow_Graph, root: Root_Id, contents: 
 	}
 }
 
-// Whether two entries record the same kind of fact at the same path, so one
-// merges into the other.
-prov_same_region_content :: proc(a, b: Prov_Region_Content) -> bool {
-	if a.handle != b.handle || a.own != b.own || !prov_same_path(a.path, b.path) { return false }
-	from_a, copied_a := a.from.?
-	from_b, copied_b := b.from.?
-	return copied_a == copied_b && (!copied_a || from_a.query == from_b.query && prov_same_path(from_a.path, from_b.path))
-}
-
-// `entry` with its paths in `allocator` and `region` in place of its own.
-prov_clone_region_content :: proc(entry: Prov_Region_Content, region: Region_Set, allocator: mem.Allocator) -> Prov_Region_Content {
-	out := entry
-	out.path = slice.clone(entry.path, allocator)
-	out.region = region
-	if from, copied := entry.from.?; copied {
-		out.from = Prov_Region_Source{slice.clone(from.path, allocator), from.query}
-	}
-	return out
-}
-
 // design.md "Minimum provenance precision": of what a call leaves in a record passed
 // by value, the rows that went through the carrier at `held` in it, each at its path
 // below where that carrier points. One copied from elsewhere in the record reads other
@@ -562,24 +541,6 @@ prov_path_below_carrier :: proc(graph: ^Flow_Graph, destination: Value_Id) -> []
 	place := prov_value(graph, destination).place
 	if _, indirect := place.base.(Value_Id); indirect { return place.path }
 	return nil
-}
-
-@(private)
-prov_storage_for_root :: proc(graph: ^Flow_Graph, root: Root_Id) -> Storage_Id {
-	if root == NO_ROOT { return 0 }
-	return graph.roots[int(root)].storage
-}
-
-@(private)
-prov_root_for_storage :: proc(graph: ^Flow_Graph, storage: Storage_Id) -> Root_Id {
-	if storage == 0 { return NO_ROOT }
-	entry := prov_storage(graph, storage)
-	if entry.key.symbol != INVALID_SYMBOL { return prov_root_for_symbol(graph, entry.key.symbol) }
-	if root, found := graph.root_by_storage[storage]; found { return root }
-	root := prov_new_root(graph, entry.kind, entry.span, "this temporary")
-	graph.roots[int(root)].storage = storage
-	graph.root_by_storage[storage] = root
-	return root
 }
 
 CALL_LEFT_OWNER :: "an owner this call leaves"
