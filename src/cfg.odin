@@ -1262,60 +1262,61 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			}
 		}
 	}
-	if graph.mode != .Lifecycle {
-		prov_note_assigned_procs(graph, s)
-		// design.md "Operator declarations": `operator([]=)` and a direct compound
-		// overload are the whole statement, a call like any other.
-		if s.place_setter != INVALID_SYMBOL {
-			prov_call(graph, prov_synthetic_call(graph, s.place_setter, s.setter_bound, TYPE_VOID, s.op_span, indexes = true))
+	if graph.mode == .Lifecycle {
+		walk_flow_assign_lifecycle(graph, s)
+	} else {
+		walk_flow_assign_provenance(graph, s)
+	}
+}
+
+@(private = "file")
+walk_flow_assign_provenance :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
+	prov_note_assigned_procs(graph, s)
+	// design.md "Operator declarations": `operator([]=)` and a direct compound
+	// overload are the whole statement, a call like any other.
+	if s.place_setter != INVALID_SYMBOL {
+		prov_call(graph, prov_synthetic_call(graph, s.place_setter, s.setter_bound, TYPE_VOID, s.op_span, indexes = true))
+		return
+	}
+	value_loans := make([][]int, len(s.rhs), graph.alloc)
+	if s.operator != INVALID_SYMBOL {
+		operands := make([]Expr, 2, graph.alloc)
+		operands[0], operands[1] = s.lhs[0], s.rhs[0]
+		if s.operator_direct {
+			prov_call(graph, prov_synthetic_call(graph, s.operator, operands, TYPE_VOID, s.op_span))
 			return
 		}
-		if s.operator != INVALID_SYMBOL {
-			operands := make([]Expr, 2, graph.alloc)
-			operands[0], operands[1] = s.lhs[0], s.rhs[0]
-			if s.operator_direct {
-				prov_call(graph, prov_synthetic_call(graph, s.operator, operands, TYPE_VOID, s.op_span))
-				return
-			}
-			// The binary operator, then a write of its result.
-			result := symbol_of(graph.k.c, s.operator).result
-			value_loans := make([][]int, 1, graph.alloc)
-			value_loans[0] = prov_call(graph, prov_synthetic_call(graph, s.operator, operands, result, s.op_span))
-			prov_assign(graph, s, value_loans)
-			prov_note_overwrites(graph, s)
-			return
-		}
-	}
-	value_loans: [][]int
-	if graph.mode != .Lifecycle {
-		value_loans = make([][]int, len(s.rhs), graph.alloc)
-	}
-	for value, index in s.rhs {
-		if graph.mode == .Lifecycle {
-			walk_flow_bound_value(graph, value, nil, s, index)
-		} else {
-			value_loans[index] = walk_flow_assigned(graph, s, value, index)
-			prov_hold_owner(graph, value)
-		}
-		// A clone allocates through the destination's `via`, evaluated here.
-		if index < len(s.rhs_clones) && s.rhs_clones[index] && index < len(s.lhs) {
-			walk_flow_expr(graph, symbol_via_allocator(graph.k.c, place_root_symbol(s.lhs[index])))
-		}
-	}
-	if graph.mode != .Lifecycle {
-		if s.destructure.active {
-			prov_destructure_copy_effects(graph, &s.destructure, s.rhs[0])
-		}
+		// The binary operator, then a write of its result.
+		result := symbol_of(graph.k.c, s.operator).result
+		value_loans[0] = prov_call(graph, prov_synthetic_call(graph, s.operator, operands, result, s.op_span))
 		prov_assign(graph, s, value_loans)
 		prov_note_overwrites(graph, s)
-		if !s.destructure.active {
-			for target, index in s.lhs {
-				if is_discard(target) && index < len(s.rhs) {
-					prov_discarded_drop_effects(graph, s.rhs[index])
-				}
+		return
+	}
+	for value, index in s.rhs {
+		value_loans[index] = walk_flow_assigned(graph, s, value, index)
+		prov_hold_owner(graph, value)
+		walk_clone_via(graph, s, index)
+	}
+	if s.destructure.active {
+		prov_destructure_copy_effects(graph, &s.destructure, s.rhs[0])
+	}
+	prov_assign(graph, s, value_loans)
+	prov_note_overwrites(graph, s)
+	if !s.destructure.active {
+		for target, index in s.lhs {
+			if is_discard(target) && index < len(s.rhs) {
+				prov_discarded_drop_effects(graph, s.rhs[index])
 			}
 		}
-		return
+	}
+}
+
+@(private = "file")
+walk_flow_assign_lifecycle :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
+	for value, index in s.rhs {
+		walk_flow_bound_value(graph, value, nil, s, index)
+		walk_clone_via(graph, s, index)
 	}
 	// design.md "Evaluation order": every destination is prepared before any
 	// write. A write through a field or element is a use of its root.
@@ -1348,6 +1349,14 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			target = index,
 		})
 		note_required_write(graph, ident.symbol, index < len(s.rhs) && len(s.rhs) == len(s.lhs) ? s.rhs[index] : nil)
+	}
+}
+
+// A clone allocates through the destination's `via`, evaluated after the value.
+@(private = "file")
+walk_clone_via :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, index: int) {
+	if index < len(s.rhs_clones) && s.rhs_clones[index] && index < len(s.lhs) {
+		walk_flow_expr(graph, symbol_via_allocator(graph.k.c, place_root_symbol(s.lhs[index])))
 	}
 }
 
@@ -1882,91 +1891,17 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		walk_flow_expr(graph, v.hi)
 
 	case ^Expr_Composite:
-		held := len(graph.held_owners)
-		defer resize(&graph.held_owners, held)
-		// A non-empty container literal evaluates its destination's `via` first.
-		if len(v.elements) > 0 {
-			walk_flow_expr(graph, v.via)
-			if prov && type_is_container(graph.k.c, prov_type(graph, v)) {
-				prov_note_fresh_owner(graph, v, v.via)
-			}
-		}
-		if prov {
-			if prov_repr(graph, v).backing != INVALID_TYPE {
-				return prov_slice_literal(graph, v, carrier_is_mutable(graph.k.c, prov_type(graph, v)))
-			}
-			if content := prov_temp_content(graph, prov_type(graph, v)); len(content) > 0 {
-				return prov_composite_content(graph, v, content, prov_type(graph, v))
-			}
-		}
-		is_map := underlying_kind(graph.k.c, prov_type(graph, v)) == .Map
-		for element, index in v.elements {
-			if is_map {
-				walk_flow_expr(graph, element.key)
-				if prov { prov_hold_owner(graph, element.key) }
-			}
-			loans := walk_flow_expr(graph, element.value)
-			if prov {
-				prov_hold_owner(graph, element.value)
-				prov_repeated_element_effects(graph, v, prov_type(graph, v), index, loans)
-			}
-		}
-		if prov && is_map && len(v.elements) > 0 {
-			prov_key_effects(graph, prov_type(graph, v), v.span)
-		}
+		return walk_flow_composite(graph, v)
 
 	case ^Expr_Cond:
-		walk_flow_expr(graph, v.cond)
-		roots, cleanups := len(graph.temp_roots), len(graph.in_scope)
-		entry := graph.current
-		merge := new_flow_block(graph)
-		graph.current = new_flow_block(graph)
-		link(graph, entry, graph.current)
-		then_loans := walk_flow_expr(graph, v.then)
-		then_reaches := graph.current != NO_BLOCK
-		then_roots: []Root_Id
-		then_cleanups: []Flow_Cleanup
-		if then_reaches {
-			then_roots = slice.clone(graph.temp_roots[roots:], graph.alloc)
-			then_cleanups = slice.clone(graph.in_scope[cleanups:], graph.alloc)
-		}
-		resize(&graph.temp_roots, roots)
-		resize(&graph.in_scope, cleanups)
-		link(graph, graph.current, merge)
-		graph.current = new_flow_block(graph)
-		link(graph, entry, graph.current)
-		else_loans := walk_flow_expr(graph, v.otherwise)
-		else_reaches := graph.current != NO_BLOCK
-		if !else_reaches {
-			resize(&graph.temp_roots, roots)
-			resize(&graph.in_scope, cleanups)
-		}
-		append(&graph.temp_roots, ..then_roots)
-		append(&graph.in_scope, ..then_cleanups)
-		link(graph, graph.current, merge)
-		graph.current = then_reaches || else_reaches ? merge : NO_BLOCK
-		return prov_join(graph, then_loans, else_loans)
+		return walk_flow_cond(graph, v)
 
 	case ^Expr_Propagated_Error:
 		// A fresh value: moved out of a temporary, or copied out of a place.
 		return graph.propagated_errors[v.owner]
 
 	case ^Expr_Or_Else:
-		value_loans := walk_flow_expr(graph, v.value)
-		// design.md "or_else expression": the failure leaves through its exit,
-		// which runs the cleanups the statement would, and only success resumes.
-		if v.exit != nil {
-			resume := fork_flow_branch(graph)
-			walk_flow_stmt(graph, v.exit)
-			graph.current = resume
-			return prov_payload_content(graph, value_loans, prov_type(graph, v.value), prov_type(graph, v), v.span)
-		}
-		merge := fork_flow_branch(graph)
-		fallback_loans := walk_flow_expr(graph, v.fallback)
-		link(graph, graph.current, merge)
-		graph.current = merge
-		payload := prov_payload_content(graph, value_loans, prov_type(graph, v.value), prov_type(graph, v), v.span)
-		return prov_join(graph, payload, fallback_loans)
+		return walk_flow_or_else(graph, v)
 
 	case ^Expr_Range:
 		walk_flow_expr(graph, v.lo)
@@ -1979,6 +1914,98 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Anon_Union, ^Type_Enum, ^Type_Interface:
 	}
 	return nil
+}
+
+@(private = "file")
+walk_flow_composite :: proc(graph: ^Flow_Graph, v: ^Expr_Composite) -> []int {
+	prov := graph.mode != .Lifecycle
+	held := len(graph.held_owners)
+	defer resize(&graph.held_owners, held)
+	// A non-empty container literal evaluates its destination's `via` first.
+	if len(v.elements) > 0 {
+		walk_flow_expr(graph, v.via)
+		if prov && type_is_container(graph.k.c, prov_type(graph, v)) {
+			prov_note_fresh_owner(graph, v, v.via)
+		}
+	}
+	if prov {
+		if prov_repr(graph, v).backing != INVALID_TYPE {
+			return prov_slice_literal(graph, v, carrier_is_mutable(graph.k.c, prov_type(graph, v)))
+		}
+		if content := prov_temp_content(graph, prov_type(graph, v)); len(content) > 0 {
+			return prov_composite_content(graph, v, content, prov_type(graph, v))
+		}
+	}
+	is_map := underlying_kind(graph.k.c, prov_type(graph, v)) == .Map
+	for element, index in v.elements {
+		if is_map {
+			walk_flow_expr(graph, element.key)
+			if prov { prov_hold_owner(graph, element.key) }
+		}
+		loans := walk_flow_expr(graph, element.value)
+		if prov {
+			prov_hold_owner(graph, element.value)
+			prov_repeated_element_effects(graph, v, prov_type(graph, v), index, loans)
+		}
+	}
+	if prov && is_map && len(v.elements) > 0 {
+		prov_key_effects(graph, prov_type(graph, v), v.span)
+	}
+	return nil
+}
+
+// A branch's temporaries and cleanups reach the merge only if the branch does.
+@(private = "file")
+walk_flow_cond :: proc(graph: ^Flow_Graph, v: ^Expr_Cond) -> []int {
+	walk_flow_expr(graph, v.cond)
+	roots, cleanups := len(graph.temp_roots), len(graph.in_scope)
+	entry := graph.current
+	merge := new_flow_block(graph)
+	graph.current = new_flow_block(graph)
+	link(graph, entry, graph.current)
+	then_loans := walk_flow_expr(graph, v.then)
+	then_reaches := graph.current != NO_BLOCK
+	then_roots: []Root_Id
+	then_cleanups: []Flow_Cleanup
+	if then_reaches {
+		then_roots = slice.clone(graph.temp_roots[roots:], graph.alloc)
+		then_cleanups = slice.clone(graph.in_scope[cleanups:], graph.alloc)
+	}
+	resize(&graph.temp_roots, roots)
+	resize(&graph.in_scope, cleanups)
+	link(graph, graph.current, merge)
+	graph.current = new_flow_block(graph)
+	link(graph, entry, graph.current)
+	else_loans := walk_flow_expr(graph, v.otherwise)
+	else_reaches := graph.current != NO_BLOCK
+	if !else_reaches {
+		resize(&graph.temp_roots, roots)
+		resize(&graph.in_scope, cleanups)
+	}
+	append(&graph.temp_roots, ..then_roots)
+	append(&graph.in_scope, ..then_cleanups)
+	link(graph, graph.current, merge)
+	graph.current = then_reaches || else_reaches ? merge : NO_BLOCK
+	return prov_join(graph, then_loans, else_loans)
+}
+
+@(private = "file")
+walk_flow_or_else :: proc(graph: ^Flow_Graph, v: ^Expr_Or_Else) -> []int {
+	value_loans := walk_flow_expr(graph, v.value)
+	// design.md "or_else expression": the failure leaves through its exit,
+	// which runs the cleanups the statement would, and only success resumes.
+	if v.exit != nil {
+		resume := fork_flow_branch(graph)
+		walk_flow_stmt(graph, v.exit)
+		graph.current = resume
+		return prov_payload_content(graph, value_loans, prov_type(graph, v.value), prov_type(graph, v), v.span)
+	}
+	merge := fork_flow_branch(graph)
+	fallback_loans := walk_flow_expr(graph, v.fallback)
+	link(graph, graph.current, merge)
+	graph.current = merge
+	payload := prov_payload_content(graph, value_loans, prov_type(graph, v.value), prov_type(graph, v), v.span)
+	return prov_join(graph, payload, fallback_loans)
 }
 
 // design.md "or_return operator": a failure operand leaves through its `return`,
