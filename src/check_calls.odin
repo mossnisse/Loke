@@ -301,10 +301,7 @@ set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool, resu
 	}
 	v.type = result
 	if result_inout {
-		v.value_category = .Place
-		v.addressable = true
-		v.assignable = true
-		v.immutable = .None
+		mark_writable_place(&v.base)
 	}
 }
 

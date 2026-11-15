@@ -62,10 +62,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 				return
 			}
 			v.type = info.element
-			v.value_category = .Place
-			v.addressable = true
-			v.assignable = true
-			v.immutable = .None
+			mark_writable_place(&v.base)
 			return
 		case .Slice:
 			// The element lives in the slice's root, so `[]mut T` decides the write,
@@ -334,10 +331,7 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, position
 	v.bound = bound
 	annotate_user_operator(k, &v.base, chosen)
 	if operator_result_is_place(k, chosen) {
-		v.value_category = .Place
-		v.addressable = true
-		v.assignable = true
-		v.immutable = .None
+		mark_writable_place(&v.base)
 	}
 	return true
 }

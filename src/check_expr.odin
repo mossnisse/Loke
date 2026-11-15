@@ -818,6 +818,12 @@ select_field :: proc(
 	return true
 }
 
+// A place anything may write: an `inout` result, or a C pointer's element.
+mark_writable_place :: proc(v: ^Expr_Base) {
+	v.value_category = .Place
+	inherit_capability(v, nil, true, true)
+}
+
 // A field or element place: writable through a `^mut T`, read-only through a
 // `^T`, and otherwise exactly as writable as the operand it is part of.
 inherit_capability :: proc(v, operand: ^Expr_Base, through_pointer, pointer_mutable: bool) {
@@ -1142,14 +1148,11 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	}
 
 	v.type = operand
-	if !base_is_const(operand_base) {
-		return
+	if base_is_const(operand_base) {
+		if folded, ok := fold_unary_const(k, v.op, v.op_span, operand_base.const_value, operand); ok {
+			v.const_value = folded
+		}
 	}
-	folded, ok := fold_unary_const(k, v.op, v.op_span, operand_base.const_value, operand)
-	if !ok {
-		return
-	}
-	v.const_value = folded
 }
 
 // `fold_unary` for the checker, whose float constants keep a decimal spelling.
@@ -1317,11 +1320,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	is_comparison := false
-	#partial switch v.op {
-	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
-		is_comparison = true
-	}
+	is_comparison := v.op == .Eq_Eq || v.op == .Not_Eq || v.op == .Lt || v.op == .Lt_Eq || v.op == .Gt || v.op == .Gt_Eq
 	shift := v.op == .Shl || v.op == .Shr
 
 	hint := is_comparison ? INVALID_TYPE : expected
@@ -1341,10 +1340,8 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	if !builtin_binary_defined(k, v.op, lhs, rhs) {
-		if check_user_binary(k, v, lhs, rhs) {
-			return
-		}
+	if !builtin_binary_defined(k, v.op, lhs, rhs) && check_user_binary(k, v, lhs, rhs) {
+		return
 	}
 	// design.md "SIMD vectors": lane-wise, with its own operator table.
 	if simd_operand(k.c, lhs) || simd_operand(k.c, rhs) {
@@ -1483,21 +1480,16 @@ check_logical :: proc(k: ^Checker, v: ^Expr_Binary) {
 // integer; an untyped left operand first takes the type it would have on its
 // own.
 @(private = "file")
-check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, rhs: Type_Id) {
-	lhs := left_type
+check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, lhs, rhs: Type_Id) {
 	if !shiftable_type(k.c, lhs) {
 		operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
 		return
 	}
-
 	if !validate_shift_count(k, v.rhs, rhs) {
 		return
 	}
-
-	right := expr_base(v.rhs)
-	left := expr_base(v.lhs)
+	left, right := expr_base(v.lhs), expr_base(v.rhs)
 	v.type = lhs
-
 	if !base_is_const(left) || !base_is_const(right) {
 		// A runtime shift needs a concrete left operand to shift.
 		if type_is_untyped(k.c, lhs) {
@@ -1511,10 +1503,8 @@ check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, 
 		return
 	}
 
-	folded, folded_ok := fold_arithmetic(
-		k.c, v.op, v.op_span, left.const_value, right.const_value, v.type,
-	)
-	if !folded_ok {
+	folded, ok := fold_arithmetic(k.c, v.op, v.op_span, left.const_value, right.const_value, v.type)
+	if !ok {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -1675,7 +1665,9 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span, comparing := 
 	}
 	if type_kind(k.c, lt) == .Proc && type_kind(k.c, rt) == .Proc {
 		plain := erase_proc_contract(k.c, lt)
-		if plain == erase_proc_contract(k.c, rt) { return plain, true }
+		if plain == erase_proc_contract(k.c, rt) {
+			return plain, true
+		}
 	}
 	left_untyped := type_is_untyped(k.c, lt)
 	right_untyped := type_is_untyped(k.c, rt)
@@ -1939,14 +1931,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 			base.type = target
 			return true
 		}
-		converted, fits := convert_const(k.c, base.const_value, target, false)
-		if !fits {
-			report_unrepresentable(k, base, target)
-			return false
-		}
-		base.type = target
-		base.const_value = converted
-		return true
+		return fold_constant_at(k, base, target)
 	}
 	// design.md "Borrowed callable views": the procedure or capture value is
 	// kept for the backend to hold or take the address of.
@@ -1984,18 +1969,14 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 			return true
 		}
 		merged, ok := merge_untyped_types(base.type, target)
-		if !ok {
-			return true
-		}
-		converted, fits := convert_const(k.c, base.const_value, merged, false)
-		if !fits {
-			report_unrepresentable(k, base, merged)
-			return false
-		}
-		base.type = merged
-		base.const_value = converted
-		return true
+		return !ok || fold_constant_at(k, base, merged)
 	}
+	return fold_constant_at(k, base, target)
+}
+
+// A constant's value at `target`, reporting one that `target` cannot represent.
+@(private = "file")
+fold_constant_at :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) -> bool {
 	converted, fits := convert_const(k.c, base.const_value, target, false)
 	if !fits || !nil_converts(k.c, base.type, target) {
 		report_unrepresentable(k, base, target)
