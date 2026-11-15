@@ -471,11 +471,11 @@ Prov_Event :: struct {
 	store_id:      int,
 	// `Rearrange`: see `Prov_Kind`.
 	rearranged:    Carrier_Move,
-	// `Load`: the one element of a view parameter it names, whose caller slots it
-	// reads when through that loan, instead of those standing for every element.
 	// `Load`: what it reads below the storage its carriers name, where one of them
 	// points below the whole of it (`prov_load_places`); nil reads `path`.
 	load_places:   [][]Proj_Step,
+	// `Load`: the one element of a view parameter it names, whose caller slots it
+	// reads when through that loan, instead of those standing for every element.
 	load_element:  Prov_Element_Slots,
 	// `Def` of a named slot: one more than the index of its definition in
 	// `view_defs` (`prov_note_view`), or 0.
