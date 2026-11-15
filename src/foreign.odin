@@ -201,18 +201,7 @@ check_exports :: proc(c: ^Compiler, defines_entry: bool) {
 	for id in package_order(c) {
 		for file in package_of(c, id).files {
 			for item in file.active_items {
-				#partial switch v in item {
-				case ^Decl:
-					check_export_decl(c, v, &claimed)
-				case ^Item_Impl:
-					for member in v.members {
-						if d, ok := member.(^Decl); ok {
-							check_export_decl(c, d, &claimed)
-						}
-					}
-				case ^Item_Foreign_Block:
-					check_foreign_links(c, v, &linked)
-				}
+				check_item_exports(c, item, &claimed, &linked)
 			}
 		}
 	}
@@ -231,6 +220,22 @@ check_exports :: proc(c: ^Compiler, defines_entry: bool) {
 			errorf(c, bound.span, "L0600", "the foreign symbol `%s` is exported with a different type", name)
 			add_notef(c, defined.span, "`%s` is exported here", name)
 		}
+	}
+}
+
+@(private = "file")
+check_item_exports :: proc(c: ^Compiler, item: Item, claimed, linked: ^map[string]Symbol_Id) {
+	#partial switch v in item {
+	case ^Decl:
+		check_export_decl(c, v, claimed)
+	case ^Item_Impl:
+		for member in v.members {
+			if d, ok := member.(^Decl); ok {
+				check_export_decl(c, d, claimed)
+			}
+		}
+	case ^Item_Foreign_Block:
+		check_foreign_links(c, v, linked)
 	}
 }
 

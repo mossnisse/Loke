@@ -738,12 +738,7 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 		}
 		return callable_dyn_type(k, info, resolved, v)
 	}
-	callee := v.interface_expr
-	args: []Argument
-	if call, is_call := callee.(^Expr_Call); is_call {
-		args = call.args
-		callee = call.callee
-	}
+	callee, args := application_parts(v.interface_expr)
 	info := interface_info_for(k, named_callee_symbol(k, callee))
 	if info == nil {
 		errorf(k.c, expr_span(v.interface_expr), "L0463", "`dyn` needs an interface")

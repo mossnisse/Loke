@@ -1013,6 +1013,14 @@ named_callee_symbol :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	return INVALID_SYMBOL
 }
 
+// `Name(args...)` as its callee and arguments; a bare `Name` has none.
+application_parts :: proc(e: Expr) -> (callee: Expr, args: []Argument) {
+	if call, is_call := e.(^Expr_Call); is_call {
+		return call.callee, call.args
+	}
+	return e, nil
+}
+
 // The generics whose application names a type: a record or a parametric alias.
 TYPE_GENERICS :: bit_set[Generic_Kind]{.Record, .Alias}
 
@@ -1346,12 +1354,7 @@ match_type_pattern :: proc(
 		if info.kind != .Dyn || (v.mutable && !info.mutable) {
 			return false
 		}
-		callee := v.interface_expr
-		args: []Argument
-		if call, is_call := callee.(^Expr_Call); is_call {
-			args = call.args
-			callee = call.callee
-		}
+		callee, args := application_parts(v.interface_expr)
 		if named_callee_symbol(k, callee) != info.dyn_interface || len(args) != len(info.dyn_args) {
 			return false
 		}
