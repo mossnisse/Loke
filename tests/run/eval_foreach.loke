@@ -63,7 +63,7 @@ doubled :: proc() -> int {
 // slice views the array.
 squares :: proc() -> int {
 	cells := [4]int{0, 0, 0, 0};
-	foreach (&mut cell, index in (&mut cells[:]).indexed()) { cell = index * index; }
+	foreach (&mut cell, index in cells[mut :].indexed()) { cell = index * index; }
 	return cells[0] + cells[1] + cells[2] + cells[3];
 }
 

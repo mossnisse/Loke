@@ -46,7 +46,7 @@ main :: proc() {
 	}
 
 	cells := [2]int{0, 0};
-	scene := Scene{&mut cells[:]};
+	scene := Scene{cells[mut :]};
 	size: int;
 	parallel {
 		spawn size = measure(&scene);

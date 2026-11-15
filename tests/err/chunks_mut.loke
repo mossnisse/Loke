@@ -32,7 +32,7 @@ alias_in_step :: proc(xs: []mut int) {
 grow_owner :: proc() {
 	values := [dynamic]int{1, 2, 3};
 	first: []mut int = {};
-	foreach (rows in (&mut values[:]).chunks_mut(2)) {
+	foreach (rows in values[mut :].chunks_mut(2)) {
 		first = rows;
 		break;
 	}
@@ -52,7 +52,7 @@ read_only :: proc(xs: []int) {
 CHUNKED :: chunked();
 chunked :: proc() -> int {
 	values := [4]int{};
-	view := (&mut values[:]).chunks_mut(2);
+	view := values[mut :].chunks_mut(2);
 	return 0;
 }
 

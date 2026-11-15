@@ -35,7 +35,7 @@ replaced_before_the_drop :: proc() -> int {
 	other := [dynamic]int{8};
 	defer drop(other);
 	arr := [1]Plain{Plain{values[:]}};
-	view := &mut arr[:];
+	view := arr[mut :];
 	view[0] = Plain{other[:]};
 	drop(values);
 	return first(view);

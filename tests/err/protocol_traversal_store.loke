@@ -29,7 +29,7 @@ Inline_Cursor :: struct { rows: []mut Ro, at: int }
 impl Inline {
 	Element :: Ro;
 	Mut_Iterator :: Inline_Cursor;
-	iter_mut :: proc(self: inout Inline) -> Inline_Cursor { return {&mut self.rows[:], 0}; }
+	iter_mut :: proc(self: inout Inline) -> Inline_Cursor { return {self.rows[mut :], 0}; }
 }
 impl Inline_Cursor {
 	next :: proc(self: inout Inline_Cursor) -> Option(^mut Ro) {
@@ -68,7 +68,7 @@ impl Cursor_Rw {
 backing_storage :: proc() {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	source := Lender{&mut lists[:], 0};
+	source := Lender{lists[mut :], 0};
 	foreach (&mut list in source) { list.head = &c; }
 	node := lists[0].head;
 	c.value = 5;
@@ -78,7 +78,7 @@ backing_storage :: proc() {
 whole_element :: proc() {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	source := Lender{&mut lists[:], 0};
+	source := Lender{lists[mut :], 0};
 	foreach (&mut list in source) { list = Ro{&c}; }
 	node := lists[0].head;
 	c.value = 5;
@@ -88,7 +88,7 @@ whole_element :: proc() {
 through_a_pointer :: proc() {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	source := Lender{&mut lists[:], 0};
+	source := Lender{lists[mut :], 0};
 	pointer := &mut source;
 	foreach (&mut list in pointer^) { list.head = &c; }
 	node := lists[0].head;
@@ -108,7 +108,7 @@ in_the_source_itself :: proc() {
 two_carriers_away :: proc() {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	inner := Lender{&mut lists[:], 0};
+	inner := Lender{lists[mut :], 0};
 	source := Deep{&mut inner};
 	foreach (&mut list in source) { list.head = &c; }
 	node := lists[0].head;
@@ -120,7 +120,7 @@ two_carriers_away :: proc() {
 mutable_element :: proc() {
 	a := Node{1}; c := Node{3};
 	lists := [1]Rw{Rw{&mut a}};
-	source := Lender_Rw{&mut lists[:]};
+	source := Lender_Rw{lists[mut :]};
 	foreach (&mut list in source) { list.head = &mut c; }
 	node := lists[0].head;
 	c.value = 5;
@@ -135,7 +135,7 @@ stores_in_a_parameter :: proc(source: inout Lender, @(escape=stored) node: ^Node
 across_a_call :: proc() {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	source := Lender{&mut lists[:], 0};
+	source := Lender{lists[mut :], 0};
 	stores_in_a_parameter(inout source, &c);
 	node := lists[0].head;
 	c.value = 5;
@@ -147,7 +147,7 @@ across_a_call :: proc() {
 measured_afterwards :: proc() {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	source := Lender{&mut lists[:], 0};
+	source := Lender{lists[mut :], 0};
 	foreach (&mut list in source) { list.head = &c; }
 	c.value = 5;
 	_ = source.values.len();

@@ -22,8 +22,8 @@ Erased :: struct { view: dyn Sized };
 main :: proc() {
 	a := [2]int{1, 2};
 	b := [2]int{1, 2};
-	p: []mut int = &mut a[:];
-	q: []mut int = &mut b[:];
+	p: []mut int = a[mut :];
+	q: []mut int = b[mut :];
 	c := Counter{1};
 	v := (dyn Sized)(&c);
 	w := (dyn Sized)(&c);

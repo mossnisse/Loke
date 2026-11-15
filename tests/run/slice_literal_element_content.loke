@@ -90,7 +90,7 @@ fresh_each_iteration :: proc() {
 }
 mutable_element_done :: proc() {
 	a := [dynamic]int{11};
-	xs := &mut a[:];
+	xs := a[mut :];
 	view := []mut []mut int{xs};
 	bump(view);
 	xs[0] += 1;

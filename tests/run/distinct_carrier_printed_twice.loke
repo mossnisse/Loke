@@ -9,6 +9,6 @@ Cells :: distinct []mut int;
 
 main :: proc() {
 	storage := [2]int{1, 2};
-	cells := Cells(&mut storage[:]);
+	cells := Cells(storage[mut :]);
 	fmt.println(cells, cells);
 }

@@ -40,7 +40,7 @@ owner_again :: proc() {
 	values := [dynamic]int{1, 2, 3, 4};
 	kept: [dynamic]^mut int = {};
 	foreach (o in 0 ..< 2) {
-		foreach (rows in (&mut values[:]).chunks_mut(2)) { kept.append(&mut rows[0]); }
+		foreach (rows in values[mut :].chunks_mut(2)) { kept.append(&mut rows[0]); }
 	}
 	foreach (p in kept) { p^ = 4; }
 }

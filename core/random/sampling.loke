@@ -36,7 +36,7 @@ impl Weighted {
 		keep := make([dynamic]f64, count, count, allocator);
 		alias := make([dynamic]int, count, count, allocator);
 		work := make([dynamic]int, count, count, allocator);
-		build_alias(weights, total, &mut keep[:], &mut alias[:], &mut work[:]);
+		build_alias(weights, total, keep[mut :], alias[mut :], work[mut :]);
 		return Weighted{move(keep), move(alias)};
 	}
 
@@ -49,7 +49,7 @@ impl Weighted {
 		keep := try_make([dynamic]f64, count, count, allocator) or_return;
 		alias := try_make([dynamic]int, count, count, allocator) or_return;
 		work := try_make([dynamic]int, count, count, allocator) or_return;
-		build_alias(weights, total, &mut keep[:], &mut alias[:], &mut work[:]);
+		build_alias(weights, total, keep[mut :], alias[mut :], work[mut :]);
 		return Weighted{move(keep), move(alias)};
 	}
 

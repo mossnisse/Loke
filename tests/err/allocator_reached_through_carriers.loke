@@ -21,7 +21,7 @@ through_local :: proc(handles: ^Handles) -> [dynamic]int {
 
 field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := Holder{kept.allocator()};
 	b := Holder{allocator};
 	handles := Handles{&mut a, &mut b};
@@ -33,7 +33,7 @@ field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 whole :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := Holder{kept.allocator()};
 	b := Holder{allocator};
 	handles := Handles{&mut a, &mut b};
@@ -45,7 +45,7 @@ whole :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 in_place :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := Holder{kept.allocator()};
 	b := Holder{allocator};
 	handles := Handles{&mut a, &mut b};
@@ -57,7 +57,7 @@ in_place :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 result :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := Holder{kept.allocator()};
 	b := Holder{allocator};
 	handles := Handles{&mut a, &mut b};
@@ -68,7 +68,7 @@ result :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 result_three_down :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := Holder{kept.allocator()};
 	b := Holder{allocator};
 	handles := Handles{&mut a, &mut b};
@@ -80,7 +80,7 @@ result_three_down :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 result_through_a_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := Holder{kept.allocator()};
 	b := Holder{allocator};
 	handles := Handles{&mut a, &mut b};

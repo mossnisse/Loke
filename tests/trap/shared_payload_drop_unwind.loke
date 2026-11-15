@@ -26,7 +26,7 @@ impl Probe {
 
 main :: proc() {
 	buffer: [256]u8 = {};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	probe := Probe{arena.allocator()};
 	handle := shared(Payload{1}, arena.allocator());
 }

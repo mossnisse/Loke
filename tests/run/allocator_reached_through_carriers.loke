@@ -14,7 +14,7 @@ cross_field :: proc(handles: ^Handles) { handles^.first^.allocator = handles^.se
 
 kept_apart :: proc(@(allocator_reset) other: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := Holder{kept.allocator()};
 	b := Holder{kept.allocator()};
 	handles := Handles{&mut a, &mut b};
@@ -27,6 +27,6 @@ kept_apart :: proc(@(allocator_reset) other: mem.Allocator) -> int {
 
 main :: proc() {
 	buffer := [256]u8{};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	fmt.println(kept_apart(arena.allocator()));
 }

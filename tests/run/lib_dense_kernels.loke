@@ -73,7 +73,7 @@ products :: proc($T: type) -> bool {
 				dense.multiply_into(fast.view_mut(), a.view(), b.view());
 				storage := make([dynamic]T, 0, m*(n + 1));
 				foreach (_ in 0 ..< m*(n + 1)) { storage.append(T(0)); }
-				slow := dense.View_Mut(T).from_row_major(&mut storage[:], m, n, n + 1);
+				slow := dense.View_Mut(T).from_row_major(storage[mut :], m, n, n + 1);
 				dense.multiply_into(slow, a.view(), b.view());
 				if (!dense.equal(fast.view(), slow.as_view())) { same = false; }
 
@@ -103,7 +103,7 @@ strided :: proc($T: type) -> bool {
 	dense.multiply_into(whole.block(2, 1, m, n), a, b);
 	storage := make([dynamic]T, 0, m*n);
 	foreach (_ in 0 ..< m*n) { storage.append(T(0)); }
-	slow := dense.View_Mut(T).from_row_major(&mut storage[:], m, n);
+	slow := dense.View_Mut(T).from_row_major(storage[mut :], m, n);
 	dense.multiply_into(slow, a, b);
 	same := dense.equal(big_out.view().block(2, 1, m, n), slow.as_view());
 	// The block wrote nothing outside itself.
@@ -138,11 +138,11 @@ blocked_lu :: proc($T: type) -> bool {
 			}
 			storage := make([dynamic]T, 0, n*n);
 			foreach (_ in 0 ..< n*n) { storage.append(T(0)); }
-			slow := row_major(&a, &mut storage[:]);
+			slow := row_major(&a, storage[mut :]);
 			pivots := make([dynamic]int, n);
 			slow_pivots := make([dynamic]int, n);
-			blocked := dense.lu_in_place(a.view_mut(), &mut pivots[:]);
-			unblocked := dense.lu_in_place(slow, &mut slow_pivots[:]);
+			blocked := dense.lu_in_place(a.view_mut(), pivots[mut :]);
+			unblocked := dense.lu_in_place(slow, slow_pivots[mut :]);
 			switch (blocked) {
 			case .ok:
 				switch (unblocked) {
@@ -181,7 +181,7 @@ blocked_cholesky :: proc($T: type) -> bool {
 			}
 			storage := make([dynamic]T, 0, n*n);
 			foreach (_ in 0 ..< n*n) { storage.append(T(0)); }
-			slow := row_major(&a, &mut storage[:]);
+			slow := row_major(&a, storage[mut :]);
 			blocked := dense.cholesky_in_place(a.view_mut());
 			unblocked := dense.cholesky_in_place(slow);
 			switch (blocked) {
@@ -223,7 +223,7 @@ pooled :: proc($T: type, pool: ^thread.Pool) -> bool {
 	if (!dense.equal(alone.view(), shared.view())) { same = false; }
 	storage := make([dynamic]T, 0, 130*130);
 	foreach (_ in 0 ..< 130*130) { storage.append(T(0)); }
-	rows := dense.View_Mut(T).from_row_major(&mut storage[:], 130, 130);
+	rows := dense.View_Mut(T).from_row_major(storage[mut :], 130, 130);
 	dense.multiply_into(rows, a.view(), b.view(), .some(pool));
 	if (!dense.equal(alone.view(), rows.as_view())) { same = false; }
 	sum := alone.clone();

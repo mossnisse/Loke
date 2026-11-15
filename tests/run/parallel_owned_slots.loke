@@ -46,7 +46,7 @@ main :: proc() {
 	slots: [dynamic]Option([dynamic]int) = {};
 	foreach (_ in 0 ..< 4) { slots.append(.none); }
 	{
-		all := &mut slots[:];
+		all := slots[mut :];
 		parallel (&pool) {
 			foreach (slot, i in all.chunks_mut(1).indexed()) { spawn fill(i, slot); }
 		}
@@ -55,7 +55,7 @@ main :: proc() {
 
 	// Each task drops the owner the last batch left in its slot.
 	{
-		all := &mut slots[:];
+		all := slots[mut :];
 		parallel {
 			foreach (slot, i in all.chunks_mut(1).indexed()) { spawn fill(i + 1, slot); }
 		}
@@ -63,7 +63,7 @@ main :: proc() {
 	fmt.println(total(slots[:]));
 
 	{
-		all := &mut slots[:];
+		all := slots[mut :];
 		halves := all.split_at_mut(2);
 		parallel (&pool) {
 			spawn fill(5, halves.left);
@@ -75,7 +75,7 @@ main :: proc() {
 	meshes: [dynamic]Option(Mesh) = {};
 	foreach (_ in 0 ..< 3) { meshes.append(.none); }
 	{
-		all := &mut meshes[:];
+		all := meshes[mut :];
 		parallel (&pool) {
 			foreach (slot, i in all.chunks_mut(1).indexed()) { spawn build(i, slot); }
 		}
@@ -93,7 +93,7 @@ main :: proc() {
 	lists: [dynamic][dynamic]int = {};
 	foreach (_ in 0 ..< 3) { lists.append({}); }
 	{
-		all := &mut lists[:];
+		all := lists[mut :];
 		parallel (&pool) {
 			foreach (slot, i in all.chunks_mut(1).indexed()) { spawn grow(i, slot); }
 		}

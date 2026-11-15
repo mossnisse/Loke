@@ -103,7 +103,7 @@ returned_from_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int
 // The text beside the handle is in another arena, but the copy is built with the handle.
 handle :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("text", other.allocator())};

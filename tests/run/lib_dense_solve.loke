@@ -459,7 +459,7 @@ failures :: proc() {
 	case .err(e): check("an infinity is singular", e == .Singular);
 	}
 	pivots := [dynamic]int{0, 0};
-	check("lu_in_place reports it", fails_with(dense.lu_in_place(singular.view_mut(), &mut pivots[:]), .Singular));
+	check("lu_in_place reports it", fails_with(dense.lu_in_place(singular.view_mut(), pivots[mut :]), .Singular));
 
 	indefinite := dense.Matrix(f64).from_rows([2][2]f64{{1, 2}, {2, 1}});
 	switch (dense.cholesky(indefinite.view())) {

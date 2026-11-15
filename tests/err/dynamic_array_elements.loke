@@ -38,7 +38,7 @@ same_element :: proc() {
 same_element_through_a_view :: proc() {
 	x := 1; y := 2;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	first := view[0].to;
 	second := view[0].to;
 	second^ = 3;
@@ -93,7 +93,7 @@ a_store_past_the_budget_replaces_nothing :: proc() {
 through_a_view_past_the_budget :: proc() {
 	x := 1; y := 2; a := 3; b := 4;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	view[8].to = &mut a;
 	view[9].to = &mut b;
 	held := view[8].to;
@@ -142,7 +142,7 @@ appended_is_anywhere :: proc() {
 through_a_view_copy :: proc() {
 	x := 1; y := 2; z := 3;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	copy := view;
 	copy[0].to = &mut z;
 	held := links[1].to;
@@ -173,7 +173,7 @@ through_a_pointer :: proc() {
 at_a_view_offset :: proc() {
 	x := 1; y := 2; z := 3;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[1:];
+	view := links[mut 1:];
 	view[0].to = &mut z;
 	held := links[1].to;
 	z = 5;
@@ -193,7 +193,7 @@ through_an_element :: proc() {
 split_halves :: proc() {
 	x := 1; y := 2; z := 3;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	left, right := view.split_at_mut(1);
 	right[0].to = &mut z;
 	held := links[1].to;
@@ -266,7 +266,7 @@ call_exchanges :: proc() {
 	x := 1; y := 2; z := 3;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
 	links[0].to = &mut z;
-	exchange(&mut links[:]);
+	exchange(links[mut :]);
 	held := links[1].to;
 	z = 5;
 	held^ = 4;
@@ -275,7 +275,7 @@ call_exchanges :: proc() {
 call_copies :: proc() {
 	x := 1; y := 2;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
+	duplicate(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -284,7 +284,7 @@ call_copies :: proc() {
 a_copy_left_in_two_places :: proc() {
 	x := 1; y := 2;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
+	duplicate(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ = 1;
@@ -294,7 +294,7 @@ a_copy_left_in_two_places :: proc() {
 a_copy_seen_through_a_view :: proc() {
 	x := 1; y := 2;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	duplicate(view);
 	first := view[0].to;
 	second := view[1].to;
@@ -324,7 +324,7 @@ library_reverse :: proc() {
 	x := 1; y := 2; z := 3;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
 	links[0].to = &mut z;
-	slice.reverse(&mut links[:]);
+	slice.reverse(links[mut :]);
 	held := links[1].to;
 	z = 5;
 	held^ = 4;
@@ -527,7 +527,7 @@ owner_moved_by_a_call :: proc() -> string {
 	items.append("a");
 	items.append("b");
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	slice.reverse(&mut items[:]);
+	slice.reverse(items[mut :]);
 	return items[0];
 }
 

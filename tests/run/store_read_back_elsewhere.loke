@@ -45,7 +45,7 @@ removed_twice_from_a_local :: proc(a: ^mut int, b: ^mut int) {
 main :: proc() {
 	a := 0; b := 0; c := 0;
 	pairs := [1]Two{Two{&mut a, &mut b}};
-	another_field(&mut pairs[:], &mut c);
+	another_field(pairs[mut :], &mut c);
 	fmt.println(a, b, c);
 	d := [dynamic]^mut int{};
 	done_in_turn(&mut d, &mut c);

@@ -51,8 +51,8 @@ Failure_Policy :: enum { Panic, Trap }
 	A local bump region, provider-backed or laid over a caller's buffer.
 
 	    arena := mem.Arena.init();                       // blocks from the default provider
-	    arena := mem.Arena.from_buffer(&mut buffer[:]);  // caller storage, no allocation
-	    arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
+	    arena := mem.Arena.from_buffer(buffer[mut :]);  // caller storage, no allocation
+	    arena := mem.Arena.from_buffer(buffer[mut :], policy = .Trap);
 
 	A reset needs every borrower of the region to be gone, and that is a scope
 	rather than a convention: resetting while one is live is rejected (L0537).

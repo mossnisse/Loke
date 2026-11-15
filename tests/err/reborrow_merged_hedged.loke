@@ -8,8 +8,8 @@ import "core:fmt";
 main :: proc() {
 	storage: [4]int = {};
 	a: [9][]mut int = {};
-	a[8] = &mut storage[:];
-	r := &mut a[8][:];
+	a[8] = storage[mut :];
+	r := a[8][mut :];
 	fmt.println(a[0][0]);
 	fmt.println(r[0]);
 }

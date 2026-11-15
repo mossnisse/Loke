@@ -42,7 +42,7 @@ read_only_copied_back :: proc() -> int {
 	foreach (&mut list in lists) { list.head = list.head; }
 	node := lists[0].head;
 	lists[1].head = &c;
-	view := &mut lists[:];
+	view := lists[mut :];
 	foreach (&mut list in view) { list.head = list.head; }
 	lists[0].head = node;
 	return lists[0].head^.value + lists[1].head^.value;
@@ -109,7 +109,7 @@ use_through_the_binding_of_a_dynamic_array :: proc() -> int {
 use_through_the_binding_over_a_view :: proc() -> int {
 	a := Node{1}; b := Node{2};
 	lists := [2]List{List{&mut a}, List{&mut b}};
-	view := &mut lists[:];
+	view := lists[mut :];
 	foreach (&mut list in view) { list.head^.value += 10; }
 	view[0].head^.value += 100;
 	return a.value + b.value;
@@ -136,7 +136,7 @@ two_loops_over_a_parameter :: proc(lists: []mut List) -> int {
 through_a_parameter :: proc() -> int {
 	a := Node{1}; b := Node{2};
 	lists := [2]List{List{&mut a}, List{&mut b}};
-	return two_loops_over_a_parameter(&mut lists[:]);
+	return two_loops_over_a_parameter(lists[mut :]);
 }
 
 // An owner stored through the binding stays in the source's regions, which
@@ -174,7 +174,7 @@ main :: proc() {
 	fmt.println(through_a_parameter());
 	owners();
 	items := [1]string{strings.copy("a")};
-	left_in_a_parameter(&mut items[:]);
+	left_in_a_parameter(items[mut :]);
 	fmt.println(items[0]);
 	drop(items);
 }

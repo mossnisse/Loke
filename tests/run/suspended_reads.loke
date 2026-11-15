@@ -11,7 +11,7 @@ len_of :: proc(xs: []int) -> int { return xs.len(); }
 
 main :: proc() {
 	storage := [2]int{1, 2};
-	held := Holder{&mut storage[:]};
+	held := Holder{storage[mut :]};
 	view: []int = held.items;
 	fmt.println(held.items[0], len_of(held.items));
 	fmt.println(view[0]);
@@ -23,7 +23,7 @@ main :: proc() {
 
 	inner := [2]int{3, 4};
 	outer := [1][]int{inner[:]};
-	lists := &mut outer[:];
+	lists := outer[mut :];
 	seen: [][]int = lists;
 	fmt.println(lists[0][1], seen[0][0]);
 }

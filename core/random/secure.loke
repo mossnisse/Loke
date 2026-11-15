@@ -21,7 +21,7 @@ fill_secure :: proc(destination: []mut u8) {
 	filled := 0;
 	for (; filled < destination.len(); ) {
 		count := math.min(destination.len() - filled, ENTROPY_CHUNK);
-		if (!fill_native(&mut destination[filled:filled + count])) {
+		if (!fill_native(destination[mut filled:filled + count])) {
 			panic("random.fill_secure: the operating system's generator failed");
 		}
 		filled += count;
@@ -34,7 +34,7 @@ fill_secure :: proc(destination: []mut u8) {
 */
 secure_u64 :: proc() -> u64 {
 	bytes: [8]u8 = {};
-	fill_secure(&mut bytes[:]);
+	fill_secure(bytes[mut :]);
 	value: u64 = 0;
 	foreach (i in 0 ..< 8) { value |= u64(bytes[i]) << uint(8*i); }
 	return value;
@@ -46,7 +46,7 @@ secure_u64 :: proc() -> u64 {
 entropy_words :: proc() -> [4]u64 {
 	for (;;) {
 		bytes: [32]u8 = {};
-		fill_secure(&mut bytes[:]);
+		fill_secure(bytes[mut :]);
 		words: [4]u64 = {};
 		foreach (i in 0 ..< 32) { words[i / 8] |= u64(bytes[i]) << uint(8*(i % 8)); }
 		if ((words[0] | words[1] | words[2] | words[3]) != 0) { return words; }

@@ -187,7 +187,7 @@ store :: proc(bytes: []mut u8, value: $T, order: Order) where is_fixed_width(T) 
 		store(bytes, math.to_bits(value), order);
 	} else {
 		width := size_of(T);
-		field := &mut bytes[:width];
+		field := bytes[mut :width];
 		foreach (i in 0 ..< width) {
 			shift := i;
 			if (order == .Big) { shift = width - 1 - i; }

@@ -44,19 +44,19 @@ same_binding :: proc(xs: []mut Counter) {
 
 resliced_onto :: proc() {
 	counters := [3]Counter{};
-	view := &mut counters[:];
+	view := counters[mut :];
 	second := &mut view[1];
-	view = &mut view[1:];
+	view = view[mut 1:];
 	view[0].count += 1;
 	second^.count += 1;
 }
 
 resliced_in_loop :: proc() {
 	counters := [4]Counter{};
-	view := &mut counters[:];
+	view := counters[mut :];
 	for (i := 0; i < 2; i += 1) {
 		second := &mut view[1];
-		view = &mut view[1:];
+		view = view[mut 1:];
 		view[0].count += 1;
 		second^.count += 1;
 	}
@@ -64,8 +64,8 @@ resliced_in_loop :: proc() {
 
 chosen_start :: proc() {
 	counters := [3]Counter{};
-	view := &mut counters[:];
-	if (cond()) { view = &mut view[1:]; }
+	view := counters[mut :];
+	if (cond()) { view = view[mut 1:]; }
 	first := &mut view[0];
 	view[1].count += 1;
 	first^.count += 1;
@@ -73,7 +73,7 @@ chosen_start :: proc() {
 
 view_borrowed :: proc() {
 	counters := [3]Counter{};
-	view := &mut counters[:];
+	view := counters[mut :];
 	held := &mut view;
 	first := &mut view[0];
 	view[1].count += 1;
@@ -82,8 +82,8 @@ view_borrowed :: proc() {
 
 shortened_same_element :: proc() {
 	counters := [3]Counter{};
-	view := &mut counters[:];
-	if (cond()) { view = &mut view[:2]; }
+	view := counters[mut :];
+	if (cond()) { view = view[mut :2]; }
 	first := &mut view[1];
 	view[1].count += 1;
 	first^.count += 1;
@@ -91,7 +91,7 @@ shortened_same_element :: proc() {
 
 dynamic_same_element :: proc() {
 	counters := [dynamic]Counter{Counter{}, Counter{}};
-	view := &mut counters[:];
+	view := counters[mut :];
 	first := &mut view[0];
 	view[0].count += 1;
 	first^.count += 1;
@@ -99,8 +99,8 @@ dynamic_same_element :: proc() {
 
 dynamic_chosen_start :: proc() {
 	counters := [dynamic]Counter{Counter{}, Counter{}, Counter{}};
-	view := &mut counters[:];
-	if (cond()) { view = &mut view[1:]; }
+	view := counters[mut :];
+	if (cond()) { view = view[mut 1:]; }
 	first := &mut view[0];
 	view[1].count += 1;
 	first^.count += 1;
@@ -110,7 +110,7 @@ copy_same_element :: proc() {
 	x := 1;
 	y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	held := view[0].to;
 	again := view[0].to;
 	again^ = 3;
@@ -122,8 +122,8 @@ copy_chosen_start :: proc() {
 	y := 2;
 	z := 3;
 	links := [3]Link{Link{&mut x}, Link{&mut y}, Link{&mut z}};
-	view := &mut links[:];
-	if (cond()) { view = &mut view[1:]; }
+	view := links[mut :];
+	if (cond()) { view = view[mut 1:]; }
 	held := view[0].to;
 	again := view[1].to;
 	again^ = 3;
@@ -134,8 +134,8 @@ copy_chosen_start :: proc() {
 // else the loop does, and however the reslice reaches itself.
 moved_in_loop :: proc() {
 	a := [3]Counter{};
-	s := &mut a[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[1:]; }
+	s := a[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut 1:]; }
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 1;
@@ -143,10 +143,10 @@ moved_in_loop :: proc() {
 
 moved_in_branch_in_loop :: proc() {
 	a := [3]Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	for (i := 0; i < 2; i += 1) {
-		s = &mut s[:2];
-		if (cond()) { s = &mut s[1:]; }
+		s = s[mut :2];
+		if (cond()) { s = s[mut 1:]; }
 	}
 	first := &mut s[0];
 	s[1].count += 1;
@@ -155,10 +155,10 @@ moved_in_branch_in_loop :: proc() {
 
 moved_through_another_view :: proc() {
 	a := [3]Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	for (i := 0; i < 2; i += 1) {
-		t := &mut s[1:];
-		s = &mut t[:];
+		t := s[mut 1:];
+		s = t[mut :];
 	}
 	first := &mut s[0];
 	s[1].count += 1;
@@ -167,10 +167,10 @@ moved_through_another_view :: proc() {
 
 moved_in_outer_loop :: proc() {
 	a := [3]Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	for (i := 0; i < 2; i += 1) {
-		for (j := 0; j < 2; j += 1) { s = &mut s[:2]; }
-		s = &mut s[1:];
+		for (j := 0; j < 2; j += 1) { s = s[mut :2]; }
+		s = s[mut 1:];
 	}
 	first := &mut s[0];
 	s[1].count += 1;
@@ -180,9 +180,9 @@ moved_in_outer_loop :: proc() {
 // The loop only shortens it, but a branch after the loop moves it.
 moved_after_shortening_loop :: proc() {
 	a := [3]Counter{};
-	s := &mut a[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
-	if (cond()) { s = &mut s[1:]; }
+	s := a[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut :2]; }
+	if (cond()) { s = s[mut 1:]; }
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 1;
@@ -193,13 +193,13 @@ moved_after_shortening_loop :: proc() {
 kept_across_moving_rounds :: proc() {
 	a := [3]Counter{};
 	other := Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	first := &mut other;
 	for (i := 0; i < 2; i += 1) {
 		s[0].count += 1;
 		first^.count += 1;
 		first = &mut s[1];
-		s = &mut s[1:];
+		s = s[mut 1:];
 	}
 	first^.count += 1;
 }
@@ -207,8 +207,8 @@ kept_across_moving_rounds :: proc() {
 // A loop that only shortens the view leaves each element itself.
 same_element_after_shortening_loop :: proc() {
 	a := [3]Counter{};
-	s := &mut a[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	s := a[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut :2]; }
 	first := &mut s[0];
 	s[0].count += 1;
 	first^.count += 1;
@@ -217,13 +217,13 @@ same_element_after_shortening_loop :: proc() {
 same_element_across_shortening_rounds :: proc() {
 	a := [3]Counter{};
 	other := Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	first := &mut other;
 	for (i := 0; i < 2; i += 1) {
 		s[0].count += 1;
 		first^.count += 1;
 		first = &mut s[0];
-		s = &mut s[:2];
+		s = s[mut :2];
 	}
 }
 
@@ -231,8 +231,8 @@ same_element_across_shortening_rounds :: proc() {
 // view starts or how long it is.
 variable_end_in_loop :: proc(n: int) {
 	a := [3]Counter{};
-	s := &mut a[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[:n]; }
+	s := a[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut :n]; }
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 1;
@@ -240,8 +240,8 @@ variable_end_in_loop :: proc(n: int) {
 
 variable_start_in_loop :: proc(n: int) {
 	a := [3]Counter{};
-	s := &mut a[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[n:]; }
+	s := a[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut n:]; }
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 1;
@@ -251,8 +251,8 @@ variable_start_in_loop :: proc(n: int) {
 // always panics, name no element.
 past_every_length_after_loop :: proc() {
 	a := [3]Counter{};
-	s := &mut a[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	s := a[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut :2]; }
 	first := &mut s[0];
 	s[5].count += 1;
 	first^.count += 1;
@@ -260,8 +260,8 @@ past_every_length_after_loop :: proc() {
 
 reslice_past_length_in_loop :: proc() {
 	a := [3]Counter{};
-	s := &mut a[0:2];
-	for (i := 0; i < 2; i += 1) { s = &mut s[:5]; }
+	s := a[mut 0:2];
+	for (i := 0; i < 2; i += 1) { s = s[mut :5]; }
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 1;
@@ -357,7 +357,7 @@ literal_elements :: proc() {
 }
 
 through_pointer :: proc(a: ^mut [2]Counter) {
-	s := &mut a^[0:2];
+	s := a^[mut 0:2];
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 1;

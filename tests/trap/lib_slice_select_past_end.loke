@@ -6,5 +6,5 @@ import "core:slice";
 // clamped to the last element.
 main :: proc() {
 	values := [3]int{3, 1, 2};
-	slice.select_nth_by(&mut values[:], 3, slice.Ascending(int){});
+	slice.select_nth_by(values[mut :], 3, slice.Ascending(int){});
 }

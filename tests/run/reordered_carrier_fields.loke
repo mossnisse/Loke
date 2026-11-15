@@ -82,7 +82,7 @@ records_through_a_pointer :: proc(slots: ^mut Slots) {
 through_a_local_view :: proc() -> int {
 	x := 0; y := 0;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	view[0].to, view[1].to = view[1].to, view[0].to;
 	bump_both(view);
 	return x * 10 + y;
@@ -93,7 +93,7 @@ then_swapped_in_a_local :: proc() -> int {
 	x := 0; y := 0;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[0], links[1] = links[1], links[0];
-	view := &mut links[:];
+	view := links[mut :];
 	view.swap(0, 1);
 	bump_both(view);
 	first := links[0].to;
@@ -115,7 +115,7 @@ locals :: proc() -> int {
 on_links :: proc(body: proc(links: []mut Link)) -> int {
 	x := 0; y := 0; z := 0;
 	links := [3]Link{Link{&mut x}, Link{&mut y}, Link{&mut z}};
-	body(&mut links[:]);
+	body(links[mut :]);
 	return x * 100 + y * 10 + z;
 }
 
@@ -129,7 +129,7 @@ main :: proc() {
 	fmt.println(on_links(held_around));
 	x := 0; y := 0; z := 0;
 	links := [3]Link{Link{&mut x}, Link{&mut y}, Link{&mut z}};
-	at_variable_indices(&mut links[:], 1, 2);
+	at_variable_indices(links[mut :], 1, 2);
 	two := Two{links[0].to, links[1].to};
 	through_a_pointer(&mut two);
 	fmt.println(x, y, z);

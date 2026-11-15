@@ -109,8 +109,8 @@ indirect_carriers :: proc() {
 	drop(value);
 	free_all(arena.allocator());
 	array := [1]Option([dynamic]string){.some(make([dynamic]string))};
-	view := &mut array[:];
-	resliced := &mut view[:];
+	view := array[mut :];
+	resliced := view[mut :];
 	switch (resliced[0]) {
 	case .some(&mut values): values.append(fmt.to_string(arena.allocator(), 44));
 	case .none:

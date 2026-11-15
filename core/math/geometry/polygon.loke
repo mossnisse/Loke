@@ -256,7 +256,7 @@ convex_hull_allocated :: proc(points: []linalg.Vector2($T), allocator: Allocator
 		sorted.append(p);
 		result.append(p);
 	}
-	count := convex_hull_into(&mut sorted[:], &mut result[:]);
+	count := convex_hull_into(sorted[mut :], result[mut :]);
 	result.resize(count);
 	return result;
 }

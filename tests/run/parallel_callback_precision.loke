@@ -64,7 +64,7 @@ work :: proc() -> int { f: dyn proc(n: int) -> int = step; return stored(f, 1); 
 // The dirty callbacks, each used where no task runs.
 serial :: proc() -> int {
 	cells = [3]int{1, 2, 3};
-	table = &mut cells[:];
+	table = cells[mut :];
 	loud := Loud{1};
 	arena := mem.Arena.init();
 	a := apply(tally, 1) + twice(tally, 1) + repeat(tally, 1, 2) + apply(peek, 1);

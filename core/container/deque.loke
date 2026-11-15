@@ -380,10 +380,10 @@ impl Deque($T) {
 		head := self.head;
 		end := head + self.count;
 		all := self.slots_mut();
-		if (end <= all.len()) { return {&mut all[head:end], {}}; }
+		if (end <= all.len()) { return {all[mut head:end], {}}; }
 		wrapped := end - all.len();
 		low, high := all.split_at_mut(head);
-		return {high, &mut low[:wrapped]};
+		return {high, low[mut :wrapped]};
 	}
 
 	/**
@@ -409,15 +409,15 @@ impl Deque($T) {
 			}
 			// `back` then `front` to `front` then `back`, by three reversals: every slot
 			// in the run is live, and `swap` needs no copy or zero value.
-			run := &mut self.slots_mut()[to:capacity];
-			slice.reverse(&mut run[:back]);
-			slice.reverse(&mut run[back:]);
+			run := self.slots_mut()[mut to:capacity];
+			slice.reverse(run[mut :back]);
+			slice.reverse(run[mut back:]);
 			slice.reverse(run);
 			self.head = to;
 		}
 		head := self.head;
 		last := head + self.count;
-		return &mut self.slots_mut()[head:last];
+		return self.slots_mut()[mut head:last];
 	}
 
 	/// Reads from first to last. `foreach` over a deque does this, and borrows it.

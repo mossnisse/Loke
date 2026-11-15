@@ -48,10 +48,10 @@ main :: proc() {
 	a := 1; b := 2;
 	links_a := [1]Link{Link{&mut a}};
 	links_b := [1]Link{Link{&mut b}};
-	done_first(Holder{&mut links_a[:]});
-	copied_after(Holder{&mut links_a[:]});
-	read := read_only_copy(&mut links_a[:]);
-	two := Two{Holder{&mut links_a[:]}, Holder{&mut links_b[:]}};
+	done_first(Holder{links_a[mut :]});
+	copied_after(Holder{links_a[mut :]});
+	read := read_only_copy(links_a[mut :]);
+	two := Two{Holder{links_a[mut :]}, Holder{links_b[mut :]}};
 	another_field(&mut two);
 	two_fields(&mut two);
 	fmt.println(read, a, b);

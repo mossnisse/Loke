@@ -61,8 +61,8 @@ never_used_again :: proc() {
 
 carrier_stored_into_itself :: proc() {
 	values := [4]int{1, 2, 3, 4};
-	view := &mut values[:];
-	for (i := 0; i < 2; i += 1) { view = &mut view[1:]; }
+	view := values[mut :];
+	for (i := 0; i < 2; i += 1) { view = view[mut 1:]; }
 	view[0] = 2;
 	values[0] = 3;
 }

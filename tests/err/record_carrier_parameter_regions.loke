@@ -91,7 +91,7 @@ without_a_handle :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 // The copy's array is in `local`, but its strings share the arena's allocations.
 container_elements :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	local := mem.Arena.from_buffer(&mut buffer[:]);
+	local := mem.Arena.from_buffer(buffer[mut :]);
 	kept := [dynamic]string{};
 	{
 		names := make([dynamic]string, 0, local.allocator());

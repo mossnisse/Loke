@@ -61,7 +61,7 @@ impl Text {
 main :: proc() {
 	values := [2]int{5, 6};
 	foreach (x, i in values.indexed()) { fmt.println(x, take_int(move(i))); }
-	foreach (&mut x, i in (&mut values[:]).indexed()) { x += take_int(move(i)); }
+	foreach (&mut x, i in values[mut :].indexed()) { x += take_int(move(i)); }
 	fmt.println(values[0], values[1]);
 
 	rows := Rows{1};

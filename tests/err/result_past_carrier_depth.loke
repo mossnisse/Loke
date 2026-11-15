@@ -21,7 +21,7 @@ six :: proc(y: ^F) -> ^mut [dynamic]int { return y^.e^.a^.b^.c^.d^.p; }
 
 through_five :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 1, kept.allocator());
 	two := Two{&mut a, &mut b};
@@ -38,7 +38,7 @@ through_five :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 through_six :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 1, kept.allocator());
 	two := Two{&mut a, &mut b};
@@ -56,7 +56,7 @@ through_six :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 sibling :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 1, kept.allocator());
 	two := Two{&mut a, &mut b};

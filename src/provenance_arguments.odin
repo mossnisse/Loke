@@ -410,7 +410,7 @@ Prov_Reserved_Form :: enum u8 {
 	// `&mut place` as written, which borrows the place.
 	Borrow,
 	// A place holding mutable carriers, read where it is: a carrier, a record
-	// holding some, or the carrier a reslice `&mut xs[lo:hi]` is of.
+	// holding some, or the carrier a reslice `xs[mut lo:hi]` is of.
 	Carrier,
 }
 

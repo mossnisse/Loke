@@ -110,7 +110,7 @@ waiter :: proc(file: string_view) {
 	_ = signal.write("a".bytes());
 	reply: [1]u8 = {};
 	input := term.stdin();
-	acknowledged := (input.read(&mut reply[:]) or_else 0) == 1 && reply[0] == u8('k');
+	acknowledged := (input.read(reply[mut :]) or_else 0) == 1 && reply[0] == u8('k');
 	os.exit(0 if acknowledged else 3);
 }
 
@@ -224,10 +224,10 @@ main :: proc() {
 			program = exe, arguments = []string_view{"waiter", data}, stdin = .Pipe, stdout = .Pipe,
 		}) or_else panic("the waiting child could not start");
 		signal: [1]u8 = {};
-		fmt.println((blocked.stdout.read(&mut signal[:]) or_else 0) == 1 && signal[0] == u8('w'));
+		fmt.println((blocked.stdout.read(signal[mut :]) or_else 0) == 1 && signal[0] == u8('w'));
 		time.sleep(50 * time.MILLISECOND);
 		report(owner.unlock());
-		fmt.println((blocked.stdout.read(&mut signal[:]) or_else 0) == 1 && signal[0] == u8('a'));
+		fmt.println((blocked.stdout.read(signal[mut :]) or_else 0) == 1 && signal[0] == u8('a'));
 		rival := open_as(data, .Read);
 		attempt(rival.try_lock(.Exclusive));
 		fmt.println((blocked.stdin.write("k".bytes()) or_else 0) == 1);

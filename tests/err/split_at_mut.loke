@@ -18,13 +18,13 @@ read_source :: proc(xs: []mut int) {
 }
 grow_owner :: proc() {
 	values := [dynamic]int{1, 2, 3};
-	halves := (&mut values[:]).split_at_mut(1);
+	halves := values[mut :].split_at_mut(1);
 	values.append(4);
 	halves.left[0] = 1;
 }
 outlive :: proc() -> []mut int {
 	local := [4]int{};
-	left, right := (&mut local[:]).split_at_mut(2);
+	left, right := local[mut :].split_at_mut(2);
 	return right;
 }
 copy_half :: proc(xs: []mut int) {

@@ -45,6 +45,6 @@ main :: proc() {
 
 	node := Node{0};
 	lists := [1]List{List{.some(&mut node), [2]int{0, 0}}};
-	called(&mut lists[:]);
+	called(lists[mut :]);
 	fmt.println(node.value, lists[0].cells[1]);
 }

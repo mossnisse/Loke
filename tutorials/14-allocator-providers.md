@@ -31,7 +31,7 @@ region: static mem.Arena = {};
 
 @(public)
 allocator_factory :: proc() -> Allocator {
-	region = mem.Arena.from_buffer(&mut buffer[:]);
+	region = mem.Arena.from_buffer(buffer[mut :]);
 	return region.allocator();
 }
 ```

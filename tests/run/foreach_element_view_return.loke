@@ -123,7 +123,7 @@ main :: proc() {
 		labeled := [1]Labeled{{"label", 1}};
 		copied = first_view(values[:]);
 		label = first_label(labeled[:]);
-		fmt.println(last_then_changed(&mut values[:]));
+		fmt.println(last_then_changed(values[mut :]));
 		fmt.println(values[0]);
 	}
 	fmt.println(copied, label);

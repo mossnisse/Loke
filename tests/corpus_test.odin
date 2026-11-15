@@ -1598,11 +1598,10 @@ formatting_settles_and_keeps_tokens :: proc(t: ^testing.T) {
 }
 
 // `-migrate` moves a record's attributes to its declaration and changes nothing
-// else, and each result already has the form a second run leaves alone.
+// else.
 @(test)
 migrating_moves_a_records_attributes_to_its_declaration :: proc(t: ^testing.T) {
-	Case :: struct { before, after: string }
-	cases := []Case {
+	expect_migrations(t, "migrate", {
 		{"S :: struct @(packed) { a: u8 }", "@(packed) S :: struct { a: u8 }"},
 		{"@(public) S :: struct @(packed, align=8) { a: u8 }", "@(public, packed, align=8) S :: struct { a: u8 }"},
 		{"@(public,) S :: struct @(packed,) { a: u8 }", "@(public, packed,) S :: struct { a: u8 }"},
@@ -1626,8 +1625,37 @@ migrating_moves_a_records_attributes_to_its_declaration :: proc(t: ^testing.T) {
 		// Written well already, or nothing of the kind.
 		{"@(packed) S :: struct { a: u8 }", "@(packed) S :: struct { a: u8 }"},
 		{"move_only := 3;\nS  ::  struct { move_only: int }", "move_only := 3;\nS  ::  struct { move_only: int }"},
-	}
-	dir := fmt.tprintf("%s/migrate", TMP)
+	})
+}
+
+// `-migrate` moves a mutable slice's `mut` into its brackets, and leaves the
+// address operator where it is one.
+@(test)
+migrating_moves_mut_into_a_slices_brackets :: proc(t: ^testing.T) {
+	expect_migrations(t, "migrate_slices", {
+		{"f :: proc() { x := &mut a[:]; }", "f :: proc() { x := a[mut :]; }"},
+		{"f :: proc() { x := &mut a[lo:hi]; }", "f :: proc() { x := a[mut lo:hi]; }"},
+		{"f :: proc() { x := &mut a[ lo : hi ]; }", "f :: proc() { x := a[mut lo : hi ]; }"},
+		{"f :: proc() { x := & mut  p^.items[i][1:]; }", "f :: proc() { x := p^.items[i][mut 1:]; }"},
+		{"f :: proc() { x := (&mut a[:]).indexed(); }", "f :: proc() { x := (a[mut :]).indexed(); }"},
+		{"f :: proc() { fill(&mut g(&mut a[:n])[1:], &mut b); }", "f :: proc() { fill(g(a[mut :n])[mut 1:], &mut b); }"},
+		{"f :: proc() { return&mut a[:]; }", "f :: proc() { return a[mut :]; }"},
+		{"f :: proc() { x := &mut /* why */ a[:]; }", "f :: proc() { x := /* why */ a[mut :]; }"},
+		{"f :: proc() { x := &mut\n\t\ta[:]; }", "f :: proc() { x :=\n\t\ta[mut :]; }"},
+		{"S :: struct @(packed) { a: [2]u8 }\nf :: proc(s: ^mut S) { x := &mut s^.a[:]; }", "@(packed) S :: struct { a: [2]u8 }\nf :: proc(s: ^mut S) { x := s^.a[mut :]; }"},
+		// Written well already, or the address operator.
+		{"f :: proc() { x := a[mut :]; y := &mut a[0]; z := &mut (a[:]); w := &a[:]; }", "f :: proc() { x := a[mut :]; y := &mut a[0]; z := &mut (a[:]); w := &a[:]; }"},
+	})
+}
+
+@(private = "file")
+Migration :: struct { before, after: string }
+
+// Each `before`, as a file's only item, becomes `after`, which a second run
+// leaves alone.
+@(private = "file")
+expect_migrations :: proc(t: ^testing.T, name: string, cases: []Migration) {
+	dir := fmt.tprintf("%s/%s", TMP, name)
 	remove_tree(dir)
 	os.make_directory_all(dir)
 	path := fmt.tprintf("%s/case.loke", dir)

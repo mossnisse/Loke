@@ -19,7 +19,7 @@ write_through :: proc(p: ^mut int) { p^ += 1; }
 printed_fields :: proc() {
 	storage := [2]int{1, 2};
 	x := 3;
-	held := Holder{&mut storage[:], &mut x, 0};
+	held := Holder{storage[mut :], &mut x, 0};
 	fmt.println(held.items, len_of(held.items));
 	fmt.println(held.items, held.items, held.p, held.p, get(held.p), held.count);
 	assert(true, "stop", held.items, len_of(held.items), held.p, held.p, get(held.p));
@@ -31,14 +31,14 @@ printed_fields :: proc() {
 printed_nested_fields :: proc() {
 	storage := [2]int{1, 2};
 	x := 3;
-	outer := Outer{Holder{&mut storage[:], &mut x, 0}};
+	outer := Outer{Holder{storage[mut :], &mut x, 0}};
 	fmt.println(outer.held.items, outer.held.items, outer.held.p, outer.held.p);
 }
 
 printed_elements :: proc() {
 	storage := [2]int{1, 2};
 	x := 3;
-	row := [1]Holder{Holder{&mut storage[:], &mut x, 0}};
+	row := [1]Holder{Holder{storage[mut :], &mut x, 0}};
 	fmt.println(row[0].items, len_of(row[0].items), row[0].p, get(row[0].p));
 }
 
@@ -76,7 +76,7 @@ main :: proc() {
 	printed_elements();
 	storage := [2]int{1, 2};
 	x := 3;
-	held := Holder{&mut storage[:], &mut x, 0};
+	held := Holder{storage[mut :], &mut x, 0};
 	printed_through_a_pointer(&mut held);
 	printed_locals();
 	kept_read_only();

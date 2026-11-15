@@ -25,7 +25,7 @@ impl Outer {
 main :: proc() {
 	a := box(Outer{inner = Inner{id = 1}});
 	room: [256]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 	_ = a.try_clone(arena.allocator());
 	fmt.println("unreachable");
 }

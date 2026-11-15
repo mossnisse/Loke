@@ -9,6 +9,6 @@ bytes := [2]u8{0xAA, 0xAA};
 
 main :: proc() {
 	fmt.println("before");
-	endian.store(&mut bytes[:], u32(1), .Big);
+	endian.store(bytes[mut :], u32(1), .Big);
 	fmt.println("not reached");
 }

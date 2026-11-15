@@ -22,7 +22,7 @@ show_write :: proc(result: Result(int, io.Error)) {
 
 main :: proc() {
 	storage := [6]u8{9, 9, 9, 9, 9, 9};
-	sink := io.Slice_Writer.init(&mut storage[:]);
+	sink := io.Slice_Writer.init(storage[mut :]);
 	fmt.println(sink.len(), sink.space(), sink.bytes());
 
 	// Below capacity.
@@ -44,14 +44,14 @@ main :: proc() {
 
 	// `write_all` and `write_string` meet it through the protocol.
 	short: [3]u8 = {};
-	other := io.Slice_Writer.init(&mut short[:]);
+	other := io.Slice_Writer.init(short[mut :]);
 	show(io.write_all(inout other, []u8{1, 2}));
 	show(io.write_string(inout other, "xy"));
 	fmt.println(other.len(), other.bytes());
 
 	// Formatting reaches it through the same protocol.
 	room: [4]u8 = {};
-	limited := io.Slice_Writer.init(&mut room[:]);
+	limited := io.Slice_Writer.init(room[mut :]);
 	show(io.write_formatted(inout limited, 12));
 	fmt.println(limited.len());
 

@@ -70,7 +70,7 @@ stringify :: proc(
 ) -> Result(string, Write_Error) {
 	bytes := io.Buffer_Writer.init(allocator);
 	scratch: [1024]u8 = {};
-	switch (write_value(&mut bytes, &mut scratch[:], value, options)) {
+	switch (write_value(&mut bytes, scratch[mut :], value, options)) {
 	case .ok:
 	case .err(error):
 		// The output is memory, so its only failure is an allocation.

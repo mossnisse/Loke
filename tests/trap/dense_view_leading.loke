@@ -8,8 +8,8 @@ import "core:math/dense";
 
 main :: proc() {
 	data := [dynamic]f64{0, 1, 2, 3, 4, 5};
-	packed := dense.View_Mut(f64).from_row_major(&mut data[:], 2, 3, 3);
+	packed := dense.View_Mut(f64).from_row_major(data[mut :], 2, 3, 3);
 	fmt.println(packed[1, 0]);
-	overlapping := dense.View_Mut(f64).from_row_major(&mut data[:], 2, 3, 2);
+	overlapping := dense.View_Mut(f64).from_row_major(data[mut :], 2, 3, 2);
 	fmt.println(overlapping[1, 0]);
 }

@@ -29,7 +29,7 @@ merge_sort :: proc(xs: []mut int) {
 	foreach (k in 0..<merged.len()) { xs[k] = merged[k]; }
 }
 
-// A half of a parameter's view may be returned, as `&mut xs[1:]` may.
+// A half of a parameter's view may be returned, as `xs[mut 1:]` may.
 tail :: proc(xs: []mut int) -> []mut int {
 	_, right := xs.split_at_mut(1);
 	return right;
@@ -38,7 +38,7 @@ tail :: proc(xs: []mut int) -> []mut int {
 // Writing through both halves of a compile-time array.
 interleaved :: proc() -> [4]int {
 	values := [4]int{1, 2, 3, 4};
-	left, right := (&mut values[:]).split_at_mut(2);
+	left, right := values[mut :].split_at_mut(2);
 	left[0], right[1] = right[1], left[0];
 	left[1] += right[0];
 	return values;
@@ -56,8 +56,8 @@ replace :: proc(receiver: inout []mut int, @(escape=stored) replacement: []mut i
 rebound :: proc() -> [4]int {
 	first := [2]int{1, 2};
 	second := [2]int{3, 4};
-	receiver := &mut first[:];
-	halves := receiver.split_at_mut(replace(inout receiver, &mut second[:]));
+	receiver := first[mut :];
+	halves := receiver.split_at_mut(replace(inout receiver, second[mut :]));
 	halves.left[0] = 9;
 	return [4]int{first[0], first[1], second[0], second[1]};
 }
@@ -67,7 +67,7 @@ REBOUND :: rebound();
 main :: proc() {
 	values := [dynamic]int{5, 3, 9, 1, 7, 2};
 	{
-		xs := &mut values[:];
+		xs := values[mut :];
 		left, right := xs.split_at_mut(2);
 		left[0] = 50;
 		right[0] = 90;
@@ -77,7 +77,7 @@ main :: proc() {
 	fmt.println(values);
 
 	// Either half may be empty, and the record's fields name them.
-	xs := &mut values[:];
+	xs := values[mut :];
 	whole := xs.split_at_mut(xs.len());
 	fmt.println(whole.left.len(), whole.right.len());
 	none := xs.split_at_mut(0);
@@ -88,7 +88,7 @@ main :: proc() {
 	fmt.println(values);
 
 	names := [3]string{"Ada", "Bo", "Cy"};
-	first, rest := (&mut names[:]).split_at_mut(1);
+	first, rest := names[mut :].split_at_mut(1);
 	first[0], rest[1] = rest[1], first[0];
 	fmt.println(names);
 

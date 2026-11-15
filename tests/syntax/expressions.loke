@@ -42,6 +42,10 @@ main :: proc() {
 	e17 := s[a:];
 	e18 := s[:b];
 	e19 := s[a:b];
+	e19a := s[mut :];
+	e19b := s[mut a:b];
+	e19c := p^.field[mut :b].indexed();
+	e19d := &mut s[mut a:][0];
 	e20 := may_fail() or_return;
 	e21 := p^.field[1][2:3](x) or_return;
 

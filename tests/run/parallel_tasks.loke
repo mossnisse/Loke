@@ -103,7 +103,7 @@ main :: proc() {
 
 	values := [1]int{0};
 	parallel {
-		spawn increment(&mut values[:]);
+		spawn increment(values[mut :]);
 	}
 	fmt.println("incremented", values[0]);
 

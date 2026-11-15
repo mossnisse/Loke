@@ -85,9 +85,9 @@ prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) -> int {
 }
 
 // Announces that the next definition of `slot` takes `value`, when that is a
-// constant reslice of a local view, as `&mut s[1:]` or `s[0:2]`, or a fresh
+// constant reslice of a local view, as `s[mut 1:]` or `s[0:2]`, or a fresh
 // borrow of elements from a constant start to an end that is not constant,
-// as `&mut d[:]` of a dynamic array, which is `open` (`prov_note_view`).
+// as `d[mut :]` of a dynamic array, which is `open` (`prov_note_view`).
 @(private)
 prov_note_reslice :: proc(graph: ^Flow_Graph, slot: int, value: Expr) {
 	graph.view_reslice = {}
@@ -121,7 +121,7 @@ prov_note_reslice :: proc(graph: ^Flow_Graph, slot: int, value: Expr) {
 
 // `prov_note_reslice` for a slice of an array or dynamic array in a local
 // place whose range step is a wildcard (`prov_range_step`) though it starts
-// at a constant element, as `&mut d[:]` or `&mut a[1:n]`: the borrow it makes
+// at a constant element, as `d[mut :]` or `a[mut 1:n]`: the borrow it makes
 // lends the elements from there on (`Prov_View_Def.open`).
 @(private = "file")
 prov_note_open_borrow :: proc(graph: ^Flow_Graph, slot: int, slice_expr: ^Expr_Slice) -> bool {
@@ -1871,7 +1871,8 @@ prov_borrow_through :: proc(
 	return prov_join(graph, prov_place_loan(graph, carriers, below, mutable, what, place, borrows = true), marker), true
 }
 
-// Whether `e` is `&mut place` as written, a slice of a place included.
+// Whether `e` borrows a place mutably as written: `&mut place`, or
+// `place[mut lo:hi]`.
 @(private)
 prov_borrows_place :: proc(e: Expr) -> bool {
 	#partial switch v in e {
@@ -2033,7 +2034,7 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 }
 
 // design.md "Slice literals": the hidden array is always extended, an owner
-// ending with its block, and a named array's `&mut a[:]` lends as this literal
+// ending with its block, and a named array's `a[mut :]` lends as this literal
 // lends it. Its content is held by slots of the array's shape, so a store through
 // the slice lands in or replaces one element's, and a load reads what it holds
 // now. A slice of it holds only its loan.

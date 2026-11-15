@@ -30,8 +30,8 @@ next_of :: proc(node: ^mut Node) -> ^mut Node {
 distinct_carriers :: proc() -> int {
 	x := 0; y := 0;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	bump_both(&mut links[:]);
-	bump_both(&mut links[:]);
+	bump_both(links[mut :]);
+	bump_both(links[mut :]);
 	bump_inout(inout links);
 	bump_by_value(links);
 	return x * 100 + y;
@@ -41,14 +41,14 @@ reordered :: proc() -> int {
 	x := 0; y := 0;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[0], links[1] = links[1], links[0];
-	bump_both(&mut links[:]);
+	bump_both(links[mut :]);
 	return x * 100 + y;
 }
 
 swapped :: proc() -> int {
 	x := 0; y := 0;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	view.swap(0, 1);
 	bump_both(view);
 	exchange(view);
@@ -73,7 +73,7 @@ source_replaced :: proc() -> int {
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[0] = links[1];
 	links[1] = Link{&mut z};
-	bump_both(&mut links[:]);
+	bump_both(links[mut :]);
 	return x * 10000 + y * 100 + z;
 }
 
@@ -82,7 +82,7 @@ copy_replaced :: proc() -> int {
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[0] = links[1];
 	links[0] = Link{&mut z};
-	bump_both(&mut links[:]);
+	bump_both(links[mut :]);
 	return x * 10000 + y * 100 + z;
 }
 
@@ -92,7 +92,7 @@ copy_used_before_the_call :: proc() -> int {
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	copy := links[0].to;
 	copy^ += 1;
-	bump_both(&mut links[:]);
+	bump_both(links[mut :]);
 	return x * 100 + y;
 }
 
@@ -114,7 +114,7 @@ copy_out_of_a_parameter :: proc(holder: ^mut Holder) {
 }
 
 view_held_in_a_record :: proc(links: []mut Link) {
-	view := View{&mut links[1:]};
+	view := View{links[mut 1:]};
 	bump_view(&mut view);
 	bump_view(&mut view);
 	view.links[0].to^ += 1;
@@ -144,7 +144,7 @@ operations_on_a_copy :: proc() -> int {
 	x := 0; y := 0;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[0] = links[1];
-	view := &mut links[:];
+	view := links[mut :];
 	view.swap(0, 1);
 	return view.len() + x + y;
 }
@@ -152,9 +152,9 @@ operations_on_a_copy :: proc() -> int {
 through_links :: proc() -> int {
 	a := 0; b := 0;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	reordered_in_a_parameter(&mut links[:]);
-	view_held_in_a_record(&mut links[:]);
-	outer := View{&mut links[:]};
+	reordered_in_a_parameter(links[mut :]);
+	view_held_in_a_record(links[mut :]);
+	outer := View{links[mut :]};
 	view_copied_out(&mut outer);
 	return a * 100 + b;
 }

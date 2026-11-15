@@ -51,6 +51,9 @@ Parser :: struct {
 	imports:        [dynamic]^Item_Import,
 	parallels:      [dynamic]u32, // each `parallel` keyword's offset
 	earlier_spellings: [dynamic]Earlier_Spelling,
+	earlier_slices: [dynamic]Earlier_Slice,
+	// Just past the `[` of the slice parsed last, where `-migrate` writes `mut`.
+	slice_open:     u32,
 	accept_earlier_spellings: bool, // `-migrate`, which rewrites them
 	allocator:      mem.Allocator,
 }
@@ -78,6 +81,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 		imports   = make([dynamic]^Item_Import, 0, 0, allocator),
 		parallels = make([dynamic]u32, 0, 0, allocator),
 		earlier_spellings = make([dynamic]Earlier_Spelling, 0, 0, allocator),
+		earlier_slices = make([dynamic]Earlier_Slice, 0, 0, allocator),
 		accept_earlier_spellings = accept_earlier_spellings,
 	}
 	tag_written_move_only(&p)
@@ -86,6 +90,7 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 	result.imports = p.imports[:]
 	result.parallels = p.parallels[:]
 	result.earlier_spellings = p.earlier_spellings[:]
+	result.earlier_slices = p.earlier_slices[:]
 	return result
 }
 
@@ -2387,13 +2392,12 @@ parse_unary :: proc(p: ^Parser) -> Expr {
 		}
 		advance(p)
 		mutable := t.kind == .Amp && allow(p, .Mut)
+		keyword := p.last
 		operand := parse_unary(p)
-		// `&mut a[lo:hi]` is mutable slicing, not the address of a slice. The
-		// slice is the last suffix written, so a closing `)` is no such thing
-		// (grammar.md "Expressions").
+		// A slice is a value, so `&mut` of one written last had no other reading
+		// than the earlier spelling of `a[mut lo:hi]`.
 		if s, is_slice := operand.(^Expr_Slice); is_slice && mutable && !s.mutable && p.last.kind == .Rbracket {
-			s.mutable = true
-			s.span.lo = t.lo
+			earlier_mutable_slice(p, s, t, keyword)
 			return s
 		}
 		e := new_expr(p, Expr_Unary, t.lo)
@@ -2541,12 +2545,41 @@ is_proc_literal :: proc(e: Expr) -> bool {
 	return false
 }
 
+// `&mut a[lo:hi]`, the earlier spelling of `a[mut lo:hi]`: the tree `-migrate`
+// compares is the one the new spelling parses to.
+@(private = "file")
+earlier_mutable_slice :: proc(p: ^Parser, s: ^Expr_Slice, amp, keyword: Token) {
+	s.mutable = true
+	if p.suppress {
+		return
+	}
+	if !p.accept_earlier_spellings {
+		parse_error(
+			p, Span{file = p.file, lo = amp.lo, hi = keyword.hi}, "L0750", "write `mut` inside the brackets",
+			"a mutable slice is written `a[mut lo:hi]`",
+		)
+		add_notef(p.c, NO_SPAN, "`lokec -migrate` rewrites this")
+		return
+	}
+	// A probe the parser rolled back wrote the same slice again.
+	for written in p.earlier_slices {
+		if written.amp.lo == amp.lo {
+			return
+		}
+	}
+	append(&p.earlier_slices, Earlier_Slice{span_of(p, amp), span_of(p, keyword), p.slice_open})
+}
+
 @(private = "file")
 parse_index_or_slice :: proc(p: ^Parser, operand: Expr, lo: u32) -> Expr {
-	advance(p) // `[`
+	open := advance(p) // `[`
 	outer := p.no_composite
 	p.no_composite = false
 	defer p.no_composite = outer
+
+	// grammar.md "Expressions": `mut` asks a slice for a `[]mut T`.
+	keyword := current(p)
+	mutable := allow(p, .Mut)
 
 	low: Expr
 	if !at(p, .Colon) {
@@ -2563,9 +2596,17 @@ parse_index_or_slice :: proc(p: ^Parser, operand: Expr, lo: u32) -> Expr {
 		s.operand = operand
 		s.lo = low
 		s.hi = high
+		s.mutable = mutable
 		s.has_error =
 			!closed || expr_has_error(operand) || expr_has_error(low) || expr_has_error(high)
+		p.slice_open = open.hi
 		return s
+	}
+	if mutable && !expr_has_error(low) {
+		parse_error(
+			p, span_of(p, keyword), "L0263", "an index takes no `mut`",
+			"`mut` begins a mutable slice, `a[mut lo:hi]`; a mutable pointer to an element is `&mut a[i]`",
+		)
 	}
 
 	indices := make([dynamic]Expr, 0, 0, p.allocator)
@@ -2581,7 +2622,7 @@ parse_index_or_slice :: proc(p: ^Parser, operand: Expr, lo: u32) -> Expr {
 	n := new_expr(p, Expr_Index, lo)
 	n.operand = operand
 	n.indices = indices[:]
-	n.has_error = !closed || expr_has_error(operand) || exprs_have_error(n.indices)
+	n.has_error = mutable || !closed || expr_has_error(operand) || exprs_have_error(n.indices)
 	return n
 }
 

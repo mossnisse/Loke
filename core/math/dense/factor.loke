@@ -216,7 +216,7 @@ lu :: proc(a: View($T), allocator: Allocator = mem.default_allocator(), pool: Op
 	assert(a.row_count == a.column_count, "dense.lu needs a square matrix");
 	factors := Matrix(T).from_view(a, allocator);
 	pivots := make([dynamic]int, a.row_count, allocator);
-	lu_in_place(factors.view_mut(), &mut pivots[:], pool) or_return;
+	lu_in_place(factors.view_mut(), pivots[mut :], pool) or_return;
 	norm := norm_one(a);
 	norm_scale := T.Real(1);
 	if (!norm.is_finite()) {

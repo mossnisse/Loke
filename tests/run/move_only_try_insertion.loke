@@ -34,7 +34,7 @@ main :: proc() {
 	// The ones stored are cleared so the output does not depend on growth.
 	{
 		buffer: [256]u8 = ---;
-		arena := mem.Arena.from_buffer(&mut buffer[:]);
+		arena := mem.Arena.from_buffer(buffer[mut :]);
 		small := make([dynamic]Token, 0, 0, arena.allocator());
 		failed := false;
 		for (round := 0; round < 100 && !failed; round += 1) {

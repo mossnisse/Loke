@@ -245,50 +245,50 @@ impl View_Mut($T) {
 
 	@(private) block_whole :: proc(self: move, row, column, rows, columns: int) -> View_Mut(T) {
 		check_block(row, column, rows, columns, self.row_count, self.column_count);
-		return sub_view(&mut self.data[:], row*self.row_stride + column*self.column_stride, rows, columns, self.row_stride, self.column_stride);
+		return sub_view(self.data[mut :], row*self.row_stride + column*self.column_stride, rows, columns, self.row_stride, self.column_stride);
 	}
 	@(private) block_borrowed :: proc(self: inout, row, column, rows, columns: int) -> View_Mut(T) {
 		check_block(row, column, rows, columns, self.row_count, self.column_count);
-		return sub_view(&mut self.data[:], row*self.row_stride + column*self.column_stride, rows, columns, self.row_stride, self.column_stride);
+		return sub_view(self.data[mut :], row*self.row_stride + column*self.column_stride, rows, columns, self.row_stride, self.column_stride);
 	}
 
 	@(private) transpose_whole :: proc(self: move) -> View_Mut(T) {
-		return {&mut self.data[:], self.column_count, self.row_count, self.column_stride, self.row_stride};
+		return {self.data[mut :], self.column_count, self.row_count, self.column_stride, self.row_stride};
 	}
 	@(private) transpose_borrowed :: proc(self: inout) -> View_Mut(T) {
-		return {&mut self.data[:], self.column_count, self.row_count, self.column_stride, self.row_stride};
+		return {self.data[mut :], self.column_count, self.row_count, self.column_stride, self.row_stride};
 	}
 
 	@(private) row_whole :: proc(self: move, r: int) -> View_Mut(T) {
 		check_block(r, 0, 1, self.column_count, self.row_count, self.column_count);
-		return sub_view(&mut self.data[:], r*self.row_stride, 1, self.column_count, self.row_stride, self.column_stride);
+		return sub_view(self.data[mut :], r*self.row_stride, 1, self.column_count, self.row_stride, self.column_stride);
 	}
 	@(private) row_borrowed :: proc(self: inout, r: int) -> View_Mut(T) {
 		check_block(r, 0, 1, self.column_count, self.row_count, self.column_count);
-		return sub_view(&mut self.data[:], r*self.row_stride, 1, self.column_count, self.row_stride, self.column_stride);
+		return sub_view(self.data[mut :], r*self.row_stride, 1, self.column_count, self.row_stride, self.column_stride);
 	}
 
 	@(private) column_whole :: proc(self: move, c: int) -> View_Mut(T) {
 		check_block(0, c, self.row_count, 1, self.row_count, self.column_count);
-		return sub_view(&mut self.data[:], c*self.column_stride, self.row_count, 1, self.row_stride, self.column_stride);
+		return sub_view(self.data[mut :], c*self.column_stride, self.row_count, 1, self.row_stride, self.column_stride);
 	}
 	@(private) column_borrowed :: proc(self: inout, c: int) -> View_Mut(T) {
 		check_block(0, c, self.row_count, 1, self.row_count, self.column_count);
-		return sub_view(&mut self.data[:], c*self.column_stride, self.row_count, 1, self.row_stride, self.column_stride);
+		return sub_view(self.data[mut :], c*self.column_stride, self.row_count, 1, self.row_stride, self.column_stride);
 	}
 
 	@(private) split_columns_whole :: proc(self: move, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
-		return split(&mut self.data[:], k, self.column_count, self.row_count, self.column_stride, self.row_stride, false);
+		return split(self.data[mut :], k, self.column_count, self.row_count, self.column_stride, self.row_stride, false);
 	}
 	@(private) split_columns_borrowed :: proc(self: inout, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
-		return split(&mut self.data[:], k, self.column_count, self.row_count, self.column_stride, self.row_stride, false);
+		return split(self.data[mut :], k, self.column_count, self.row_count, self.column_stride, self.row_stride, false);
 	}
 
 	@(private) split_rows_whole :: proc(self: move, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
-		return split(&mut self.data[:], k, self.row_count, self.column_count, self.row_stride, self.column_stride, true);
+		return split(self.data[mut :], k, self.row_count, self.column_count, self.row_stride, self.column_stride, true);
 	}
 	@(private) split_rows_borrowed :: proc(self: inout, k: int) -> (left: View_Mut(T), right: View_Mut(T)) {
-		return split(&mut self.data[:], k, self.row_count, self.column_count, self.row_stride, self.column_stride, true);
+		return split(self.data[mut :], k, self.row_count, self.column_count, self.row_stride, self.column_stride, true);
 	}
 
 	/// Sets every element to `value`.
@@ -343,8 +343,8 @@ impl View_Mut($T) {
 
 @(private)
 sub_view :: proc(data: []mut $T, start, rows, columns, row_stride, column_stride: int) -> View_Mut(T) {
-	if (rows == 0 || columns == 0) { return {&mut data[:0], rows, columns, row_stride, column_stride}; }
-	return {&mut data[start:], rows, columns, row_stride, column_stride};
+	if (rows == 0 || columns == 0) { return {data[mut :0], rows, columns, row_stride, column_stride}; }
+	return {data[mut start:], rows, columns, row_stride, column_stride};
 }
 
 // Splits along the `outer` direction, whose stride `outer_stride` must step

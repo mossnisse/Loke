@@ -1072,6 +1072,8 @@ main :: proc() {
   f( /* name */ x);
   f(/* name */x);
   xs[/* n */ 1];
+  ys := xs[ mut 1 : 2 ];
+  zs := xs[mut:].len() + xs[mut  :n].len();
   f(x /* name */);
   t := x*/* c */y;
   if (x)
@@ -1169,6 +1171,8 @@ main :: proc() {
 	f( /* name */ x);
 	f(/* name */x);
 	xs[/* n */ 1];
+	ys := xs[mut 1:2];
+	zs := xs[mut :].len() + xs[mut :n].len();
 	f(x /* name */);
 	t := x*/* c */y;
 	if (x)

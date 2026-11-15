@@ -111,7 +111,7 @@ hull_agrees :: proc(points: []linalg.Vector2($T)) -> bool {
 		copy.append(p);
 		out.append(p);
 	}
-	count := geometry.convex_hull(&mut copy[:], &mut out[:]);
+	count := geometry.convex_hull(copy[mut :], out[mut :]);
 	ok = ok && count == h;
 	foreach (i in 0 ..< math.min(count, h)) { ok = ok && out[i] == hull[i]; }
 	return ok;
@@ -163,7 +163,7 @@ hulls :: proc() {
 	check("the hull of a square's grid", corners.len() == 4 && corners[0] == v2(0, 0) && corners[1] == v2(2, 0) && corners[2] == v2(2, 2) && corners[3] == v2(0, 2));
 	sorted := [3]V2{v2(3, 0), v2(0, 0), v2(0, 3)};
 	room := [3]V2{v2(9, 9), v2(9, 9), v2(9, 9)};
-	written := geometry.convex_hull(&mut sorted[:], &mut room[:]);
+	written := geometry.convex_hull(sorted[mut :], room[mut :]);
 	check("the hull into caller storage sorts its points", written == 3 && sorted[0] == v2(0, 0) && sorted[1] == v2(0, 3) && sorted[2] == v2(3, 0)
 		&& room[0] == v2(0, 0) && room[1] == v2(3, 0) && room[2] == v2(0, 3));
 }

@@ -15,7 +15,7 @@ total :: proc(values: []int) -> int {
 
 main :: proc() {
 	storage := [4]int{4, 3, 2, 1};
-	xs: []mut int = &mut storage[:];
+	xs: []mut int = storage[mut :];
 	view: []int = xs;
 	tail := xs[1:];
 	walked := 0;

@@ -52,7 +52,7 @@ main :: proc() {
 
 	// A loop's earlier spawn is running at its next write.
 	squares := [3]int{0, 0, 0};
-	all := &mut squares[:];
+	all := squares[mut :];
 	parallel {
 		foreach (slot, i in all.chunks_mut(1).indexed()) {
 			frames = i;

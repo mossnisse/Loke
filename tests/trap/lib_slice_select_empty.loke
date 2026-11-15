@@ -5,5 +5,5 @@ import "core:slice";
 // index, so an empty slice has nothing to select and always panics.
 main :: proc() {
 	nothing: [dynamic]int = {};
-	slice.select_nth(&mut nothing[:], 0);
+	slice.select_nth(nothing[mut :], 0);
 }

@@ -157,11 +157,11 @@ model_check :: proc() {
 		if (choice < 4) {
 			queue.push(value);
 			model.append(value);
-			slice.sort(&mut model[:]);
+			slice.sort(model[mut :]);
 		} else if (choice == 4) {
 			out := queue.push_pop(value);
 			model.append(value);
-			slice.sort(&mut model[:]);
+			slice.sort(model[mut :]);
 			if (out != model.remove(0)) { panic("push_pop"); }
 		} else if (choice == 5 && step % 512 == 0) {
 			queue.clear();
@@ -269,7 +269,7 @@ ownership :: proc() {
 
 failure :: proc() {
 	room: [256]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 
 	switch (container.Min_Queue(int).try_init({}, 100000, arena.allocator())) {
 	case .ok(q): fmt.println("unexpected", q.cap());
@@ -293,7 +293,7 @@ failure :: proc() {
 
 	// A borrowed place is copied only on success.
 	spare: [256]u8 = {};
-	tight := mem.Arena.from_buffer(&mut spare[:]);
+	tight := mem.Arena.from_buffer(spare[mut :]);
 	numbers := container.Min_Queue(int).try_init({}, 2, tight.allocator()) or_else panic("small");
 	large := 64;
 	pushed := 0;
@@ -409,7 +409,7 @@ main :: proc() {
 
 	// An explicit allocator.
 	buffer: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	inlined := container.Max_Queue(int).init({}, allocator = arena.allocator());
 	inlined.push(1);
 	inlined.push(2);

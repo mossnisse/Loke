@@ -18,7 +18,7 @@ read_in_the_arena_scope :: proc() {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	view := &mut items[:];
+	view := items[mut :];
 	view.swap(0, 1);
 	fmt.println(items[0]);
 }
@@ -27,7 +27,7 @@ swapped_by_a_call_in_the_arena_scope :: proc() {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 43);
-	swap_elements(&mut items[:]);
+	swap_elements(items[mut :]);
 	fmt.println(items[0]);
 }
 
@@ -35,7 +35,7 @@ reversed_by_a_call_in_the_arena_scope :: proc() {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 44);
-	slice.reverse(&mut items[:]);
+	slice.reverse(items[mut :]);
 	fmt.println(items[0]);
 }
 
@@ -43,13 +43,13 @@ copied_at_any_index_in_the_arena_scope :: proc() {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 45);
-	by_index(&mut items[:], 0, 1);
+	by_index(items[mut :], 0, 1);
 	fmt.println(items[0]);
 }
 
 no_region_to_move :: proc() -> string {
 	items := [2]string{"c", "d"};
-	view := &mut items[:];
+	view := items[mut :];
 	view.swap(0, 1);
 	return items[0];
 }
@@ -59,7 +59,7 @@ other_array_swapped :: proc() -> string {
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 46);
 	cells := [2]string{"e", "f"};
-	view := &mut cells[:];
+	view := cells[mut :];
 	view.swap(0, 1);
 	return cells[0];
 }
@@ -68,7 +68,7 @@ field_beside_the_array :: proc() -> string {
 	arena := mem.Arena.init();
 	box := Mixed{"g", [2]string{"a", "b"}};
 	box.items[1] = fmt.to_string(arena.allocator(), 47);
-	view := &mut box.items[:];
+	view := box.items[mut :];
 	view.swap(0, 1);
 	return box.name;
 }
@@ -78,7 +78,7 @@ call_that_stores :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 48);
-	leave_in_place(&mut items[:]);
+	leave_in_place(items[mut :]);
 	return items[0];
 }
 

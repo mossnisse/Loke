@@ -14,7 +14,7 @@ impl Payload {
 
 main :: proc() {
 	room: [320]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 	defer {
 		// The arena has room for one box.
 		switch (try_box(Payload{}, arena.allocator())) {

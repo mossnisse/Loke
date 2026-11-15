@@ -25,7 +25,7 @@ in_an_array :: proc(links: inout [2]Link) { links[0] = links[1]; }
 in_a_holder :: proc(holder: ^mut Holder) { holder^.links[0] = holder^.links[1]; }
 by_value_holder :: proc(holder: Holder) { holder.links[0] = holder.links[1]; }
 behind_a_pointer :: proc(links: ^mut [2]Link) { links^[0] = links^[1]; }
-through_a_local_view :: proc(links: []mut Link) { view := &mut links[1:]; view[0].to = view[1].to; }
+through_a_local_view :: proc(links: []mut Link) { view := links[mut 1:]; view[0].to = view[1].to; }
 through_a_pointer :: proc(links: []mut Link) { pointer := &mut links[0]; pointer^ = links[1]; }
 at_variable_indices :: proc(links: []mut Link, i: int, j: int) { links[i] = links[j]; }
 one_field :: proc(links: []mut Link) { links[0].to = links[1].to; }
@@ -37,7 +37,7 @@ recurse_b :: proc(links: []mut Link) { if (links.len() > 3) { recurse_a(links); 
 apply :: proc(links: []mut Link, callback: proc(values: []mut Link)) { callback(links); }
 
 impl Slots {
-	rotate :: proc(self: inout Slots) { view := &mut self.items[:]; view.swap(0, 1); }
+	rotate :: proc(self: inout Slots) { view := self.items[mut :]; view.swap(0, 1); }
 	shuffle :: proc(self: inout Slots) { self.items[0] = self.items[1]; }
 }
 
@@ -48,7 +48,7 @@ between_arguments :: proc(a: []mut Link, b: []mut Link) { a[0] = b[0]; }
 view_swapped :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	view.swap(0, 1);
 	held := links[0].to;
 	y = 5;
@@ -58,7 +58,7 @@ view_swapped :: proc() {
 call_exchanges :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	exchange(&mut links[:]);
+	exchange(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -67,7 +67,7 @@ call_exchanges :: proc() {
 call_copies :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
+	duplicate(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -86,7 +86,7 @@ between_fields :: proc() {
 copy_used_as_either :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
+	duplicate(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ = 1;
@@ -116,7 +116,7 @@ in_a_body :: proc(links: []mut Link) {
 forwarded_copy :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	forward(&mut links[:]);
+	forward(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -125,7 +125,7 @@ forwarded_copy :: proc() {
 forwarded_exchange :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	forward_exchange(&mut links[:]);
+	forward_exchange(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -134,7 +134,7 @@ forwarded_exchange :: proc() {
 recursive :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	recurse_b(&mut links[:]);
+	recurse_b(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -143,7 +143,7 @@ recursive :: proc() {
 generic_instance :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	generic_copy(&mut links[:]);
+	generic_copy(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -152,7 +152,7 @@ generic_instance :: proc() {
 library_swap :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	slice.swap(&mut links[:], 0, 1);
+	slice.swap(links[mut :], 0, 1);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -161,7 +161,7 @@ library_swap :: proc() {
 library_reverse :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	slice.reverse(&mut links[:]);
+	slice.reverse(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -170,7 +170,7 @@ library_reverse :: proc() {
 through_a_procedure_value :: proc(callback: proc(values: []mut Link)) {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	callback(&mut links[:]);
+	callback(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -180,7 +180,7 @@ through_a_local_value :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	callee := exchange;
-	callee(&mut links[:]);
+	callee(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -189,7 +189,7 @@ through_a_local_value :: proc() {
 through_a_callback :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	apply(&mut links[:], exchange);
+	apply(links[mut :], exchange);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -227,7 +227,7 @@ inout_array :: proc() {
 held_in_a_record :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	holder := Holder{&mut links[:]};
+	holder := Holder{links[mut :]};
 	in_a_holder(&mut holder);
 	held := holder.links[0].to;
 	y = 5;
@@ -237,7 +237,7 @@ held_in_a_record :: proc() {
 record_passed_by_value :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	by_value_holder(Holder{&mut links[:]});
+	by_value_holder(Holder{links[mut :]});
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -255,7 +255,7 @@ pointer_to_an_array :: proc() {
 local_view_in_the_body :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	through_a_local_view(&mut links[:]);
+	through_a_local_view(links[mut :]);
 	held := links[1].to;
 	x = 5;
 	held^ = 4;
@@ -264,7 +264,7 @@ local_view_in_the_body :: proc() {
 pointer_in_the_body :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	through_a_pointer(&mut links[:]);
+	through_a_pointer(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -273,7 +273,7 @@ pointer_in_the_body :: proc() {
 variable_indices :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	at_variable_indices(&mut links[:], 0, 1);
+	at_variable_indices(links[mut :], 0, 1);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -282,7 +282,7 @@ variable_indices :: proc() {
 only_the_carrier :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	one_field(&mut links[:]);
+	one_field(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ = 4;
@@ -291,7 +291,7 @@ only_the_carrier :: proc() {
 in_a_loop :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	for (i := 0; i < 2; i += 1) { view.swap(0, 1); }
 	held := links[0].to;
 	y = 5;
@@ -303,7 +303,7 @@ in_a_loop :: proc() {
 read_only_moved :: proc() {
 	x := 1; y := 2;
 	links := [2]Read_Only{Read_Only{&x}, Read_Only{&y}};
-	read_only(&mut links[:]);
+	read_only(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	see(held);
@@ -332,8 +332,8 @@ weakened_suspends_the_source :: proc() {
 used_by_a_later_call :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
-	duplicate(&mut links[:]);
+	duplicate(links[mut :]);
+	duplicate(links[mut :]);
 	held := links[0].to;
 	held^ = 4;
 }

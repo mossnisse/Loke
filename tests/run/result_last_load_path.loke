@@ -17,7 +17,7 @@ through_three :: proc(t: ^Three) -> ^mut [dynamic]int { return t^.nest^.two^.q; 
 
 two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	two := Two{&mut a, &mut b};
@@ -32,7 +32,7 @@ two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 // The first load goes along `other`, so nothing of `two` is reached.
 beside_the_first :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 1, kept.allocator());
 	c := make([dynamic]int, 1, kept.allocator());
@@ -49,7 +49,7 @@ beside_the_first :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 three_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	two := Two{&mut a, &mut b};
@@ -71,7 +71,7 @@ either_first :: proc(w: ^Wide, flag: bool) -> ^mut [dynamic]int {
 
 two_first_paths :: proc(@(allocator_reset) allocator: mem.Allocator, flag: bool) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	c := make([dynamic]int, 0, kept.allocator());
@@ -89,7 +89,7 @@ two_first_paths :: proc(@(allocator_reset) allocator: mem.Allocator, flag: bool)
 
 main :: proc() {
 	buffer := [4096]u8{};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	fmt.println(two_loads(arena.allocator()), beside_the_first(arena.allocator()), three_loads(arena.allocator()));
 	fmt.println(two_first_paths(arena.allocator(), true), two_first_paths(arena.allocator(), false));
 }

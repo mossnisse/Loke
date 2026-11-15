@@ -523,7 +523,7 @@ evaluator_sort_and_range_keep_only_results :: proc(t: ^testing.T) {
 	check_source(&p, `package main;
 sorts :: proc(times: int) -> int {
 	values := [64]int{};
-	view := &mut values[:];
+	view := values[mut :];
 	foreach (round in 0..<8) {
 		if (round < times) { view.sort(); }
 	}

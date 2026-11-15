@@ -19,7 +19,7 @@ pick :: proc(a: ^mut mem.Arena) -> ^mut mem.Arena { return a; }
 
 stored_through_method :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 0, kept.allocator());
 	own := Own{&mut a};
 	target := own.get();
@@ -30,7 +30,7 @@ stored_through_method :: proc(@(allocator_reset) allocator: mem.Allocator) -> in
 
 stored_through_operator :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 0, kept.allocator());
 	own := Own{&mut a};
 	target := own[0];
@@ -41,7 +41,7 @@ stored_through_operator :: proc(@(allocator_reset) allocator: mem.Allocator) -> 
 
 stored_through_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 0, kept.allocator());
 	inner := Inner{&mut a};
 	outer := Outer{&mut inner};
@@ -72,7 +72,7 @@ Crossing :: struct { p: ^mut [dynamic]int, q: ^mut [dynamic]int }
 crossed :: proc(two: Crossing) -> Crossing { return Crossing{two.q, two.p}; }
 stored_through_crossed_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 0, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	back := crossed(Crossing{&mut a, &mut b});
@@ -88,7 +88,7 @@ Nest :: struct { two: ^Crossing }
 through_two :: proc(nest: ^Nest) -> ^mut [dynamic]int { return nest^.two^.q; }
 stored_through_two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 0, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	two := Crossing{&mut a, &mut b};
@@ -103,7 +103,7 @@ stored_through_two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) ->
 through_two_p :: proc(nest: ^Nest) -> ^mut [dynamic]int { return nest^.two^.p; }
 stored_through_two_loads_p :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 0, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	two := Crossing{&mut a, &mut b};
@@ -122,7 +122,7 @@ through_two_either :: proc(nest: ^Nest, flag: bool) -> ^mut [dynamic]int {
 }
 stored_through_two_loads_either :: proc(@(allocator_reset) allocator: mem.Allocator, flag: bool) -> int {
 	buffer := [64]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 0, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	two := Crossing{&mut a, &mut b};
@@ -143,7 +143,7 @@ through_wide :: proc(w: ^Wide, flag: bool) -> ^mut [dynamic]int {
 }
 stored_through_crossed_loads :: proc(@(allocator_reset) allocator: mem.Allocator, flag: bool) -> int {
 	buffer := [128]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 0, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	c := make([dynamic]int, 0, kept.allocator());

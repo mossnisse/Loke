@@ -13,7 +13,7 @@ import "core:slice";
 
 swapped :: proc() -> [3]int {
 	values := [3]int{3, 1, 2};
-	view := &mut values[:];
+	view := values[mut :];
 	view.swap(0, 1);
 	return values;
 }
@@ -21,9 +21,9 @@ swapped :: proc() -> [3]int {
 // Only the viewed range moves.
 sorted_tail :: proc() -> [6]int {
 	values := [6]int{9, 5, 3, 8, 1, 7};
-	tail := &mut values[2:];
+	tail := values[mut 2:];
 	tail.sort();
-	head := &mut values[:2];
+	head := values[mut :2];
 	head.reverse_sort();
 	return values;
 }
@@ -32,7 +32,7 @@ sorted_tail :: proc() -> [6]int {
 reversed_dynamic :: proc() -> [4]int {
 	values: [dynamic]int = {};
 	values.append(1, 2, 3, 4);
-	slice.reverse(&mut values[:]);
+	slice.reverse(values[mut :]);
 	return [4]int{values[0], values[1], values[2], values[3]};
 }
 
@@ -40,22 +40,22 @@ reversed_dynamic :: proc() -> [4]int {
 median_of_scattered :: proc() -> int {
 	values := [33]int{};
 	foreach (i in 0 ..< 33) { values[i] = (i * 19) % 33; }
-	slice.select_nth(&mut values[:], 16);
+	slice.select_nth(values[mut :], 16);
 	return values[16];
 }
 
 evens_first :: proc() -> [6]int {
 	values := [6]int{1, 2, 3, 4, 5, 6};
-	count := slice.partition(&mut values[:], proc(value: int) -> bool { return value % 2 == 0; });
-	slice.sort(&mut values[:count]);
-	slice.sort(&mut values[count:]);
+	count := slice.partition(values[mut :], proc(value: int) -> bool { return value % 2 == 0; });
+	slice.sort(values[mut :count]);
+	slice.sort(values[mut count:]);
 	return values;
 }
 
 dealt :: proc(seed: u64) -> [8]int {
 	rng := random.Xoshiro256.from_seed(seed);
 	deck := [8]int{0, 1, 2, 3, 4, 5, 6, 7};
-	random.shuffle(inout rng, &mut deck[:]);
+	random.shuffle(inout rng, deck[mut :]);
 	return deck;
 }
 

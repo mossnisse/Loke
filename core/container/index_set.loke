@@ -87,7 +87,7 @@ impl Index_Set($N) {
 	view :: proc(self: ^) -> Index_View { return {self.words[:], N}; }
 
 	/// The set as a mutable view, which borrows it exclusively.
-	view_mut :: proc(self: inout) -> Index_View_Mut { return {&mut self.words[:], N}; }
+	view_mut :: proc(self: inout) -> Index_View_Mut { return {self.words[mut :], N}; }
 
 	// ------------------------------------------------------------ queries --
 
@@ -116,28 +116,28 @@ impl Index_Set($N) {
 
 	// ----------------------------------------------------------- mutation --
 
-	set :: proc(self: inout, index: int) { set_member(&mut self.words[:], N, index); }
-	unset :: proc(self: inout, index: int) { unset_member(&mut self.words[:], N, index); }
-	toggle :: proc(self: inout, index: int) { toggle_member(&mut self.words[:], N, index); }
+	set :: proc(self: inout, index: int) { set_member(self.words[mut :], N, index); }
+	unset :: proc(self: inout, index: int) { unset_member(self.words[mut :], N, index); }
+	toggle :: proc(self: inout, index: int) { toggle_member(self.words[mut :], N, index); }
 
 	/// Removes every index.
-	clear :: proc(self: inout) { apply_range(&mut self.words[:], N, 0, N, .Unset); }
+	clear :: proc(self: inout) { apply_range(self.words[mut :], N, 0, N, .Unset); }
 
 	/// Adds every index `0 ..< N`.
-	fill :: proc(self: inout) { apply_range(&mut self.words[:], N, 0, N, .Set); }
+	fill :: proc(self: inout) { apply_range(self.words[mut :], N, 0, N, .Set); }
 
-	set_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], N, low, high, .Set); }
-	unset_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], N, low, high, .Unset); }
-	toggle_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], N, low, high, .Toggle); }
+	set_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], N, low, high, .Set); }
+	unset_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], N, low, high, .Unset); }
+	toggle_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], N, low, high, .Toggle); }
 
 	/// Adds every index of `other`: the union, in place.
-	insert_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], N, other, .Insert); }
+	insert_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], N, other, .Insert); }
 	/// Keeps only the indices `other` also holds: the intersection, in place.
-	retain_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], N, other, .Retain); }
+	retain_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], N, other, .Retain); }
 	/// Removes every index of `other`: the difference, in place.
-	remove_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], N, other, .Remove); }
+	remove_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], N, other, .Remove); }
 	/// Toggles every index of `other`: the symmetric difference, in place.
-	toggle_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], N, other, .Toggle); }
+	toggle_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], N, other, .Toggle); }
 
 	// -------------------------------------------------------- operators --
 
@@ -196,7 +196,7 @@ impl Index_Set($N) {
 		`bytes_for_bits(N)`. A set bit at or above `N` in the final byte is
 		false, and leaves the set unchanged.
 	*/
-	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(&mut self.words[:], N, bytes); }
+	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(self.words[mut :], N, bytes); }
 
 	// -------------------------------------------------------- iteration --
 
@@ -244,7 +244,7 @@ impl Dynamic_Index_Set {
 		count := words_for_bits(cap);
 		// Clear the bits above the smaller capacity before growing, so the
 		// owner's clear-tail invariant holds for the new last word as well.
-		if (cap < self.capacity) { apply_range(&mut self.words[:], self.capacity, cap, self.capacity, .Unset); }
+		if (cap < self.capacity) { apply_range(self.words[mut :], self.capacity, cap, self.capacity, .Unset); }
 		self.words.resize(count);
 		self.capacity = cap;
 	}
@@ -267,7 +267,7 @@ impl Dynamic_Index_Set {
 	view :: proc(self: ^) -> Index_View { return {self.words[:], self.capacity}; }
 
 	/// The set as a mutable view, which borrows it exclusively.
-	view_mut :: proc(self: inout) -> Index_View_Mut { return {&mut self.words[:], self.capacity}; }
+	view_mut :: proc(self: inout) -> Index_View_Mut { return {self.words[mut :], self.capacity}; }
 
 	/// The number of indices the set can hold.
 	cap :: proc(self: ^) -> int { return self.capacity; }
@@ -283,21 +283,21 @@ impl Dynamic_Index_Set {
 	is_subset_of :: proc(self: ^, other: Index_View) -> bool { return subset_of(self.words[:], self.capacity, other); }
 	intersects :: proc(self: ^, other: Index_View) -> bool { return overlaps(self.words[:], self.capacity, other); }
 
-	set :: proc(self: inout, index: int) { set_member(&mut self.words[:], self.capacity, index); }
-	unset :: proc(self: inout, index: int) { unset_member(&mut self.words[:], self.capacity, index); }
-	toggle :: proc(self: inout, index: int) { toggle_member(&mut self.words[:], self.capacity, index); }
+	set :: proc(self: inout, index: int) { set_member(self.words[mut :], self.capacity, index); }
+	unset :: proc(self: inout, index: int) { unset_member(self.words[mut :], self.capacity, index); }
+	toggle :: proc(self: inout, index: int) { toggle_member(self.words[mut :], self.capacity, index); }
 
 	/// Removes every index and keeps the storage, which is how a visited set is reused.
-	clear :: proc(self: inout) { apply_range(&mut self.words[:], self.capacity, 0, self.capacity, .Unset); }
+	clear :: proc(self: inout) { apply_range(self.words[mut :], self.capacity, 0, self.capacity, .Unset); }
 
-	fill :: proc(self: inout) { apply_range(&mut self.words[:], self.capacity, 0, self.capacity, .Set); }
-	set_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Set); }
-	unset_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Unset); }
-	toggle_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Toggle); }
-	insert_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Insert); }
-	retain_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Retain); }
-	remove_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Remove); }
-	toggle_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Toggle); }
+	fill :: proc(self: inout) { apply_range(self.words[mut :], self.capacity, 0, self.capacity, .Set); }
+	set_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], self.capacity, low, high, .Set); }
+	unset_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], self.capacity, low, high, .Unset); }
+	toggle_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], self.capacity, low, high, .Toggle); }
+	insert_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Insert); }
+	retain_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Retain); }
+	remove_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Remove); }
+	toggle_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Toggle); }
 
 	/// Equal capacities and equal members.
 	equal :: operator(==) proc(left, right: Dynamic_Index_Set) -> bool { return left.view() == right.view(); }
@@ -306,7 +306,7 @@ impl Dynamic_Index_Set {
 	is_member :: operator(in) proc(index: int, set: Dynamic_Index_Set) -> bool { return has_member(set.words[:], set.capacity, index); }
 
 	store_bytes :: proc(self: ^, out: []mut u8) { store(self.words[:], self.capacity, out); }
-	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(&mut self.words[:], self.capacity, bytes); }
+	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(self.words[mut :], self.capacity, bytes); }
 
 	Element :: int;
 
@@ -399,24 +399,24 @@ impl Index_View_Mut {
 	is_subset_of :: proc(self: ^, other: Index_View) -> bool { return subset_of(self.words[:], self.capacity, other); }
 	intersects :: proc(self: ^, other: Index_View) -> bool { return overlaps(self.words[:], self.capacity, other); }
 
-	set :: proc(self: inout, index: int) { set_member(&mut self.words[:], self.capacity, index); }
-	unset :: proc(self: inout, index: int) { unset_member(&mut self.words[:], self.capacity, index); }
-	toggle :: proc(self: inout, index: int) { toggle_member(&mut self.words[:], self.capacity, index); }
-	clear :: proc(self: inout) { apply_range(&mut self.words[:], self.capacity, 0, self.capacity, .Unset); }
-	fill :: proc(self: inout) { apply_range(&mut self.words[:], self.capacity, 0, self.capacity, .Set); }
-	set_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Set); }
-	unset_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Unset); }
-	toggle_range :: proc(self: inout, low, high: int) { apply_range(&mut self.words[:], self.capacity, low, high, .Toggle); }
-	insert_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Insert); }
-	retain_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Retain); }
-	remove_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Remove); }
-	toggle_all :: proc(self: inout, other: Index_View) { combine(&mut self.words[:], self.capacity, other, .Toggle); }
+	set :: proc(self: inout, index: int) { set_member(self.words[mut :], self.capacity, index); }
+	unset :: proc(self: inout, index: int) { unset_member(self.words[mut :], self.capacity, index); }
+	toggle :: proc(self: inout, index: int) { toggle_member(self.words[mut :], self.capacity, index); }
+	clear :: proc(self: inout) { apply_range(self.words[mut :], self.capacity, 0, self.capacity, .Unset); }
+	fill :: proc(self: inout) { apply_range(self.words[mut :], self.capacity, 0, self.capacity, .Set); }
+	set_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], self.capacity, low, high, .Set); }
+	unset_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], self.capacity, low, high, .Unset); }
+	toggle_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], self.capacity, low, high, .Toggle); }
+	insert_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Insert); }
+	retain_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Retain); }
+	remove_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Remove); }
+	toggle_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Toggle); }
 
 	/// `index in set`: whether `index` is present, as `contains`.
 	is_member :: operator(in) proc(index: int, set: Index_View_Mut) -> bool { return has_member(set.words[:], set.capacity, index); }
 
 	store_bytes :: proc(self: ^, out: []mut u8) { store(self.words[:], self.capacity, out); }
-	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(&mut self.words[:], self.capacity, bytes); }
+	load_bytes :: proc(self: inout, bytes: []u8) -> bool { return load(self.words[mut :], self.capacity, bytes); }
 
 	Element :: int;
 

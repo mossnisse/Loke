@@ -251,7 +251,7 @@ qr :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Resul
 	packed := Matrix(T).from_view(a, allocator);
 	scales := make([dynamic]T, 0, a.column_count, allocator);
 	foreach (_ in 0 ..< a.column_count) { scales.append(T(0)); }
-	qr_in_place(packed.view_mut(), &mut scales[:]) or_return;
+	qr_in_place(packed.view_mut(), scales[mut :]) or_return;
 	return .ok(Qr(T){move(packed), move(scales)});
 }
 

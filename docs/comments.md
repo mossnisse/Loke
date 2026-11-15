@@ -15,7 +15,7 @@ belong in [standard-library.md](standard-library.md); release history is in
 | Concurrency | [Threads](#threads-the-language-can-start), [`parallel` blocks](#tasks-that-borrow-joined-by-their-block), [pools](#pools-that-help-at-joins), [channels](#channels-end-by-ownership) |
 | Compilation and configuration | [Compile time](#one-language-at-compile-time), [providers](#build-selected-services-and-explicit-runtime-state) |
 | Simpler language surface | [Removed or narrowed features](#removed-or-narrowed-features) |
-| Values and operations | [Overflow](#integer-overflow-panics), [slicing](#mutable-slicing-is-written-mut-alohi), [text](#slicing-text-keeps-its-panic) |
+| Values and operations | [Overflow](#integer-overflow-panics), [slicing](#mutable-slicing-is-written-amut-lohi), [text](#slicing-text-keeps-its-panic) |
 | Syntax and layout | [Syntax choices](#changed-syntax), [formatter](#formatting) |
 | Library and compiler decisions | [Library APIs](#standard-library-api-choices) (files, random numbers, time, JSON), [compiler design](#compiler-design-choices) |
 
@@ -80,7 +80,7 @@ for every body, for a case that choosing within one storage, or borrowing each
 storage separately, avoids. As with the other budgets, the rejection names the
 limit and says the borrow *may* cover the place.
 
-For the same reason a range sliced through a pointer, as `&mut p^[0:2]`, is not
+For the same reason a range sliced through a pointer, as `p^[mut 0:2]`, is not
 one of the [fresh borrows of a range](design.md#weakening-and-reborrows) whose
 constant elements are apart: it reborrows the pointer, a loan whose storage only
 the solve knows, so the view records no start. Indexing through the pointer,
@@ -91,7 +91,7 @@ reached by nothing but the slice, as a named array is reached only by its name.
 ### Splitting a mutable slice is compiler-known
 
 Two runtime slice ranges conservatively overlap, so after
-`left := &mut xs[:mid]` the source is suspended and `&mut xs[mid:]` is
+`left := xs[mut :mid]` the source is suspended and `xs[mut mid:]` is
 rejected. Most algorithms never need both halves at once: a recursive merge
 sort ends each half's reborrow before the next, and its merge reads both
 halves through read-only views. Handing each half to its own task does need
@@ -2699,16 +2699,25 @@ element; yielding a borrow of it requires another reference level.
 This follows the same convention as `^mut`, `[]mut`, and `iter_mut`: the spelling
 that can write is visibly marked.
 
-### Mutable slicing is written `&mut a[lo:hi]`
+### Mutable slicing is written `a[mut lo:hi]`
 
-`a[lo:hi]` is read-only; `&mut a[lo:hi]` is mutable. The destination type does
-not select the capability or change which slicing overload runs. This matches
-`&x` and `&mut x` and makes mutation visible at the call site.
+`a[lo:hi]` is read-only; `a[mut lo:hi]` is mutable. The destination type does
+not select the capability or change which slicing overload runs, which makes
+mutation visible at the call site.
 
 Consequently, `fmt.println(primes[1:4], total(primes[:]))` can use both read-only
 slices in one call. It needs no intermediate binding to change a slice's type.
-Parenthesize a mutable slice before selecting a member:
-`(&mut a[:]).indexed()`.
+
+The `mut` sits where the type `[]mut T` puts it. The form was `&mut a[lo:hi]`,
+after `&mut x`, but only half of that pair existed: a slice expression is a
+value, so `&a[lo:hi]` was an error, and the `&mut` was a slicing mode in the
+address operator's spelling beside `&mut xs[i]`, which is the operator and
+yields a `^mut T`. As a prefix it also took every suffix after the slice, so a
+member needed parentheses, `(&mut a[:]).indexed()`, where `a[mut :].indexed()`
+chains as any suffix does. A method, `a.slice_mut(lo, hi)`, would have been a
+second way to write the endpoints. The cost is the leading marker: a mutable
+borrow passed to a call began with `&mut` or `inout`, and a slice now carries
+its `mut` inside the brackets.
 
 ### A string literal receiver is a static `string_view`
 

@@ -1,0 +1,10 @@
+// grammar.md "Expressions": `mut` begins a mutable slice, never an index.
+package main;
+
+main :: proc() {
+	values := [3]int{1, 2, 3};
+	one := values[mut 0];
+	fine := values[mut 0:1];
+}
+
+sentinel :: proc() { }

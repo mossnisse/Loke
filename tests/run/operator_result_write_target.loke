@@ -13,7 +13,7 @@ impl Pick {
 
 store_in_other :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	pick := Pick{&mut a};
@@ -27,6 +27,6 @@ store_in_other :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 main :: proc() {
 	buffer := [256]u8{};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	fmt.println(store_in_other(arena.allocator()));
 }

@@ -311,7 +311,7 @@ counts :: proc() {
 
 	// A hostile count fails before an arena too small to serve it is asked.
 	storage: [256]u8 = {};
-	arena := mem.Arena.from_buffer(&mut storage[:]);
+	arena := mem.Arena.from_buffer(storage[mut :]);
 	hostile_bytes := [6]u8{0xFF, 0xFF, 1, 2, 3, 4};
 	h := binary.Reader.init(hostile_bytes[:], .Big);
 	switch (h.get_count(u16, 4, 100000)) {
@@ -429,8 +429,8 @@ stream :: proc() -> Status(io.Error) {
 
 	// A short read, then the end.
 	small: [64]u8 = {};
-	fmt.println(r.read(&mut small[:]) or_return);
-	switch (r.read(&mut small[:])) {
+	fmt.println(r.read(small[mut :]) or_return);
+	switch (r.read(small[mut :])) {
 	case .ok(_): fail("read past the end");
 	case .err(error): fmt.println(io.code_of(error), io.operation_of(error));
 	}

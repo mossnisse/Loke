@@ -46,7 +46,7 @@ appended :: proc(d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int) {
 
 appended_then_viewed :: proc(d: ^mut [dynamic]Link, @(escape=stored) other: ^mut int) {
 	d^.append(Link{other});
-	view := &mut d^[:];
+	view := d^[mut :];
 	x := view[0].to;
 	other^ = 1;
 	x^ = 2;

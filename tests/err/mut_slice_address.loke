@@ -1,0 +1,11 @@
+package main;
+
+// design.md "Slices": a slice is a value, mutable or not, so `&mut` of one is the
+// address of a temporary, as with `&`.
+main :: proc() {
+	a := [3]int{1, 2, 3};
+	sliced := a[mut 1:2];
+	wrapped := &mut (a[1:2]);
+	again := &mut a[mut 1:2];
+	_, _, _ = sliced, wrapped, again;
+}

@@ -8,7 +8,7 @@ fill :: proc(allocator: Allocator, values: []mut [dynamic]int) {
 
 array_reset :: proc(@(allocator_reset) allocator: Allocator) {
     owners: [1][dynamic]int = {};
-    fill(allocator, &mut owners[:]);
+    fill(allocator, owners[mut :]);
     free_all(allocator);
     assert(owners[0].len() == 1);
 }

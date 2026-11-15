@@ -81,28 +81,28 @@ copied_then_replaced :: proc(links: []mut Link, @(escape=stored) carrier: ^mut i
 run_swap_by_hand :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	swap_by_hand(&mut links[:]);
+	swap_by_hand(links[mut :]);
 	fmt.println(a, b);
 }
 
 run_swap_then_each_place :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	swap_then_each_place(&mut links[:]);
+	swap_then_each_place(links[mut :]);
 	fmt.println(a, b);
 }
 
 run_swap_fields_by_hand :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	swap_fields_by_hand(&mut links[:]);
+	swap_fields_by_hand(links[mut :]);
 	fmt.println(a, b);
 }
 
 run_copies_of_each :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	copies_of_each(&mut links[:]);
+	copies_of_each(links[mut :]);
 	fmt.println(a, b);
 }
 
@@ -116,7 +116,7 @@ run_swap_through_a_pointer :: proc() {
 run_other_element_kept :: proc() {
 	e := 1; f := 2; g := 3;
 	kept := [2]Link{Link{&mut e}, Link{&mut f}};
-	other_element_kept(&mut kept[:], &mut g);
+	other_element_kept(kept[mut :], &mut g);
 	fmt.println(f, g);
 }
 
@@ -129,7 +129,7 @@ run_replaced_in_a_loop :: proc() {
 run_copied_then_replaced :: proc() {
 	i := 1; j := 2; k := 3;
 	copied := [2]Link{Link{&mut i}, Link{&mut j}};
-	copied_then_replaced(&mut copied[:], &mut k);
+	copied_then_replaced(copied[mut :], &mut k);
 	fmt.println(i, j, k);
 }
 

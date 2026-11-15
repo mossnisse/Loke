@@ -42,7 +42,7 @@ main :: proc() {
 	words: [2]u64 = {0x1, 0xFFFF_FFFF_FFFF_FFF8};
 	fmt.println(0 in container.Index_View.over(words[:], 66), 65 in container.Index_View.over(words[:], 66));
 	{
-		writer := container.Index_View_Mut.over(&mut words[:], 66);
+		writer := container.Index_View_Mut.over(words[mut :], 66);
 		writer.set(65);
 		fmt.println(65 in writer, 64 in writer, 1 in writer);
 	}
@@ -58,7 +58,7 @@ main :: proc() {
 	// An arena over a small buffer is an allocator that fails once its room
 	// is used up.
 	room: [512]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 
 	switch (container.Dynamic_Index_Set.try_init(100000, arena.allocator())) {
 	case .ok(set): fmt.println("try_init: unexpected success", set.cap());
@@ -81,10 +81,10 @@ main :: proc() {
 	// A failed growth leaves the capacity, the members, and the storage
 	// unchanged, and the set stays usable.
 	before: [9]u8 = {};
-	small.store_bytes(&mut before[:]);
+	small.store_bytes(before[mut :]);
 	fmt.println(small.try_resize(5000) != .ok, small.cap(), small.len(), small);
 	after: [9]u8 = {};
-	small.store_bytes(&mut after[:]);
+	small.store_bytes(after[mut :]);
 	fmt.println(before == after, 69 in small);
 	fmt.println(small.try_resize(huge) != .ok, small.cap(), small);
 	small.set(2);

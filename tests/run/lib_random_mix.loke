@@ -112,8 +112,8 @@ bijection :: proc() {
 		column[i] = chunk(42, 5, i32(i - 2048));
 		seeds[i] = chunk(u64(i), 0, 0);
 	}
-	fmt.println("distinct", all_distinct(&mut row[:]), all_distinct(&mut column[:]),
-		all_distinct(&mut seeds[:]));
+	fmt.println("distinct", all_distinct(row[mut :]), all_distinct(column[mut :]),
+		all_distinct(seeds[mut :]));
 }
 
 all_distinct :: proc(values: []mut u64) -> bool {

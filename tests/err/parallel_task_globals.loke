@@ -17,7 +17,7 @@ table: [2]int;
 table_view: []int;
 
 setup :: proc() {
-	view = &mut values[:];
+	view = values[mut :];
 	table_view = table[:];
 }
 
@@ -55,7 +55,7 @@ main :: proc() {
 	local := [2]int{0, 0};
 	seen: int;
 	parallel {
-		spawn add(&mut local[:]);
+		spawn add(local[mut :]);
 		hits = 2;                    // no running task reserves `hits`
 		spawn seen = read_hits();
 		hits = 3;

@@ -558,16 +558,16 @@ Keep these contracts:
   borrow itself, or a constant reslice of such a view, and nothing borrows
   `s`. Which definitions reach the store, and each reslice, is a
   reaching-definitions pass over the views stores name
-  (`solve_view_defs`), so `s = &mut s[1:]` before a loop is known there, but
+  (`solve_view_defs`), so `s = s[mut 1:]` before a loop is known there, but
   not inside it, where the reslice reaches itself and moves the view each
   round, and not in a multiple assignment that also writes `s`
   (`Prov_View_Def`, `prov_local_view_element`, `view_start_of`). Where a
   reslice reaches itself, the starts are the least fixed point over the
-  definitions, so `s = &mut s[:2]` in a loop keeps the start. The lengths
+  definitions, so `s = s[mut :2]` in a loop keeps the start. The lengths
   settle first, in a fixed point of their own (`view_start_lengths`), as a
   length still short would otherwise look like a reslice past its source. The
   definitions need not agree on its length, as an index past a shorter one
-  panics, and a fresh borrow whose end is not constant, as `&mut d[:]` of a
+  panics, and a fresh borrow whose end is not constant, as `d[mut :]` of a
   dynamic array, lends from its constant start on (`Prov_View_Def.open`). A
   load out of such an element reads that element's slots alone
   (`Prov_Event.element`, `view_element_loan`). A parameter's loan publishes into its caller slots,

@@ -9,7 +9,7 @@ answer :: proc() -> int { return 42; }
 sorts_with_a_capture :: proc() {
 	limit := 5;
 	values := [3]int{3, 1, 2};
-	slice.sort_by(&mut values[:], proc(left, right: int) -> bool capture(limit) { return left + limit < right + limit; });
+	slice.sort_by(values[mut :], proc(left, right: int) -> bool capture(limit) { return left + limit < right + limit; });
 	assert(values[0] == 1);
 }
 

@@ -171,7 +171,7 @@ minor2 :: proc(px, py, qx, qy: f64, h: []mut f64) -> int {
 @(private)
 minor3 :: proc(pq, qr, rp: []f64, h: []mut f64) -> int {
 	partial: [8]f64 = {};
-	n := sum(pq, qr, &mut partial[:]);
+	n := sum(pq, qr, partial[mut :]);
 	return sum(partial[0:n], rp, h);
 }
 
@@ -181,11 +181,11 @@ orient2d_exact :: proc(ax, ay, bx, by, cx, cy: f64) -> Sign {
 	ab: [4]f64 = {};
 	bc: [4]f64 = {};
 	ca: [4]f64 = {};
-	nab := minor2(ax, ay, bx, by, &mut ab[:]);
-	nbc := minor2(bx, by, cx, cy, &mut bc[:]);
-	nca := minor2(cx, cy, ax, ay, &mut ca[:]);
+	nab := minor2(ax, ay, bx, by, ab[mut :]);
+	nbc := minor2(bx, by, cx, cy, bc[mut :]);
+	nca := minor2(cx, cy, ax, ay, ca[mut :]);
 	det: [12]f64 = {};
-	n := minor3(ab[0:nab], bc[0:nbc], ca[0:nca], &mut det[:]);
+	n := minor3(ab[0:nab], bc[0:nbc], ca[0:nca], det[mut :]);
 	return expansion_sign(det[0:n]);
 }
 
@@ -207,7 +207,7 @@ minors :: proc(points: []Point) -> Minors {
 		foreach (j in i + 1 ..< points.len()) {
 			p := points[i];
 			q := points[j];
-			n := minor2(p.x, p.y, q.x, q.y, &mut m.terms[i][j][:]);
+			n := minor2(p.x, p.y, q.x, q.y, m.terms[i][j][mut :]);
 			m.counts[i][j] = n;
 			m.counts[j][i] = n;
 			foreach (k in 0 ..< n) { m.terms[j][i][k] = -m.terms[i][j][k]; }
@@ -231,18 +231,18 @@ xyz_minor :: proc(points: []Point, m: ^Minors, i, j, k, l: int, h: []mut f64) ->
 	minor: [12]f64 = {};
 	scaled: [4][24]f64 = {};
 	counts: [4]int = {};
-	n := xy_minor(m, j, k, l, &mut minor[:]);
-	counts[0] = scale(minor[0:n], points[i].z, &mut scaled[0][:]);
-	n = xy_minor(m, i, k, l, &mut minor[:]);
-	counts[1] = scale(minor[0:n], -points[j].z, &mut scaled[1][:]);
-	n = xy_minor(m, i, j, l, &mut minor[:]);
-	counts[2] = scale(minor[0:n], points[k].z, &mut scaled[2][:]);
-	n = xy_minor(m, i, j, k, &mut minor[:]);
-	counts[3] = scale(minor[0:n], -points[l].z, &mut scaled[3][:]);
+	n := xy_minor(m, j, k, l, minor[mut :]);
+	counts[0] = scale(minor[0:n], points[i].z, scaled[0][mut :]);
+	n = xy_minor(m, i, k, l, minor[mut :]);
+	counts[1] = scale(minor[0:n], -points[j].z, scaled[1][mut :]);
+	n = xy_minor(m, i, j, l, minor[mut :]);
+	counts[2] = scale(minor[0:n], points[k].z, scaled[2][mut :]);
+	n = xy_minor(m, i, j, k, minor[mut :]);
+	counts[3] = scale(minor[0:n], -points[l].z, scaled[3][mut :]);
 	first: [48]f64 = {};
 	second: [48]f64 = {};
-	n1 := sum(scaled[0][0:counts[0]], scaled[1][0:counts[1]], &mut first[:]);
-	n2 := sum(scaled[2][0:counts[2]], scaled[3][0:counts[3]], &mut second[:]);
+	n1 := sum(scaled[0][0:counts[0]], scaled[1][0:counts[1]], first[mut :]);
+	n2 := sum(scaled[2][0:counts[2]], scaled[3][0:counts[3]], second[mut :]);
 	return sum(first[0:n1], second[0:n2], h);
 }
 
@@ -252,7 +252,7 @@ orient3d_exact :: proc(a, b, c, d: Point) -> Sign {
 	points := [4]Point{a, b, c, d};
 	m := minors(points[:]);
 	det: [96]f64 = {};
-	n := xyz_minor(points[:], &m, 0, 1, 2, 3, &mut det[:]);
+	n := xyz_minor(points[:], &m, 0, 1, 2, 3, det[mut :]);
 	return expansion_sign(det[0:n]);
 }
 
@@ -265,7 +265,7 @@ lift :: proc(p: Point, three: bool, h: []mut f64) -> int {
 	y := [2]f64{yl, yh};
 	if (!three) { return sum(x[:], y[:], h); }
 	xy: [4]f64 = {};
-	n := sum(x[:], y[:], &mut xy[:]);
+	n := sum(x[:], y[:], xy[mut :]);
 	zh, zl := two_product(p.z, p.z);
 	z := [2]f64{zl, zh};
 	return sum(xy[0:n], z[:], h);
@@ -284,24 +284,24 @@ incircle_exact :: proc(a, b, c, d: Point) -> Sign {
 		minor: [12]f64 = {};
 		n := 0;
 		switch (i) {
-		case 0: n = xy_minor(&m, 1, 2, 3, &mut minor[:]);
-		case 1: n = xy_minor(&m, 0, 2, 3, &mut minor[:]);
-		case 2: n = xy_minor(&m, 0, 1, 3, &mut minor[:]);
-		case:   n = xy_minor(&m, 0, 1, 2, &mut minor[:]);
+		case 0: n = xy_minor(&m, 1, 2, 3, minor[mut :]);
+		case 1: n = xy_minor(&m, 0, 2, 3, minor[mut :]);
+		case 2: n = xy_minor(&m, 0, 1, 3, minor[mut :]);
+		case:   n = xy_minor(&m, 0, 1, 2, minor[mut :]);
 		}
-		if (i % 2 == 1) { negate(&mut minor[0:n]); }
+		if (i % 2 == 1) { negate(minor[mut 0:n]); }
 		lifted: [6]f64 = {};
-		nl := lift(points[i], false, &mut lifted[:]);
+		nl := lift(points[i], false, lifted[mut :]);
 		term: [96]f64 = {};
 		scratch: [96]f64 = {};
 		partial: [96]f64 = {};
-		nt := multiply(minor[0:n], lifted[0:nl], &mut term[:], &mut scratch[:], &mut partial[:]);
+		nt := multiply(minor[0:n], lifted[0:nl], term[mut :], scratch[mut :], partial[mut :]);
 		if (i == 0) {
 			foreach (k in 0 ..< nt) { total[k] = term[k]; }
 			count = nt;
 		} else {
 			foreach (k in 0 ..< count) { other[k] = total[k]; }
-			count = sum(other[0:count], term[0:nt], &mut total[:]);
+			count = sum(other[0:count], term[0:nt], total[mut :]);
 		}
 	}
 	return expansion_sign(total[0:count]);
@@ -331,17 +331,17 @@ insphere_exact :: proc(a, b, c, d, e: Point) -> Sign {
 		foreach (j in 0 ..< 5) {
 			if (j != i) { rest[r] = j; r += 1; }
 		}
-		n := xyz_minor(points[:], &m, rest[0], rest[1], rest[2], rest[3], &mut s.minor[:]);
-		if (i % 2 == 0) { negate(&mut s.minor[0:n]); }
+		n := xyz_minor(points[:], &m, rest[0], rest[1], rest[2], rest[3], s.minor[mut :]);
+		if (i % 2 == 0) { negate(s.minor[mut 0:n]); }
 		lifted: [6]f64 = {};
-		nl := lift(points[i], true, &mut lifted[:]);
-		nt := multiply(s.minor[0:n], lifted[0:nl], &mut s.term[:], &mut s.scratch[:], &mut s.partial[:]);
+		nl := lift(points[i], true, lifted[mut :]);
+		nt := multiply(s.minor[0:n], lifted[0:nl], s.term[mut :], s.scratch[mut :], s.partial[mut :]);
 		if (i == 0) {
 			foreach (k in 0 ..< nt) { s.total[k] = s.term[k]; }
 			count = nt;
 		} else {
 			foreach (k in 0 ..< count) { s.other[k] = s.total[k]; }
-			count = sum(s.other[0:count], s.term[0:nt], &mut s.total[:]);
+			count = sum(s.other[0:count], s.term[0:nt], s.total[mut :]);
 		}
 	}
 	return expansion_sign(s.total[0:count]);

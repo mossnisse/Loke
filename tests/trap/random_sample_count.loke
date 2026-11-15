@@ -5,5 +5,5 @@ import "core:random";
 main :: proc() {
 	rng := random.Xoshiro256.from_seed(1);
 	values := [3]int{1, 2, 3};
-	random.sample(inout rng, &mut values[:], 4);
+	random.sample(inout rng, values[mut :], 4);
 }

@@ -54,7 +54,7 @@ rolls :: proc(seed: u64) -> [6]int {
 noise :: proc(seed: u64) -> [10]u8 {
 	rng := random.Xoshiro256.from_seed(seed);
 	bytes: [10]u8 = {};
-	random.fill(inout rng, &mut bytes[:]);
+	random.fill(inout rng, bytes[mut :]);
 	return bytes;
 }
 
@@ -135,11 +135,11 @@ seeding :: proc() {
 	fmt.println("from_entropy", entropy_a.state() != entropy_b.state());
 	fmt.println("secure_u64", random.secure_u64() != random.secure_u64());
 	secret: [40]u8 = {};
-	random.fill_secure(&mut secret[:]);
+	random.fill_secure(secret[mut :]);
 	zeros := 0;
 	foreach (b in secret) { if (b == 0) { zeros += 1; } }
 	fmt.println("fill_secure", zeros < 10);
-	random.fill_secure(&mut secret[0:0]);
+	random.fill_secure(secret[mut 0:0]);
 
 	// `split` depends only on the parent's state, takes four draws from it, and
 	// gives a stream unlike the parent's.
@@ -226,7 +226,7 @@ scripted :: proc() {
 	// discarded.
 	bytes := Script{values = {0x0807060504030201, 0x0D0C0B0A09, 0xFF}};
 	filled: [10]u8 = {};
-	random.fill(inout bytes, &mut filled[:]);
+	random.fill(inout bytes, filled[mut :]);
 	fmt.println("fill", filled, bytes.used);
 
 	// Through a `dyn mut` view, as a non-generic caller would hold a source.
@@ -279,14 +279,14 @@ floats_and_bits :: proc() {
 	fmt.println("quarter", quarter, quarter > 9700 && quarter < 10300);
 
 	noise: [12]u8 = {};
-	random.fill(inout rng, &mut noise[:]);
+	random.fill(inout rng, noise[mut :]);
 	fmt.println(noise);
 }
 
 permutations :: proc() {
 	rng := random.Xoshiro256.from_seed(1);
 	deck := [10]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-	random.shuffle(inout rng, &mut deck[:]);
+	random.shuffle(inout rng, deck[mut :]);
 	fmt.println(deck);
 
 	// Still a permutation.
@@ -301,11 +301,11 @@ permutations :: proc() {
 	b := random.Xoshiro256.from_seed(4);
 	none: [0]int = {};
 	single := [1]int{7};
-	random.shuffle(inout a, &mut none[:]);
-	random.shuffle(inout a, &mut single[:]);
+	random.shuffle(inout a, none[mut :]);
+	random.shuffle(inout a, single[mut :]);
 	fmt.println("no draws", a.state() == b.state(), single);
 	nine := [9]int{};
-	random.shuffle(inout a, &mut nine[:]);
+	random.shuffle(inout a, nine[mut :]);
 	skip(inout b, 8);
 	fmt.println("one draw per index", a.state() == b.state());
 

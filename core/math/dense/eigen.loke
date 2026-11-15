@@ -84,7 +84,7 @@ symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocato
 	off_diagonal := zeros_of(T.Real, n, allocator);
 	scales := zeros_of(T, n, allocator);
 	scratch := zeros_of(T, n, allocator);
-	tridiagonalize(work.view_mut(), &mut values[:], &mut off_diagonal[:], &mut scales[:], &mut scratch[:]);
+	tridiagonalize(work.view_mut(), values[mut :], off_diagonal[mut :], scales[mut :], scratch[mut :]);
 
 	// Q = H_0 H_1 ... H_{n-3}, applied to the identity from the last
 	// reflector to the first. Reflector `k` leaves columns `0 ..= k` of the
@@ -94,7 +94,7 @@ symmetric_eigen :: proc(a: View($T), allocator: Allocator = mem.default_allocato
 	for (k := n - 2; k >= 0; k -= 1) {
 		reflect(packed, k + 1, k, scales[k], vectors.view_mut().block(0, k + 1, n, n - k - 1));
 	}
-	tridiagonal_ql(&mut values[:], &mut off_diagonal[:], vectors.view_mut()) or_return;
+	tridiagonal_ql(values[mut :], off_diagonal[mut :], vectors.view_mut()) or_return;
 	if (!(scale == T.Real(1))) {
 		unscale := T.Real(1)/scale;
 		foreach (i in 0 ..< n) { values[i] = values[i]*unscale; }

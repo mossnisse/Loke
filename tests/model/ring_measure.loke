@@ -249,7 +249,7 @@ round_trips :: proc(count: int) {
 		spawn pong(move(items), move(echo));
 	}
 	whole := f64(i64(time.tick_now() - start)) / f64(count);
-	slice.sort(&mut times[:]);
+	slice.sort(times[mut :]);
 	n := times.len();
 	fmt.println("round trip ns: mean", whole, "p50", times[n / 2], "p99", times[n * 99 / 100],
 		"p99.9", times[n * 999 / 1000], "max", times[n - 1]);
@@ -325,12 +325,12 @@ RUNS :: 15;
 
 show :: proc(title: string, rows: inout Rows) {
 	fmt.println(title);
-	report("  library", &mut rows.library[:]);
-	report("  copy", &mut rows.copy[:]);
-	report("  no closure check", &mut rows.unchecked[:]);
-	report("  flags on head's line", &mut rows.shared[:]);
-	report("  power-of-two mask", &mut rows.masked[:]);
-	report("  16-byte slots", &mut rows.wide[:]);
+	report("  library", rows.library[mut :]);
+	report("  copy", rows.copy[mut :]);
+	report("  no closure check", rows.unchecked[mut :]);
+	report("  flags on head's line", rows.shared[mut :]);
+	report("  power-of-two mask", rows.masked[mut :]);
+	report("  16-byte slots", rows.wide[mut :]);
 }
 
 main :: proc() {

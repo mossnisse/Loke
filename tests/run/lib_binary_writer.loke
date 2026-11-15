@@ -149,7 +149,7 @@ short_io :: proc() {
 
 	// A bounded memory sink takes a whole field or none of it.
 	room: [6]u8 = {};
-	bounded := io.Slice_Writer.init(&mut room[:]);
+	bounded := io.Slice_Writer.init(room[mut :]);
 	b := binary.writer(&mut bounded, .Little);
 	expect_ok("first", b.put(u32(1)));
 	expect_code("no room", b.put(u32(2)), .Out_Of_Space);
@@ -210,7 +210,7 @@ fills :: proc() {
 
 	// A later failure keeps the accepted chunks counted, in a bounded memory sink too.
 	room: [300]u8 = {};
-	bounded := io.Slice_Writer.init(&mut room[:]);
+	bounded := io.Slice_Writer.init(room[mut :]);
 	b := binary.writer(&mut bounded, .Big);
 	expect_code("fill past capacity", b.fill(600, 1), .Out_Of_Space);
 	fmt.println(b.offset(), bounded.len());
@@ -334,7 +334,7 @@ sinks :: proc() -> Status(io.Error) {
 	at := int(w.offset());
 	w.put(u32(0)) or_return;
 	w.put(u8(9)) or_return;
-	endian.store(&mut buffer.bytes_mut()[at:], u32(1), .Big);
+	endian.store(buffer.bytes_mut()[mut at:], u32(1), .Big);
 	fmt.println(buffer.bytes());
 
 	// A sink chosen at run time.

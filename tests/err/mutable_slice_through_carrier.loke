@@ -10,13 +10,13 @@ look :: proc(s: []int) -> int { return s[0]; }
 
 kept_view :: proc(p: ^mut Holder) -> int {
 	v := p^.items[:];
-	poke(&mut p^.items[:]);
+	poke(p^.items[mut :]);
 	return v[0];
 }
 
 held_carrier :: proc(p: ^mut Cursors) -> int {
 	first := p^.items[0];
-	all := &mut p^.items[:];
+	all := p^.items[mut :];
 	_ = all;
 	return first^;
 }

@@ -288,9 +288,9 @@ Prov_Offset :: struct {
 
 // How one definition of a named view slot relates what it views to the range
 // a fresh borrow lends (`prov_note_view`): that borrow itself, as
-// `s := &mut a[0:2]`; elements `lo` up to `hi` of another such slot, as
-// `t := &mut s[1:]`, with `hi` -1 for its end; or `unknown`. A borrow whose
-// end is not constant, as `&mut d[:]` of a dynamic array, lends a range its
+// `s := a[mut 0:2]`; elements `lo` up to `hi` of another such slot, as
+// `t := s[mut 1:]`, with `hi` -1 for its end; or `unknown`. A borrow whose
+// end is not constant, as `d[mut :]` of a dynamic array, lends a range its
 // loan's last step cannot name, so it is `open`, starting at element `lo`
 // of what it is taken from.
 Prov_View_Def :: struct {

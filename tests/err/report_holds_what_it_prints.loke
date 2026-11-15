@@ -98,7 +98,7 @@ chain_holds_named_target :: proc() {
 view_holds_named_target :: proc() {
 	x := 1;
 	a := [1]Node{Node{&mut x, 1}};
-	s := &mut a[:];
+	s := a[mut :];
 	assert(false, "m", s, bump(&mut x));
 }
 beside_a_mutable_copy_of_what_it_reaches :: proc(p: ^mut Node) {

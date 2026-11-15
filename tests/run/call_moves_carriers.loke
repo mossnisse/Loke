@@ -27,8 +27,8 @@ pop :: proc(chain: ^mut Chain) { chain^.head = chain^.head^.next; }
 two_calls_that_move :: proc() -> int {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	exchange(&mut links[:]);
-	exchange(&mut links[:]);
+	exchange(links[mut :]);
+	exchange(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ += 10;
@@ -39,8 +39,8 @@ two_calls_that_move :: proc() -> int {
 two_calls_in_the_library :: proc() -> int {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	slice.reverse(&mut links[:]);
-	slice.reverse(&mut links[:]);
+	slice.reverse(links[mut :]);
+	slice.reverse(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ += 10;
@@ -52,8 +52,8 @@ two_calls_in_the_library :: proc() -> int {
 two_calls_that_reorder :: proc() -> int {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	by_assignment(&mut links[:]);
-	by_assignment(&mut links[:]);
+	by_assignment(links[mut :]);
+	by_assignment(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ += 10;
@@ -65,8 +65,8 @@ two_calls_that_reorder :: proc() -> int {
 two_calls_that_only_write_through :: proc() -> int {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	touch(&mut links[:]);
-	touch(&mut links[:]);
+	touch(links[mut :]);
+	touch(links[mut :]);
 	held := links[0].to;
 	y = 5;
 	held^ += 10;
@@ -91,7 +91,7 @@ used_before_the_copy :: proc() -> int {
 	second := links[1].to;
 	first^ += 10;
 	second^ += 20;
-	duplicate(&mut links[:]);
+	duplicate(links[mut :]);
 	return x + y;
 }
 
@@ -109,7 +109,7 @@ used_before_the_copy_in_a_body :: proc(links: []mut Link) -> int {
 one_place_after_the_copy :: proc() -> int {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
+	duplicate(links[mut :]);
 	links[0].to^ += 10;
 	return y;
 }
@@ -128,8 +128,8 @@ other_type_of_carrier :: proc() -> int {
 read_only_copies :: proc() -> int {
 	x := 1; y := 2;
 	links := [2]Read_Only{Read_Only{&x}, Read_Only{&y}};
-	read_only(&mut links[:]);
-	read_only(&mut links[:]);
+	read_only(links[mut :]);
+	read_only(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	return first^ + second^;
@@ -156,7 +156,7 @@ main :: proc() {
 	fmt.println(used_before_the_copy());
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	fmt.println(used_before_the_copy_in_a_body(&mut links[:]));
+	fmt.println(used_before_the_copy_in_a_body(links[mut :]));
 	fmt.println(one_place_after_the_copy());
 	fmt.println(other_type_of_carrier());
 	fmt.println(read_only_copies());

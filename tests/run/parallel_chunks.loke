@@ -11,7 +11,7 @@ fill :: proc(chunk: []mut int, value: int) {
 
 main :: proc() {
 	cells: [10]int = {};
-	view := &mut cells[:];
+	view := cells[mut :];
 	parallel {
 		step := 0;
 		foreach (chunk in view.chunks_mut(3)) {

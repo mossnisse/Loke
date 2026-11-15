@@ -59,7 +59,7 @@ carrier_element :: proc() {
 through_a_view :: proc() {
 	a := Node{1}; b := Node{2}; c := Node{3};
 	lists := [2]Ro{Ro{&a}, Ro{&b}};
-	view := &mut lists[:];
+	view := lists[mut :];
 	foreach (&mut list in view) { list.head = &c; }
 	node := lists[1].head;
 	c.value = 5;
@@ -69,7 +69,7 @@ through_a_view :: proc() {
 seen_through_the_view :: proc() {
 	a := Node{1}; b := Node{2}; c := Node{3};
 	lists := [2]Ro{Ro{&a}, Ro{&b}};
-	view := &mut lists[:];
+	view := lists[mut :];
 	foreach (&mut list in view) { list.head = &c; }
 	node := view[1].head;
 	c.value = 5;
@@ -107,7 +107,7 @@ nested_traversals :: proc() {
 an_indexed_view :: proc() {
 	a := Node{1}; b := Node{2}; c := Node{3};
 	lists := [2]Ro{Ro{&a}, Ro{&b}};
-	view := &mut lists[:];
+	view := lists[mut :];
 	foreach (&mut list, index in view.indexed()) { list.head = &c; }
 	node := lists[1].head;
 	c.value = 5;
@@ -193,7 +193,7 @@ copied_out_of_the_binding :: proc() {
 copied_out_over_a_view :: proc() {
 	a := Node{1}; b := Node{2};
 	lists := [2]List{List{&mut a}, List{&mut b}};
-	view := &mut lists[:];
+	view := lists[mut :];
 	foreach (&mut list in view) {
 		copy := list.head;
 		a.value = 2;
@@ -236,7 +236,7 @@ owner_through_a_view :: proc() {
 	items := [2]string{strings.copy("a"), strings.copy("b")};
 	{
 		arena := mem.Arena.init();
-		view := &mut items[:];
+		view := items[mut :];
 		foreach (&mut item in view) { item = fmt.to_string(arena.allocator(), 42); }
 	}
 	fmt.println(items[0]);

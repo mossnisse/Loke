@@ -1044,7 +1044,7 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 	case .Through_Slice:
 		errorf(
 			k.c, base.span, "L0478",
-			"this is an element of a read-only `[]T` and cannot be %s; writing through a slice takes a `[]mut T`, which `&mut a[lo:hi]` makes",
+			"this is an element of a read-only `[]T` and cannot be %s; writing through a slice takes a `[]mut T`, which `a[mut lo:hi]` makes",
 			what,
 		)
 	case .Through_Pointer:

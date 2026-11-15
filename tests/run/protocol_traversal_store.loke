@@ -28,7 +28,7 @@ impl Cursor {
 copied_afterwards :: proc() -> int {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	source := Lender{&mut lists[:], 0};
+	source := Lender{lists[mut :], 0};
 	foreach (&mut list in source) { list.head = &c; }
 	c.value = 5;
 	again := source.values;
@@ -39,7 +39,7 @@ copied_afterwards :: proc() -> int {
 through_a_pointer :: proc() -> int {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	source := Lender{&mut lists[:], 7};
+	source := Lender{lists[mut :], 7};
 	pointer := &mut source;
 	foreach (&mut list in pointer^) { list.head = &c; }
 	c.value = 5;
@@ -49,7 +49,7 @@ through_a_pointer :: proc() -> int {
 field_beside_the_elements :: proc() -> int {
 	a := Node{1}; c := Node{3};
 	lists := [1]Ro{Ro{&a}};
-	source := Lender{&mut lists[:], 0};
+	source := Lender{lists[mut :], 0};
 	foreach (&mut list in source) { list.head = &c; }
 	c.value = 5;
 	source.count = 2;
@@ -60,7 +60,7 @@ field_beside_the_elements :: proc() -> int {
 stored_twice :: proc() -> int {
 	a := Node{1}; c := Node{3};
 	lists := [2]Ro{Ro{&a}, Ro{&a}};
-	source := Lender{&mut lists[:], 0};
+	source := Lender{lists[mut :], 0};
 	foreach (&mut list in source) { list.head = &c; }
 	foreach (&mut list in source) { list.head = &a; }
 	return lists[0].head^.value + lists[1].head^.value;

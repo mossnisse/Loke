@@ -147,8 +147,8 @@ Expr_Slice :: struct {
 	operand:    Expr,
 	lo:         Expr,
 	hi:         Expr,
-	// Written `&mut a[lo:hi]`: the one way to ask for a `[]mut T` (design.md
-	// "Slices"). The span starts at the `&`.
+	// Written `a[mut lo:hi]`: the one way to ask for a `[]mut T` (design.md
+	// "Slices").
 	mutable:    bool,
 	// A user `operator([:])`: receiver, low, and high in parameter order.
 	bound:      []Expr,
@@ -1398,8 +1398,16 @@ File :: struct {
 	// added it.
 	parallels:      []u32,
 	parallel_bound: bool,
-	// What `-migrate` rewrites. Nothing else reads it.
+	// What `-migrate` rewrites. Nothing else reads these.
 	earlier_spellings: []Earlier_Spelling,
+	earlier_slices:    []Earlier_Slice,
+}
+
+// `&mut a[lo:hi]`, which an earlier release wrote for `a[mut lo:hi]`: its `&`,
+// its `mut`, and the offset just past the slice's `[`.
+Earlier_Slice :: struct {
+	amp, keyword: Span,
+	open:         u32,
 }
 
 // A record written the way an earlier release required: its `move_only` keyword

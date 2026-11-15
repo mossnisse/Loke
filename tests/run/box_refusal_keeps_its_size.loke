@@ -17,7 +17,7 @@ impl Big {
 
 main :: proc() {
 	room: [256]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 	switch (try_box(Big{}, arena.allocator())) {
 	case .ok: fmt.println("ok");
 	case .err(error): fmt.println(error);

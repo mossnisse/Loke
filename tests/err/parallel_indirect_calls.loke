@@ -216,7 +216,7 @@ pooled_write :: proc() {
 }
 
 main :: proc() {
-	view = &mut values[:];
+	view = values[mut :];
 	value_writes();
 	literal_writes();
 	slot_writes();

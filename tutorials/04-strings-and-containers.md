@@ -137,7 +137,7 @@ main :: proc() {
 	fmt.println(middle, total(primes), total(scores));
 
 	// `&mut` explicitly borrows a mutable slice.
-	add_bonus(&mut scores[:]);
+	add_bonus(scores[mut :]);
 	foreach (score, index in scores.indexed()) {
 		fmt.println(index, score);
 	}
@@ -165,7 +165,7 @@ main :: proc() {
 `[]int` has read-only elements; `[]mut int` permits changing them. `add_bonus`
 borrows a mutable slice of `scores` and changes its elements without `inout`:
 the parameter binding stays immutable while the elements it views are mutable.
-`scores[:]` is always read-only; `&mut scores[:]` asks for the mutable slice,
+`scores[:]` is always read-only; `scores[mut :]` asks for the mutable slice,
 as `&mut x` asks for a `^mut T`, so the call shows that `scores` may change. A
 slice cannot grow the array; a procedure that appends to the caller's array
 takes `inout [dynamic]int` instead.

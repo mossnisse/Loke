@@ -115,7 +115,7 @@ borrows :: proc() {
 regions :: proc() {
 	fmt.println("-- regions");
 	room: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 	kept: Option([dynamic]int) = .none;
 	{
 		q := container.Deque([dynamic]int).init(0, arena.allocator());
@@ -134,7 +134,7 @@ regions :: proc() {
 	numbers: container.Deque([dynamic]int) = {};
 	numbers.append([dynamic]int{1});
 	unrelated_room: [512]u8 = {};
-	unrelated := mem.Arena.from_buffer(&mut unrelated_room[:]);
+	unrelated := mem.Arena.from_buffer(unrelated_room[mut :]);
 	scratch := make([dynamic]int, 0, 4, unrelated.allocator());
 	scratch.append(2);
 	fmt.println(names, numbers, scratch);
@@ -157,7 +157,7 @@ owned :: proc() {
 failure :: proc() {
 	fmt.println("-- failure");
 	room: [512]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 
 	switch (container.Deque(int).try_init(100000, arena.allocator())) {
 	case .ok(d): fmt.println("unexpected", d.cap());
@@ -200,7 +200,7 @@ failure :: proc() {
 
 	// A moved element is dropped.
 	spare: [256]u8 = {};
-	tight := mem.Arena.from_buffer(&mut spare[:]);
+	tight := mem.Arena.from_buffer(spare[mut :]);
 	tokens := container.Deque(Token).try_init(8, tight.allocator()) or_else panic("small");
 	foreach (i in 0 ..< tokens.cap()) { tokens.append(Token{i + 1}); }
 	drops = 0;
@@ -223,7 +223,7 @@ failure :: proc() {
 
 	// A clone that fails after the ring has room adds nothing.
 	small: [512]u8 = {};
-	limited := mem.Arena.from_buffer(&mut small[:]);
+	limited := mem.Arena.from_buffer(small[mut :]);
 	lists := container.Deque([dynamic]int).try_init(4, limited.allocator()) or_else panic("small");
 	big := make([dynamic]int, 4096);
 	one := [dynamic]int{1};

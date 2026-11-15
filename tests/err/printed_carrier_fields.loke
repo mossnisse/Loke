@@ -98,7 +98,7 @@ distinct_pointer :: proc(x: int) {
 
 distinct_slice :: proc() {
 	storage := [2]int{1, 2};
-	cells := Cells(&mut storage[:]);
+	cells := Cells(storage[mut :]);
 	fmt.println(cells, cells);
 }
 

@@ -10,7 +10,7 @@ look :: proc(s: []int) -> int { return s[0]; }
 
 through :: proc(p: ^mut Holder) -> int {
 	v := p^.items[:];
-	n := look(&mut p^.items[:]);
+	n := look(p^.items[mut :]);
 	return n + v[1];
 }
 

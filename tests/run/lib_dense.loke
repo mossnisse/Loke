@@ -124,7 +124,7 @@ mutable_views :: proc() {
 	// A row-major buffer splits by rows, and a transposed column-major view
 	// does too.
 	buffer := [dynamic]int{0, 0, 0, 0, 0, 0};
-	top, bottom := dense.View_Mut(int).from_row_major(&mut buffer[:], 3, 2).split_rows(1);
+	top, bottom := dense.View_Mut(int).from_row_major(buffer[mut :], 3, 2).split_rows(1);
 	top.fill(1);
 	bottom.fill(3);
 	check("split_rows of a row-major buffer", buffer[0] == 1 && buffer[1] == 1 && buffer[2] == 3 && buffer[5] == 3);

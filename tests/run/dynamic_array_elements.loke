@@ -17,7 +17,7 @@ touch :: proc(links: []mut Link) { links[0].to^ += 1; }
 through_a_dynamic_view :: proc() -> int {
 	a := Node{1}; b := Node{2};
 	lists := [dynamic]List{List{&mut a}, List{&mut b}};
-	s := &mut lists[:];
+	s := lists[mut :];
 	node := s[0].head;
 	other := s[1].head;
 	other^.value = 3;
@@ -38,7 +38,7 @@ straight_out :: proc() -> int {
 at_a_view_offset :: proc() -> int {
 	a := Node{1}; b := Node{2}; c := Node{3};
 	lists := [dynamic]List{List{&mut a}, List{&mut b}, List{&mut c}};
-	s := &mut lists[1:];
+	s := lists[mut 1:];
 	node := s[0].head;
 	other := s[1].head;
 	other^.value = 30;
@@ -75,8 +75,8 @@ after_a_swap_in_a_body :: proc(lists: inout [dynamic]List) -> int {
 two_calls_that_move :: proc() -> int {
 	x := 1; y := 2;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	exchange(&mut links[:]);
-	exchange(&mut links[:]);
+	exchange(links[mut :]);
+	exchange(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ += 10;
@@ -87,8 +87,8 @@ two_calls_that_move :: proc() -> int {
 two_calls_in_the_library :: proc() -> int {
 	x := 1; y := 2;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	slice.reverse(&mut links[:]);
-	slice.reverse(&mut links[:]);
+	slice.reverse(links[mut :]);
+	slice.reverse(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ += 10;
@@ -99,8 +99,8 @@ two_calls_in_the_library :: proc() -> int {
 two_calls_that_write_through :: proc() -> int {
 	x := 1; y := 2;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	touch(&mut links[:]);
-	touch(&mut links[:]);
+	touch(links[mut :]);
+	touch(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ += 10;
@@ -121,7 +121,7 @@ another_elements_target :: proc() -> int {
 through_a_view :: proc() -> int {
 	x := 1; y := 2;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	held := view[0].to;
 	y = 5;
 	held^ += 10;
@@ -141,7 +141,7 @@ replaced :: proc() -> int {
 replaced_through_a_view :: proc() -> int {
 	x := 1; y := 2; z := 3;
 	links := [dynamic]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	view[0].to = &mut z;
 	held := view[0].to;
 	x = 5;

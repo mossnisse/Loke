@@ -24,7 +24,7 @@ in_place :: proc(links: []mut Link, i, j: int) { links[i], links[j] = links[i], 
 rejected_through_calls :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	through_calls(&mut links[:]);
+	through_calls(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ = 1;
@@ -34,7 +34,7 @@ rejected_through_calls :: proc() {
 rejected_one_value_twice :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	one_value_twice(&mut links[:]);
+	one_value_twice(links[mut :]);
 	first := links[0].to;
 	second := links[1].to;
 	first^ = 1;
@@ -44,7 +44,7 @@ rejected_one_value_twice :: proc() {
 rejected_one_variable_twice :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	one_variable_twice(&mut links[:], 0, 1);
+	one_variable_twice(links[mut :], 0, 1);
 	first := links[0].to;
 	second := links[1].to;
 	first^ = 1;
@@ -54,11 +54,11 @@ rejected_one_variable_twice :: proc() {
 accepted_reorderings :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	swapped(&mut links[:]);
-	spaced(&mut links[:]);
-	named_constant(&mut links[:]);
-	variables(&mut links[:], 0, 1);
-	in_place(&mut links[:], 0, 1);
+	swapped(links[mut :]);
+	spaced(links[mut :]);
+	named_constant(links[mut :]);
+	variables(links[mut :], 0, 1);
+	in_place(links[mut :], 0, 1);
 	first := links[0].to;
 	second := links[1].to;
 	first^ = 1;

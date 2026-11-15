@@ -50,7 +50,7 @@ main :: proc() {
 	through_pointer(&mut link, &mut o, &mut f);
 	fmt.println(o, f);
 	links := [1]Link{Link{&mut w}};
-	at_one_element(&mut links[:], &mut o, &mut f);
+	at_one_element(links[mut :], &mut o, &mut f);
 	fmt.println(o, f);
 	r := &mut v;
 	through_pointer_to_pointer(&mut r, &mut o, &mut f);

@@ -330,7 +330,7 @@ impl Writer($W) {
 	put :: proc(self: inout, value: $T) -> Status(io.Error) where endian.is_fixed_width(T) {
 		self.check_room(size_of(T)) or_return;
 		field: [size_of(T)]u8 = {};
-		endian.store(&mut field[:], value, self.byte_order);
+		endian.store(field[mut :], value, self.byte_order);
 		return io.write_all(inout self, field[:]);
 	}
 

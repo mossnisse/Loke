@@ -12,7 +12,7 @@ impl Two { second :: proc(self) -> ^mut [dynamic]int { return self.q; } }
 // Only `b` takes the new owner, by the summary's path, so the reset spares `a`.
 reset_other_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	two := Two{&mut a, &mut b};
@@ -27,7 +27,7 @@ reset_other_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 second_of :: proc(two: ^Two) -> ^mut [dynamic]int { return two^.q; }
 reset_other_loaded_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	two := Two{&mut a, &mut b};
@@ -42,7 +42,7 @@ reset_other_loaded_field :: proc(@(allocator_reset) allocator: mem.Allocator) ->
 identity :: proc(two: Two) -> Two { return two; }
 reset_other_returned_field :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [1024]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	two := Two{&mut a, &mut b};

@@ -28,7 +28,7 @@ asked :: proc(values: []mut Job) -> bool { return less(values[last(values)], val
 
 main :: proc() {
 	jobs := [3]Job{Job{1}, Job{2}, Job{3}};
-	fmt.println(named(&mut jobs[:]), computed(&mut jobs[:]), converted(&mut jobs[:]));
-	fmt.println(indexed(&mut jobs[:]), fielded(&mut jobs[:], Pick{0, {0, 1}}), measured(&mut jobs[:]), chosen(&mut jobs[:], true));
-	fmt.println(called(&mut jobs[:]), operated(&mut jobs[:], Key{0}), asked(&mut jobs[:]));
+	fmt.println(named(jobs[mut :]), computed(jobs[mut :]), converted(jobs[mut :]));
+	fmt.println(indexed(jobs[mut :]), fielded(jobs[mut :], Pick{0, {0, 1}}), measured(jobs[mut :]), chosen(jobs[mut :], true));
+	fmt.println(called(jobs[mut :]), operated(jobs[mut :], Key{0}), asked(jobs[mut :]));
 }

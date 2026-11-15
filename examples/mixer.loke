@@ -99,15 +99,15 @@ audio_loop :: proc(
 	mix: [dynamic]f32 = {};
 	mix.resize(FRAMES);
 	for (;;) {
-		if (!apply_commands(&mut commands, &mut voices[:])) {   // the interface has ended
+		if (!apply_commands(&mut commands, voices[mut :])) {   // the interface has ended
 			report(voices[:]);
 			return .ok;
 		}
-		all := &mut voices[:];
+		all := voices[mut :];
 		parallel (pool) {
 			foreach (group in all.chunks_mut(GROUP)) { spawn render(group); }
 		}
-		mix_down(voices[:], &mut mix[:]);   // the voices are this loop's again
+		mix_down(voices[:], mix[mut :]);   // the voices are this loop's again
 		device.write(mix[:]) or_return;     // waits one period at most
 	}
 }

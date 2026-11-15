@@ -69,7 +69,7 @@ owner_again :: proc() {
 	values := [dynamic]int{1, 2, 3, 4};
 	kept: [dynamic]^mut int = {};
 	foreach (o in 0 ..< 2) {
-		halves := (&mut values[:]).split_at_mut(o + 1);
+		halves := values[mut :].split_at_mut(o + 1);
 		kept.append(&mut halves.left[0]);
 	}
 	foreach (p in kept) { p^ = 4; }

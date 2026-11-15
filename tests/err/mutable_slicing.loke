@@ -1,7 +1,7 @@
 package main;
 import "core:slice";
 
-// design.md "Slices": `a[lo:hi]` is read-only and `&mut a[lo:hi]` is the one way
+// design.md "Slices": `a[lo:hi]` is read-only and `a[mut lo:hi]` is the one way
 // to ask for a `[]mut T`, whose operand must be writable. A read-only slice
 // where a mutable one is wanted says how to ask for it.
 
@@ -13,7 +13,7 @@ impl Reads {
 }
 Writes :: struct { items: [2]int }
 impl Writes {
-	span :: operator([:]) proc(self: inout, low: int, high: int) -> []mut int { return &mut self.items[low:high]; }
+	span :: operator([:]) proc(self: inout, low: int, high: int) -> []mut int { return self.items[mut low:high]; }
 }
 
 main :: proc() {
@@ -23,13 +23,13 @@ main :: proc() {
 	held: []mut int = numbers[0:2];
 	handle := Handle(numbers[:]);
 	view: []int = numbers[:];
-	again := &mut view[:];
+	again := view[mut :];
 	text := "abc";
-	part := &mut text[0:1];
+	part := text[mut 0:1];
 	reads := Reads{};
 	writes := Writes{};
-	a := &mut reads[0:1];
+	a := reads[mut 0:1];
 	b := writes[0:1];
 }
 
-parameter :: proc(values: [2]int) { c := &mut values[:]; }
+parameter :: proc(values: [2]int) { c := values[mut :]; }

@@ -13,7 +13,7 @@ main :: proc() {
 	case .err: fmt.println("try_arena failed");
 	}
 	buffer: [512]u8 = {};
-	arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
+	arena := mem.Arena.from_buffer(buffer[mut :], policy = .Trap);
 	small: [dynamic]int via arena.allocator() = {};
 	small.append(1, 2, 3);
 	fmt.println(small, scratch.allocator() != arena.allocator());

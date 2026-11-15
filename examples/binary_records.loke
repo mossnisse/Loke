@@ -86,26 +86,26 @@ encode_record :: proc(record: Record, out: inout io.Buffer_Writer) -> Status(io.
 		w.put(entry.weight) or_return;
 	}
 
-	whole := &mut out.bytes_mut()[start:];
+	whole := out.bytes_mut()[mut start:];
 	body_length := whole.len() - HEADER_SIZE;
-	endian.store(&mut whole[8:], u32(body_length), .Big);
+	endian.store(whole[mut 8:], u32(body_length), .Big);
 	crc: checksum.Crc32 = {};
 	crc.update(whole[0:HEADER_SIZE - 4]);
 	crc.update(whole[HEADER_SIZE:]);
-	endian.store(&mut whole[HEADER_SIZE - 4:], crc.sum(), .Big);
+	endian.store(whole[mut HEADER_SIZE - 4:], crc.sum(), .Big);
 	return .ok;
 }
 
 // A record at a file offset: the header first, then a body of a validated size.
 load_at :: proc(file: inout fs.File, offset: u64) -> Result(Record, Load_Error) {
 	header: [HEADER_SIZE]u8 = {};
-	file.read_exact_at(&mut header[:], offset) or_return .io;
+	file.read_exact_at(header[mut :], offset) or_return .io;
 	probe := binary.Reader.init(header[:], .Big, offset);
 	probe.skip(8) or_return .data;
 	length := probe.get_length(u32, MAX_BODY) or_return .data;
 
 	bytes := make([dynamic]u8, HEADER_SIZE + length);
-	file.read_exact_at(&mut bytes[:], offset) or_return .io;
+	file.read_exact_at(bytes[mut :], offset) or_return .io;
 	return decode_record(bytes[:], offset);
 }
 

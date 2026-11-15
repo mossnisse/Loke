@@ -44,7 +44,7 @@ param_traversal :: proc(xs: []mut Counter) {
 
 local_two_borrows :: proc() -> int {
 	counters := [3]Counter{};
-	view := &mut counters[:];
+	view := counters[mut :];
 	a := &mut view[0];
 	b := &mut view[2];
 	a^.count = 1;
@@ -55,8 +55,8 @@ local_two_borrows :: proc() -> int {
 
 local_resliced :: proc() -> int {
 	counters := [3]Counter{};
-	view := &mut counters[:];
-	view = &mut view[1:];
+	view := counters[mut :];
+	view = view[mut 1:];
 	for (i := 0; i < 2; i += 1) {
 		a := &mut view[0];
 		view[1].count += 1;
@@ -67,8 +67,8 @@ local_resliced :: proc() -> int {
 
 local_shortened :: proc() -> int {
 	counters := [3]Counter{};
-	view := &mut counters[:];
-	if (cond()) { view = &mut view[:2]; }
+	view := counters[mut :];
+	if (cond()) { view = view[mut :2]; }
 	a := &mut view[0];
 	view[1].count += 1;
 	a^.count += 4;
@@ -77,7 +77,7 @@ local_shortened :: proc() -> int {
 
 local_dynamic :: proc() -> int {
 	counters := [dynamic]Counter{Counter{}, Counter{}};
-	view := &mut counters[:];
+	view := counters[mut :];
 	a := &mut view[0];
 	view[1].count += 2;
 	a^.count += 5;
@@ -88,7 +88,7 @@ local_copies :: proc() -> int {
 	a := Node{1};
 	b := Node{2};
 	lists := [2]List{List{&mut a}, List{&mut b}};
-	view := &mut lists[:];
+	view := lists[mut :];
 	node := view[0].head;
 	other := view[1].head;
 	other^.value = 3;
@@ -98,8 +98,8 @@ local_copies :: proc() -> int {
 
 shortened_in_loop :: proc() -> int {
 	a := [3]Counter{};
-	s := &mut a[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	s := a[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut :2]; }
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 2;
@@ -108,8 +108,8 @@ shortened_in_loop :: proc() -> int {
 
 whole_in_loop :: proc() -> int {
 	a := [3]Counter{};
-	s := &mut a[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[0:]; }
+	s := a[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut 0:]; }
 	first := &mut s[0];
 	s[2].count += 1;
 	first^.count += 2;
@@ -119,12 +119,12 @@ whole_in_loop :: proc() -> int {
 // Each round borrows through what the round before left, from the same start.
 shortened_each_round :: proc() -> int {
 	a := [3]Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	for (i := 0; i < 2; i += 1) {
 		first := &mut s[0];
 		s[1].count += 1;
 		first^.count += 2;
-		s = &mut s[:2];
+		s = s[mut :2];
 	}
 	return a[0].count * 10 + a[1].count;
 }
@@ -133,13 +133,13 @@ shortened_each_round :: proc() -> int {
 kept_across_rounds :: proc() -> int {
 	a := [3]Counter{};
 	other := Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	first := &mut other;
 	for (i := 0; i < 2; i += 1) {
 		first^.count += 2;
 		first = &mut s[0];
 		s[1].count += 1;
-		s = &mut s[:2];
+		s = s[mut :2];
 	}
 	first^.count += 2;
 	return a[0].count * 10 + a[1].count;
@@ -147,9 +147,9 @@ kept_across_rounds :: proc() -> int {
 
 shortened_in_branch_in_loop :: proc() -> int {
 	a := [3]Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	for (i := 0; i < 3; i += 1) {
-		if (i == 1) { s = &mut s[:2]; } else { s = &mut s[0:]; }
+		if (i == 1) { s = s[mut :2]; } else { s = s[mut 0:]; }
 	}
 	first := &mut s[0];
 	s[1].count += 1;
@@ -159,10 +159,10 @@ shortened_in_branch_in_loop :: proc() -> int {
 
 shortened_in_nested_loops :: proc() -> int {
 	a := [3]Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	for (i := 0; i < 2; i += 1) {
-		s = &mut s[0:];
-		for (j := 0; j < 2; j += 1) { s = &mut s[:2]; }
+		s = s[mut 0:];
+		for (j := 0; j < 2; j += 1) { s = s[mut :2]; }
 	}
 	first := &mut s[0];
 	s[1].count += 1;
@@ -172,10 +172,10 @@ shortened_in_nested_loops :: proc() -> int {
 
 shortened_through_another_view :: proc() -> int {
 	a := [3]Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	for (i := 0; i < 2; i += 1) {
-		t := &mut s[:2];
-		s = &mut t[:];
+		t := s[mut :2];
+		s = t[mut :];
 	}
 	first := &mut s[0];
 	s[1].count += 1;
@@ -186,9 +186,9 @@ shortened_through_another_view :: proc() -> int {
 // The start the loop keeps is the one its view came in with.
 shortened_from_a_start :: proc() -> int {
 	a := [3]Counter{};
-	s := &mut a[:];
-	s = &mut s[1:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	s := a[mut :];
+	s = s[mut 1:];
+	for (i := 0; i < 2; i += 1) { s = s[mut :2]; }
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 2;
@@ -197,8 +197,8 @@ shortened_from_a_start :: proc() -> int {
 
 shortened_dynamic_in_loop :: proc() -> int {
 	d := [dynamic]Counter{Counter{}, Counter{}, Counter{}};
-	s := &mut d[:];
-	for (i := 0; i < 2; i += 1) { s = &mut s[:2]; }
+	s := d[mut :];
+	for (i := 0; i < 2; i += 1) { s = s[mut :2]; }
 	first := &mut s[0];
 	s[1].count += 1;
 	first^.count += 2;
@@ -209,10 +209,10 @@ shortened_dynamic_in_loop :: proc() -> int {
 // differ, and nothing repoints it between the two uses.
 shortened_of_two_borrows :: proc() -> int {
 	a := [3]Counter{};
-	s := &mut a[:];
+	s := a[mut :];
 	for (i := 0; i < 2; i += 1) {
-		if (i == 1) { s = &mut a[1:]; }
-		s = &mut s[:2];
+		if (i == 1) { s = a[mut 1:]; }
+		s = s[mut :2];
 	}
 	first := &mut s[0];
 	s[1].count += 1;
@@ -261,9 +261,9 @@ shortened_views_through_a_third :: proc(flag: bool) -> int {
 main :: proc() {
 	n := 1;
 	counters := [2]Counter{Counter{first = .some(&mut n)}, Counter{cells = [2]int{5, 6}}};
-	param_borrow(&mut counters[:]);
-	param_binding(&mut counters[:]);
-	param_traversal(&mut counters[:]);
+	param_borrow(counters[mut :]);
+	param_binding(counters[mut :]);
+	param_traversal(counters[mut :]);
 	fmt.println(counters[0].count, counters[1].count, counters[1].total, n);
 	fmt.println(counters[0].cells[0], counters[0].cells[1], counters[1].cells[1]);
 	fmt.println(local_two_borrows(), local_resliced());

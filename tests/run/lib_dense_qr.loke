@@ -316,7 +316,7 @@ failures :: proc() {
 	}
 	tau := [dynamic]f64{0, 0};
 	failed := false;
-	switch (dense.qr_in_place(zero_column.view_mut(), &mut tau[:])) {
+	switch (dense.qr_in_place(zero_column.view_mut(), tau[mut :])) {
 	case .ok:      failed = false;
 	case .err(e):  failed = e == .Singular;
 	}

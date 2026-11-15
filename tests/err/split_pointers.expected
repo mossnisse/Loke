@@ -29,7 +29,7 @@ L0641
 @64:15
 `halves` cannot be used here: a mutable reborrow of it is still in use
 L0511
-@72:14
+@72:13
 this write of `values` is not compatible with the mutable slice of it that is still in use
 L0641
 @73:15

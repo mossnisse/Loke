@@ -22,7 +22,7 @@ import "core:mem";
 
 main :: proc() {
 	room: [448]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 	fmt.println("before");
 	long := "0123456789" + "0123456789" + "0123456789" + "0123456789" +
 		"0123456789" + "0123456789" + "0123456789" + "0123456789" +

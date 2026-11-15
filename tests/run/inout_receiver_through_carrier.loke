@@ -101,7 +101,7 @@ main :: proc() {
 	a_user_method(&mut r);
 	rows := [2]map[int]int{{}, {}};
 	defer drop(rows);
-	beside_an_element(&mut rows[:]);
+	beside_an_element(rows[mut :]);
 	in_a_loop(&mut m);
 	entry := entry_of(&mut m);
 	entry^ += 1;

@@ -12,6 +12,6 @@ storage: static [65536]u8 = {};
 region: static mem.Arena = {};
 
 allocator_factory :: proc() -> Allocator {
-	region = mem.Arena.from_buffer(&mut storage[:]);
+	region = mem.Arena.from_buffer(storage[mut :]);
 	return region.allocator();
 }

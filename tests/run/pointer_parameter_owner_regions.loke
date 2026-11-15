@@ -28,7 +28,7 @@ read_built :: proc(holder: ^Holder) -> string { reader := Reader{holder}; return
 
 direct :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("direct", other.allocator())};
@@ -40,7 +40,7 @@ direct :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("local", other.allocator())};
@@ -52,7 +52,7 @@ through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("forward", other.allocator())};
@@ -64,7 +64,7 @@ forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 returned :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("returned", other.allocator())};
@@ -76,7 +76,7 @@ returned :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("held", other.allocator())};
@@ -88,7 +88,7 @@ record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 built_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("built", other.allocator())};
@@ -100,7 +100,7 @@ built_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 main :: proc() {
 	buffer := [4096]u8{};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	fmt.println(direct(arena.allocator()), through_local(arena.allocator()), forwarded(arena.allocator()),
 		returned(arena.allocator()), record(arena.allocator()), built_record(arena.allocator()));
 }

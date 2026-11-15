@@ -70,7 +70,7 @@ moved_copy_in_a_local :: proc() {
 after_a_call :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	exchange(&mut links[:]);
+	exchange(links[mut :]);
 	held := links[1].to;
 	y = 3;
 	held^ = 4;
@@ -79,7 +79,7 @@ after_a_call :: proc() {
 after_a_call_on_fields :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	exchange_fields(&mut links[:]);
+	exchange_fields(links[mut :]);
 	held := links[1].to;
 	x = 3;
 	held^ = 4;
@@ -88,7 +88,7 @@ after_a_call_on_fields :: proc() {
 in_a_local_view :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	view := &mut links[:];
+	view := links[mut :];
 	view[0].to, view[1].to = view[1].to, view[0].to;
 	held := links[1].to;
 	x = 3;

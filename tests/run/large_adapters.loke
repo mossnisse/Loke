@@ -142,6 +142,6 @@ main :: proc() {
 
 	storage := [2]int{20, 21};
 	panel: Panel = {};
-	panel.cells = &mut storage[:];
+	panel.cells = storage[mut :];
 	foreach (v, i in panel.indexed()) { fmt.println("panel", v, i); }
 }

@@ -74,25 +74,25 @@ MATRIX_PLACES := [?]Matrix_Place {
 	{"param_map", "m: ^mut map[int]^mut List", "", "m^[1]^", "m^[1]", "", false},
 	{
 		"local_slice", "",
-		MATRIX_NODES + MATRIX_MORE_NODES + " lists := [2]List{" + MATRIX_LIST + ", " + MATRIX_OTHER_LIST + "}; s := &mut lists[:];",
+		MATRIX_NODES + MATRIX_MORE_NODES + " lists := [2]List{" + MATRIX_LIST + ", " + MATRIX_OTHER_LIST + "}; s := lists[mut :];",
 		"s[0]", "&mut s[0]", "s[1]", false,
 	},
 	{
 		"local_resliced", "",
 		MATRIX_NODES + MATRIX_MORE_NODES + MATRIX_LAST_NODES + " lists := [3]List{" + MATRIX_OTHER_LIST + ", " + MATRIX_LIST + ", " + MATRIX_LAST_LIST +
-		"}; s := &mut lists[:]; t := &mut s[1:];",
+		"}; s := lists[mut :]; t := s[mut 1:];",
 		"t[0]", "&mut t[0]", "t[1]", false,
 	},
 	{
 		"local_self_resliced", "",
 		MATRIX_NODES + MATRIX_MORE_NODES + MATRIX_LAST_NODES + " lists := [3]List{" + MATRIX_OTHER_LIST + ", " + MATRIX_LIST + ", " + MATRIX_LAST_LIST +
-		"}; s := &mut lists[:]; s = &mut s[1:];",
+		"}; s := lists[mut :]; s = s[mut 1:];",
 		"s[0]", "&mut s[0]", "s[1]", false,
 	},
 	{
 		"local_shortened", "",
 		MATRIX_NODES + MATRIX_MORE_NODES + MATRIX_LAST_NODES + " lists := [3]List{" + MATRIX_LIST + ", " + MATRIX_OTHER_LIST + ", " + MATRIX_LAST_LIST +
-		"}; s := &mut lists[:]; if (cond()) { s = &mut s[:2]; }",
+		"}; s := lists[mut :]; if (cond()) { s = s[mut :2]; }",
 		"s[0]", "&mut s[0]", "s[1]", false,
 	},
 	{
@@ -384,7 +384,7 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 	case .Slice:
 		open, first, again = fmt.tprintf("taken := %s.cells[:];", place.base), "sink(taken[0]);", "sink(taken[0]);"
 	case .Slice_Mut:
-		open, first, again = fmt.tprintf("taken := &mut %s.cells[:];", place.base), "taken[0] = 0;", "taken[0] = 1;"
+		open, first, again = fmt.tprintf("taken := %s.cells[mut :];", place.base), "taken[0] = 0;", "taken[0] = 1;"
 	case .Foreach:
 		open, close = fmt.tprintf("foreach (item in %s.cells) {{", place.base), "}"
 		first, again = "sink(item);", "sink(item);"

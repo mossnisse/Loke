@@ -77,6 +77,6 @@ main :: proc() {
 	fmt.println(holder.plus(.none if no else .some(5)));
 
 	numbers := [3]int{1, 2, 3};
-	view := &mut numbers[0:2];
+	view := numbers[mut 0:2];
 	fmt.println(by_inout(inout view, 1));
 }

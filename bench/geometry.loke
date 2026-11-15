@@ -428,9 +428,9 @@ ray_box_case :: proc($T: type, inverse: bool) -> Outcome {
 	out := make([dynamic]T, COUNT);
 	start := time.tick_now();
 	if (inverse) {
-		foreach (_ in 0 ..< ROUNDS) { cast_boxes_inverse(&mut out[:], r[:], inverses[:], b[:]); }
+		foreach (_ in 0 ..< ROUNDS) { cast_boxes_inverse(out[mut :], r[:], inverses[:], b[:]); }
 	} else {
-		foreach (_ in 0 ..< ROUNDS) { cast_boxes(&mut out[:], r[:], b[:]); }
+		foreach (_ in 0 ..< ROUNDS) { cast_boxes(out[mut :], r[:], b[:]); }
 	}
 	stop := time.tick_now();
 	return timed(start, stop, hash_slice(out[:]));
@@ -441,7 +441,7 @@ ray_triangle_case :: proc($T: type) -> Outcome {
 	r := rays(T, 1, triangle_centers(t[:])[:], 0.2);
 	out := make([dynamic]Option(geometry.Triangle_Hit(T)), COUNT);
 	start := time.tick_now();
-	foreach (_ in 0 ..< ROUNDS) { cast_triangles(&mut out[:], r[:], t[:]); }
+	foreach (_ in 0 ..< ROUNDS) { cast_triangles(out[mut :], r[:], t[:]); }
 	stop := time.tick_now();
 	return timed(start, stop, hash_hits(out[:]));
 }
@@ -451,7 +451,7 @@ frustum_box_case :: proc($T: type) -> Outcome {
 	b := boxes(T, 4, 40.0);
 	out := make([dynamic]bool, COUNT);
 	start := time.tick_now();
-	foreach (_ in 0 ..< ROUNDS) { cull_boxes(&mut out[:], f, b[:]); }
+	foreach (_ in 0 ..< ROUNDS) { cull_boxes(out[mut :], f, b[:]); }
 	stop := time.tick_now();
 	return timed(start, stop, hash_slice(out[:]));
 }
@@ -461,7 +461,7 @@ frustum_sphere_case :: proc($T: type) -> Outcome {
 	s := spheres(T, 5);
 	out := make([dynamic]bool, COUNT);
 	start := time.tick_now();
-	foreach (_ in 0 ..< ROUNDS) { cull_spheres(&mut out[:], f, s[:]); }
+	foreach (_ in 0 ..< ROUNDS) { cull_spheres(out[mut :], f, s[:]); }
 	stop := time.tick_now();
 	return timed(start, stop, hash_slice(out[:]));
 }
@@ -470,7 +470,7 @@ frustum_sphere_case :: proc($T: type) -> Outcome {
 predicate_case :: proc(p: []$V, all: proc(out: []mut geometry.Sign, p: []V)) -> Outcome {
 	out := make([dynamic]geometry.Sign, COUNT);
 	start := time.tick_now();
-	foreach (_ in 0 ..< ROUNDS) { all(&mut out[:], p); }
+	foreach (_ in 0 ..< ROUNDS) { all(out[mut :], p); }
 	stop := time.tick_now();
 	return timed(start, stop, hash_slice(out[:]));
 }
@@ -504,7 +504,7 @@ run :: proc(operation: Operation) -> Outcome {
 		foreach (ray in r) { inverses.append(ray.inverse_direction()); }
 		out := make([dynamic]f32, COUNT);
 		start := time.tick_now();
-		foreach (_ in 0 ..< ROUNDS) { hand_ray_box(&mut out[:], r[:], inverses[:], b[:]); }
+		foreach (_ in 0 ..< ROUNDS) { hand_ray_box(out[mut :], r[:], inverses[:], b[:]); }
 		stop := time.tick_now();
 		return timed(start, stop, hash_slice(out[:]));
 	case .Ray_Triangle_F32: return ray_triangle_case(f32);
@@ -514,7 +514,7 @@ run :: proc(operation: Operation) -> Outcome {
 		r := rays(f32, 1, triangle_centers(t[:])[:], 0.2);
 		out := make([dynamic]f32, COUNT);
 		start := time.tick_now();
-		foreach (_ in 0 ..< ROUNDS) { hand_ray_triangle(&mut out[:], r[:], t[:]); }
+		foreach (_ in 0 ..< ROUNDS) { hand_ray_triangle(out[mut :], r[:], t[:]); }
 		stop := time.tick_now();
 		return timed(start, stop, hash_slice(out[:]));
 	case .Frustum_Box_F32: return frustum_box_case(f32);
@@ -524,7 +524,7 @@ run :: proc(operation: Operation) -> Outcome {
 		b := boxes(f32, 4, 40.0);
 		out := make([dynamic]bool, COUNT);
 		start := time.tick_now();
-		foreach (_ in 0 ..< ROUNDS) { hand_frustum_box(&mut out[:], f, b[:]); }
+		foreach (_ in 0 ..< ROUNDS) { hand_frustum_box(out[mut :], f, b[:]); }
 		stop := time.tick_now();
 		return timed(start, stop, hash_slice(out[:]));
 	case .Frustum_Sphere_F32: return frustum_sphere_case(f32);

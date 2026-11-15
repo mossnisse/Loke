@@ -71,7 +71,7 @@ around_a_loop :: proc() {
 items: [dynamic]int;
 item_count :: proc() -> int { return items.len(); }
 of_a_mutable_slice :: proc() {
-	view: []mut int = &mut items[:];
+	view: []mut int = items[mut :];
 	n := item_count();
 	view[0] = n;
 }

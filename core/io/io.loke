@@ -224,7 +224,7 @@ CHUNK :: 4096;
 read_exact :: proc(reader: inout $R, destination: []mut u8) -> Status(Error) where Reader(R) {
 	filled := 0;
 	for (; filled < destination.len(); ) {
-		switch (reader.read(&mut destination[filled:])) {
+		switch (reader.read(destination[mut filled:])) {
 		case .ok(outcome):
 			if (outcome == 0) { return .err(make_error(.Unexpected_End, .Read)); }
 			filled += outcome;
@@ -274,7 +274,7 @@ read_to_end :: proc(
 	chunk: [CHUNK]u8 = {};
 	for (;;) {
 		count := 0;
-		switch (reader.read(&mut chunk[:])) {
+		switch (reader.read(chunk[mut :])) {
 		case .ok(outcome): count = outcome;
 		case .err(outcome):
 			if (is(outcome, .End_Of_Input)) { return move(collected); }
@@ -305,7 +305,7 @@ copy :: proc(
 	destination: inout $W, source: inout $R, buffer: []mut u8 = {},
 ) -> Result(u64, Error) where Writer(W), Reader(R) {
 	own: [CHUNK]u8 = {};
-	window := buffer if buffer.len() > 0 else &mut own[:];
+	window := buffer if buffer.len() > 0 else own[mut :];
 	moved: u64 = 0;
 	for (;;) {
 		count := 0;
@@ -340,7 +340,7 @@ read_line :: proc(
 	one: [1]u8 = {};
 	for (;;) {
 		count := 0;
-		switch (reader.read(&mut one[:])) {
+		switch (reader.read(one[mut :])) {
 		case .ok(outcome): count = outcome;
 		case .err(outcome):
 			if (!is(outcome, .End_Of_Input)) {
@@ -429,7 +429,7 @@ impl Buffer_Writer {
 		Everything written so far, to patch in place: a length or a checksum known
 		only once the rest is written. A write while the view is in use is rejected.
 	*/
-	bytes_mut :: proc(self: inout) -> []mut u8 { return &mut self.data[:]; }
+	bytes_mut :: proc(self: inout) -> []mut u8 { return self.data[mut :]; }
 
 	len :: proc(self) -> int { return self.data.len(); }
 

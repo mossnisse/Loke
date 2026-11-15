@@ -4,7 +4,7 @@ package main;
 main :: proc() {
 	m := map[int][4]int{};
 	m[1] = [4]int{};
-	view := &mut m[1][0:2];
+	view := m[1][mut 0:2];
 	m[2] = [4]int{};
 	view[0] = 1;
 }

@@ -67,7 +67,7 @@ main :: proc() {
 	tasks.sort();
 	fmt.println(tasks);
 	words: [dynamic]IS = {{"b", 2}, {"a", 3}, {"b", 1}};
-	slice.reverse_sort(&mut words[:]);
+	slice.reverse_sort(words[mut :]);
 	fmt.println(words);
 	fmt.println(SORTED);
 	switch (P{2, 5}) {

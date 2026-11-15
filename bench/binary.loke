@@ -52,7 +52,7 @@ main :: proc() {
 	fmt.println(sum_fields(data[:], .Big) or_else 0);
 
 	out := make([dynamic]u8, SIZE);
-	fmt.println(copy_fields(data[:], &mut out[:]) == .ok);
+	fmt.println(copy_fields(data[:], out[mut :]) == .ok);
 
 	fmt.println(checksum.Crc32.of(data[:]));
 	fmt.println(checksum.Crc32c.of(out[:]));

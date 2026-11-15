@@ -21,7 +21,7 @@ partition :: proc(xs: []mut int) -> int {
 sort :: proc(xs: []mut int, depth := 0) {
 	if (xs.len() <= 16) { slice.sort(xs); return; }
 	left, rest := xs.split_at_mut(partition(xs));
-	right := &mut rest[1:];
+	right := rest[mut 1:];
 	if (depth >= 3) {
 		sort(left, depth + 1);
 		sort(right, depth + 1);
@@ -40,7 +40,7 @@ main :: proc() {
 		seed = (seed * 1103515245 + 12345) % 2147483648;
 		values.append(seed % 1000);
 	}
-	sort(&mut values[:]);
+	sort(values[mut :]);
 	ok := true;
 	foreach (i in 1..<values.len()) {
 		if (values[i - 1] > values[i]) { ok = false; }

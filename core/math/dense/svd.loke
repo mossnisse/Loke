@@ -86,9 +86,9 @@ svd :: proc(a: View($T), allocator: Allocator = mem.default_allocator()) -> Resu
 	right := Matrix(T).zeros(n, k, allocator);
 	values := zeros_of(T.Real, k, allocator);
 	if (n <= m) {
-		golub_reinsch(a, scale, left.view_mut(), &mut values[:], right.view_mut(), allocator) or_return;
+		golub_reinsch(a, scale, left.view_mut(), values[mut :], right.view_mut(), allocator) or_return;
 	} else {
-		golub_reinsch(a.adjoint(), scale, right.view_mut(), &mut values[:], left.view_mut(), allocator) or_return;
+		golub_reinsch(a.adjoint(), scale, right.view_mut(), values[mut :], left.view_mut(), allocator) or_return;
 	}
 	if (!(scale == T.Real(1))) {
 		unscale := T.Real(1)/scale;
@@ -194,7 +194,7 @@ golub_reinsch :: proc(a: View($T), scale: $R, u: View_Mut(T), s: []mut R, v: Vie
 	e := zeros_of(R, n, allocator);
 	left_scales := zeros_of(T, n, allocator);
 	right_scales := zeros_of(T, n, allocator);
-	bidiagonalize(work.view_mut(), s, &mut e[:], &mut left_scales[:], &mut right_scales[:]);
+	bidiagonalize(work.view_mut(), s, e[mut :], left_scales[mut :], right_scales[mut :]);
 	// A bidiagonal that is not finite would never deflate.
 	if (!reals_finite(s[:]) || !reals_finite(e[:])) { return .err(.No_Convergence); }
 
@@ -218,7 +218,7 @@ golub_reinsch :: proc(a: View($T), scale: $R, u: View_Mut(T), s: []mut R, v: Vie
 	for (k := n - 2; k >= 0; k -= 1) {
 		reflect(rows_of, k + 1, k, conj(right_scales[k]), vv.block(0, k + 1, n, n - k - 1));
 	}
-	return bidiagonal_qr(s, &mut e[:], uu, vv);
+	return bidiagonal_qr(s, e[mut :], uu, vv);
 }
 
 // `dsvdc`'s main loop on the real bidiagonal `s`, `e`, each rotation applied
@@ -301,7 +301,7 @@ bidiagonal_qr :: proc(s, e: []mut $T, uu, vv: View_Mut($S)) -> Status(Error) whe
 				rotate_columns(uu, k, zero, g.c, g.s);
 			}
 		} else {
-			qr_sweep(s, &mut e[:], j + 1, q, uu, vv);
+			qr_sweep(s, e[mut :], j + 1, q, uu, vv);
 			sweeps += 1;
 		}
 	}

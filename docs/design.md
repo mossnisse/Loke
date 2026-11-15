@@ -1009,7 +1009,7 @@ fmt.println(x[0]); // 1
 
 A fixed array converts implicitly to a read-only `[]T` of all its elements. This
 zero-cost borrow cannot outlive the array, and a generic `[]$T` parameter binds
-`T` to the element type. A writable view requires `&mut x[:]` from a mutable
+`T` to the element type. A writable view requires `x[mut :]` from a mutable
 place; ordinary `x[:]` remains read-only. See [Slices](#slices).
 
 #### Multidimensional arrays
@@ -1091,13 +1091,15 @@ mutability enforced as a static capability.
 | Expression or conversion | Capability |
 | --- | --- |
 | `a[lo:hi]` over an array, dynamic array, or slice | Always `[]T`, regardless of storage or expected type. |
-| `&mut a[lo:hi]` | `[]mut T`; requires a mutable array/dynamic-array place or an existing mutable slice. |
+| `a[mut lo:hi]` | `[]mut T`; requires a mutable array/dynamic-array place or an existing mutable slice. |
 | `[]mut T` to `[]T` | Implicit weakening. The reverse is never permitted, even if the original storage is mutable. |
 | String or string-view slicing | A [`string_view`](#string-views). |
 | [C-pointer slicing](#c-pointers) with both bounds | `[]mut T`; the unchecked-pointer exception. |
 
 Annotations and adapters cannot upgrade a slice's capability. A mutating call
-therefore spells its borrow explicitly: `fill(&mut buffer[:])`.
+therefore spells its borrow explicitly: `fill(buffer[mut :])`. The `mut` is part
+of the slice expression, whose result takes members as any value does:
+`values[mut :].indexed()`.
 
 `a[low:high]` includes `low` and excludes `high`. Omitted bounds default to zero
 and length, so `a[:]` views the whole sequence. `x.len()` returns a slice's
@@ -1181,7 +1183,7 @@ x.append(10);
 
 It converts implicitly to a read-only `[]T` of its live elements, including for
 a generic `[]$T` parameter. The borrow cannot outlive the array and prevents
-conflicting mutation while live. A writable view requires `&mut x[:]`; see
+conflicting mutation while live. A writable view requires `x[mut :]`; see
 [Slices](#slices). `len()` reports live elements and `cap()` reports capacity.
 
 Assignment recursively clones owned elements; `move` transfers the allocation
@@ -1199,7 +1201,7 @@ Backing storage can be frame-local:
 
 ```loke
 buffer: [4096]u8 = {};
-arena := mem.Arena.from_buffer(&mut buffer[:]);
+arena := mem.Arena.from_buffer(buffer[mut :]);
 data: [dynamic]int via arena.allocator() = {};
 data.append(1, 2, 3); // storage is in buffer; no heap allocation
 ```
@@ -3535,7 +3537,7 @@ them before ranking:
    assignable.
 2. Everywhere else the value overload is preferred, even for a mutable receiver.
 
-The operand of [`&mut a[lo:hi]`](#slices) is a place position when an `inout`
+The operand of [`a[mut lo:hi]`](#slices) is a place position when an `inout`
 overload exists. With only a value overload it stays a value, which a result
 carrying a `[]mut T` can still slice.
 
@@ -3586,12 +3588,12 @@ lifetimes](#borrows-and-lifetimes). A `[]mut T` result requires an `inout`
 receiver; a `self: ^` receiver returns only `[]T`.
 
 The written form selects between the two, as it does for built-in slicing:
-`&mut x[a:b]` requires the overload yielding `[]mut T`, and `x[a:b]` requires
+`x[mut a:b]` requires the overload yielding `[]mut T`, and `x[a:b]` requires
 one yielding anything else. The destination selects nothing, and a form the type
 does not offer is an error rather than a fallback to the other:
 
 ```loke
-part := &mut small[0:2];   // the `inout` overload; `small` must be a mutable place
+part := small[mut 0:2];   // the `inout` overload; `small` must be a mutable place
 read := small[0:2];        // the read-only overload
 ```
 
@@ -3718,7 +3720,7 @@ Adapters and container views (`indexed`, `reversed`, `copied`, `keys`, `values`,
 `entries`) are ordinary values. A header's `&mut` requests mutable traversal
 from that value, not its original collection. Thus
 `foreach (&mut v, i in values.indexed())` rejects a dynamic array's read-only
-view; use `(&mut values[:]).indexed()` for a mutable view with indices.
+view; use `values[mut :].indexed()` for a mutable view with indices.
 
 The **root** expression receiving the adapters is evaluated once. A temporary
 root lives for the whole statement; see
@@ -3864,12 +3866,12 @@ names take precedence. Static expansion uses the same adapters.
 
 A stored adapter keeps the capability of what it was made from and never
 upgrades it. `v := items.indexed()` and `v := items[:].indexed()` read-borrow
-`items` while `v` is live; `v := (&mut items[:]).indexed()` holds the exclusive
-loan `&mut items[:]` took, so it can be traversed by reference, stored, passed,
+`items` while `v` is live; `v := items[mut :].indexed()` holds the exclusive
+loan `items[mut :]` took, so it can be traversed by reference, stored, passed,
 and returned like the `[]mut T` it wraps:
 
 ```loke
-view := (&mut values[:]).indexed();
+view := values[mut :].indexed();
 fmt.println(values.len());          // ERROR: `view` holds the exclusive loan of `values`
 foreach (&mut value, index in view) { value += index; }
 ```
@@ -7759,7 +7761,7 @@ The reverse never happens: a read-only carrier does not strengthen, whatever the
 storage behind it was declared as.
 
 Weakening a **fresh** borrow creates it read-only. For example, `&mut x`
-assigned directly to a `^T`, or `&mut xs[0:2]` to a `[]T`, takes the
+assigned directly to a `^T`, or `xs[mut 0:2]` to a `[]T`, takes the
 destination's capability and suspends nothing.
 
 Weakening an **existing** mutable carrier creates a read-only reborrow. Until
@@ -7770,7 +7772,7 @@ reslicing read-only, traversing by value, and printing. Thus
 `slice.equal(xs, xs)` is accepted for `xs: []mut int`.
 
 ```loke
-source: []mut int = &mut numbers[0:2];
+source: []mut int = numbers[mut 0:2];
 reborrow: []int = source;    // a read-only reborrow of `source`
 fmt.println(reborrow[0]);
 source[0] = 50;              // ERROR: `source` is suspended here
@@ -7829,13 +7831,13 @@ In a view, elements at different constant indices are different places
 wherever it is known where the view starts: in a view parameter, whose binding
 is read-only, and in a local view that is never borrowed itself and whose every
 definition that may reach the access is a fresh borrow of a range, as
-`&mut a[0:4]`, a [slice literal](#slice-literals), whose hidden array nothing
-else reaches, or a constant reslice of such a view, as `s = &mut s[1:]`
-before a loop. A range sliced through a pointer, as `&mut p^[0:4]`, is not a
+`a[mut 0:4]`, a [slice literal](#slice-literals), whose hidden array nothing
+else reaches, or a constant reslice of such a view, as `s = s[mut 1:]`
+before a loop. A range sliced through a pointer, as `p^[mut 0:4]`, is not a
 fresh borrow: it reborrows the pointer, and where it starts is not known. A
 reslice inside a loop keeps the start known only when no
-reslice the loop repeats moves it: `s = &mut s[:2]` in a loop does, and
-`s = &mut s[1:]` does not. So `&mut xs[0]` leaves `xs[1]` usable. Through an
+reslice the loop repeats moves it: `s = s[mut :2]` in a loop does, and
+`s = s[mut 1:]` does not. So `&mut xs[0]` leaves `xs[1]` usable. Through an
 index that is not a constant, or through a copy of the view, the element may be
 any of them:
 
@@ -7905,8 +7907,8 @@ duplicate :: proc(links: []mut Link) { links[0] = links[1]; }
 after_a_move :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	exchange(&mut links[:]);
-	exchange(&mut links[:]);   // OK: nothing is in two places
+	exchange(links[mut :]);
+	exchange(links[mut :]);   // OK: nothing is in two places
 	held := links[0].to;       // may point at `x` or `y`
 	y = 5;                     // ERROR: `held` may point at `y`
 	held^ = 4;
@@ -7915,7 +7917,7 @@ after_a_move :: proc() {
 after_a_copy :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
+	duplicate(links[mut :]);
 	first := links[0].to;      // ERROR: `links[1].to` may be the same carrier
 	second := links[1].to;
 	first^ = 1;
@@ -7928,9 +7930,9 @@ arguments after it and the omitted defaults are [evaluated](#evaluation-order),
 and becomes mutable when the call starts. These arguments take such a loan:
 
 - an `inout` receiver, and an `inout` argument that names a place;
-- `&mut place` written as the argument, `&mut place[lo:hi]` included;
+- `&mut place` written as the argument, `place[mut lo:hi]` included;
 - a mutable carrier read from a place, as `p`, `list^.head`, or the reslice
-  `&mut xs[1:]`, passed where a mutable carrier is wanted, by itself, in a record
+  `xs[mut 1:]`, passed where a mutable carrier is wanted, by itself, in a record
   passed by value, or as one operand of a [variadic pack](#variadic-parameters).
 
 While a loan is reserved its place may be read, as under a read-only borrow of
@@ -8173,7 +8175,7 @@ elements borrow:
 first :: proc(values: []string_view) -> string_view { return values[0]; }
 
 arr := [2]string_view{"b", "a"};
-xs: []mut string_view = &mut arr[:];
+xs: []mut string_view = arr[mut :];
 low := first(xs);  // borrows the literals, not `xs`
 xs[0] = "c";       // fine
 fmt.println(low);
@@ -10058,7 +10060,7 @@ storage, thread-affine values, and allocator state.
 sort :: proc(xs: []mut int, depth := 0) {
 	if (xs.len() <= 4096) { slice.sort(xs); return; }
 	left, rest := xs.split_at_mut(partition(xs));
-	right := &mut rest[1:];               // the pivot is in place
+	right := rest[mut 1:];               // the pivot is in place
 	if (depth >= 6) {                     // at most 64 threads at once
 		sort(left, depth + 1);
 		sort(right, depth + 1);
@@ -10512,7 +10514,7 @@ values: [1]int;                            // file scope
 view: []mut int;                           // file scope
 increment :: proc() { view[0] += 1; }
 // In the parent procedure:
-view = &mut values[:];
+view = values[mut :];
 parallel {
 	spawn increment();                    // ERROR: access through a global mutable carrier
 }
@@ -10623,7 +10625,7 @@ fill :: proc(n: int, slot: []mut Option([dynamic]int)) {
 
 slots: [dynamic]Option([dynamic]int) = {};
 foreach (_ in 0 ..< 4) { slots.append(.none); }
-all := &mut slots[:];
+all := slots[mut :];
 parallel {
 	foreach (slot, i in all.chunks_mut(1).indexed()) { spawn fill(i, slot); }
 }

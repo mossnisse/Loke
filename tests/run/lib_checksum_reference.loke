@@ -58,7 +58,7 @@ pattern :: proc(out: []mut u8) {
 
 agrees :: proc(name: string_view, $T: type, $P: checksum.Crc_Params(T)) {
 	storage: [64]u8 = {};
-	pattern(&mut storage[:]);
+	pattern(storage[mut :]);
 
 	// Every start and length near the block size, so that each path meets every
 	// misalignment and the tail after the last whole block.

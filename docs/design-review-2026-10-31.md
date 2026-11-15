@@ -8,7 +8,7 @@ compatibility is not a constraint. Each proposal says what it would cost, so
 that it can be judged on its merits for a general-purpose language and not by
 how often the repository happens to use what it removes.
 
-This file holds only what is still open, as it stands on 2026-11-14 after
+This file holds only what is still open, as it stands on 2026-11-15 after
 several passes over the proposals and reviews of the steps taken. Proposals
 that landed are described by the specification, [CHANGELOG.md](../CHANGELOG.md),
 and [comments.md](comments.md); earlier drafts and their reasoning are in git.
@@ -43,7 +43,6 @@ is independent of the others unless noted.
 
 | Step | Proposal | Removes | Loses | Verdict |
 | --- | --- | --- | --- | --- |
-| 1 | [Mutable slicing as `a[mut lo:hi]`](#mutable-slicing-as-amut-lohi) | The `&mut`-before-slice grammar rule | The resemblance to `&mut x` | Recommended; needs `lokec -migrate` |
 | 1 | [Reserve `static` and `thread_local`](#reserve-static-and-thread_local) | A four-case disambiguation rule | Those two words as names | Recommended; needs `lokec -migrate` |
 | 2 | [Predeclare the interface catalogue](#predeclare-the-interface-catalogue) | `interfaces.` in every bound | Nothing; the names stay shadowable | Recommended |
 | 2 | [`some I`](#some-i-the-static-twin-of-dyn-i), after the catalogue | The longest repeated `where` clause | One more contextual keyword; a generic procedure without a `$` | Judgment call, judged after the catalogue |
@@ -112,35 +111,13 @@ two spellings. The places left are not that:
 
 ## Recommended
 
-### Mutable slicing as `a[mut lo:hi]`
-
-`(&mut a[:]).indexed()` needs parentheses for a member of the result, and the
-`&` in it is not the address operator: `&a[0:2]` and `&mut a[:].len()` are both
-"`&` needs an addressable operand", since a slice expression is a value, not a
-place ([Probes](#probes)). `&mut a[lo:hi]` is a second slicing form that borrows
-the operator's spelling, beside `&mut xs[i]`, which is the operator and yields
-a `^mut T`.
-
-**Proposal.** Spell it `a[mut lo:hi]`. `mut` is reserved, so nothing else can
-begin there; it puts the capability where the type `[]mut T` puts it; it chains
-like every other postfix; it keeps mutation visible at the call, which is what
-comments.md ["Mutable slicing is written
-`&mut a[lo:hi]`"](comments.md#mutable-slicing-is-written-mut-alohi) asks of
-the form; and it selects between `operator([:])` overloads by the written form
-as today. A method `a.slice_mut()` would need a second way to write the
-endpoints. grammar.md loses the `&mut`-before-slice rule.
-
-**What is lost.** The resemblance to `&mut x`. Every `&mut x[lo:hi]` changes,
-which `lokec -migrate` can rewrite, since the old form has no other reading.
-
 ### Reserve `static` and `thread_local`
 
 Each contextual keyword has a disambiguation rule in [Resolved
 ambiguities](grammar.md#resolved-ambiguities) that every tool must follow, and
 the rule for `static` and `thread_local` has four cases. As reserved words they
 need none: no program needs a type named `static`, and a keyword may still name
-a field or member ([Predeclared names](design.md#predeclared-names)). Land it
-with `a[mut lo:hi]`, since both need `lokec -migrate`.
+a field or member ([Predeclared names](design.md#predeclared-names)).
 
 ### Predeclare the interface catalogue
 
@@ -794,8 +771,6 @@ modified tree at `267ab0f9` for the last two):
 - *Only `return` wraps.* `return 5;` in a procedure returning `Option(int)` is
   accepted; `x: Option(int) = 5;` is ``L0352: 5 is not representable by
   `Option(int)` ``.
-- *`&mut a[lo:hi]` is not the address operator.* For `a: [4]int`, `&a[0:2]` is
-  ``L0357: `&` needs an addressable operand``, and so is `&mut a[:].len()`.
 - *A `self: ^mut` method is reported as missing.* With
   `bump :: proc(self: ^mut Counter)` in `impl Counter`, `c.bump()` is
   ``L0363: `Counter` has no field or member `bump` ``.

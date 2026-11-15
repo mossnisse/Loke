@@ -27,7 +27,7 @@ Expr_Position :: enum u8 {
 	// design.md "Maps": the destination of a plain assignment, the one place
 	// where `m[key]` may create an entry.
 	Insert,
-	// design.md "Slices": the operand of `&mut a[lo:hi]`. A place when there is
+	// design.md "Slices": the operand of `a[mut lo:hi]`. A place when there is
 	// one, but a value carrying a `[]mut T` serves as well.
 	Sliced_Mutably,
 }
@@ -308,7 +308,7 @@ note_mutable_slicing :: proc(k: ^Checker, e: Expr, found, target: Type_Id) {
 	slice, is_slice := e.(^Expr_Slice)
 	if is_slice && !slice.mutable && slice_is_mutable(k.c, target) && !slice_is_mutable(k.c, found) &&
 	   type_kind(k.c, found) == .Slice {
-		add_notef(k.c, slice.span, "`a[lo:hi]` is read-only; write `&mut a[lo:hi]` for a mutable slice")
+		add_notef(k.c, slice.span, "`a[lo:hi]` is read-only; write `a[mut lo:hi]` for a mutable slice")
 	}
 }
 

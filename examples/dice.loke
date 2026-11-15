@@ -63,7 +63,7 @@ roll_dice :: proc(rng: inout random.Xoshiro256) {
 deal :: proc(rng: inout random.Xoshiro256) {
 	deck: [52]int = {};
 	foreach (i in 0 ..< 52) { deck[i] = i; }
-	random.shuffle(inout rng, &mut deck[:]);
+	random.shuffle(inout rng, deck[mut :]);
 	fmt.print("hand:");
 	foreach (card in deck[:5]) {
 		fmt.concat_to(fmt.stdout(), " ", RANKS[card % 13], SUITS[card / 13]);
@@ -105,9 +105,9 @@ loaded_die :: proc(rng: inout random.Xoshiro256) {
 lottery :: proc(rng: inout random.Xoshiro256) {
 	balls: [49]int = {};
 	foreach (i in 0 ..< 49) { balls[i] = i + 1; }
-	random.sample(inout rng, &mut balls[:], 6);
+	random.sample(inout rng, balls[mut :], 6);
 	drawn := [6]int{balls[0], balls[1], balls[2], balls[3], balls[4], balls[5]};
-	sorted := &mut drawn[:];
+	sorted := drawn[mut :];
 	sorted.sort();
 	fmt.print("lottery:");
 	foreach (ball in drawn) { fmt.concat_to(fmt.stdout(), " ", ball); }

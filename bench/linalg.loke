@@ -310,7 +310,7 @@ run :: proc(operation: Operation) -> Outcome {
 		b := flatten_matrices(matrices(f32, 4, 2)[:]);
 		out := values(f32, COUNT*16, 3);
 		start := time.tick_now();
-		foreach (_ in 0 ..< ROUNDS) { hand_multiply(&mut out[:], a[:], b[:], 4); }
+		foreach (_ in 0 ..< ROUNDS) { hand_multiply(out[mut :], a[:], b[:], 4); }
 		stop := time.tick_now();
 		return timed(start, stop, hash_slice(out[:]));
 	case .Transform4_F32: return transform4_case(f32);
@@ -319,7 +319,7 @@ run :: proc(operation: Operation) -> Outcome {
 		v := flatten_vectors4(vectors4(f32, 4)[:]);
 		out := values(f32, COUNT*4, 5);
 		start := time.tick_now();
-		foreach (_ in 0 ..< ROUNDS) { hand_transform4(&mut out[:], m[:], v[:]); }
+		foreach (_ in 0 ..< ROUNDS) { hand_transform4(out[mut :], m[:], v[:]); }
 		stop := time.tick_now();
 		return timed(start, stop, hash_slice(out[:]));
 	case .Transform3_F32: return transform3_case(f32);
@@ -331,7 +331,7 @@ run :: proc(operation: Operation) -> Outcome {
 		p := flatten_vectors3(vectors3(f32, 6)[:]);
 		out := values(f32, COUNT*3, 7);
 		start := time.tick_now();
-		foreach (_ in 0 ..< ROUNDS) { hand_transform_point(&mut out[:], m[:], p[:]); }
+		foreach (_ in 0 ..< ROUNDS) { hand_transform_point(out[mut :], m[:], p[:]); }
 		stop := time.tick_now();
 		return timed(start, stop, hash_slice(out[:]));
 	case .Rotate_F32: return rotate_case(f32);
@@ -341,7 +341,7 @@ run :: proc(operation: Operation) -> Outcome {
 		v := flatten_vectors3(vectors3(f32, 9)[:]);
 		out := values(f32, COUNT*3, 10);
 		start := time.tick_now();
-		foreach (_ in 0 ..< ROUNDS) { hand_rotate(&mut out[:], q[:], v[:]); }
+		foreach (_ in 0 ..< ROUNDS) { hand_rotate(out[mut :], q[:], v[:]); }
 		stop := time.tick_now();
 		return timed(start, stop, hash_slice(out[:]));
 	}

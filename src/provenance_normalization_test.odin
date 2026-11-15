@@ -183,10 +183,10 @@ normalization_address_and_unknown_target_contract :: proc(t: ^testing.T) {
 untracked: []mut int;
 targets :: proc(choose: bool) {
     destination := [1]int{1};
-    pointer := &mut destination[:];
+    pointer := destination[mut :];
     if (choose) { pointer = untracked; }
     descriptor := &mut pointer;
-    descriptor^ = &mut destination[:];
+    descriptor^ = destination[mut :];
 }
 main :: proc() {}`) { return }
 	k: Checker
@@ -588,8 +588,8 @@ replace :: proc(receiver: inout []mut int, @(escape=stored) replacement: []mut i
 capture :: proc() -> int {
     first := [2]int{1, 2};
     second := [2]int{3, 4};
-    rebound := &mut first[:];
-    halves := rebound.split_at_mut(replace(inout rebound, &mut second[:]));
+    rebound := first[mut :];
+    halves := rebound.split_at_mut(replace(inout rebound, second[mut :]));
     return halves.left[0];
 }
 main :: proc() {}`) { return }

@@ -16,7 +16,7 @@ fill_holder :: proc(allocator: Allocator, holder: ^Holder) {
 ended :: proc(@(allocator_reset) allocator: Allocator) {
     {
         owners: [1][dynamic]int = {};
-        fill(allocator, &mut owners[:]);
+        fill(allocator, owners[mut :]);
         fmt.println(owners[0].len());
     }
     {

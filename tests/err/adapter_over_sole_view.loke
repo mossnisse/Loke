@@ -22,7 +22,7 @@ impl Sole {
 
 main :: proc() {
 	storage := [2]int{1, 2};
-	source := Sole{&mut storage[:]};
+	source := Sole{storage[mut :]};
 	view := source.indexed();
 	foreach (&mut v, i in view) { v += i; }
 }

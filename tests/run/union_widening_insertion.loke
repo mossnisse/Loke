@@ -52,7 +52,7 @@ Wide_Owned :: (none: | owned: Owned | token: Token);
 
 arena_append :: proc() {
 	buffer: [1024]u8 = {};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	source: Small_Owned = .owned(Owned{make([dynamic]int, 1024)});
 	items := make([dynamic]Wide_Owned, 0, 0, arena.allocator());
 	fmt.println(items.try_append(source), items.len());

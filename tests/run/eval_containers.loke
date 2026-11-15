@@ -133,8 +133,8 @@ record_keys :: proc() -> int {
 // A slice made on the spot still views what it was made from.
 through_view :: proc() -> int {
 	cells := [3]int{1, 2, 3};
-	(&mut cells[:])[0] = 10;
-	foreach (&mut cell in view(&mut cells[1:])) { cell += 1; }
+	cells[mut :][0] = 10;
+	foreach (&mut cell in view(cells[mut 1:])) { cell += 1; }
 	return cells[0] * 100 + cells[1] * 10 + cells[2];
 }
 view :: proc(cells: []mut int) -> []mut int { return cells; }

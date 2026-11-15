@@ -23,12 +23,12 @@ vector :: proc(name: string_view, value: $T, big: []u8) {
 	if (!same(endian.load(T, little[:width], .Little), value)) { report(name, "load little"); }
 
 	out: [16]u8 = {};
-	endian.store(&mut out[:], value, .Big);
+	endian.store(out[mut :], value, .Big);
 	foreach (i in 0 ..< width) { if (out[i] != big[i]) { report(name, "store big"); } }
 	foreach (i in width ..< out.len()) { if (out[i] != 0) { report(name, "store big past the field"); } }
 
 	out = {};
-	endian.store(&mut out[:], value, .Little);
+	endian.store(out[mut :], value, .Little);
 	foreach (i in 0 ..< width) { if (out[i] != little[i]) { report(name, "store little"); } }
 	foreach (i in width ..< out.len()) { if (out[i] != 0) { report(name, "store little past the field"); } }
 }
@@ -83,7 +83,7 @@ main :: proc() {
 
 	// Patching in place leaves its neighbours alone.
 	patched := [6]u8{0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA};
-	endian.store(&mut patched[1:], u32(0x01020304), .Little);
+	endian.store(patched[mut 1:], u32(0x01020304), .Little);
 	fmt.println(patched);
 
 	fmt.println(endian.is_fixed_width(u8), endian.is_fixed_width(i128), endian.is_fixed_width(f16));

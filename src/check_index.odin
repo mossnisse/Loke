@@ -371,7 +371,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 		} else {
 			errorf(
 				k.c, v.span, "L0419",
-				"`%s` has only a mutable `operator([:])`; slice it with `&mut`, as in `&mut x[a:b]`",
+				"`%s` has only a mutable `operator([:])`; slice it with `mut`, as in `x[mut a:b]`",
 				type_name(k.c, operand),
 			)
 		}
@@ -429,7 +429,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, expected: Type_Id) {
 	}
 }
 
-// design.md "Indexing and slicing": `&mut x[a:b]` selects the overload yielding
+// design.md "Indexing and slicing": `x[mut a:b]` selects the overload yielding
 // `[]mut T`, and `x[a:b]` the one yielding anything else. The destination
 // selects nothing.
 @(private = "file")
@@ -495,7 +495,7 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 	if !ok {
 		return true
 	}
-	// design.md "Slices": `a[lo:hi]` is read-only; `&mut a[lo:hi]` asks for the
+	// design.md "Slices": `a[lo:hi]` is read-only; `a[mut lo:hi]` asks for the
 	// mutable capability, which the operand must have.
 	#partial switch info.kind {
 	case .Array, .Dynamic_Array:

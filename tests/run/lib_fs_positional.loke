@@ -88,20 +88,20 @@ main :: proc() {
 	ab: string_view = "AB";
 	report(file.write_at(ab.bytes(), 2));
 	four: [4]u8 = {};
-	report(file.read_at(&mut four[:], 0));
+	report(file.read_at(four[mut :], 0));
 	fmt.println(text(four[:]));
 	// A read that reaches the end is short, not a failure; one that starts there
 	// is `End_Of_Input`.
-	report(file.read_at(&mut four[:], 8));
+	report(file.read_at(four[mut :], 8));
 	fmt.println(text(four[0:2]));
-	report(file.read_at(&mut four[:], 10));
+	report(file.read_at(four[mut :], 10));
 	// The offset's high half reaches the platform: 2^32 is past this file's end,
 	// not offset 0.
-	report(file.read_at(&mut four[:], 0x100000000));
+	report(file.read_at(four[mut :], 0x100000000));
 	three: [3]u8 = {};
-	fmt.println(succeeded(file.read_exact_at(&mut three[:], 7)));
+	fmt.println(succeeded(file.read_exact_at(three[mut :], 7)));
 	fmt.println(text(three[:]));
-	short := failure_of(file.read_exact_at(&mut four[:], 8));
+	short := failure_of(file.read_exact_at(four[mut :], 8));
 	fmt.println(io.code_of(short), io.operation_of(short));
 
 	// Writing past the end extends the file, and the gap reads as zeros.
@@ -114,16 +114,16 @@ main :: proc() {
 	show(data);
 
 	// An offset no signed 64-bit offset can hold, and an empty buffer.
-	report(file.read_at(&mut four[:], 0x8000000000000000));
+	report(file.read_at(four[mut :], 0x8000000000000000));
 	report(file.write_at(z.bytes(), 0x8000000000000000));
-	report(file.read_at(&mut four[0:0], 0));
+	report(file.read_at(four[mut 0:0], 0));
 	fmt.println(succeeded(file.close()));
-	report(file.read_at(&mut four[:], 0));
+	report(file.read_at(four[mut :], 0));
 	report(file.write_at(z.bytes(), 0));
 
 	// An append handle reads anywhere and writes only at the end.
 	appender := fs.open(data, fs.Open_Options{access = .Read_Write, disposition = .Open_Existing, append = true}) or_else panic("a file the test just wrote could not be opened");
-	report(appender.read_at(&mut four[:], 2));
+	report(appender.read_at(four[mut :], 2));
 	fmt.println(text(four[:]));
 	report(appender.write_at(z.bytes(), 0));
 	fmt.println(succeeded(appender.close()));
@@ -133,7 +133,7 @@ main :: proc() {
 	report(reader.write_at(z.bytes(), 0));
 	fmt.println(succeeded(reader.close()));
 	writer := fs.open(data, fs.Open_Options{access = .Write, disposition = .Open_Existing, append = false}) or_else panic("a file the test just wrote could not be opened");
-	report(writer.read_at(&mut four[:], 0));
+	report(writer.read_at(four[mut :], 0));
 	fmt.println(succeeded(writer.close()));
 	show(data);
 

@@ -56,7 +56,7 @@ main :: proc() {
 	number := 1;
 	readers(&mut number);
 	values := [1]int{2};
-	views(&mut values[:]);
+	views(values[mut :]);
 	box := Box{3};
 	shapes(&mut box);
 	held := 4;

@@ -114,12 +114,12 @@ main :: proc() {
 	// read_exact fills the whole destination, and reports a short stream.
 	source := reader_over("abcdef", 2);
 	buffer: [6]u8 = {};
-	fmt.println(succeeded(io.read_exact(inout source, &mut buffer[:])));
+	fmt.println(succeeded(io.read_exact(inout source, buffer[mut :])));
 	fmt.println(text_of(buffer[:]));
 
 	short := reader_over("abc", 2);
 	big: [6]u8 = {};
-	fmt.println(int(io.code_of(failed(io.read_exact(inout short, &mut big[:])))));
+	fmt.println(int(io.code_of(failed(io.read_exact(inout short, big[mut :])))));
 
 	// read_to_end, with and without a limit.
 	whole := reader_over("one two three", 4);
@@ -158,7 +158,7 @@ main :: proc() {
 	into: Short_Writer = {};
 	into.most = 4;
 	window: [3]u8 = {};
-	switch (io.copy(inout into, inout from, &mut window[:])) {
+	switch (io.copy(inout into, inout from, window[mut :])) {
 	case .ok(moved):
 		fmt.println(moved);
 		fmt.println(true);
@@ -238,7 +238,7 @@ main :: proc() {
 	// An allocator that runs out is a write failure, and nothing of that write
 	// is kept.
 	room: [256]u8 = {};
-	cramped := mem.Arena.from_buffer(&mut room[:]);
+	cramped := mem.Arena.from_buffer(room[mut :]);
 	starved := io.Buffer_Writer.init(cramped.allocator());
 	oversized: [1024]u8 = {};
 	switch (io.write_all(inout starved, oversized[:])) {

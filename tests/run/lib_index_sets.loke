@@ -169,40 +169,40 @@ main :: proc() {
 	// words are read directly.
 	words: [2]u64 = {0, 0xFFFF_FFFF_FFFF_FFFF};
 	{
-		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v := container.Index_View_Mut.over(words[mut :], 66);
 		fmt.println(v.len(), v.next_member(0), v.next_absent(64), v);
 		v.clear();
 		fmt.println(v.is_empty());
 	}
 	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFC);
 	{
-		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v := container.Index_View_Mut.over(words[mut :], 66);
 		v.set(65);
 		v.set_range(0, 2);
 		fmt.println(v);
 	}
 	fmt.println(words[0], words[1] == 0xFFFF_FFFF_FFFF_FFFE);
 	{
-		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v := container.Index_View_Mut.over(words[mut :], 66);
 		v.fill();
 		fmt.println(v.len());
 	}
 	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFF);
 	{
-		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v := container.Index_View_Mut.over(words[mut :], 66);
 		v.toggle_range(0, 66);
 		fmt.println(v.len());
 	}
 	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFC);
 	{
-		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v := container.Index_View_Mut.over(words[mut :], 66);
 		v.insert_all(container.Index_Set(66).all().view());
 		v.retain_all(container.Index_Set(66).of(0, 65).view());
 		fmt.println(v);
 	}
 	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFE);
 	{
-		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v := container.Index_View_Mut.over(words[mut :], 66);
 		v.toggle_all(container.Index_Set(66).of(1, 65).view());
 		fmt.println(v);
 	}
@@ -219,7 +219,7 @@ main :: proc() {
 	// the host's byte order; the padding of the final byte is zero.
 	p := container.Index_Set(20).of(0, 9, 10, 19);
 	bytes: [3]u8 = {};
-	p.store_bytes(&mut bytes[:]);
+	p.store_bytes(bytes[mut :]);
 	fmt.println(container.bytes_for_bits(20), bytes);
 	q: container.Index_Set(20) = {};
 	fmt.println(q.load_bytes(bytes[:]), q == p);
@@ -231,19 +231,19 @@ main :: proc() {
 	// A capacity that fills its last byte has no padding to check.
 	w := container.Index_Set(16).of(15);
 	two: [2]u8 = {0, 0};
-	w.store_bytes(&mut two[:]);
+	w.store_bytes(two[mut :]);
 	fmt.println(two);
 	two[0] = 0xFF;
 	fmt.println(w.load_bytes(two[:]), w);
 
 	// A view stores only its members, and loading keeps the caller's tail.
 	stored: [9]u8 = {};
-	container.Index_View.over(words[:], 66).store_bytes(&mut stored[:]);
+	container.Index_View.over(words[:], 66).store_bytes(stored[mut :]);
 	fmt.println(stored);
 	stored[0] = 0x80;
 	stored[8] = 0x02;
 	{
-		v := container.Index_View_Mut.over(&mut words[:], 66);
+		v := container.Index_View_Mut.over(words[mut :], 66);
 		fmt.println(v.load_bytes(stored[:]), v);
 	}
 	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFE);

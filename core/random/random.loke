@@ -14,7 +14,7 @@
 
 	    rng := random.Xoshiro256.from_seed(42);
 	    die := random.in_range(inout rng, 1 ..= 6);
-	    random.shuffle(inout rng, &mut deck[:]);
+	    random.shuffle(inout rng, deck[mut :]);
 
 	There is no package-owned generator. A program that wants one declares its
 	own, `rng: thread_local random.Xoshiro256;`, whose zero value seeds itself

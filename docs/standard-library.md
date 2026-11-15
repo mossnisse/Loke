@@ -614,11 +614,11 @@ region: allocating a byte or more from it fails, and resetting or dropping it
 does nothing.
 
 ```loke
-fixed := mem.Arena.from_buffer(&mut buffer[:]);
+fixed := mem.Arena.from_buffer(buffer[mut :]);
 arena := mem.Arena.init(parent_allocator);
 scratch := mem.Scratch.init();
 outcome := mem.try_scratch(parent_allocator); // Result; handle before using the owner
-embedded := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
+embedded := mem.Arena.from_buffer(buffer[mut :], policy = .Trap);
 ```
 
 `mem.Failure_Policy` is `enum { Panic, Trap }`, and `init`, `from_buffer`,
@@ -1359,7 +1359,7 @@ and outputs, and after the join the parent has all of them back:
 ```loke
 pool := thread.Pool.init(thread.processor_count());
 foreach (_ in 0..<frames) {
-	all := &mut particles[:];
+	all := particles[mut :];
 	parallel (&pool) {
 		foreach (group in all.chunks_mut(256)) { spawn step(group); }
 	}
@@ -2069,7 +2069,7 @@ save_generation :: proc(path: string_view, generation: u64, allocator: Allocator
 	-> Status((json: json.Write_Error | file: io.Error)) {
 	bytes := io.Buffer_Writer.init(allocator);
 	scratch: [8192]u8 = {};
-	out := json.writer(&mut bytes, &mut scratch[:]) or_return .json;
+	out := json.writer(&mut bytes, scratch[mut :]) or_return .json;
 	out.begin_object() or_return .json;
 	out.key("generation") or_return .json;
 	out.u64(generation) or_return .json;
@@ -2256,7 +2256,7 @@ w.put_length(u16, entries.len()) or_return;
 
 whole := buffer.bytes_mut();
 body_length := whole.len() - length_at - 4;
-endian.store(&mut whole[length_at:], u32(body_length), .Big);
+endian.store(whole[mut length_at:], u32(body_length), .Big);
 ```
 
 ## `core:checksum`
@@ -2385,8 +2385,8 @@ with a place in the other half, whether each is reached through the half, a
 copy of it, or a further split or chunk of it. The receiver may be any place
 holding a `[]mut T`, such as `halves.left`, which is suspended as `xs` is.
 
-No other spelling gives two mutable views of one sequence: `&mut xs[:mid]` and
-`&mut xs[mid:]` are two reborrows of `xs`, which cannot be live at once, and a
+No other spelling gives two mutable views of one sequence: `xs[mut :mid]` and
+`xs[mut mid:]` are two reborrows of `xs`, which cannot be live at once, and a
 procedure cannot return them together either. That is why this is a contributed
 member rather than a `core:slice` procedure. A read-only `[]T` needs no such
 member, since two read-only reslices may be live together.
@@ -3347,7 +3347,7 @@ read and written in place.
 PAGE :: 4096;
 
 read_page :: proc(store: inout fs.File, page: u64, into: []mut u8) -> Status(io.Error) {
-	return store.read_exact_at(&mut into[0:PAGE], page * PAGE);
+	return store.read_exact_at(into[mut 0:PAGE], page * PAGE);
 }
 
 write_page :: proc(store: inout fs.File, page: u64, from: []u8) -> Status(io.Error) {

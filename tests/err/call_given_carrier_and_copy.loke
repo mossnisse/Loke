@@ -33,14 +33,14 @@ written_out :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[0] = links[1];
-	poke_both(&mut links[:]);
+	poke_both(links[mut :]);
 }
 
 copied_by_a_call :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
-	duplicate(&mut links[:]);
-	poke_both(&mut links[:]);
+	duplicate(links[mut :]);
+	poke_both(links[mut :]);
 }
 
 // Reached through a read-only view, whose mutable carriers keep their capability.
@@ -121,7 +121,7 @@ value_receiver_holding_a_view :: proc() {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[0] = links[1];
-	wrap := Wrap{&mut links[:]};
+	wrap := Wrap{links[mut :]};
 	wrap.poke();
 }
 
@@ -138,7 +138,7 @@ through_a_procedure_value :: proc(callback: proc(values: []mut Link)) {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[0] = links[1];
-	callback(&mut links[:]);
+	callback(links[mut :]);
 }
 
 // At indices that are not constants the two may be different elements.
@@ -146,7 +146,7 @@ at_variable_indices :: proc(i: int, j: int) {
 	x := 1; y := 2;
 	links := [2]Link{Link{&mut x}, Link{&mut y}};
 	links[i] = links[j];
-	poke_both(&mut links[:]);
+	poke_both(links[mut :]);
 }
 
 // In a body, of what its parameter holds.

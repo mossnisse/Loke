@@ -1,3 +1,6 @@
 L0357
 @8:13
 `&mut` needs an addressable operand
+L0357
+@9:11
+`&mut` needs an addressable operand

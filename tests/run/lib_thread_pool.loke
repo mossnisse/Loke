@@ -71,7 +71,7 @@ rounds :: proc() {
 	values: [dynamic]int = {};
 	foreach (i in 0 ..< 64) { values.append(i); }
 	foreach (_ in 0 ..< 100) {
-		all := &mut values[:];
+		all := values[mut :];
 		parallel (&pool) {
 			foreach (chunk in all.chunks_mut(8)) { spawn double_all(chunk); }
 		}

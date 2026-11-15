@@ -42,6 +42,6 @@ through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 main :: proc() {
 	buffer := [256]u8{};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	fmt.println(run(arena.allocator()), nested(arena.allocator()), through_local(arena.allocator()));
 }

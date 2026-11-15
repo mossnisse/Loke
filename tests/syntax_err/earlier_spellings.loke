@@ -1,5 +1,5 @@
-// design.md "Attributes": a record's attributes are written on its declaration,
-// and `-migrate` rewrites what an earlier release accepted.
+// design.md "Attributes", "Slices": a record's attributes are written on its declaration, and a
+// mutable slice's `mut` in its brackets. `-migrate` rewrites what an earlier release accepted.
 package main;
 
 Packed :: struct @(packed) { a: u8 }
@@ -12,5 +12,13 @@ Holder :: struct { field: union @(zero=none) { none, some: int } }
 // A name, not a keyword.
 move_only := 3;
 Named :: struct { move_only: int }
+
+slices :: proc(values: []mut int) {
+	whole := &mut values[:];
+	inner := (&mut values[1:])[0:1];
+	chained := (& mut values[1:2]).len();
+	// The address of an element is the operator.
+	element := &mut values[0];
+}
 
 sentinel :: proc() { }

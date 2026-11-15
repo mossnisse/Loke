@@ -30,7 +30,7 @@ forward_pointee :: proc(pointer: ^Reader) -> string { return read_text(pointer^)
 
 by_value :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("text", other.allocator())};
@@ -42,7 +42,7 @@ by_value :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 through_inout :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("inout", other.allocator())};
@@ -55,7 +55,7 @@ through_inout :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("local", other.allocator())};
@@ -67,7 +67,7 @@ through_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("deep", other.allocator())};
@@ -80,7 +80,7 @@ two_loads :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 element :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		names := make([dynamic]string, 0, other.allocator());
@@ -96,7 +96,7 @@ element :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 // still reads owners alone.
 forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("forward", other.allocator())};
@@ -108,7 +108,7 @@ forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 forwarded_pointee :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [4096]u8{};
-	other := mem.Arena.from_buffer(&mut buffer[:]);
+	other := mem.Arena.from_buffer(buffer[mut :]);
 	kept: string = "";
 	{
 		source := Holder{allocator, strings.copy("pointee", other.allocator())};
@@ -121,7 +121,7 @@ forwarded_pointee :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 main :: proc() {
 	buffer := [4096]u8{};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	fmt.println(by_value(arena.allocator()), through_inout(arena.allocator()), through_local(arena.allocator()),
 		two_loads(arena.allocator()), element(arena.allocator()), forwarded(arena.allocator()),
 		forwarded_pointee(arena.allocator()));

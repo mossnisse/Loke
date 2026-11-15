@@ -32,7 +32,7 @@ leave_through :: proc(owned: ^Owned) { owned^.out^ = owned^.items; }
 
 from_literal :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	store_second(Pair{&mut a, &mut b}, allocator);
@@ -43,7 +43,7 @@ from_literal :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 from_named :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 2, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	pair := Pair{&mut a, &mut b};
@@ -55,7 +55,7 @@ from_named :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 3, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	forward(Pair{&mut a, &mut b}, allocator);
@@ -66,7 +66,7 @@ forwarded :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 copied_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 4, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	through_local(Pair{&mut a, &mut b}, allocator);
@@ -77,7 +77,7 @@ copied_local :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 nested_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 5, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	nested(Outer{Pair{&mut a, &mut b}}, allocator);
@@ -88,7 +88,7 @@ nested_record :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 field_of_target :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := Items{make([dynamic]int, 6, kept.allocator())};
 	b := Items{make([dynamic]int, 0, kept.allocator())};
 	field_below(Carriers{&mut a, &mut b}, allocator);
@@ -99,7 +99,7 @@ field_of_target :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 behind_a_pointer :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 9, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	pair := Pair{&mut a, &mut b};
@@ -111,7 +111,7 @@ behind_a_pointer :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 
 in_place :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 10, kept.allocator());
 	b := make([dynamic]int, 0, kept.allocator());
 	pair := Pair{&mut a, &mut b};
@@ -125,7 +125,7 @@ in_place :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 // of `kept`, though `a` is in it.
 owned_left :: proc(allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	leave_items(Owned{make([dynamic]int, 7, allocator), &mut a});
 	return a.len();
@@ -133,7 +133,7 @@ owned_left :: proc(allocator: mem.Allocator) -> int {
 
 owned_through_pointer :: proc(allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	owned := Owned{make([dynamic]int, 8, allocator), &mut a};
 	leave_through(&owned);
@@ -142,7 +142,7 @@ owned_through_pointer :: proc(allocator: mem.Allocator) -> int {
 
 main :: proc() {
 	arena_buffer := [1024]u8{};
-	arena := mem.Arena.from_buffer(&mut arena_buffer[:]);
+	arena := mem.Arena.from_buffer(arena_buffer[mut :]);
 	fmt.println(from_literal(arena.allocator()), from_named(arena.allocator()), forwarded(arena.allocator()));
 	fmt.println(copied_local(arena.allocator()), nested_record(arena.allocator()), field_of_target(arena.allocator()));
 	fmt.println(owned_left(arena.allocator()), owned_through_pointer(arena.allocator()));

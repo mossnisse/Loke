@@ -35,7 +35,7 @@ show :: proc(what: string_view, outcome: Result(Unit, io.Error)) {
 main :: proc() {
 	// The result storage is the caller's own; only scratch is short.
 	buffer: [65536]u8 = {};
-	results := mem.Arena.from_buffer(&mut buffer[:]);
+	results := mem.Arena.from_buffer(buffer[mut :]);
 	hoard := exhaust();
 
 	switch (fs.read_directory(".", results.allocator())) {

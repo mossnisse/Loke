@@ -70,8 +70,8 @@ forced_fallback_selects_among_duplicates :: proc() {
 				seed := state;
 				foreach (n in 0 ..< count) {
 					state = seed;
-					fill_duplicates(&mut work[:count], shape, alphabet, inout state);
-					assert(forced_selection_holds(&mut work[:count], n));
+					fill_duplicates(work[mut :count], shape, alphabet, inout state);
+					assert(forced_selection_holds(work[mut :count], n));
 				}
 			}
 		}
@@ -86,7 +86,7 @@ forced_fallback_selects_among_equal_keys :: proc() {
 	foreach (count in [3]int{17, 24, 64}) {
 		foreach (n in 0 ..< count) {
 			foreach (i in 0 ..< count) { work[i] = 0; }
-			assert(forced_selection_holds(&mut work[:count], n));
+			assert(forced_selection_holds(work[mut :count], n));
 		}
 	}
 }

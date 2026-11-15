@@ -60,11 +60,11 @@ weakened_field :: proc(external: []mut int, writable: []mut int) -> []int {
 main :: proc() {
 	values := [2]int{1, 2};
 	other := [1]int{3};
-	xs := &mut values[:];
+	xs := values[mut :];
 	declarations(xs);
 	assignments(xs);
 	records(xs);
-	fmt.println(weakened_field(xs, &mut other[:]));
+	fmt.println(weakened_field(xs, other[mut :]));
 	near := [dynamic]int{4, 5};
 	far := [dynamic]int{6, 7};
 	held := &mut far;

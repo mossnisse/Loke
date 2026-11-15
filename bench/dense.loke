@@ -124,7 +124,7 @@ run :: proc(operation: Operation, n: int, pool: ^thread.Pool) -> Outcome {
 		out := make([dynamic]f64, 0, n*n);
 		foreach (_ in 0 ..< n*n) { out.append(0.0); }
 		start := time.tick_now();
-		hand_multiply(&mut out[:], a[:], b[:], n);
+		hand_multiply(out[mut :], a[:], b[:], n);
 		stop := time.tick_now();
 		// The same checksum as `.Multiply`'s, which it matches bit for bit.
 		result := dense.View(f64).from_column_major(out[:], n, n);

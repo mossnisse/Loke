@@ -33,49 +33,49 @@ copy_in_branch_after_swap :: proc(links: []mut Link, c: bool) {
 l1 :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	via_local(&mut links[:]);
+	via_local(links[mut :]);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }
 l2 :: proc(c: bool) {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	in_branch(&mut links[:], c);
+	in_branch(links[mut :], c);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }
 l3 :: proc(c: bool) {
 	a := 1; b := 2; o := 3;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	source_replaced_on_one_path(&mut links[:], &mut o, c);
+	source_replaced_on_one_path(links[mut :], &mut o, c);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }
 l4 :: proc(i: int, j: int) {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	unknown_index(&mut links[:], i, j);
+	unknown_index(links[mut :], i, j);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }
 l5 :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	in_loop(&mut links[:]);
+	in_loop(links[mut :]);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }
 l6 :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	self_assigned(&mut links[:]);
+	self_assigned(links[mut :]);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }
 l7 :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	back_and_forth(&mut links[:]);
+	back_and_forth(links[mut :]);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }
@@ -96,14 +96,14 @@ l9 :: proc() {
 l10 :: proc() {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	held_then_copied(&mut links[:]);
+	held_then_copied(links[mut :]);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }
 l11 :: proc(c: bool) {
 	a := 1; b := 2;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	copy_in_branch_after_swap(&mut links[:], c);
+	copy_in_branch_after_swap(links[mut :], c);
 	links[0].to^ = 1; // L0641
 	links[1].to^ = 2;
 }

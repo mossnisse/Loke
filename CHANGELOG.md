@@ -10,6 +10,19 @@ checklist.
 
 ### Breaking changes
 
+- Mutable slicing is written `a[mut lo:hi]` ([Slices](docs/design.md#slices), rationale under
+  ["Mutable slicing is written `a[mut lo:hi]`"](docs/comments.md#mutable-slicing-is-written-amut-lohi)).
+  `&mut a[lo:hi]` was a slicing form in the address operator's spelling: a slice is a value, so
+  `&a[lo:hi]` was an error, and the prefix took every suffix after the slice, so a member of the
+  result needed parentheses. `(&mut values[:]).indexed()` is now `values[mut :].indexed()`. The
+  earlier spelling is `L0750`, and `mut` in an index, `a[mut i]`, is `L0263`; `&mut a[i]` is still
+  the address of an element. Upgrade by running `lokec <file or directory> -migrate`, which moves
+  each `mut` and leaves the parentheses, which can then go:
+
+  ```
+  fill(&mut buffer[:]);                          // before
+  fill(buffer[mut :]);                           // after
+  ```
 - An allocator that a parameter received inside a record or an `Option`, by value or `inout`, names
   its argument's region, as one passed alone or behind a pointer does
   ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
@@ -354,7 +367,7 @@ checklist.
   have existed; write a procedure type with no clause. `-> !` on a procedure type in result position,
   `f :: proc() -> proc() -> ! { ... }`, is `L0257`, as it is elsewhere: calls through it never
   diverged, so remove the `!`. A parenthesized slice, `&mut (a[1:2])`, is `L0357`, as `&(a[1:2])` is:
-  drop the parentheses for mutable slicing. Attributes on an empty statement, `@(x) ;` in a body, are
+  write `a[mut 1:2]` for mutable slicing. Attributes on an empty statement, `@(x) ;` in a body, are
   `L0206`, as at file scope: they applied to nothing, so remove them.
 - An extension `operator([]=)` no longer takes a store that built-in indexing answers
   ([Operator lookup and overload resolution](docs/design.md#operator-lookup-and-overload-resolution)):
@@ -624,7 +637,7 @@ checklist.
 - A call can no longer be left both a mutable carrier and a copy of it
   ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). After
   `links[0] = links[1];` or a call that may copy between elements,
-  `poke_both(&mut links[:]);` compiled when neither carrier was used afterwards,
+  `poke_both(links[mut :]);` compiled when neither carrier was used afterwards,
   and the callee could write through both. It is now `L0641`, however the
   arguments reach the two: through a view, a pointer, `inout`, a receiver, by value,
   or one through each of two arguments, which depended on their order. A second call
@@ -731,7 +744,7 @@ checklist.
   by evaluating the later argument into a local first.
 - A call that moves or copies carriers within the storage an argument reaches is
   now seen ([Values that contain borrows](docs/design.md#values-that-contain-borrows)).
-  After `exchange(&mut links[:])` over a fixed array or `share(&mut pair)` between
+  After `exchange(links[mut :])` over a fixed array or `share(&mut pair)` between
   fields, each carrier there kept what it held before the call, so a copy
   `held := links[0].to` still allowed writing what it now pointed at; that is now
   `L0512`, `L0511`, or `L0641`, whether the store is in a body, a generic instance,
@@ -1751,7 +1764,7 @@ checklist.
   unspecified, since [Representation](docs/design.md#representation) specifies it.
 - [Weakening and reborrows](docs/design.md#weakening-and-reborrows) now says which views keep their
   constant elements apart as the compiler already did: a slice literal does, as a fresh borrow of
-  a range does, and a range sliced through a pointer, as `&mut p^[0:2]`, does not, since it
+  a range does, and a range sliced through a pointer, as `p^[mut 0:2]`, does not, since it
   reborrows the pointer. Nothing a program means changed.
 - A thread the runtime did not start attaches itself the first time it calls a Loke export or a
   callback Loke handed to C
@@ -2699,7 +2712,7 @@ checklist.
   side is, where a mismatched one was `L0310`.
 - A declared `Simd`, unsuitable as a type, is `L0306` rather than a request for the predeclared
   constructor's arguments, and `$n := 5` says that a `$` parameter writes its type.
-- `&mut p^.items[:]` passed where a `[]T` is wanted now suspends nothing through the carrier, as
+- `p^.items[mut :]` passed where a `[]T` is wanted now suspends nothing through the carrier, as
   on a local and as `&mut p^.items` does; it was a false `L0641`
   ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)). A conflict on such a slice is
   also reported once, naming the carrier.
@@ -2713,8 +2726,8 @@ checklist.
   ([Compile-time procedure evaluation](docs/design.md#compile-time-procedure-evaluation)).
   `xs.append(..view)` added nothing, so a `static_assert` could pass on the wrong length, and
   `xs.append(1, ..view)` was `L0341`. A zero `string_view` compared unequal to `""`. A single name
-  over a lent `indexed()` reported a nil pointer at `r.value^`, and `&mut` over a slice expression,
-  as in `(&mut arr[:]).indexed()`, and a write through one, as in `(&mut arr[:])[0] = 1`, were
+  over a lent `indexed()` reported a nil pointer at `r.value^`, and a member of a mutable slice expression,
+  as in `arr[mut :].indexed()`, and a write through one, as in `arr[mut :][0] = 1`, were
   `L0341`. A local type, or `_: int;`, gave only `L0311`. A non-scalar `assert` argument reported
   `L0341` in place of the assertion, reading a box emptied by `unsafe.take` gave only `L0311`, and
   the seed of `hash` ran after its receiver's `or_return` had left.
@@ -2792,7 +2805,7 @@ checklist.
   and a labelled record against the unlabelled one with its field types, were `L0354`.
 - `pp[i]`, with `pp` a pointer to a C pointer, indexes through the C pointer. It reached clang and
   failed `L0403` ([C pointers](docs/design.md#c-pointers)).
-- `&mut a[lo:hi]` slices any mutable array place ([Slices](docs/design.md#slices)): an element of a C
+- `a[mut lo:hi]` slices any mutable array place ([Slices](docs/design.md#slices)): an element of a C
   pointer, a map element, or an `inout` `operator([])` result was `L0359` or `L0477`.
 - A field a box's payload promotes beats the box's own member, as a declared one does:
   `box(Outer{...}).clone` with a `using` field holding `clone` was `L0408`
@@ -3060,9 +3073,9 @@ checklist.
   disjoint write was `L0641` although each storage was within its eight places
   ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
 - A reslice in a loop that never moves a local view's start, as
-  `s = &mut s[:2]`, now leaves the view's constant elements apart, so `s[1]`
+  `s = s[mut :2]`, now leaves the view's constant elements apart, so `s[1]`
   beside a live `&mut s[0]` is no longer `L0641`. A loop that moves the start,
-  as `s = &mut s[1:]`, stays rejected.
+  as `s = s[mut 1:]`, stays rejected.
 - Printing only reads a mutable pointer to plain data, and a mutable slice or pointer
   held in a field, element, or through a pointer, so `fmt.println(held.items,
   len_of(held.items))`, `fmt.println(p, p)`, and `assert(ok, "stop", held.p, held.p)`
@@ -3076,7 +3089,7 @@ checklist.
 - A dynamic array's first 8 elements are now told apart by a constant index, as a
   fixed array's are ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
   `node := lists[0].head; other := lists[1].head;`, directly or through a fresh
-  `&mut lists[:]`, was `L0641` as each element stood for all of them; and with it
+  `lists[mut :]`, was `L0641` as each element stood for all of them; and with it
   `&mut d[0]` beside a use of `d[1]`, and a write of `y` while only
   `links[0]`, built from `&mut x`, is in use. `insert`, `remove`,
   `remove_unordered`, `swap`, the sorts, and any call that moves carriers join
@@ -3136,8 +3149,8 @@ checklist.
   same or another element kept beside it in a loop (`L0641`)
   ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A local view that a branch only shortens, as
-  `if (flag) { s = &mut s[:2]; }`, and a fresh view of a whole dynamic array,
-  as `s := &mut d[:]`, now keep their elements at different constant indices
+  `if (flag) { s = s[mut :2]; }`, and a fresh view of a whole dynamic array,
+  as `s := d[mut :]`, now keep their elements at different constant indices
   apart, so `&mut s[0]` leaves `s[1]` usable; both were rejected with `L0641`
   ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - A carrier copied out of one element of a local view, as `s[0].head`, no
@@ -3222,12 +3235,12 @@ checklist.
   Before, it was rejected with `L0385`.
 
 - A store into one element of a local slice view at a constant index, as
-  `s[0].head = s[0].tail` with `s := &mut arr[:]` or a constant reslice
-  `t := &mut s[1:]`, now replaces what that element held, so a loop that
+  `s[0].head = s[0].tail` with `s := arr[mut :]` or a constant reslice
+  `t := s[mut 1:]`, now replaces what that element held, so a loop that
   copies `s[0].head` before the store compiles, as it does through a slice
   parameter ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).
 - Such a store also replaces what the element held when the view was resliced
-  from itself before the loop, as `s = &mut s[1:]`; it was rejected with
+  from itself before the loop, as `s = s[mut 1:]`; it was rejected with
   `L0641`. Resliced inside the loop or in one branch only, `s[0]` may name
   several elements, and the store is still rejected
   ([Weakening and reborrows](docs/design.md#weakening-and-reborrows)).

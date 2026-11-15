@@ -57,7 +57,7 @@ main :: proc() {
 	unsafe.write(held[0], {});
 	{
 		room: [512]u8 = {};
-		arena := mem.Arena.from_buffer(&mut room[:]);
+		arena := mem.Arena.from_buffer(room[mut :]);
 		scratch := make([dynamic]int, 0, 4, arena.allocator());
 		scratch.append(2);
 		fmt.println(kept, scratch);
@@ -67,7 +67,7 @@ main :: proc() {
 	from_call := take_items(inout holder);
 	unsafe.write(holder.items, {});
 	room: [512]u8 = {};
-	unrelated := mem.Arena.from_buffer(&mut room[:]);
+	unrelated := mem.Arena.from_buffer(room[mut :]);
 	other := make([dynamic]int, 0, 4, unrelated.allocator());
 	other.append(9);
 	fmt.println(from_call, other);
@@ -76,14 +76,14 @@ main :: proc() {
 	small.append([dynamic]int{4});
 	popped := small.pop();
 	room2: [512]u8 = {};
-	later := mem.Arena.from_buffer(&mut room2[:]);
+	later := mem.Arena.from_buffer(room2[mut :]);
 	values := make([dynamic]int, 0, 4, later.allocator());
 	values.append(5);
 	fmt.println(popped, values);
 
 	// The region it was in still counts: this arena outlives what it backs.
 	room3: [512]u8 = {};
-	backing := mem.Arena.from_buffer(&mut room3[:]);
+	backing := mem.Arena.from_buffer(room3[mut :]);
 	into_arena: container.Small_Array([dynamic]int, 2) = {};
 	fresh := make([dynamic]int, 0, 4, backing.allocator());
 	fresh.append(6);

@@ -23,7 +23,7 @@ windows: sync.Lazy(Window);
 per_thread: thread_local int;
 
 counting :: proc() -> int { counter += 1; return 3; }
-view_of :: proc() -> []mut int { return &mut values[:]; }
+view_of :: proc() -> []mut int { return values[mut :]; }
 three :: proc() -> int { return 3; }
 per_thread_view :: proc() -> ^int { return &per_thread; }
 open :: proc() -> Window { return Window{4}; }

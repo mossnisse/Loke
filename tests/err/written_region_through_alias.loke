@@ -20,7 +20,7 @@ set_reassigned :: proc(dst: ^mut [dynamic]int, alloc: Allocator) {
 }
 
 set_element :: proc(dst: []mut [dynamic]int, alloc: Allocator) {
-	rest := &mut dst[1:];
+	rest := dst[mut 1:];
 	rest[0] = make([dynamic]int, 4, alloc);
 }
 
@@ -39,7 +39,7 @@ main :: proc() {
 
 	zs := [2][dynamic]int{};
 	third := mem.Arena.init();
-	set_element(&mut zs[:], third.allocator());
+	set_element(zs[mut :], third.allocator());
 	free_all(third.allocator());
 	fmt.println(zs[1][0]);
 }

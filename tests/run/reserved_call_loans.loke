@@ -69,8 +69,8 @@ an_earlier_view :: proc(p: ^mut Counter) {
 // A reslice, a record holding carriers, and a pack's operands lend the carriers
 // they are read from.
 carriers :: proc(xs: []mut int, pair: Pair, h: ^mut Pair) {
-	fill(&mut xs[1:], xs.len());
-	fill(&mut xs[:1], xs[2] + 1);
+	fill(xs[mut 1:], xs.len());
+	fill(xs[mut :1], xs[2] + 1);
 	sum_pair(pair, pair.a^.n);
 	sum_pair(h^, h^.b^.n);
 	add_all(pair.a^.n, pair.a, pair.b);
@@ -150,7 +150,7 @@ main :: proc() {
 	rows := [2]Row{Row{[dynamic]int{6}, 1}, Row{[dynamic]int{}, 2}};
 	defer drop(rows);
 	q := &mut d;
-	through_a_pointer(&mut c, &mut row, &mut rows[:], &mut q);
+	through_a_pointer(&mut c, &mut row, rows[mut :], &mut q);
 	an_earlier_view(&mut c);
 	values := [3]int{1, 2, 3};
 	x := Counter{1, false};
@@ -159,7 +159,7 @@ main :: proc() {
 	w := Counter{4, false};
 	held := Pair{&mut x, &mut y};
 	other := Pair{&mut z, &mut w};
-	carriers(&mut values[:], held, &mut other);
+	carriers(values[mut :], held, &mut other);
 	fmt.println(z.n, w.n);
 	defaults_and_loops();
 	rewritten_pointer();
@@ -170,7 +170,7 @@ main :: proc() {
 	extra := [1]Row{Row{[dynamic]int{}, 6}};
 	defer drop(extra);
 	table := [2]Counter{Counter{10, false}, Counter{20, false}};
-	through_an_index_that_calls(&mut counters[:], &mut more[:], &mut table, &mut extra[:]);
+	through_an_index_that_calls(counters[mut :], more[mut :], &mut table, extra[mut :]);
 	one := Counter{1, false};
 	two := Counter{2, false};
 	by_key := map[int]^mut Counter{1 = &mut one, 2 = &mut two};

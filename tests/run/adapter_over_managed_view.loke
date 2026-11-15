@@ -54,7 +54,7 @@ impl Sole {
 
 owning :: proc() {
 	storage := [2]int{1, 2};
-	source := Owning{&mut storage[:], {}};
+	source := Owning{storage[mut :], {}};
 	source.owned.append(5);
 	{
 		view := source.indexed();
@@ -69,7 +69,7 @@ owning :: proc() {
 
 hooked :: proc() {
 	storage := [1]int{3};
-	source := Hooked{&mut storage[:], 1};
+	source := Hooked{storage[mut :], 1};
 	{
 		view := source.indexed();
 		_ = view;
@@ -80,7 +80,7 @@ hooked :: proc() {
 
 sole :: proc() {
 	storage := [2]int{1, 2};
-	source := Sole{&mut storage[:], 7};
+	source := Sole{storage[mut :], 7};
 	foreach (&mut v, i in source.indexed()) { v += i; }
 	{
 		view := source.indexed();

@@ -45,7 +45,7 @@ main :: proc() {
 	// A read beside a value printed through a mutable field, or through a mutable
 	// call's result, which a read does not move.
 	storage := [2]int{1, 2};
-	lent := Lent{&mut storage[:]};
+	lent := Lent{storage[mut :]};
 	assert(i < 2, "never", lent.items[0], peek(lent.items), lent.items);
 	counts := map[int]int{};
 	counts.find_or_insert(3, 1);

@@ -412,6 +412,10 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 		if after == ":" || after == "=" {
 			return at_least_one // `x :: 1`, `x := 1`
 		}
+		// `a[mut :hi]`: the keyword is not the low endpoint.
+		if last == .Mut {
+			return " "
+		}
 		// `x: int`, and the typed constant `HEIGHT : int : 5` as written.
 		return in_brackets ? "" : written
 	case .Assign:

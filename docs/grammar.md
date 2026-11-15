@@ -320,8 +320,8 @@ Calling_Convention = String_Literal                      // "c" or "stdcall"
 ```
 
 `[?]T` is valid only as the type of a composite literal. `mut` is the
-capability modifier, written on a slice, a pointer, a `dyn` view, or a unary
-`&`; see [design.md](design.md#capabilities-and-the-one-rule). `Type_Arguments`
+capability modifier, written on a slice, a pointer, a `dyn` view, a unary `&`,
+or a slice expression; see [design.md](design.md#capabilities-and-the-one-rule). `Type_Arguments`
 also carries specialization patterns such as `^Table($Key, $Value)`, since
 `$Name` is itself a `Type`. A generic argument is positional: it takes no
 `name =`, `inout`, or `..`. A constant declaration whose type binds `$Name`,
@@ -676,7 +676,7 @@ Suffix = "^"                                          // dereference
        | "or_return" Postfix_Expression?              // failure operand
 
 Index_Or_Slice = Expression ("," Expression)* ","?     // index; comma form is user-defined
-               | Expression? ":" Expression?           // slice
+               | "mut"? Expression? ":" Expression?    // slice
 ```
 
 After `or_return`, a token that begins a `Primary_Expression` (an identifier, a
@@ -687,11 +687,8 @@ of a bare `or_return`'s payload is reached through parentheses,
 `(f() or_return).len()` (see design.md
 [The failure operand](design.md#the-failure-operand)).
 
-`&mut` applied to a postfix expression whose last suffix is a slice,
-`&mut a[lo:hi]`, is mutable slicing rather than the address of a slice: one
-expression whose value is a `[]mut T`. A suffix after the slice applies first,
-so a mutable slice's member is reached through parentheses,
-`(&mut a[:]).indexed()`. See design.md [Slices](design.md#slices).
+`mut` after the `[` asks a slice for a `[]mut T`, as in `a[mut lo:hi]` and
+`a[mut :]`; an index takes none. See design.md [Slices](design.md#slices).
 
 ## Primary expressions
 

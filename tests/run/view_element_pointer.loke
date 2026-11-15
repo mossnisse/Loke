@@ -53,13 +53,13 @@ to_a_field :: proc(s: []mut Wrapped, @(escape=stored) other: ^mut int) {
 main :: proc() {
 	a := 0; b := 0; c := 0; d := 0;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	read_through_one(&mut links[:]);
-	stored_through_one(&mut links[:], &mut c);
-	two_pointers(&mut links[:]);
-	left_by_a_call(&mut links[:], &mut d);
+	read_through_one(links[mut :]);
+	stored_through_one(links[mut :], &mut c);
+	two_pointers(links[mut :]);
+	left_by_a_call(links[mut :], &mut d);
 	fmt.println(a, b, c, d);
 	e := 0; f := 0; g := 0;
 	wrapped := [2]Wrapped{Wrapped{Link{&mut e}, 0}, Wrapped{Link{&mut f}, 0}};
-	to_a_field(&mut wrapped[:], &mut g);
+	to_a_field(wrapped[mut :], &mut g);
 	fmt.println(e, f, g);
 }

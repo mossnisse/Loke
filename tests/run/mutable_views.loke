@@ -59,25 +59,25 @@ number :: proc(xs: $S) where interfaces.Mutable_Iterable(S) {
 main :: proc() {
 	keys := [2]int{1, 2};
 	weights := [2]int{10, 20};
-	table := Table{keys[:], &mut weights[:]};
+	table := Table{keys[:], weights[mut :]};
 	foreach (key, &mut value in table) { value += key; }
 	fmt.println(weights);
 
 	storage := [3]int{1, 2, 3};
-	bump_row(Row{&mut storage[:]});
-	foreach (&mut c in Row{&mut storage[:]}) { c += 10; }
+	bump_row(Row{storage[mut :]});
+	foreach (&mut c in Row{storage[mut :]}) { c += 10; }
 	fmt.println(storage);
 
 	// A stored adapter over a mutable view keeps its capability.
 	values := [dynamic]int{1, 2, 3};
-	view := (&mut values[:]).indexed();
+	view := values[mut :].indexed();
 	foreach (&mut value, index in view) { value += index; }
-	back := (&mut values[:]).reversed();
+	back := values[mut :].reversed();
 	foreach (&mut value in back) { value *= 2; }
-	foreach (&mut value, index in (&mut values[:]).reversed().indexed()) { value += index * 1000; }
+	foreach (&mut value, index in values[mut :].reversed().indexed()) { value += index * 1000; }
 	fmt.println(values);
-	number((&mut values[:]).indexed());
-	walker := (&mut values[:]).indexed().iter_mut();
+	number(values[mut :].indexed());
+	walker := values[mut :].indexed().iter_mut();
 	switch (walker.next()) { case .some(pair): pair.value^ = 7; case .none: }
 	fmt.println(values);
 
@@ -86,7 +86,7 @@ main :: proc() {
 	foreach (&mut v, i in small.slice().indexed()) { v += i; }
 	fmt.println(small);
 
-	row := Row{&mut storage[:]};
+	row := Row{storage[mut :]};
 	numbered := row.indexed();
 	foreach (&mut c, i in numbered) { c += i * 1000; }
 	fmt.println(storage);

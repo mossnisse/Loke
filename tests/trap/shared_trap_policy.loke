@@ -13,7 +13,7 @@ Payload :: struct { data: [2048]u8 }
 main :: proc() {
 	defer fmt.println("unwound");
 	buffer: [256]u8 = {};
-	arena := mem.Arena.from_buffer(&mut buffer[:], policy = .Trap);
+	arena := mem.Arena.from_buffer(buffer[mut :], policy = .Trap);
 	payload: Payload = {};
 	handle := shared(move(payload), arena.allocator());
 	fmt.println(handle.strong_count());

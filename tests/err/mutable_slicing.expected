@@ -1,7 +1,7 @@
 L0310
 @21:7
 cannot pass `[]mut int` with `[]int`
-write `&mut a[lo:hi]` for a mutable slice
+write `a[mut lo:hi]` for a mutable slice
 L0392
 @22:2
 no overload of `sort` applies to these arguments
@@ -22,7 +22,7 @@ L0419
 `Reads` has no `operator([:])` yielding a `[]mut T`
 L0419
 @32:7
-`Writes` has only a mutable `operator([:])`; slice it with `&mut`
+`Writes` has only a mutable `operator([:])`; slice it with `mut`
 L0358
-@35:47
+@35:42
 a value parameter is immutable and cannot be sliced mutably

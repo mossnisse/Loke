@@ -45,7 +45,7 @@ in_a_dynamic_array :: proc() -> int {
 through_a_local_view :: proc() -> int {
 	a := Node{1}; b := Node{2};
 	lists := [2]List{List{&mut a}, List{&mut b}};
-	view := &mut lists[:];
+	view := lists[mut :];
 	foreach (&mut list in view) { list.head = list.head; }
 	node := view[0].head;
 	node^.value = 10;
@@ -114,7 +114,7 @@ main :: proc() {
 	fmt.println(through_a_local_view());
 	a := Node{1}; b := Node{2};
 	lists := [2]List{List{&mut a}, List{&mut b}};
-	through_a_view_parameter(&mut lists[:]);
+	through_a_view_parameter(lists[mut :]);
 	fmt.println(lists[0].head^.value);
 	fmt.println(with_calls());
 }

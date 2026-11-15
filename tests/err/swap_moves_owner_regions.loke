@@ -19,7 +19,7 @@ swapped_through_a_view :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	view := &mut items[:];
+	view := items[mut :];
 	view.swap(0, 1);
 	return items[0];
 }
@@ -28,7 +28,7 @@ swapped_through_a_slice_of_the_array :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	(&mut items[:]).swap(0, 1);
+	items[mut :].swap(0, 1);
 	return items[0];
 }
 
@@ -36,7 +36,7 @@ swapped_through_a_copy_of_the_view :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	view := &mut items[:];
+	view := items[mut :];
 	again := view;
 	again.swap(0, 1);
 	return items[0];
@@ -46,7 +46,7 @@ swapped_in_a_reslice :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	view := &mut items[0:2];
+	view := items[mut 0:2];
 	view.swap(0, 1);
 	return items[0];
 }
@@ -55,7 +55,7 @@ sorted_in_place :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	view := &mut items[:];
+	view := items[mut :];
 	view.sort();
 	return items[0];
 }
@@ -64,7 +64,7 @@ reversed_by_a_call :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	slice.reverse(&mut items[:]);
+	slice.reverse(items[mut :]);
 	return items[0];
 }
 
@@ -72,7 +72,7 @@ sorted_by_a_call :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	slice.sort(&mut items[:]);
+	slice.sort(items[mut :]);
 	return items[0];
 }
 
@@ -80,7 +80,7 @@ reverse_sorted_by_a_call :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	slice.reverse_sort(&mut items[:]);
+	slice.reverse_sort(items[mut :]);
 	return items[0];
 }
 
@@ -88,7 +88,7 @@ swapped_by_a_call :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	swap_elements(&mut items[:]);
+	swap_elements(items[mut :]);
 	return items[0];
 }
 
@@ -96,7 +96,7 @@ swapped_by_a_call_through_a_view :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	view := &mut items[:];
+	view := items[mut :];
 	swap_elements(view);
 	return items[0];
 }
@@ -105,7 +105,7 @@ swapped_by_a_forwarding_call :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	forward(&mut items[:]);
+	forward(items[mut :]);
 	return items[0];
 }
 
@@ -113,7 +113,7 @@ copied_at_any_index_by_a_call :: proc() -> string {
 	arena := mem.Arena.init();
 	items := [2]string{"a", "b"};
 	items[1] = fmt.to_string(arena.allocator(), 42);
-	by_index(&mut items[:], 0, 1);
+	by_index(items[mut :], 0, 1);
 	return items[0];
 }
 
@@ -121,7 +121,7 @@ swapped_in_a_record :: proc() -> string {
 	arena := mem.Arena.init();
 	box := Box{[2]string{"a", "b"}};
 	box.items[1] = fmt.to_string(arena.allocator(), 42);
-	view := &mut box.items[:];
+	view := box.items[mut :];
 	view.swap(0, 1);
 	return box.items[0];
 }
@@ -130,7 +130,7 @@ swapped_records :: proc() -> string {
 	arena := mem.Arena.init();
 	rows := [2]Pair{Pair{"a", "b"}, Pair{"c", "d"}};
 	rows[1].b = fmt.to_string(arena.allocator(), 42);
-	view := &mut rows[:];
+	view := rows[mut :];
 	view.swap(0, 1);
 	return rows[0].b;
 }

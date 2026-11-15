@@ -34,10 +34,10 @@ copied_then_replaced :: proc(links: []mut Link, @(escape=stored) fresh: ^mut int
 view_case :: proc() {
 	a, b, c := 1, 2, 3;
 	links := [3]Link{Link{&mut a}, Link{&mut b}, Link{&mut c}};
-	by_view(&mut links[:]);
+	by_view(links[mut :]);
 	links[0].to^ += 10;
 	links[1].to^ += 20;
-	rotated(&mut links[:]);
+	rotated(links[mut :]);
 	links[0].to^ += 1;
 	links[1].to^ += 2;
 	links[2].to^ += 3;
@@ -57,7 +57,7 @@ pair_case :: proc() {
 replaced_case :: proc() {
 	a, b, f := 1, 2, 4;
 	links := [2]Link{Link{&mut a}, Link{&mut b}};
-	copied_then_replaced(&mut links[:], &mut f);
+	copied_then_replaced(links[mut :], &mut f);
 	links[0].to^ += 5;
 	links[1].to^ += 6;
 	fmt.println(links[0].to^, links[1].to^);

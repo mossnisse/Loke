@@ -1,11 +1,12 @@
 // `-migrate`: rewrites the spellings an earlier release accepted into the ones
 // this release does, and touches nothing else, so a file keeps its layout.
 //
-// Today that is a record's attributes, which move to its declaration:
-// `Name :: move_only struct @(packed) { }` becomes
-// `@(move_only, packed) Name :: struct { }`. Both spellings parse to one tree, so
-// a rewrite is checked rather than assumed: the result has none left, and its
-// `-dump-ast` text is the input's (comments.md "Formatting").
+// A record's attributes move to its declaration: `Name :: move_only struct
+// @(packed) { }` becomes `@(move_only, packed) Name :: struct { }`. A mutable
+// slice's `mut` moves into its brackets: `&mut a[lo:hi]` becomes `a[mut lo:hi]`.
+// Both spellings of each parse to one tree, so a rewrite is checked rather than
+// assumed: the result has none left, and its `-dump-ast` text is the input's
+// (comments.md "Formatting").
 package lokec
 
 import "core:fmt"
@@ -31,13 +32,24 @@ migrate_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 		return "", false
 	}
 	text := c.sources[file].text
-	if len(ast.earlier_spellings) == 0 {
+	if len(ast.earlier_spellings) + len(ast.earlier_slices) == 0 {
 		return strings.clone(text), true
 	}
 
 	edits := make([dynamic]Migrate_Edit, context.temp_allocator)
 	for spelling in ast.earlier_spellings {
 		migrate_spelling(c, file, spelling, &edits)
+	}
+	for written in ast.earlier_slices {
+		// `&mut` goes as one word unless a comment sits inside it.
+		if strings.trim_space(text[written.amp.hi:written.keyword.lo]) == "" {
+			append(&edits, removal(text, Span{lo = written.amp.lo, hi = written.keyword.hi}))
+		} else {
+			append(&edits, removal(text, written.amp), removal(text, written.keyword))
+		}
+		// `a[ lo:hi]` already has the space `mut` needs after it.
+		spaced := text[written.open] == ' ' || text[written.open] == '\t'
+		append(&edits, Migrate_Edit{written.open, written.open, spaced ? "mut" : "mut "})
 	}
 	if c.error_count > errors {
 		return "", false
@@ -58,7 +70,7 @@ migrate_source :: proc(c: ^Compiler, file: u32) -> (string, bool) {
 		defer destroy_ast(&again_ast)
 		after := ast_dump(&again_ast)
 		defer delete(after)
-		same = c.error_count == errors && len(again_ast.earlier_spellings) == 0 && before == after
+		same = c.error_count == errors && len(again_ast.earlier_spellings) + len(again_ast.earlier_slices) == 0 && before == after
 	}
 	if !same {
 		delete(migrated)
@@ -75,18 +87,19 @@ Migrate_Edit :: struct {
 	text:   string,
 }
 
-// Two edits overlap only where a record is written inside another's attributes,
-// which moving the outer ones would carry along unrewritten.
+// Two edits overlap only where an earlier spelling is written inside a record's
+// attributes, which moving them would carry along unrewritten.
 @(private = "file")
 apply_edits :: proc(c: ^Compiler, file: u32, edits: []Migrate_Edit) -> (string, bool) {
 	text := c.sources[file].text
-	slice.sort_by(edits, proc(a, b: Migrate_Edit) -> bool { return a.lo < b.lo })
+	// An insertion comes before a removal that starts where it is.
+	slice.sort_by(edits, proc(a, b: Migrate_Edit) -> bool { return a.lo < b.lo || a.lo == b.lo && a.hi < b.hi })
 	out := strings.builder_make()
 	at: u32 = 0
 	for edit in edits {
 		if edit.lo < at {
 			strings.builder_destroy(&out)
-			errorf(c, Span{file = file, lo = edit.lo, hi = edit.hi}, "L0752", "`-migrate` cannot move a record's attributes while a record is written inside them; move the outer ones by hand")
+			errorf(c, Span{file = file, lo = edit.lo, hi = edit.hi}, "L0752", "`-migrate` cannot move a record's attributes while an earlier spelling is written inside them; move the outer ones by hand")
 			return "", false
 		}
 		strings.write_string(&out, text[at:edit.lo])

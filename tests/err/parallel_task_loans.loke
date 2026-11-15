@@ -55,7 +55,7 @@ main :: proc() {
 	// design.md "Task borrows and the join": a `[]mut` passed by name stays
 	// reborrowed by the first task until the join.
 	cells := [2]int{0, 0};
-	view := &mut cells[:];
+	view := cells[mut :];
 	parallel {
 		spawn add(view);
 		spawn add(view);

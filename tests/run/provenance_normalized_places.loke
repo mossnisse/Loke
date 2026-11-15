@@ -12,7 +12,7 @@ deferred :: proc(early: bool) {
 
 main :: proc() {
     first := [4]int{1, 2, 3, 4};
-    receiver := &mut first[:];
+    receiver := first[mut :];
     halves := receiver.split_at_mut(receiver.len() / 2);
     halves.left[0] = 10;
     halves.right[0] = 20;

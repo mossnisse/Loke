@@ -64,7 +64,7 @@ ok_length_before_drop :: proc(a: Allocator) {
 main :: proc() {
 	a, b := 1, 2;
 	pairs := [2]Pair{Pair{&mut a, 3}, Pair{&mut b, 4}};
-	s := &mut pairs[:];
+	s := pairs[mut :];
 	y: []Pair = s;
 	n := s.len();
 	fmt.println(n, y[1].n);

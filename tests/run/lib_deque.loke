@@ -224,7 +224,7 @@ main :: proc() {
 	back_mut[0] = 8;
 	fmt.println(wrapped);
 	via_arena_room: [1024]u8 = {};
-	via_arena := mem.Arena.from_buffer(&mut via_arena_room[:]);
+	via_arena := mem.Arena.from_buffer(via_arena_room[mut :]);
 	placed: Deque_Int via via_arena.allocator() = wrapped.clone();
 	fmt.println(placed);
 
@@ -260,7 +260,7 @@ main :: proc() {
 
 	// An allocator of its own.
 	room: [4096]u8 = {};
-	arena := mem.Arena.from_buffer(&mut room[:]);
+	arena := mem.Arena.from_buffer(room[mut :]);
 	on_arena := Deque_Int.try_init(4, arena.allocator()) or_else panic("small");
 	foreach (value in 0 ..< 20) { on_arena.append(value); }
 	fmt.println(on_arena.len(), on_arena.at(19)^);
@@ -281,9 +281,9 @@ main :: proc() {
 	// A worked use: breadth-first search that reuses its queue.
 	light: [16]int = {};
 	frontier: container.Deque(int) = {};
-	flood(&mut light[:], inout frontier, 3);
+	flood(light[mut :], inout frontier, 3);
 	capacity := frontier.cap();
-	flood(&mut light[:], inout frontier, 8);
+	flood(light[mut :], inout frontier, 8);
 	fmt.println(light, frontier.cap() == capacity);
 
 	model_check();

@@ -191,7 +191,7 @@ impl File {
 	read_exact_at :: proc(self: inout File, destination: []mut u8, offset: u64) -> Status(io.Error) {
 		filled := 0;
 		for (; filled < destination.len(); ) {
-			switch (self.read_at(&mut destination[filled:], offset + u64(filled))) {
+			switch (self.read_at(destination[mut filled:], offset + u64(filled))) {
 			case .ok(count):
 				if (count == 0) { return .err(io.make_error(.Unexpected_End, .Read)); }
 				filled += count;
@@ -1074,7 +1074,7 @@ rename_native :: proc(old_path: string_view, new_path: string_view) -> Status(io
 	}
 	defer { _ = rt_close_handle(handle); }
 	source := metadata_handle(handle) or_return;
-	return rename_handle(handle, &mut information[:], source.kind != .Directory);
+	return rename_handle(handle, information[mut :], source.kind != .Directory);
 }
 
 // standard-library "Atomic replacement". The temporary file is renamed through
@@ -1107,7 +1107,7 @@ replace_atomic_native :: proc(path: string_view, data: []u8) -> Status(io.Error)
 		defer { _ = file.close(); }
 		io.write_all(inout file, data) or_return;
 		file.flush() or_return;
-		rename_handle(handle, &mut information[:], true) or_return;
+		rename_handle(handle, information[mut :], true) or_return;
 		renamed = true;
 		// The target now holds the new content. A failed flush withdraws only the
 		// durability promise, and a failed close cannot undo a durable switch, so
@@ -1133,8 +1133,8 @@ temporary_name :: proc(path: string_view, attempt: int) -> Result(string, io.Err
 	process: [8]u8 = {};
 	step: [8]u8 = {};
 	return scratch_join([]string_view{
-		path[0:at], ".replace-", hexadecimal(&mut process[:], u64(rt_current_process_id())), "-",
-		hexadecimal(&mut step[:], u64(attempt)), ".tmp",
+		path[0:at], ".replace-", hexadecimal(process[mut :], u64(rt_current_process_id())), "-",
+		hexadecimal(step[mut :], u64(attempt)), ".tmp",
 	}, .Open);
 }
 

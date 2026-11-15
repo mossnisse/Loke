@@ -28,15 +28,15 @@ arena_slots :: proc() {
 		old: [dynamic]int via arena.allocator() = {};
 		slots.append(.some(move(old)));
 	}
-	all := &mut slots[:];
+	all := slots[mut :];
 	parallel {
 		foreach (slot in all.chunks_mut(1)) { spawn fill(0, slot); }
 	}
-	again := &mut slots[:];
+	again := slots[mut :];
 	parallel {
 		foreach (slot, i in again.chunks_mut(1).indexed()) { spawn fill(i, slot); }
 	}
-	halves := (&mut slots[:]).split_at_mut(2);
+	halves := slots[mut :].split_at_mut(2);
 	parallel {
 		spawn fill(0, halves.left);
 		spawn fill(1, halves.right);
@@ -80,7 +80,7 @@ cursor_slots :: proc() {
 	slots: [dynamic]Slot = {};
 	old: [dynamic]int via arena.allocator() = {};
 	slots.append(.some(move(old)));
-	cells := Cells{&mut slots[:]};
+	cells := Cells{slots[mut :]};
 	parallel {
 		spawn allocate_work(arena.allocator());
 		foreach (slot in cells) { fill_one(0, slot); }

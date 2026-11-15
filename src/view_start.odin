@@ -120,8 +120,8 @@ Prov_View_Walk :: struct {
 //
 // A reslice is worked out from the view it reads, and around a loop that may be
 // what it made itself, so the answer is the least fixed point: a known answer
-// holds of every execution by induction over its definitions. So `s = &mut s[:2]`
-// in a loop keeps the start, and `s = &mut s[1:]` does not, as what it makes
+// holds of every execution by induction over its definitions. So `s = s[mut :2]`
+// in a loop keeps the start, and `s = s[mut 1:]` does not, as what it makes
 // disagrees with what it read on the next round.
 @(private = "file")
 view_start_of :: proc(graph: ^Flow_Graph, slot: int, reaching: []int, loan: int, range: i64) -> (offset, length: i64, present, known: bool) {

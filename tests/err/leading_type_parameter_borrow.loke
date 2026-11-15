@@ -98,7 +98,7 @@ after_a_blank :: proc() {
 
 reset_region :: proc() {
 	buffer: [256]u8 = {};
-	arena := mem.Arena.from_buffer(&mut buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[mut :]);
 	values := filled(int, arena.allocator());
 	free_all(arena.allocator());
 	fmt.println(values.len());

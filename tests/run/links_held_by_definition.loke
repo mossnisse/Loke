@@ -207,6 +207,6 @@ main :: proc() {
 	ok_swap_in_a_branch(&mut links);
 	c, d := 3, 4;
 	others := [2]Link{Link{&mut c}, Link{&mut d}};
-	ok_swap_through_a_view(&mut others[:]);
+	ok_swap_through_a_view(others[mut :]);
 	fmt.println(a, b, c, d);
 }

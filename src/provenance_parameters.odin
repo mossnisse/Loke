@@ -335,7 +335,7 @@ prov_note_element_pointer :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 }
 
 // design.md "Values that contain borrows": `s[k]`, with `s` a local view and `k` a
-// constant, names one element of the storage a fresh `&mut a[lo:hi]` lends, when
+// constant, names one element of the storage a fresh `a[mut lo:hi]` lends, when
 // where `s` starts is known (`Prov_View_Def`) and nothing else writes `s`. The solve
 // checks both (`publish_view_loan`). None when `place` names no such element.
 @(private)

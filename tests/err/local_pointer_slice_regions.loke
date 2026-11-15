@@ -14,7 +14,7 @@ store_first :: proc(pairs: ^mut []Pair, allocator: mem.Allocator) {
 }
 bad_second :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 1, kept.allocator());
 	pairs := []Pair{Pair{&mut a, &mut b}};
@@ -25,7 +25,7 @@ bad_second :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 }
 bad_first :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 1, kept.allocator());
 	pairs := []Pair{Pair{&mut a, &mut b}};
@@ -37,7 +37,7 @@ bad_first :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 }
 bad_named :: proc(@(allocator_reset) allocator: mem.Allocator) -> int {
 	buffer := [256]u8{};
-	kept := mem.Arena.from_buffer(&mut buffer[:]);
+	kept := mem.Arena.from_buffer(buffer[mut :]);
 	a := make([dynamic]int, 1, kept.allocator());
 	b := make([dynamic]int, 1, kept.allocator());
 	array := [1]Pair{Pair{&mut a, &mut b}};

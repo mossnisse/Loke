@@ -65,7 +65,7 @@ pop_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(l
 	last := values.len() - 1;
 	if (last < 1) { return; }
 	values.swap(0, last);
-	sift_down(&mut values[:last], 0, less);
+	sift_down(values[mut :last], 0, less);
 }
 
 /// Restores the order after the first element changed, in O(log n).

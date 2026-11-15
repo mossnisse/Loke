@@ -1,5 +1,5 @@
 L0358
-@11:12
+@11:7
 a value parameter is immutable and cannot be sliced mutably
 
 L0477
@@ -7,5 +7,5 @@ L0477
 `[4]int` has no storage to slice; bind it to a variable first
 
 L0359
-@19:18
+@19:13
 a temporary value cannot be sliced mutably

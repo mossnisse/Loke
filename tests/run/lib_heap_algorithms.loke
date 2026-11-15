@@ -25,24 +25,24 @@ main :: proc() {
 	// Empty and single-element slices are no-ops.
 	nothing: [dynamic]int = {};
 	asc := slice.Ascending(int){};
-	slice.make_heap(&mut nothing[:], asc);
-	slice.push_heap(&mut nothing[:], asc);
-	slice.pop_heap(&mut nothing[:], asc);
-	slice.sift_heap_top(&mut nothing[:], asc);
+	slice.make_heap(nothing[mut :], asc);
+	slice.push_heap(nothing[mut :], asc);
+	slice.pop_heap(nothing[mut :], asc);
+	slice.sift_heap_top(nothing[mut :], asc);
 	fmt.println(slice.is_heap(nothing[:], asc));
 
 	one := [1]int{7};
-	slice.push_heap(&mut one[:], asc);
-	slice.pop_heap(&mut one[:], asc);
+	slice.push_heap(one[mut :], asc);
+	slice.pop_heap(one[mut :], asc);
 	fmt.println(one[0], slice.is_heap(one[:], asc));
 
 	// The layout is specified: each parent is at (i - 1) / 2.
 	bad := [3]int{2, 1, 3};
 	fmt.println(slice.is_heap(bad[:], asc));
 	made := [5]int{4, 1, 3, 2, 5};
-	slice.make_heap(&mut made[:], asc);
+	slice.make_heap(made[mut :], asc);
 	fmt.println(slice.is_heap(made[:], asc), made[0]);
-	slice.make_heap(&mut made[:], slice.Descending(int){});
+	slice.make_heap(made[mut :], slice.Descending(int){});
 	fmt.println(slice.is_heap(made[:], slice.Descending(int){}), made[0]);
 
 	// A fixed-capacity queue needs nothing else, and drains in sorted order.
@@ -70,24 +70,24 @@ main :: proc() {
 	// sift_heap_top after the first element changed.
 	sifted := [6]int{1, 2, 3, 4, 5, 6};
 	sifted[0] = 9;
-	slice.sift_heap_top(&mut sifted[:], asc);
+	slice.sift_heap_top(sifted[mut :], asc);
 	fmt.println(slice.is_heap(sifted[:], asc), sifted[0]);
 
 	// The same comparators sort.
 	sorted := [4]int{3, 1, 4, 2};
-	slice.sort_by(&mut sorted[:], slice.Descending(int){});
+	slice.sort_by(sorted[mut :], slice.Descending(int){});
 	fmt.println(sorted);
-	slice.sort_by(&mut sorted[:], asc);
+	slice.sort_by(sorted[mut :], asc);
 	fmt.println(sorted);
 
 	// A move-only element is sifted without a copy.
 	tokens: [dynamic]Token = {};
 	foreach (id in [4]int{3, 0, 2, 1}) {
 		tokens.append(Token{id});
-		slice.push_heap(&mut tokens[:], By_Id{});
+		slice.push_heap(tokens[mut :], By_Id{});
 	}
 	for (tokens.len() > 0) {
-		slice.pop_heap(&mut tokens[:], By_Id{});
+		slice.pop_heap(tokens[mut :], By_Id{});
 		t := tokens.pop() or_else panic("empty");
 		fmt.print(t.id, "");
 	}
@@ -99,12 +99,12 @@ main :: proc() {
 	erratic := proc(left, right: int) -> bool { return (left ~ right) & 1 == 0; };
 	values := [32]int{};
 	foreach (i in 0 ..< values.len()) { values[i] = i; }
-	slice.make_heap(&mut values[:], always);
-	foreach (i in 0 ..< values.len()) { slice.push_heap(&mut values[:i + 1], always); }
-	foreach (i in 0 ..< values.len()) { slice.pop_heap(&mut values[:values.len() - i], never); }
-	slice.make_heap(&mut values[:], erratic);
-	foreach (i in 0 ..< values.len()) { slice.pop_heap(&mut values[:values.len() - i], erratic); }
-	slice.sort(&mut values[:]);
+	slice.make_heap(values[mut :], always);
+	foreach (i in 0 ..< values.len()) { slice.push_heap(values[mut :i + 1], always); }
+	foreach (i in 0 ..< values.len()) { slice.pop_heap(values[mut :values.len() - i], never); }
+	slice.make_heap(values[mut :], erratic);
+	foreach (i in 0 ..< values.len()) { slice.pop_heap(values[mut :values.len() - i], erratic); }
+	slice.sort(values[mut :]);
 	whole := true;
 	foreach (i in 0 ..< values.len()) { whole = whole && values[i] == i; }
 	fmt.println("permutation", whole);

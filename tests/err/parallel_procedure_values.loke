@@ -121,7 +121,7 @@ inout_result :: proc(f: proc(cell: ^mut Cell) -> inout int) {
 }
 
 main :: proc() {
-	view = &mut values[:];
+	view = values[mut :];
 	writes(record_hit);
 	reaches(increment);
 	selected(false);

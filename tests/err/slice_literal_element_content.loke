@@ -158,14 +158,14 @@ element_copied_out :: proc() {
 }
 mutable_element_suspends :: proc() {
 	a := [dynamic]int{1};
-	xs := &mut a[:];
+	xs := a[mut :];
 	view := []mut []mut int{xs};
 	xs[0] = 2;
 	bump(view);
 }
 mutable_element_lends :: proc() {
 	a := [dynamic]int{1};
-	view := []mut []mut int{&mut a[:]};
+	view := []mut []mut int{a[mut :]};
 	a.append(1);
 	bump(view);
 }

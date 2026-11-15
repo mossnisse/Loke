@@ -7,6 +7,6 @@ import "core:fmt";
 main :: proc() {
 	values := [3]int{1, 2, 3};
 	at := 4;
-	halves := (&mut values[:]).split_at_mut(at);
+	halves := values[mut :].split_at_mut(at);
 	fmt.println(halves.left.len());
 }

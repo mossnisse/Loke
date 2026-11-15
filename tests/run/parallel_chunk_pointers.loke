@@ -20,7 +20,7 @@ main :: proc() {
 	pool := thread.Pool.init(2);
 
 	cells: [6]int = {};
-	view := &mut cells[:];
+	view := cells[mut :];
 	parallel (&pool) {
 		foreach (rows, i in view.chunks_mut(2).indexed()) { spawn set_one(&mut rows[1], i + 1); }
 	}
@@ -28,7 +28,7 @@ main :: proc() {
 
 	// The block runs again on each frame, over the same storage.
 	foreach (frame in 0 ..< 3) {
-		again := &mut cells[:];
+		again := cells[mut :];
 		parallel {
 			foreach (rows in again.chunks_mut(3)) { spawn set_one(&mut rows[0], frame + 10); }
 		}
@@ -38,7 +38,7 @@ main :: proc() {
 	records: [dynamic]Cell = {};
 	foreach (_ in 0 ..< 3) { records.append({}); }
 	{
-		all := &mut records[:];
+		all := records[mut :];
 		parallel (&pool) {
 			foreach (rows, i in all.chunks_mut(1).indexed()) { spawn record(&mut rows[0], i + 5); }
 		}
@@ -47,7 +47,7 @@ main :: proc() {
 
 	// Pointers into earlier chunks stay usable beside the current one.
 	kept: [dynamic]^mut int = {};
-	foreach (rows in (&mut cells[:]).chunks_mut(2)) {
+	foreach (rows in cells[mut :].chunks_mut(2)) {
 		rows[1] = 7;
 		kept.append(&mut rows[0]);
 	}
@@ -57,13 +57,13 @@ main :: proc() {
 	// A copy of a chunk is in the chunk it copies, so a place in it is free of
 	// later chunks too, held by a task or kept in a container.
 	parallel (&pool) {
-		foreach (rows, i in (&mut cells[:]).chunks_mut(2).indexed()) {
+		foreach (rows, i in cells[mut :].chunks_mut(2).indexed()) {
 			chunk := rows;
 			spawn set_one(&mut chunk[1], i + 20);
 		}
 	}
 	copied: [dynamic]^mut int = {};
-	foreach (rows in (&mut cells[:]).chunks_mut(3)) {
+	foreach (rows in cells[mut :].chunks_mut(3)) {
 		chunk := rows;
 		copied.append(&mut chunk[0]);
 	}
@@ -73,7 +73,7 @@ main :: proc() {
 	// Chunks of chunks: whichever inner traversal lent a place, it is in an
 	// earlier chunk of the outer one by the time a later step chunks again.
 	parallel (&pool) {
-		foreach (rows, i in (&mut cells[:]).chunks_mut(2).indexed()) {
+		foreach (rows, i in cells[mut :].chunks_mut(2).indexed()) {
 			if (i % 2 == 0) {
 				foreach (even in rows.chunks_mut(1)) { spawn set_one(&mut even[0], 30 + i); }
 			} else {

@@ -20,6 +20,12 @@
         (var names=["g"]
           (slice-of (ident "s") (ident "lo") (ident "hi"))
         )
+        (var names=["h"]
+          (slice-of mut (ident "s") (ident "lo") (ident "hi"))
+        )
+        (var names=["k"]
+          (call (selector (slice-of mut (ident "s") _ _) "len"))
+        )
       )
     )
   )

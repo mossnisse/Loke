@@ -179,7 +179,7 @@ impl Matrix($T) {
 
 	/// The whole matrix as a mutable view, which borrows it exclusively.
 	view_mut :: proc(self: inout) -> View_Mut(T) {
-		return {&mut self.data[:], self.row_count, self.column_count, 1, self.row_count};
+		return {self.data[mut :], self.row_count, self.column_count, 1, self.row_count};
 	}
 
 	/// A copy as `linalg.Matrix(T, R, C)`; another shape panics.

@@ -1,5 +1,5 @@
 // Rule 11: after `[`, a `:` makes it a slice, a `,` a multi-index, and `]` a
-// single index.
+// single index. A slice's `mut` is its own, and what follows applies to its result.
 package main;
 
 main :: proc() {
@@ -9,4 +9,6 @@ main :: proc() {
 	d := s[lo:];
 	e := s[:hi];
 	g := s[lo:hi];
+	h := s[mut lo:hi];
+	k := s[mut :].len();
 }

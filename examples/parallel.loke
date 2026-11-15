@@ -32,7 +32,7 @@ partition :: proc(xs: []mut int) -> int {
 sort :: proc(xs: []mut int, depth := 0) {
 	if (xs.len() <= 4096) { slice.sort(xs); return; }
 	left, rest := xs.split_at_mut(partition(xs));
-	right := &mut rest[1:];               // the pivot is already in place
+	right := rest[mut 1:];               // the pivot is already in place
 	if (depth >= 6) {
 		sort(left, depth + 1);
 		sort(right, depth + 1);
@@ -85,7 +85,7 @@ main :: proc() {
 		seed = (seed * 1103515245 + 12345) % 2147483648;
 		values.append(seed % 1000000);
 	}
-	sort(&mut values[:]);
+	sort(values[mut :]);
 	sorted := true;
 	foreach (i in 1 ..< values.len()) {
 		if (values[i - 1] > values[i]) { sorted = false; }
@@ -94,6 +94,6 @@ main :: proc() {
 
 	samples: [dynamic]f64 = {};
 	foreach (i in 0 ..< 100000) { samples.append(f64(i % 100)); }
-	scale_all(&mut samples[:], 0.5);
+	scale_all(samples[mut :], 0.5);
 	fmt.println("sum of halves:", parallel_sum(samples[:]));
 }

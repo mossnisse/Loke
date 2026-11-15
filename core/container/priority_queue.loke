@@ -83,7 +83,7 @@ impl Priority_Queue($T, $C) {
 
 	/// Takes over an array and its allocator and orders it, in O(n): much faster than pushing each element.
 	from_items :: proc(items: move [dynamic]T, less: move C) -> Priority_Queue(T, C) {
-		slice.make_heap(&mut items[:], less);
+		slice.make_heap(items[mut :], less);
 		return {move(items), move(less)};
 	}
 
@@ -109,23 +109,23 @@ impl Priority_Queue($T, $C) {
 
 	push_copied :: proc(self: inout, @(escape=stored) value: T) where is_copyable(T) {
 		self.items.append(value);
-		slice.push_heap(&mut self.items[:], self.less);
+		slice.push_heap(self.items[mut :], self.less);
 	}
 
 	push_moved :: proc(self: inout, @(escape=stored) value: move T) {
 		self.items.append(move(value));
-		slice.push_heap(&mut self.items[:], self.less);
+		slice.push_heap(self.items[mut :], self.less);
 	}
 
 	try_push_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) {
 		self.items.try_append(value) or_return;
-		slice.push_heap(&mut self.items[:], self.less);
+		slice.push_heap(self.items[mut :], self.less);
 		return .ok;
 	}
 
 	try_push_moved :: proc(self: inout, @(escape=stored) value: move T) -> Status(Allocator_Error) {
 		self.items.try_append(move(value)) or_return;
-		slice.push_heap(&mut self.items[:], self.less);
+		slice.push_heap(self.items[mut :], self.less);
 		return .ok;
 	}
 
@@ -144,7 +144,7 @@ impl Priority_Queue($T, $C) {
 
 	/// Removes and returns the first element, in O(log n). Never allocates.
 	pop :: proc(self: inout) -> Option(T) {
-		slice.pop_heap(&mut self.items[:], self.less);
+		slice.pop_heap(self.items[mut :], self.less);
 		return self.items.pop();
 	}
 
@@ -157,7 +157,7 @@ impl Priority_Queue($T, $C) {
 		// The value takes the top's place, so nothing is copied and no capacity is
 		// needed.
 		top := exchange(inout self.items[0], move(value));
-		slice.sift_heap_top(&mut self.items[:], self.less);
+		slice.sift_heap_top(self.items[mut :], self.less);
 		return top;
 	}
 
@@ -175,7 +175,7 @@ impl Priority_Queue($T, $C) {
 	update_top :: proc(self: inout, change: $F) -> bool where interfaces.Callable(F, proc(top: inout T)) {
 		if (self.items.len() == 0) { return false; }
 		change(inout self.items[0]);
-		slice.sift_heap_top(&mut self.items[:], self.less);
+		slice.sift_heap_top(self.items[mut :], self.less);
 		return true;
 	}
 
@@ -189,7 +189,7 @@ impl Priority_Queue($T, $C) {
 				_ = self.items.remove_unordered(at);
 			}
 		}
-		slice.make_heap(&mut self.items[:], self.less);
+		slice.make_heap(self.items[mut :], self.less);
 	}
 
 	// ------------------------------------------------------------ capacity --
@@ -223,10 +223,10 @@ impl Priority_Queue($T, $C) {
 		items := exchange(inout self.items, {});
 		end := items.len();
 		for (end > 1) {
-			slice.pop_heap(&mut items[:end], self.less);
+			slice.pop_heap(items[mut :end], self.less);
 			end -= 1;
 		}
-		slice.reverse(&mut items[:]);
+		slice.reverse(items[mut :]);
 		return items;
 	}
 
