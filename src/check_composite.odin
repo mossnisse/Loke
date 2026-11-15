@@ -175,67 +175,11 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 	for &slot in v.field_indices { slot = -1 }
 	named := false
 	ok := true
-
 	for element, index in v.elements {
-		field := INVALID_SYMBOL
-		if element.key != nil {
-			key, is_ident := element.key.(^Expr_Ident)
-			if !is_ident {
-				errorf(k.c, element.span, "L0376", "a struct literal key must be a field name")
-				ok = false
-				continue
-			}
-			named = true
-			field = field_named(k.c, target, identifier_of(k.c, key))
-			if field == INVALID_SYMBOL {
-				errorf(k.c, element.span, "L0363", "`%s` has no field `%s`", type_name(k.c, target), key.name)
-				ok = false
-				continue
-			}
-			if !require_visible_field(k, element.span, target, field, "L0473", "initialised") {
-				ok = false
-				continue
-			}
-			if seen[symbol_of(k.c, field).index] {
-				errorf(k.c, element.span, "L0376", "field `%s` is set twice", key.name)
-				ok = false
-				continue
-			}
-		} else {
-			if named {
-				errorf(k.c, element.span, "L0372", "a positional element cannot follow a named one")
-				ok = false
-				continue
-			}
-			if index >= len(positional) {
-				named_count := len(positional)
-				errorf(k.c, element.span, "L0376", "`%s` has %d field%s", type_name(k.c, target), named_count, named_count == 1 ? "" : "s")
-				ok = false
-				continue
-			}
-			field = positional[index]
-			// Supplying an inaccessible field is rejected; omitting one is not.
-			if !require_visible_field(k, element.span, target, field, "L0474", "initialised positionally") {
-				ok = false
-				continue
-			}
-			// design.md "Struct literals": positional only where the fields are
-			// declared. Positional elements come first, so the first reports.
-			if record_order_is_foreign(k, target) {
-				if index == 0 {
-					errorf(
-						k.c, element.span, "L0709",
-						"the fields of `%s` are declared in another package, so its literal must name them",
-						type_name(k.c, target),
-					)
-					add_notef(
-						k.c, element.span, "write `%s = ...`; that package may reorder its fields",
-						identifier_text(k.c, symbol_of(k.c, field).name),
-					)
-				}
-				ok = false
-				continue
-			}
+		field := struct_literal_field(k, element, index, target, positional, seen, &named)
+		if field == INVALID_SYMBOL {
+			ok = false
+			continue
 		}
 		symbol := symbol_of(k.c, field)
 		seen[symbol.index] = true
@@ -254,6 +198,63 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 	if v.capture == nil {
 		fold_aggregate(k, v, target, info.fields)
 	}
+}
+
+// The field a struct literal's element fills, or INVALID_SYMBOL once reported.
+// `named` says whether a keyed element came first.
+@(private = "file")
+struct_literal_field :: proc(
+	k: ^Checker, element: Element, index: int, target: Type_Id, positional: []Symbol_Id, seen: []bool, named: ^bool,
+) -> Symbol_Id {
+	if element.key != nil {
+		key, is_ident := element.key.(^Expr_Ident)
+		if !is_ident {
+			errorf(k.c, element.span, "L0376", "a struct literal key must be a field name")
+			return INVALID_SYMBOL
+		}
+		named^ = true
+		field := field_named(k.c, target, identifier_of(k.c, key))
+		switch {
+		case field == INVALID_SYMBOL:
+			errorf(k.c, element.span, "L0363", "`%s` has no field `%s`", type_name(k.c, target), key.name)
+		case !require_visible_field(k, element.span, target, field, "L0473", "initialised"):
+		case seen[symbol_of(k.c, field).index]:
+			errorf(k.c, element.span, "L0376", "field `%s` is set twice", key.name)
+		case:
+			return field
+		}
+		return INVALID_SYMBOL
+	}
+	if named^ {
+		errorf(k.c, element.span, "L0372", "a positional element cannot follow a named one")
+		return INVALID_SYMBOL
+	}
+	if index >= len(positional) {
+		errorf(k.c, element.span, "L0376", "`%s` has %d field%s", type_name(k.c, target), len(positional), len(positional) == 1 ? "" : "s")
+		return INVALID_SYMBOL
+	}
+	field := positional[index]
+	// Supplying an inaccessible field is rejected; omitting one is not.
+	if !require_visible_field(k, element.span, target, field, "L0474", "initialised positionally") {
+		return INVALID_SYMBOL
+	}
+	// design.md "Struct literals": positional only where the fields are
+	// declared. Positional elements come first, so the first reports.
+	if record_order_is_foreign(k, target) {
+		if index == 0 {
+			errorf(
+				k.c, element.span, "L0709",
+				"the fields of `%s` are declared in another package, so its literal must name them",
+				type_name(k.c, target),
+			)
+			add_notef(
+				k.c, element.span, "write `%s = ...`; that package may reorder its fields",
+				identifier_text(k.c, symbol_of(k.c, field).name),
+			)
+		}
+		return INVALID_SYMBOL
+	}
+	return field
 }
 
 // design.md "Zero values": an omitted field is filled with its type's zero, and a

@@ -1469,10 +1469,7 @@ proc_type_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 			return false
 		}
 	}
-	if b.proc_contract != INVALID_SYMBOL && a.proc_contract == INVALID_SYMBOL {
-		return false
-	}
-	return true
+	return b.proc_contract == INVALID_SYMBOL || a.proc_contract != INVALID_SYMBOL
 }
 
 // design.md "Receiver forms": a `self: ^Self` method is the same procedure as

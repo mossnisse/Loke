@@ -700,10 +700,7 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		return false
 	}
 	// design.md "Maps": key policies are settled where the map type is named.
-	if !require_nested_map_key_policies(k, type, span) {
-		return false
-	}
-	return true
+	return require_nested_map_key_policies(k, type, span)
 }
 
 // Says why a written type did not resolve, for the paths where
