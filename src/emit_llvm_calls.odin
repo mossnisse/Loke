@@ -101,46 +101,12 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	case .Math_Wrap:
 		source := expr_base(v.bound[0]).type
 		return emit_value_conversion(e, emit_expr(e, v.bound[0]), source, as_type, checked = false)
-	case .Math_Fma_Available:
-		return emitted_has_fma(e) ? "true" : "false"
-	case .Math_Fma_Instruction:
-		return emit_fma_instruction(e, v)
-	case .Math_Sqrt_Instruction:
-		return emit_float_instruction(e, v, "sqrt")
-	case .Math_Floor_Instruction:
-		return emit_float_instruction(e, v, "floor")
-	case .Math_Ceil_Instruction:
-		return emit_float_instruction(e, v, "ceil")
-	case .Math_Trunc_Instruction:
-		return emit_float_instruction(e, v, "trunc")
-	case .Math_Round_Instruction:
-		return emit_float_instruction(e, v, "round")
-	case .Math_Mod_Instruction:
-		llvm := llvm_type(e, expr_base(v.bound[0]).type)
-		x, y := emit_expr(e, v.bound[0]), emit_expr(e, v.bound[1])
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = frem %s %s, %s", out, llvm, x, y)
-		return out
-	case .Math_Count_Ones:
-		return emit_bit_count(e, v, "ctpop")
-	case .Math_Leading_Zeros:
-		return emit_bit_count(e, v, "ctlz")
-	case .Math_Trailing_Zeros:
-		return emit_bit_count(e, v, "cttz")
-	case .Math_Rotate_Left:
-		return emit_rotate(e, v, "fshl")
-	case .Math_Rotate_Right:
-		return emit_rotate(e, v, "fshr")
-	case .Math_Bit_Width:
-		return emit_bit_width(e, v)
-	case .Math_Reverse_Bits:
-		return emit_reverse_bits(e, v)
-	case .Math_Is_Power_Of_Two:
-		return emit_is_power_of_two(e, v)
-	case .Math_Next_Power_Of_Two:
-		return emit_next_power_of_two(e, v, as_type, checked = false)
-	case .Math_Checked_Next_Power_Of_Two:
-		return emit_next_power_of_two(e, v, as_type, checked = true)
+	case .Math_Fma_Available, .Math_Fma_Instruction, .Math_Sqrt_Instruction,
+	     .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction,
+	     .Math_Mod_Instruction, .Math_Rotate_Left, .Math_Rotate_Right,
+	     .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width,
+	     .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
+		return emit_math_builtin(e, v, kind, as_type)
 	case .Unsafe_Take:
 		return load_place(e, as_type, emit_address(e, v.bound[0]))
 	case .Unsafe_Write:
@@ -202,9 +168,7 @@ emit_enum_from_int :: proc(e: ^Emitter, v: ^Expr_Call, enum_type, as_type: Type_
 		if !bi_fits(sym.const_value.integer, bits, signed) {
 			continue
 		}
-		matches := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %s", matches,
-			bits, value, bi_text(e.c, sym.const_value.integer))
+		matches := emit_value(e, "icmp eq i%d %s, %s", bits, value, bi_text(e.c, sym.const_value.integer))
 		present = combine_or(e, present, matches)
 	}
 	// A matching value fits both widths, so the resize is exact when it counts.
@@ -319,12 +283,10 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 	capacity := length
 	if !is_map && values[1] != "" {
 		capacity = values[1]
-		bad := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, %s", bad, length, capacity)
+		bad := emit_value(e, "icmp sgt i64 %s, %s", length, capacity)
 		panic_if(e, bad, "make.len_gt_cap", "a container's length cannot exceed its capacity")
 	}
-	negative := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, length)
+	negative := emit_value(e, "icmp slt i64 %s, 0", length)
 	panic_if(e, negative, "make.negative", "a container's length cannot be negative")
 
 	helper := is_map ? "loke_rt_v1_map_reserve" : "loke_rt_v1_dyn_reserve"
@@ -342,8 +304,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 	if !is_map {
 		element := container_element(e.c, checked.type)
 		data := load(e, "ptr", header)
-		bytes := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, length, type_size(e.c, element))
+		bytes := emit_value(e, "mul i64 %s, %d", length, type_size(e.c, element))
 		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", data, bytes)
 		count_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, count_slot)
@@ -423,13 +384,10 @@ PACK_STACK_BYTES :: 256 * 1024
 
 @(private = "file")
 checked_variadic_total :: proc(e: ^Emitter, total, added: string) -> string {
-	negative := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, added)
+	negative := emit_value(e, "icmp slt i64 %s, 0", added)
 	panic_if(e, negative, "variadic.length", "invalid variadic spread length")
-	sum := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", sum, total, added)
-	overflow := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ult i64 %s, %s", overflow, sum, total)
+	sum := emit_value(e, "add i64 %s, %s", total, added)
+	overflow := emit_value(e, "icmp ult i64 %s, %s", sum, total)
 	panic_if(e, overflow, "variadic.size", "variadic argument pack is too large")
 	return sum
 }
@@ -553,8 +511,7 @@ emit_spread_pack :: proc(
 	managed := emit_lifecycle(e, element).managed
 	size := type_size(e.c, element)
 	limit := size == 0 ? u64(max(i64)) : PACK_STACK_BYTES / size
-	too_large := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", too_large, operands.total, limit)
+	too_large := emit_value(e, "icmp ugt i64 %s, %d", operands.total, limit)
 	if _, lends := variadic_lent_pointee(e.c, element); lends {
 		buffer, cleanup = emit_lent_pack_storage(e, element, operands.total, too_large)
 	} else {
@@ -588,8 +545,7 @@ emit_spread_pack :: proc(
 				emit_pack_lend_spread(e, slice_element(e.c, lent), element, data, advance, buffer, position)
 			} else if lend || !managed {
 				// Bitwise, with any flags left clear.
-				bytes := temp(e)
-				fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, advance, size)
+				bytes := emit_value(e, "mul i64 %s, %d", advance, size)
 				fmt.sbprintfln(
 					&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %s, i1 false)",
 					gep_at(e, element_llvm, buffer, position), data, bytes,
@@ -607,8 +563,7 @@ emit_spread_pack :: proc(
 			}
 			next_element += 1
 		}
-		advanced := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, position, advance)
+		advanced := emit_value(e, "add i64 %s, %s", position, advance)
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, cursor)
 	}
 	return buffer, cleanup
@@ -626,11 +581,9 @@ emit_lent_pack_storage :: proc(e: ^Emitter, element: Type_Id, total, large: stri
 	branch_if(e, large, heap, stack)
 
 	place_label(e, heap)
-	too_large := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", too_large, total, u64(max(i64)) / size)
+	too_large := emit_value(e, "icmp ugt i64 %s, %d", total, u64(max(i64)) / size)
 	panic_if(e, too_large, "variadic.size", "variadic argument pack is too large")
-	bytes := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, total, size)
+	bytes := emit_value(e, "mul i64 %s, %d", total, size)
 	allocator := emit_default_allocator(e)
 	block, failed := emit_rt_alloc_sized(e, allocator, bytes, type_align(e.c, element))
 	alloc_failed_if(e, failed, allocator, "vararg.no_pack")
@@ -657,8 +610,7 @@ emit_lent_pack_storage :: proc(e: ^Emitter, element: Type_Id, total, large: stri
 @(private = "file")
 emit_pack_lend_spread :: proc(e: ^Emitter, lent, element: Type_Id, data, length, buffer, start: string) {
 	loop := open_counted_loop(e, new_counter(e), "vararg.lend", length, "ult")
-	position := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", position, start, loop.index)
+	position := emit_value(e, "add i64 %s, %s", start, loop.index)
 	store(e, element, gep_at(e, llvm_type(e, lent), data, loop.index), gep_at(e, llvm_type(e, element), buffer, position))
 	close_counted_loop(e, loop)
 }
@@ -670,8 +622,7 @@ emit_pack_clone_spread :: proc(e: ^Emitter, element: Type_Id, data, length, buff
 	element_llvm := llvm_type(e, element)
 	loop := open_counted_loop(e, new_counter(e), "vararg.copy", length, "ult")
 	cloned := emit_clone_value(e, element, load_place(e, element, gep_at(e, element_llvm, data, loop.index)))
-	position := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", position, start, loop.index)
+	position := emit_value(e, "add i64 %s, %s", start, loop.index)
 	store(e, element, cloned, gep_at(e, element_llvm, buffer, position))
 	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", gep_at(e, "i1", flags, position))
 	close_counted_loop(e, loop)
@@ -1156,9 +1107,7 @@ emit_call_result :: proc(e: ^Emitter, result: Type_Id, callee, arguments: string
 		fmt.sbprintfln(&e.b, "  call void %s(ptr %s%s%s)", callee, out, arguments == "" ? "" : ", ", arguments)
 		return out
 	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", out, llvm_type(e, result), callee, arguments)
-	return out
+	return emit_value(e, "call %s %s(%s)", llvm_type(e, result), callee, arguments)
 }
 
 // A pointer-mode parameter, or a large value, travels as an address.

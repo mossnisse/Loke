@@ -286,30 +286,9 @@ write_const_bytes :: proc(
 		return false
 	}
 	#partial switch info.kind {
-	case .Int, .Enum, .Rune, .Allocator_Error:
-		if value.kind != .Integer && value.kind != .Rune {
-			return false
-		}
-		wrapped := bi_wrap(e.c, value.integer, len(out) * 8, false)
-		for _, index in out {
-			byte_value, ok := bi_to_u64(e.c, bi_wrap(e.c, bi_shr(e.c, wrapped, index * 8), 8, false))
-			if !ok {
-				return false
-			}
-			out[index] = u8(byte_value)
-		}
-		return true
-	case .Bool:
-		if value.kind != .Boolean || len(out) == 0 {
-			return false
-		}
-		out[0] = value.boolean ? 1 : 0
-		return true
-	case .Float:
-		if value.kind != .Float {
-			return false
-		}
-		write_u64_bytes(out, const_float_pattern(value, info.bits))
+	case .Int, .Enum, .Rune, .Allocator_Error, .Bool, .Float:
+		pattern := scalar_const_pattern(value, info, len(out) * 8) or_return
+		write_pattern_bytes(out, pattern)
 		return true
 	case .Array, .Simd:
 		stride := int(type_size(e.c, info.element))

@@ -35,45 +35,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	emit_carrier_types(&e)
 	emit_struct_definitions(&e)
 
-	probes := make([dynamic]Layout_Probe)
-	for index in 0 ..< len(c.types) {
-		type := Type_Id(index)
-		if !layout_probeable(c, type) {
-			continue
-		}
-		llvm := llvm_type(&e, type)
-		name := type_name(c, type)
-		append(&probes, Layout_Probe {
-			description = fmt.aprintf("size_of(%s)", name),
-			llvm        = fmt.aprintf("ptrtoint (ptr getelementptr (%s, ptr null, i64 1) to i64)", llvm),
-			expected    = type_size(c, type),
-		})
-		// LLVM has no `alignof`; the offset of `T` in `{ i8, T }` is its alignment.
-		append(&probes, Layout_Probe {
-			description = fmt.aprintf("align_of(%s)", name),
-			// `{` is a format directive to core:fmt, so this one is concatenated.
-			llvm        = strings.concatenate(
-				{"ptrtoint (ptr getelementptr ({ i8, ", llvm, " }, ptr null, i64 0, i32 1) to i64)"},
-			),
-			expected    = type_align(c, type),
-		})
-		info := type_of(c, type)
-		if info.kind != .Struct {
-			continue
-		}
-		for field, position in info.fields {
-			symbol := symbol_of(c, field)
-			if symbol == nil {
-				continue
-			}
-			append(&probes, Layout_Probe {
-				description = fmt.aprintf("offset_of(%s, %s)", name, identifier_text(c, symbol.name)),
-				llvm        = fmt.aprintf("ptrtoint (ptr getelementptr (%s, ptr null, i64 0, i32 %d) to i64)", llvm, position),
-				expected    = type_field_offset(c, type, position),
-			})
-		}
-	}
-
+	probes := layout_probes(&e)
 	fmt.sbprintln(&e.b, "define i32 @main() {")
 	fmt.sbprintln(&e.b, "entry:")
 	for probe in probes {
@@ -139,6 +101,51 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	}
 	fmt.printfln("%d layout facts agree with LLVM", len(probes))
 	return 0
+}
+
+// The size, alignment, and field offsets of every probeable type.
+@(private = "file")
+layout_probes :: proc(e: ^Emitter) -> []Layout_Probe {
+	c := e.c
+	probes := make([dynamic]Layout_Probe)
+	for index in 0 ..< len(c.types) {
+		type := Type_Id(index)
+		if !layout_probeable(c, type) {
+			continue
+		}
+		llvm := llvm_type(e, type)
+		name := type_name(c, type)
+		append(&probes, Layout_Probe {
+			description = fmt.aprintf("size_of(%s)", name),
+			llvm        = fmt.aprintf("ptrtoint (ptr getelementptr (%s, ptr null, i64 1) to i64)", llvm),
+			expected    = type_size(c, type),
+		})
+		// LLVM has no `alignof`; the offset of `T` in `{ i8, T }` is its alignment.
+		append(&probes, Layout_Probe {
+			description = fmt.aprintf("align_of(%s)", name),
+			// `{` is a format directive to core:fmt, so this one is concatenated.
+			llvm        = strings.concatenate(
+				{"ptrtoint (ptr getelementptr ({ i8, ", llvm, " }, ptr null, i64 0, i32 1) to i64)"},
+			),
+			expected    = type_align(c, type),
+		})
+		info := type_of(c, type)
+		if info.kind != .Struct {
+			continue
+		}
+		for field, position in info.fields {
+			symbol := symbol_of(c, field)
+			if symbol == nil {
+				continue
+			}
+			append(&probes, Layout_Probe {
+				description = fmt.aprintf("offset_of(%s, %s)", name, identifier_text(c, symbol.name)),
+				llvm        = fmt.aprintf("ptrtoint (ptr getelementptr (%s, ptr null, i64 0, i32 %d) to i64)", llvm, position),
+				expected    = type_field_offset(c, type, position),
+			})
+		}
+	}
+	return probes[:]
 }
 
 // A type that lowers to a real LLVM type and holds a runtime value.

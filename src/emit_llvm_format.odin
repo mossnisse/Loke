@@ -70,8 +70,7 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 		value = temporary_slot(e, result)
 		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)%s", entry, value, attributes)
 	} else {
-		value = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s()%s", value, llvm_type(e, result), entry, attributes)
+		value = emit_value(e, "call %s %s()%s", llvm_type(e, result), entry, attributes)
 	}
 	slot := emit_union_spill(e, under, value)
 	failed := emit_union_failed(e, under, value)
@@ -227,8 +226,7 @@ emit_format_text :: proc(e: ^Emitter, under: Type_Id, address, callee: string) {
 	data, length: string
 	if type_kind(e.c, under) == .CString_View {
 		data = load(e, "ptr", address)
-		length = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, data)
+		length = emit_value(e, "call i64 @loke_rt_v1_cstring_len(ptr %s)", data)
 	} else {
 		data, length = load_pair(e, llvm_type(e, under), address, STRING_DATA, STRING_LEN)
 	}
@@ -268,8 +266,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	#partial switch info.kind {
 	case .Bool:
 		value := load(e, "i1", address)
-		widened := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", widened, value)
+		widened := emit_value(e, "zext i1 %s to i32", value)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bool(ptr %%w, i32 %s)", widened)
 
 	case .Int, .Allocator_Error:
@@ -294,8 +291,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		case "float":
 			fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f32(ptr %%w, float %s)", value)
 		case:
-			widened := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = fpext %s %s to float", widened, llvm, value)
+			widened := emit_value(e, "fpext %s %s to float", llvm, value)
 			fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f16(ptr %%w, float %s)", widened)
 		}
 

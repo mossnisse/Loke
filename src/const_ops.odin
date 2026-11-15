@@ -653,7 +653,7 @@ scalar_const_pattern :: proc(value: Const_Value, info: ^Type_Info, bits: int) ->
 		if value.kind == .Boolean {
 			return value.boolean ? 1 : 0, true
 		}
-	case .Int, .Rune, .Enum:
+	case .Int, .Rune, .Enum, .Allocator_Error:
 		if const_is_integral(value) {
 			return bi_pattern(value.integer, bits), true
 		}

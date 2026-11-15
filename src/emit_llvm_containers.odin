@@ -1,5 +1,5 @@
-// Container operation tables, construction, synthesized runtime bodies, and the
-// `[]mut T` members.
+// Container operation tables, construction, synthesized runtime bodies, map
+// access, and key hashing.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
@@ -90,212 +90,15 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id, relocating := false) ->
 	return name
 }
 
-// The element storage and live count of a sequence member's receiver: loaded
-// through a container header's address, or read out of a slice value.
-@(private = "file")
-synth_sequence_storage :: proc(e: ^Emitter, symbol: ^Symbol) -> (data: string, count: string) {
-	receiver := symbol.params[0]
-	if type_is_container(e.c, receiver) {
-		data = load(e, "ptr", gep_field(e, CONTAINER_TYPE, "%arg0", CONTAINER_STORAGE))
-		count = load(e, "i64", gep_field(e, CONTAINER_TYPE, "%arg0", CONTAINER_LEN))
-		return
-	}
-	header := llvm_type(e, receiver)
-	self := synth_receiver_value(e, symbol)
-	data, count = ptr_len_parts(e, header, self)
-	return
-}
-
-// `xs.sort()` and `s.sort()`: one call into `runtime/container.c`'s introsort.
-@(private = "file")
-emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	element := sequence_element(e.c, symbol.params[0])
-
-	open_synth_function(e, symbol, name)
-
-	// Only a call settles an element's `<`, so an unsettled comparison means
-	// this contributed member is never called and its body can be empty.
-	#partial switch resolved_element_order_policy(e.c, element).kind {
-	case .Builtin, .Inherent:
-	case:
-		fmt.sbprintln(&e.b, "  ret void")
-		fmt.sbprintln(&e.b, "}")
-		return
-	}
-
-	data, count := synth_sequence_storage(e, symbol)
-
-	fmt.sbprintfln(
-		&e.b, "  call void @loke_rt_v1_sort(ptr %s, i64 %s, i64 %d, ptr %s, i32 %d)",
-		data, count, type_size(e.c, element), container_less_thunk(e, element),
-		symbol.container_op == .Reverse_Sort ? 1 : 0,
-	)
-	fmt.sbprintln(&e.b, "  ret void")
-	fmt.sbprintln(&e.b, "}")
-}
-
-// standard-library.md "Swapping elements": two elements change place, so no copy or drop
-// hook runs. Both loads precede either store, so equal indices are a no-op.
-@(private = "file")
-emit_synth_swap :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	element := sequence_element(e.c, symbol.params[0])
-	element_llvm := llvm_type(e, element)
-
-	open_synth_function(e, symbol, name)
-
-	data, count := synth_sequence_storage(e, symbol)
-
-	emit_bounds_check(e, "%arg1", count, "index out of range")
-	emit_bounds_check(e, "%arg2", count, "index out of range")
-
-	left := gep_at(e, element_llvm, data, "%arg1")
-	right := gep_at(e, element_llvm, data, "%arg2")
-	held_left := load_place(e, element, left)
-	held_right := load_place(e, element, right)
-	store(e, element, held_right, left)
-	store(e, element, held_left, right)
-	fmt.sbprintln(&e.b, "  ret void")
-	fmt.sbprintln(&e.b, "}")
-}
-
-// standard-library.md "Splitting a mutable slice": one bounds check and two headers over
-// the receiver's elements.
-@(private = "file")
-emit_synth_split :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	header := llvm_type(e, symbol.params[0])
-	element_llvm := llvm_type(e, slice_element(e.c, symbol.params[0]))
-	halves := llvm_type(e, symbol.result)
-
-	open_synth_function(e, symbol, name)
-
-	data, count := synth_sequence_storage(e, symbol)
-	// `mid == len` leaves `right` empty.
-	emit_bounds_check(e, "%arg1", count, "split index out of range", inclusive = true)
-
-	rest := gep_at(e, element_llvm, data, "%arg1")
-	rest_count := emit_value(e, "sub i64 %s, %%arg1", count)
-	left := emit_ptr_len(e, header, data, "%arg1")
-	right := emit_ptr_len(e, header, rest, rest_count)
-	value := insert(e, halves, "undef", header, left, 0)
-	value = insert(e, halves, value, header, right, 1)
-	emit_ret(e, symbol.result, value)
-	fmt.sbprintln(&e.b, "}")
-}
-
-// standard-library.md "Chunks of a mutable slice": the view over the receiver, after the
-// chunk length is checked.
-@(private = "file")
-emit_synth_chunks :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	header := llvm_type(e, symbol.params[0])
-	chunks := llvm_type(e, symbol.result)
-
-	open_synth_function(e, symbol, name)
-
-	not_positive := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %%arg1, 1", not_positive)
-	panic_if(e, not_positive, "bounds", "chunk length must be positive")
-	value := insert(e, chunks, "undef", header, synth_receiver_value(e, symbol), CHUNKS_REST)
-	value = insert(e, chunks, value, "i64", "%arg1", CHUNKS_SIZE)
-	emit_ret(e, symbol.result, value)
-	fmt.sbprintln(&e.b, "}")
-}
-
-// `next` for `chunks_mut`: the next `size` elements of what is left, or all of
-// it when fewer remain, and what is left past them.
-@(private)
-emit_synth_chunks_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	option := symbol.result
-	slice := option_payload(e.c, option)
-	header := llvm_type(e, slice)
-	element := llvm_type(e, slice_element(e.c, slice))
-	iterator := llvm_type(e, symbol.params[0])
-
-	open_synth_receiver(e, name, option)
-	rest_ptr := gep_field(e, iterator, "%arg0", CHUNKS_REST)
-	rest := load(e, header, rest_ptr)
-	data, count := ptr_len_parts(e, header, rest)
-	size := load(e, "i64", gep_field(e, iterator, "%arg0", CHUNKS_SIZE))
-	empty := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp sle i64 %s, 0", empty, count)
-	stop_label, yield_label := new_label(e, "chunks.stop"), new_label(e, "chunks.yield")
-	branch_if(e, empty, stop_label, yield_label)
-
-	place_label(e, yield_label)
-	short, taken, left := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", short, count, size)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", taken, short, count, size)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", left, count, taken)
-	chunk := emit_ptr_len(e, header, data, taken)
-	store(e, slice, emit_ptr_len(e, header, gep_at(e, element, data, taken), left), rest_ptr)
-	emit_ret(e, option, emit_option_some(e, option, chunk))
-
-	close_synth_next(e, option, stop_label)
-}
-
-// `core:slice.sort_by`: the checked comparator and its concrete `call` method
-// are erased only at this C ABI seam.
-@(private)
-emit_slice_sort_by :: proc(e: ^Emitter, v: ^Expr_Call) {
-	if len(v.bound) != 2 || v.operation.(Call_Sort_By).comparator == INVALID_SYMBOL {
-		backend_fail(e, "a checked slice sort_by has no comparator")
-		return
-	}
-
-	slice_type := expr_base(v.bound[0]).type
-	element := slice_element(e.c, slice_type)
-	value := emit_expr(e, v.bound[0])
-	storage := llvm_type(e, slice_type)
-	data, count := ptr_len_parts(e, storage, value)
-	ctx := emit_expr(e, v.bound[1])
-	less := sort_by_thunk(e, element, v.operation.(Call_Sort_By).comparator)
-	fmt.sbprintfln(
-		&e.b, "  call void @loke_rt_v1_sort_by(ptr %s, i64 %s, i64 %d, ptr %s, ptr %s)",
-		data, count, type_size(e.c, element), ctx, less,
-	)
-}
-
-// One adapter per concrete comparator method, keyed by the element too so a
-// future generic `call` would collide loudly rather than load the wrong type.
-@(private = "file")
-sort_by_thunk :: proc(e: ^Emitter, element: Type_Id, method: Symbol_Id) -> string {
-	name := generated_name(e, fmt.aprintf("@loke.csortby.%d.%d", int(method), int(element)))
-	thunk, fresh := begin_thunk(e, name)
-	if !fresh {
-		return name
-	}
-	open_function(e, "define private i32 %s(ptr %%state, ptr %%a, ptr %%b)", name)
-	// A value `self` takes the comparator itself.
-	state := hook_argument(e, method, 0, symbol_of(e.c, method).params[0], "%state")
-	left := hook_argument(e, method, 1, element, "%a")
-	right := hook_argument(e, method, 2, element, "%b")
-	before := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i1 %s(%s, %s, %s)", before, symbol_name(e, method), state, left, right)
-	emit_ret_flag(e, before)
-	fmt.sbprintln(&e.b, "}")
-	end_thunk(e, thunk)
-	return name
-}
-
 // An `i1` answer, widened to the `int` the C runtime reads.
-@(private = "file")
+@(private)
 emit_ret_flag :: proc(e: ^Emitter, flag: string) {
-	widened := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", widened, flag)
+	widened := emit_value(e, "zext i1 %s to i32", flag)
 	fmt.sbprintfln(&e.b, "  ret i32 %s", widened)
 }
 
 // One comparison per element type, using the `<` policy settled during checking.
-@(private = "file")
+@(private)
 container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
 	return memo_thunk(
 		e, generated_name(e, fmt.aprintf("@loke.cless.%d", int(element))), element,
@@ -462,10 +265,9 @@ begin_container_literal :: proc(
 	}
 	family := type_is_map(e.c, as_type) ? "map" : "dyn"
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_%s_bind(ptr %s)", family, address)
-	reserved := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i32 @loke_rt_v1_%s_reserve(ptr %s, ptr %s, i64 %d)",
-		reserved, family, address, ops, len(v.elements),
+	reserved := emit_value(
+		e, "call i32 @loke_rt_v1_%s_reserve(ptr %s, ptr %s, i64 %d)",
+		family, address, ops, len(v.elements),
 	)
 	emit_container_policy_failure(e, address, reserved)
 	return ops, hold_built_part(e, as_type, address)
@@ -495,10 +297,9 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 		} else {
 			store(e, element, emit_expr(e, written.value), slot)
 		}
-		status := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %s, ptr %s, ptr %s, i64 1)",
-			status, address, borrowed ? ops : relocating, slot,
+		status := emit_value(
+			e, "call i32 @loke_rt_v1_dyn_append(ptr %s, ptr %s, ptr %s, i64 1)",
+			address, borrowed ? ops : relocating, slot,
 		)
 		emit_container_policy_failure(e, address, status)
 		end_operand_temporaries(e, operand, element)
@@ -672,11 +473,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	case .Insert:
 		slot := spill(e, element, "%arg2")
 		guard := moves ? guard_built_element(e, element, slot) : Deferred{}
-		status = temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i32 @loke_rt_v1_dyn_insert(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i64 1)",
-			status, ops, slot,
-		)
+		status = emit_value(e, "call i32 @loke_rt_v1_dyn_insert(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i64 1)", ops, slot)
 		// The helper takes the value only once nothing can panic.
 		finish_temporary_drop(e, guard)
 		if moves {
@@ -687,8 +484,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 
 	case .Pop:
 		out := alloca(e, element_llvm)
-		found := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_dyn_pop(ptr %%arg0, ptr %s, ptr %s)", found, ops, out)
+		found := emit_value(e, "call i32 @loke_rt_v1_dyn_pop(ptr %%arg0, ptr %s, ptr %s)", ops, out)
 		value := load_temporary(e, element, out)
 		ok := icmp_zero(e, "i32", found, equal = false)
 		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, value))
@@ -737,11 +533,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	case .Map_Remove:
 		key_slot := key_probe_slot(e, symbol, container)
 		out := alloca(e, element_llvm)
-		found := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i32 @loke_rt_v1_map_remove(ptr %%arg0, ptr %s, ptr %s, ptr %s)",
-			found, ops, key_slot, out,
-		)
+		found := emit_value(e, "call i32 @loke_rt_v1_map_remove(ptr %%arg0, ptr %s, ptr %s, ptr %s)", ops, key_slot, out)
 		value := load_temporary(e, element, out)
 		ok := icmp_zero(e, "i32", found, equal = false)
 		emit_ret(e, symbol.result, emit_option_value(e, symbol.result, ok, value))
@@ -805,9 +597,7 @@ receiver_header :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 // A helper's status for the receiver at `%arg0` and the count at `%arg1`.
 @(private = "file")
 status_call :: proc(e: ^Emitter, helper, ops: string) -> string {
-	status := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_%s(ptr %%arg0, ptr %s, i64 %%arg1)", status, helper, ops)
-	return status
+	return emit_value(e, "call i32 @loke_rt_v1_%s(ptr %%arg0, ptr %s, i64 %%arg1)", helper, ops)
 }
 
 @(private = "file")
@@ -823,8 +613,7 @@ emit_synth_append :: proc(e: ^Emitter, body: Container_Body) -> string {
 		// A failed append leaves every owned element with this body. A `try_`
 		// form passes no flags: it owns nothing, and its caller drops the pack.
 		kept := branch_on_failure(e, status)
-		flagged := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %%owned, null", flagged)
+		flagged := emit_value(e, "icmp ne ptr %%owned, null")
 		drop_owned, dropped := new_label(e, "append.owned"), new_label(e, "append.dropped")
 		branch_if(e, flagged, drop_owned, dropped)
 		place_label(e, drop_owned)
@@ -1004,11 +793,7 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 // One probe, no insertion: the entry's value slot, or null.
 @(private = "file")
 emit_map_find :: proc(e: ^Emitter, header, ops, key_slot: string) -> string {
-	found := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
-	)
-	return found
+	return emit_value(e, "call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", header, ops, key_slot)
 }
 
 // The address of a map a read only borrows. A literal is an owned temporary
@@ -1165,10 +950,5 @@ emit_borrowed_key_slot :: proc(e: ^Emitter, view: string) -> string {
 // already held a live value.
 @(private = "file")
 emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot, inserted: string) -> string {
-	place := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call ptr @loke_rt_v1_map_entry(ptr %s, ptr %s, ptr %s, ptr %s)",
-		place, header, ops, key_slot, inserted,
-	)
-	return place
+	return emit_value(e, "call ptr @loke_rt_v1_map_entry(ptr %s, ptr %s, ptr %s, ptr %s)", header, ops, key_slot, inserted)
 }

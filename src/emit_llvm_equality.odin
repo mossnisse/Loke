@@ -41,14 +41,11 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 		storage := llvm_type(e, type_underlying(e.c, type))
 		left_data, left_len := string_parts(e, storage, lhs)
 		right_data, right_len := string_parts(e, storage, rhs)
-		order := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i32 @loke_rt_v1_bytes_compare(ptr %s, i64 %s, ptr %s, i64 %s)",
-			order, left_data, left_len, right_data, right_len,
+		order := emit_value(
+			e, "call i32 @loke_rt_v1_bytes_compare(ptr %s, i64 %s, ptr %s, i64 %s)",
+			left_data, left_len, right_data, right_len,
 		)
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp %s i32 %s, 0", out, compare_predicate(op).signed, order)
-		return out
+		return emit_value(e, "icmp %s i32 %s, 0", compare_predicate(op).signed, order)
 	}
 	if op != .Eq_Eq && op != .Not_Eq && underlying_kind(e.c, type) == .Struct {
 		return emit_record_order(e, op, type, lhs, rhs)
@@ -82,8 +79,7 @@ emit_record_order :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: 
 		}
 		equal := emit_equal(e, field, left, right)
 		less := emit_compare(e, .Lt, field, left, right)
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", out, equal, result, less)
+		out := emit_value(e, "select i1 %s, i1 %s, i1 %s", equal, result, less)
 		result = out
 	}
 	return result
@@ -189,8 +185,7 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 
 	left_tag := emit_union_tag(e, union_type, lhs)
 	right_tag := emit_union_tag(e, union_type, rhs)
-	same_tag := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", same_tag, tag_llvm, left_tag, right_tag)
+	same_tag := emit_value(e, "icmp eq %s %s, %s", tag_llvm, left_tag, right_tag)
 
 	left_slot := emit_union_spill(e, union_type, lhs)
 	right_slot := emit_union_spill(e, union_type, rhs)
@@ -281,8 +276,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 	// payload type hash apart.
 	if info != nil && info.kind == .Union {
 		tag := emit_union_tag(e, under, value)
-		widened := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = zext %s %s to i64", widened, union_tag_llvm(union_layout(e.c, under)), tag)
+		widened := emit_value(e, "zext %s %s to i64", union_tag_llvm(union_layout(e.c, under)), tag)
 		tagged := emit_hash_mix(e, seed, widened)
 		slot := emit_union_spill(e, under, value)
 		state := alloca(e, "i64")
@@ -330,12 +324,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 	if type_is_utf8_text(e.c, under) {
 		storage := llvm_type(e, under)
 		data, length := string_parts(e, storage, value)
-		out := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i64 @loke_rt_v1_hash_bytes(ptr %s, i64 %s, i64 %s)",
-			out, data, length, seed,
-		)
-		return out
+		return emit_value(e, "call i64 @loke_rt_v1_hash_bytes(ptr %s, i64 %s, i64 %s)", data, length, seed)
 	}
 	return emit_hash_mix(e, seed, emit_hash_bits(e, under, value))
 }

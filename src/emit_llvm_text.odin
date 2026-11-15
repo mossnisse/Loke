@@ -50,8 +50,7 @@ emit_text_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: st
 	value := emit_borrowed_operand(e, operand)
 	if type_kind(e.c, type) == .CString_View {
 		// A C string view is terminated, not measured.
-		length = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, value)
+		length = emit_value(e, "call i64 @loke_rt_v1_cstring_len(ptr %s)", value)
 		return value, length
 	}
 	return string_parts(e, llvm_type(e, type), value)
@@ -70,8 +69,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 
 	case .Rune_Count:
 		data, length := emit_text_parts(e, v.bound[0])
-		out = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_rune_count(ptr %s, i64 %s)", out, data, length)
+		out = emit_value(e, "call i64 @loke_rt_v1_rune_count(ptr %s, i64 %s)", data, length)
 
 	case .Bytes:
 		// A read-only `[]u8` over the same storage.
@@ -112,10 +110,9 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 		ops := container_ops_global(e, as_type)
 		slot := alloca(e, CONTAINER_TYPE)
 		provider := emit_default_allocator(e)
-		ok := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i32 @loke_rt_v1_string_to_runes(ptr %s, ptr %s, ptr %s, i64 %s, ptr %s)",
-			ok, slot, ops, data, length, provider,
+		ok := emit_value(
+			e, "call i32 @loke_rt_v1_string_to_runes(ptr %s, ptr %s, ptr %s, i64 %s, ptr %s)",
+			slot, ops, data, length, provider,
 		)
 		emit_alloc_check(e, ok, provider)
 		out = load(e, CONTAINER_TYPE, slot)
@@ -137,8 +134,7 @@ emit_alloc_check :: proc(e: ^Emitter, status, provider: string) {
 @(private = "file")
 emit_text_call_slot :: proc(e: ^Emitter, callee: string, arguments: string) -> (slot: string, ok: string) {
 	slot = alloca(e, STRING_TYPE)
-	ok = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i32 @%s(ptr %s, %s)", ok, callee, slot, arguments)
+	ok = emit_value(e, "call i32 @%s(ptr %s, %s)", callee, slot, arguments)
 	return slot, ok
 }
 
@@ -210,8 +206,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 		data, length := emit_slice_parts(e, v.bound[0])
 		terminated := alloca(e, "i1")
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", terminated)
-		nonempty := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", nonempty, length)
+		nonempty := emit_value(e, "icmp sgt i64 %s, 0", length)
 		check, done := new_label(e, "cview.check"), new_label(e, "cview.done")
 		branch_if(e, nonempty, check, done)
 		place_label(e, check)

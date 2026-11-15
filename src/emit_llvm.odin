@@ -412,8 +412,7 @@ emit_forward_ret :: proc(e: ^Emitter, call_word, result, callee, arguments: stri
 		fmt.sbprintln(&e.b, "  ret void")
 		return
 	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s(%s)", out, call_word, result, callee, arguments)
+	out := emit_value(e, "%s %s %s(%s)", call_word, result, callee, arguments)
 	fmt.sbprintfln(&e.b, "  ret %s %s", result, out)
 }
 
@@ -569,25 +568,19 @@ numbered_name :: proc(prefix, separator: string, id: int) -> string {
 
 @(private)
 extract :: proc(e: ^Emitter, aggregate: string, value: string, index: int) -> string {
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", out, aggregate, value, index)
-	return out
+	return emit_value(e, "extractvalue %s %s, %d", aggregate, value, index)
 }
 
 // `into` is "undef" for the first field of a fresh aggregate.
 @(private)
 insert :: proc(e: ^Emitter, aggregate, into, field_type, value: string, index: int) -> string {
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, %s %s, %d", out, aggregate, into, field_type, value, index)
-	return out
+	return emit_value(e, "insertvalue %s %s, %s %s, %d", aggregate, into, field_type, value, index)
 }
 
 // A naturally aligned load; an under-aligned place needs `, align N`.
 @(private)
 load :: proc(e: ^Emitter, type: string, address: string) -> string {
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, type, address)
-	return out
+	return emit_value(e, "load %s, ptr %s", type, address)
 }
 
 @(private)
@@ -610,12 +603,7 @@ alloca_count :: proc(e: ^Emitter, name, type, count: string) {
 
 @(private)
 gep_field :: proc(e: ^Emitter, aggregate: string, address: string, index: int) -> string {
-	out := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		out, aggregate, address, index,
-	)
-	return out
+	return emit_value(e, "getelementptr inbounds %s, ptr %s, i32 0, i32 %d", aggregate, address, index)
 }
 
 // The address of part `index`: a struct field or an array element.
@@ -624,11 +612,7 @@ gep_field :: proc(e: ^Emitter, aggregate: string, address: string, index: int) -
 element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -> string {
 	info := underlying_info(e.c, owner)
 	if info != nil && info.kind == .Array {
-		out := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %d",
-			out, llvm_type(e, owner), base, index,
-		)
+		out := emit_value(e, "getelementptr inbounds %s, ptr %s, i64 0, i64 %d", llvm_type(e, owner), base, index)
 		if align, known := e.place_align[base]; known {
 			e.place_align[out] = align
 		}
@@ -647,8 +631,7 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 // The address of element `index`, an i64 operand.
 @(private)
 gep_at :: proc(e: ^Emitter, element: string, address: string, index: string) -> string {
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", out, element, address, index)
+	out := emit_value(e, "getelementptr inbounds %s, ptr %s, i64 %s", element, address, index)
 	// An element of under-aligned storage, such as an array in a packed struct,
 	// is as unaligned as the storage.
 	if align, known := e.place_align[address]; known {

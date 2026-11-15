@@ -65,9 +65,7 @@ emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 atomic_to_storage :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	kind := underlying_kind(e.c, type)
 	if kind == .Bool {
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i8", out, value)
-		return out
+		return emit_value(e, "zext i1 %s to i8", value)
 	}
 	// A one-word `Option` is its address word.
 	if kind == .Union {
@@ -107,11 +105,7 @@ emit_native_atomic :: proc(
 	align := bits / 8
 
 	if kind == .Atomic_Load {
-		raw := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = load atomic %s, ptr %s %s, align %d",
-			raw, storage, address, order, align,
-		)
+		raw := emit_value(e, "load atomic %s, ptr %s %s, align %d", storage, address, order, align)
 		return atomic_from_storage(e, checked.type, storage, raw)
 	}
 
@@ -127,11 +121,9 @@ emit_native_atomic :: proc(
 	if kind == .Atomic_Compare_Exchange {
 		expected := atomic_to_storage(e, checked.type, emit_expr(e, v.bound[1]))
 		desired := atomic_to_storage(e, checked.type, emit_expr(e, v.bound[2]))
-		pair := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = cmpxchg ptr %s, %s %s, %s %s %s %s, align %d",
-			pair, address, storage, expected, storage, desired,
-			order, llvm_ordering(checked.failure_order), align,
+		pair := emit_value(
+			e, "cmpxchg ptr %s, %s %s, %s %s %s %s, align %d",
+			address, storage, expected, storage, desired, order, llvm_ordering(checked.failure_order), align,
 		)
 		pair_type := fmt.aprintf("{{ %s, i1 }}", storage)
 		observed := extract(e, pair_type, pair, 0)
@@ -141,11 +133,7 @@ emit_native_atomic :: proc(
 
 	opcode := atomic_rmw_opcode(kind)
 	value := atomic_to_storage(e, checked.type, emit_expr(e, v.bound[1]))
-	previous := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = atomicrmw %s ptr %s, %s %s %s, align %d",
-		previous, opcode, address, storage, value, order, align,
-	)
+	previous := emit_value(e, "atomicrmw %s ptr %s, %s %s %s, align %d", opcode, address, storage, value, order, align)
 	return atomic_from_storage(e, checked.type, storage, previous)
 }
 

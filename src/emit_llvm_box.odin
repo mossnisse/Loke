@@ -103,9 +103,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 
 @(private)
 box_payload_at :: proc(e: ^Emitter, payload: Type_Id, block: string) -> string {
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds i8, ptr %s, i64 %d", out, block, box_payload_offset(e.c, payload))
-	return out
+	return emit_value(e, "getelementptr inbounds i8, ptr %s, i64 %d", block, box_payload_offset(e.c, payload))
 }
 
 // The payload a box value names: `b^`.

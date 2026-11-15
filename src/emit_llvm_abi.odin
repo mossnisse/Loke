@@ -493,8 +493,7 @@ emit_foreign_return :: proc(e: ^Emitter) {
 		fmt.sbprintln(&e.b, "  ret void")
 	case .Reg_Int:
 		bits := abi_reg_bits(e.c, result)
-		v := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", v, bits, slot, type_align(e.c, result))
+		v := emit_value(e, "load i%d, ptr %s, align %d", bits, slot, type_align(e.c, result))
 		fmt.sbprintfln(&e.b, "  ret i%d %s", bits, v)
 	case .Bool_I1, .Direct:
 		v := load_place(e, result, slot)
@@ -550,13 +549,11 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 	#partial switch info.kind {
 	case .Float:
 		if info.bits == 32 {
-			out := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = fpext float %s to double", out, operand)
+			out := emit_value(e, "fpext float %s to double", operand)
 			return fmt.aprintf("double %s", out)
 		}
 	case .Bool:
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, operand)
+		out := emit_value(e, "zext i1 %s to i32", operand)
 		return fmt.aprintf("i32 %s", out)
 	case .Int, .Enum:
 		if bits := type_bits(e.c, under); bits < 32 {
@@ -659,8 +656,7 @@ emit_foreign_call :: proc(
 	if ret == "void" {
 		fmt.sbprintfln(&e.b, "  call %s %s(%s)", head, callee, args)
 	} else {
-		call = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s(%s)", call, head, callee, args)
+		call = emit_value(e, "call %s %s(%s)", head, callee, args)
 	}
 	emit_foreign_environment_check(e, symbol)
 	return foreign_call_result(e, callee_type, call, sret)

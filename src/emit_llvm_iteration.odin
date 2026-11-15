@@ -300,11 +300,7 @@ field_value :: proc(e: ^Emitter, field: Foreach_Field) -> string {
 // spans. Text is valid UTF-8 by construction, so a zero means that broke.
 @(private = "file")
 emit_decode_rune :: proc(e: ^Emitter, data, length, offset, decoded: string) -> string {
-	used := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)",
-		used, data, length, offset, decoded,
-	)
+	used := emit_value(e, "call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)", data, length, offset, decoded)
 	panic_if(e, icmp_zero(e, "i64", used), "text.invalid", "invalid UTF-8 in a string")
 	return used
 }
@@ -460,8 +456,7 @@ map_scan_step :: proc(e: ^Emitter, table, ops, current, cursor: string) -> (fini
 @(private)
 step_counter :: proc(e: ^Emitter, slot, type: string) {
 	current := load(e, type, slot)
-	next := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add %s %s, 1", next, type, current)
+	next := emit_value(e, "add %s %s, 1", type, current)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", type, next, slot)
 }
 
@@ -481,8 +476,7 @@ open_counted_loop :: proc(e: ^Emitter, cursor, prefix, count: string, compare :=
 	done := new_label(e, fmt.aprintf("%s.done", prefix))
 	place_label(e, head)
 	index := load(e, "i64", cursor)
-	more := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp %s i64 %s, %s", more, compare, index, count)
+	more := emit_value(e, "icmp %s i64 %s, %s", compare, index, count)
 	branch_if(e, more, body, done)
 	place_label(e, body)
 	return Counted_Loop{cursor = cursor, index = index, head = head, done = done}
@@ -490,8 +484,7 @@ open_counted_loop :: proc(e: ^Emitter, cursor, prefix, count: string, compare :=
 
 @(private)
 close_counted_loop :: proc(e: ^Emitter, loop: Counted_Loop) {
-	next := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next, loop.index)
+	next := emit_value(e, "add i64 %s, 1", loop.index)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, loop.cursor)
 	branch(e, loop.head)
 	place_label(e, loop.done)
@@ -525,8 +518,7 @@ emit_sequence_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	loop := open_loop(e, true)
 	place_label(e, loop.head)
 	current := load(e, "i64", loop.counter)
-	test := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", test, current, limit)
+	test := emit_value(e, "icmp slt i64 %s, %s", current, limit)
 	branch_if(e, test, loop.body, loop.done)
 
 	begin_step(e, loop)

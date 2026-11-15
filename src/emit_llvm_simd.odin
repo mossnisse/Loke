@@ -10,8 +10,7 @@ emit_simd_splat :: proc(e: ^Emitter, value: string, vector: Type_Id) -> string {
 	llvm := llvm_type(e, vector)
 	scalar := value
 	if simd_is_mask(e, info) {
-		scalar = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i8", scalar, value)
+		scalar = emit_value(e, "zext i1 %s to i8", value)
 	}
 	one, out := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertelement %s poison, %s %s, i32 0", one, llvm, simd_lane_llvm_type(e, info), scalar)
@@ -54,8 +53,7 @@ emit_simd_binary_values :: proc(e: ^Emitter, op: Token_Kind, vector: Type_Id, le
 		form := lane_int_form(e, info, llvm)
 		return emit_shift(e, op, form, form, left, right)
 	case .Amp_Tilde:
-		complement := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = xor %s %s, %s", complement, llvm, right, simd_all_ones(e, info))
+		complement := emit_value(e, "xor %s %s, %s", llvm, right, simd_all_ones(e, info))
 		right = complement
 	}
 	mnemonics := arith_mnemonic(op == .Amp_Tilde ? .Amp : op)
@@ -64,9 +62,7 @@ emit_simd_binary_values :: proc(e: ^Emitter, op: Token_Kind, vector: Type_Id, le
 		backend_fail(e, "an unhandled SIMD operator reached emission")
 		return "zeroinitializer"
 	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, mnemonic, llvm, left, right)
-	return out
+	return emit_value(e, "%s %s %s, %s", mnemonic, llvm, left, right)
 }
 
 // design.md "Lane-wise operators": a lane that overflows panics the whole
@@ -82,11 +78,8 @@ emit_simd_checked :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, l
 
 @(private = "file")
 emit_simd_compare :: proc(e: ^Emitter, op: Token_Kind, info: ^Type_Info, llvm, left, right: string) -> string {
-	bits := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", bits, compare_instruction(e, op, info.element), llvm, left, right)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = zext <%d x i1> %s to <%d x i8>", out, info.count, bits, info.count)
-	return out
+	bits := emit_value(e, "%s %s %s, %s", compare_instruction(e, op, info.element), llvm, left, right)
+	return emit_value(e, "zext <%d x i1> %s to <%d x i8>", info.count, bits, info.count)
 }
 
 @(private)
@@ -127,9 +120,7 @@ simd_call_reduce :: proc(e: ^Emitter, name, lane: string, count: int, value, sta
 	key := fmt.aprintf("llvm.vector.reduce.%s.v%d%s", name, count, intrinsic_type_suffix(lane))
 	leading := start != "" ? fmt.aprintf("%s, ", lane) : ""
 	declare_intrinsic(e, key, lane, fmt.aprintf("%s<%d x %s>", leading, count, lane))
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s<%d x %s> %s)", out, lane, key, start, count, lane, value)
-	return out
+	return emit_value(e, "call %s @%s(%s<%d x %s> %s)", lane, key, start, count, lane, value)
 }
 
 // ------------------------------------------------------- `core:simd` --
@@ -150,12 +141,9 @@ emit_simd_select :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string
 	mask := emit_expr(e, v.bound[0])
 	left := emit_expr(e, v.bound[1])
 	right := emit_expr(e, v.bound[2])
-	bits := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = trunc <%d x i8> %s to <%d x i1>", bits, info.count, mask, info.count)
+	bits := emit_value(e, "trunc <%d x i8> %s to <%d x i1>", info.count, mask, info.count)
 	llvm := llvm_type(e, as_type)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select <%d x i1> %s, %s %s, %s %s", out, info.count, bits, llvm, left, llvm, right)
-	return out
+	return emit_value(e, "select <%d x i1> %s, %s %s, %s %s", info.count, bits, llvm, left, llvm, right)
 }
 
 // Float sums and products use the ordered form, seeded with `-0.0` or `1.0`
@@ -172,9 +160,7 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	switch fold := v.operation.(Call_Simd_Reduce).fold; fold {
 	case .Any, .All:
 		folded := simd_call_reduce(e, fold == .Any ? "or" : "and", lane, count, value, "")
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = trunc i8 %s to i1", out, folded)
-		return out
+		return emit_value(e, "trunc i8 %s to i1", folded)
 	case .Add, .Mul:
 		if !float {
 			return emit_simd_checked_fold(e, fold == .Add ? .Plus : .Star, signed, lane, count, value)
@@ -197,8 +183,7 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 emit_simd_checked_fold :: proc(e: ^Emitter, op: Token_Kind, signed: bool, lane: string, count: int, vector: string) -> string {
 	result := ""
 	for index in 0 ..< count {
-		element := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractelement <%d x %s> %s, i32 %d", element, count, lane, vector, index)
+		element := emit_value(e, "extractelement <%d x %s> %s, i32 %d", count, lane, vector, index)
 		result = index == 0 ? element : emit_checked_integer(e, op, signed, lane, result, element)
 	}
 	return result

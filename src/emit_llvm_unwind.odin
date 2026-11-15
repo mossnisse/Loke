@@ -243,16 +243,12 @@ unwind_finished_body :: proc(e: ^Emitter) -> string {
 
 @(private = "file")
 unwind_live_address :: proc(e: ^Emitter, slot: int) -> string {
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr i8, ptr %s, i64 %d", out, e.unwind.live, slot)
-	return out
+	return emit_value(e, "getelementptr i8, ptr %s, i64 %d", e.unwind.live, slot)
 }
 
 @(private = "file")
 unwind_env_address :: proc(e: ^Emitter, index: int) -> string {
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", out, e.unwind.env, index)
-	return out
+	return emit_value(e, "getelementptr ptr, ptr %s, i64 %d", e.unwind.env, index)
 }
 
 @(private = "file")
@@ -338,8 +334,7 @@ emit_unwind_prologue :: proc(e: ^Emitter) {
 	}
 	alloca_named(e, u.ctx, "[2 x ptr]")
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", u.live, u.ctx)
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 1", slot, u.ctx)
+	slot := emit_value(e, "getelementptr ptr, ptr %s, i64 1", u.ctx)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", u.env, slot)
 	fmt.sbprintfln(
 		&e.b, "  call void @loke_rt_v1_frame_push(ptr %s, ptr %s, ptr %s)",

@@ -3,15 +3,60 @@ package lokec
 
 import "core:fmt"
 
+// A `core:math` instruction built-in.
+@(private)
+emit_math_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {
+	#partial switch kind {
+	case .Math_Fma_Available:
+		return emitted_has_fma(e) ? "true" : "false"
+	case .Math_Fma_Instruction:
+		return emit_fma_instruction(e, v)
+	case .Math_Sqrt_Instruction:
+		return emit_float_instruction(e, v, "sqrt")
+	case .Math_Floor_Instruction:
+		return emit_float_instruction(e, v, "floor")
+	case .Math_Ceil_Instruction:
+		return emit_float_instruction(e, v, "ceil")
+	case .Math_Trunc_Instruction:
+		return emit_float_instruction(e, v, "trunc")
+	case .Math_Round_Instruction:
+		return emit_float_instruction(e, v, "round")
+	case .Math_Mod_Instruction:
+		llvm := llvm_type(e, expr_base(v.bound[0]).type)
+		x, y := emit_expr(e, v.bound[0]), emit_expr(e, v.bound[1])
+		return emit_value(e, "frem %s %s, %s", llvm, x, y)
+	case .Math_Count_Ones:
+		return emit_bit_count(e, v, "ctpop")
+	case .Math_Leading_Zeros:
+		return emit_bit_count(e, v, "ctlz")
+	case .Math_Trailing_Zeros:
+		return emit_bit_count(e, v, "cttz")
+	case .Math_Rotate_Left:
+		return emit_rotate(e, v, "fshl")
+	case .Math_Rotate_Right:
+		return emit_rotate(e, v, "fshr")
+	case .Math_Bit_Width:
+		return emit_bit_width(e, v)
+	case .Math_Reverse_Bits:
+		return emit_reverse_bits(e, v)
+	case .Math_Is_Power_Of_Two:
+		return emit_is_power_of_two(e, v)
+	case .Math_Next_Power_Of_Two:
+		return emit_next_power_of_two(e, v, as_type, checked = false)
+	case .Math_Checked_Next_Power_Of_Two:
+		return emit_next_power_of_two(e, v, as_type, checked = true)
+	}
+	backend_fail(e, "a math built-in has no lowering")
+	return "0"
+}
+
 // A one-operand intrinsic `key`, declared over the operand's own LLVM type.
 @(private = "file")
 emit_unary_intrinsic :: proc(e: ^Emitter, v: ^Expr_Call, key: string) -> string {
 	llvm := llvm_type(e, expr_base(v.bound[0]).type)
 	declare_intrinsic(e, key, llvm, llvm)
 	operand := emit_expr(e, v.bound[0])
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s)", out, llvm, key, llvm, operand)
-	return out
+	return emit_value(e, "call %s @%s(%s %s)", llvm, key, llvm, operand)
 }
 
 // `llvm.ctlz` or `llvm.cttz` (`name`) of the operand, in the operand's own type.
@@ -21,14 +66,12 @@ emit_unary_intrinsic :: proc(e: ^Emitter, v: ^Expr_Call, key: string) -> string 
 emit_zero_count :: proc(e: ^Emitter, name, llvm, operand: string) -> string {
 	key := fmt.aprintf("llvm.%s.%s", name, llvm)
 	declare_intrinsic(e, key, llvm, fmt.aprintf("%s, i1", llvm))
-	count := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, i1 false)", count, llvm, key, llvm, operand)
-	return count
+	return emit_value(e, "call %s @%s(%s %s, i1 false)", llvm, key, llvm, operand)
 }
 
 // `llvm.ctpop`, `llvm.ctlz`, or `llvm.cttz` (`name`) of an integer operand,
 // widened or narrowed to the `int` result.
-@(private)
+@(private = "file")
 emit_bit_count :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	source := expr_base(v.bound[0]).type
 	llvm := llvm_type(e, source)
@@ -41,17 +84,15 @@ emit_bit_count :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 // The width less the leading zeros, which a zero operand makes the width, so
 // the bit width of zero is zero. The count is at most 128, so subtracting it
 // as an `int` keeps every result.
-@(private)
+@(private = "file")
 emit_bit_width :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	leading := emit_bit_count(e, v, "ctlz")
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub %s %d, %s", out, llvm_type(e, TYPE_INT), type_bits(e.c, expr_base(v.bound[0]).type), leading)
-	return out
+	return emit_value(e, "sub %s %d, %s", llvm_type(e, TYPE_INT), type_bits(e.c, expr_base(v.bound[0]).type), leading)
 }
 
 // `llvm.bitreverse`. No x86-64 CPU level has an instruction for it, so LLVM
 // expands it to a byte swap and shift-and-mask steps, never a loop.
-@(private)
+@(private = "file")
 emit_reverse_bits :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	return emit_unary_intrinsic(e, v, fmt.aprintf("llvm.bitreverse.%s", llvm_type(e, expr_base(v.bound[0]).type)))
 }
@@ -59,7 +100,7 @@ emit_reverse_bits :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 // A positive value with no bit below its highest: `x > 0` and `x & (x - 1)`
 // zero, which reads the value, so a signed minimum, one set bit but negative,
 // is not a power of two. `x - 1` may wrap, but only where `x > 0` is false.
-@(private)
+@(private = "file")
 emit_is_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	source := expr_base(v.bound[0]).type
 	llvm := llvm_type(e, source)
@@ -76,7 +117,7 @@ emit_is_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 // checked arithmetic does, so the shift that remains is always in range. The
 // checked form makes that test the option's presence instead, and shifts by a
 // zero exponent where it fails, so that no shift is poison.
-@(private)
+@(private = "file")
 emit_next_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, checked: bool) -> string {
 	source := expr_base(v.bound[0]).type
 	llvm := llvm_type(e, source)
@@ -93,9 +134,7 @@ emit_next_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, che
 	fmt.sbprintfln(&e.b, "  %s = icmp uge %s %s, %d", overflowed, llvm, exponent, signed ? bits - 1 : bits)
 	if !checked {
 		panic_if(e, overflowed, "int.overflow", overflow_message(signed))
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = shl %s 1, %s", out, llvm, exponent)
-		return out
+		return emit_value(e, "shl %s 1, %s", llvm, exponent)
 	}
 	shift := emit_value(e, "select i1 %s, %s 0, %s %s", overflowed, llvm, llvm, exponent)
 	power := emit_value(e, "shl %s 1, %s", llvm, shift)
@@ -106,7 +145,7 @@ emit_next_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, che
 // rotates it. The funnel shift takes its amount modulo the width, a power of
 // two, so the `int` count's low bits are all it needs, and `trunc` or `zext`
 // keeps them: the floored remainder the specification gives a negative count.
-@(private)
+@(private = "file")
 emit_rotate :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	source := expr_base(v.bound[0]).type
 	llvm := llvm_type(e, source)
@@ -120,7 +159,7 @@ emit_rotate :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 
 // `core:math` calls this only behind `fma_is_instruction()`; on a target without
 // FMA the call is unreachable, so it traps.
-@(private)
+@(private = "file")
 emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	llvm := llvm_type(e, expr_base(v.bound[0]).type)
 	if !emitted_has_fma(e) {
@@ -133,16 +172,14 @@ emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	key := fmt.aprintf("llvm.fma.%s", intrinsic_type_suffix(llvm))
 	declare_intrinsic(e, key, llvm, fmt.aprintf("%s, %s, %s", llvm, llvm, llvm))
 	a, b, c := emit_expr(e, v.bound[0]), emit_expr(e, v.bound[1]), emit_expr(e, v.bound[2])
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s @%s(%s %s, %s %s, %s %s)", out, llvm, key, llvm, a, llvm, b, llvm, c)
-	return out
+	return emit_value(e, "call %s @%s(%s %s, %s %s, %s %s)", llvm, key, llvm, a, llvm, b, llvm, c)
 }
 
 // `llvm.sqrt` is the instruction on every x86-64 level, correctly rounded as
 // IEEE 754 requires. `llvm.floor`, `ceil`, `trunc`, and `round` are SSE4.1's
 // `roundsd` and `roundss` from `x86-64-v2`, and below it the C library's
 // functions of those names; the result is exact either way.
-@(private)
+@(private = "file")
 emit_float_instruction :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	suffix := intrinsic_type_suffix(llvm_type(e, expr_base(v.bound[0]).type))
 	return emit_unary_intrinsic(e, v, fmt.aprintf("llvm.%s.%s", name, suffix))

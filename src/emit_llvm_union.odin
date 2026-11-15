@@ -214,9 +214,7 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 @(private)
 emit_union_tag_is :: proc(e: ^Emitter, union_type: Type_Id, value: string, index: int) -> string {
 	tag := emit_union_tag(e, union_type, value)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", out, union_tag_llvm(union_layout(e.c, union_type)), tag, index)
-	return out
+	return emit_value(e, "icmp eq %s %s, %d", union_tag_llvm(union_layout(e.c, union_type)), tag, index)
 }
 
 // The LLVM integer type of a union's tag, as stored and as `emit_union_tag`

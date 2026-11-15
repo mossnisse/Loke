@@ -84,8 +84,7 @@ emit_entry :: proc(e: ^Emitter) {
 	// design.md "Program entry and exit": an `i32` result is the exit status.
 	status := "0"
 	if symbol.result == TYPE_I32 || fallible {
-		status = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i32 %s()%s", status, callee, entry_call_attributes(e))
+		status = emit_value(e, "call i32 %s()%s", callee, entry_call_attributes(e))
 	} else {
 		fmt.sbprintfln(&e.b, "  call void %s()%s", entry, entry_call_attributes(e))
 	}
@@ -193,8 +192,7 @@ emit_program_init_body :: proc(e: ^Emitter, name: string) {
 	place_label(e, body)
 
 	if allocator := e.c.providers[.Allocator].factory; allocator != INVALID_SYMBOL {
-		handle := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call ptr %s()", handle, symbol_name(e, allocator))
+		handle := emit_value(e, "call ptr %s()", symbol_name(e, allocator))
 		// The runtime rejects a zero or foreign handle.
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_publish_allocator(ptr %s)", handle)
 	}

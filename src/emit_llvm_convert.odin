@@ -69,9 +69,7 @@ emit_value_conversion :: proc(e: ^Emitter, value: string, source, target: Type_I
 	case:
 		return value
 	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, operation, llvm_type(e, from), value, llvm_type(e, to))
-	return out
+	return emit_value(e, "%s %s %s to %s", operation, llvm_type(e, from), value, llvm_type(e, to))
 }
 
 // design.md "Type conversion": an integer converts only to a type that holds its
@@ -101,21 +99,18 @@ guard_integer_conversion :: proc(e: ^Emitter, value: string, from, to: Type_Id) 
 	bad := ""
 	if test_high {
 		to_max := bi_sub(e.c, bi_pow2(e.c, to_value_bits), bi_from_i64(e.c, 1))
-		bad = temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = icmp %s %s %s, %s", bad, from_signed ? "sgt" : "ugt", form.llvm, value,
-			form_const(e, form, bi_text(e.c, to_max)),
+		bad = emit_value(
+			e, "icmp %s %s %s, %s",
+			from_signed ? "sgt" : "ugt", form.llvm, value, form_const(e, form, bi_text(e.c, to_max)),
 		)
 	}
 	if test_low {
 		to_min := to_signed ? bi_neg(e.c, bi_pow2(e.c, to_bits - 1)) : bi_zero(e.c)
-		under := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp slt %s %s, %s", under, form.llvm, value, form_const(e, form, bi_text(e.c, to_min)))
+		under := emit_value(e, "icmp slt %s %s, %s", form.llvm, value, form_const(e, form, bi_text(e.c, to_min)))
 		if bad == "" {
 			bad = under
 		} else {
-			joined := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = or %s %s, %s", joined, form.mask, bad, under)
+			joined := emit_value(e, "or %s %s, %s", form.mask, bad, under)
 			bad = joined
 		}
 	}
