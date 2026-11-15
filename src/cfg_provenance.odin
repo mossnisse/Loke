@@ -1184,6 +1184,14 @@ prov_capture_slots :: proc(graph: ^Flow_Graph, slots: []int, rewritten: []int, s
 // while the second is built, and its `a` must not take `b`'s borrow.
 @(private = "file")
 prov_hold_slot :: proc(graph: ^Flow_Graph, slot: int, span: Span) -> int {
+	held := prov_temp_slot_at(graph, slot)
+	prov_def_copy(graph, held, slot, span)
+	return held
+}
+
+// A temporary standing for the place in a value's shape that `slot` stands for.
+@(private)
+prov_temp_slot_at :: proc(graph: ^Flow_Graph, slot: int) -> int {
 	held := prov_temp_slot(graph)
 	source := graph.prov_slots[slot]
 	entry := &graph.prov_slots[held]
@@ -1192,7 +1200,6 @@ prov_hold_slot :: proc(graph: ^Flow_Graph, slot: int, span: Span) -> int {
 	entry.content_shape = source.content_shape
 	entry.content_truncated = source.content_truncated
 	entry.precision = source.precision
-	prov_def_copy(graph, held, slot, span)
 	return held
 }
 

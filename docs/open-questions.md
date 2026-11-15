@@ -28,10 +28,9 @@ underlying `io.Error`, so the output alone does not identify it.
 
 The [2026-11-15 coverage review](compiler-test-coverage.md) found strong
 independent borrow/store models but less systematic coverage of generic and
-operator interactions. The new borrow-result matrix covers 230 combinations;
+operator interactions. The new borrow-result matrix covers 252 combinations;
 owner/allocator-region interactions and an independent overload-ranking matrix
-remain priorities. Two reproduced precision failures are in
-[known-gaps.md](known-gaps.md#a-returned-mutable-carrier-keeps-sibling-borrows).
+remain priorities.
 
 ## Provenance architecture
 
@@ -67,8 +66,7 @@ the compiler, is the oracle for any of them.
   effects would accept more programs, not remove a special case, and a call
   may also write through an argument, which those effects do not cover.
   Whether that precision is worth an effect for writes through arguments is
-  open. [known-gaps.md](known-gaps.md#a-switch-over-a-place-whose-index-calls-suspends-the-whole-view)
-  has a program the mutable capture rejects.
+  open.
 
 ### Carrier and region tracking as principles
 

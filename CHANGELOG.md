@@ -2023,6 +2023,22 @@ checklist.
   call effects, avoiding an internal assertion while compiling programs that
   use uninitialized storage. The editor grammar highlights the predeclared
   `Uninit` type.
+- A call handed a named record that holds mutable carriers, whose result is read from one field,
+  borrows only that field's roots ([Procedure result
+  contracts](docs/design.md#procedure-result-contracts)). With
+  `first :: proc(pair: Pair) -> ^mut int { return pair.first; }`, `held := first(pair); right = 3;`
+  while `held` was in use was `L0512` for `right`, the root of `pair.second`; the same held for an
+  `Option(^mut T)` field, a generic record, and a generic indexing operator, method, or forwarding
+  call.
+- A [delegated operator](docs/design.md#delegating-operators) has the result contract of the
+  overload it forwards to. Its result derived from every argument, so `wrapped[0]` through
+  `impl Wrapped { delegate([]); }` kept the roots of the fields the underlying operator never
+  reads borrowed (`L0511`, `L0512`).
+- A `switch` over a place reached through an index that calls a procedure, as
+  `switch (s[at()].first)`, lends only that place while a payload binding is in use, as
+  `s[k].first` does ([Places and overlap](docs/design.md#places-and-overlap)).
+  `bump(&mut s[at()].cells[1])` in a case was `L0641`, as the case's view of the subject evaluated
+  the index a second time and took a mutable reborrow of all of `s`.
 - A copy of text made by `text.copy()`, `strings.copy`, `strings.try_copy`, or a
   `String_Builder`'s `copy_string` or `try_copy_string` is in the region of the allocator it was
   copied into, the default provider's when none is named, and in no region of the text it read

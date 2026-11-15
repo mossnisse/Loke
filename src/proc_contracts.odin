@@ -344,6 +344,14 @@ call_contract_declaration :: proc(c: ^Compiler, call: ^Expr_Call) -> Symbol_Id {
 			info := underlying_info(c, sym.proc_type)
 			return info == nil ? INVALID_SYMBOL : info.proc_contract
 		}
+		// design.md "Delegating operators": a delegated overload has no body; it
+		// runs the overload it forwards to on the same operands, whose distinct
+		// and underlying types share a carrier shape, so it has that contract.
+		if sym.delegated {
+			if end, _ := operator_delegate_end(c, id); end != INVALID_SYMBOL {
+				return end
+			}
+		}
 		return id
 	}
 	if base := expr_base(call.callee); base != nil {

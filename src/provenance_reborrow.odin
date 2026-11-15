@@ -463,10 +463,13 @@ prov_reborrow_each :: proc(graph: ^Flow_Graph, sources: []int, span: Span, mutab
 	return out[:]
 }
 
-// A temporary holding what `slot` holds, as a reborrow of it.
+// A temporary holding what `slot` holds, as a reborrow of it. It keeps the place
+// `slot` stands for, so a result summary naming one field of a record argument
+// selects that field's reborrow and not its siblings' (design.md "Procedure
+// result contracts").
 @(private)
 prov_reborrow_into_temp :: proc(graph: ^Flow_Graph, slot: int, span: Span, mutable: bool) -> int {
-	derived := prov_temp_slot(graph)
+	derived := prov_temp_slot_at(graph, slot)
 	prov_def_copy(graph, derived, slot, span)
 	prov_add_reborrow(graph, Prov_Reborrow{source = slot, derived = derived, span = span, mutable = mutable})
 	return derived

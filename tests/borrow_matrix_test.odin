@@ -29,8 +29,9 @@ MATRIX_DIR :: TMP + "/borrow_matrix"
 // Where the `List` lives, and how the place is written: `base` is the `List`
 // itself, `pointer` a `^mut List` to it, which `local_chosen` chooses between
 // two elements of an array, so it may point at either, and
-// `param_slice_indexed` reaches at an index that is no constant, so it may be
-// any element of the view, while a branch only shortens the view
+// `param_slice_indexed` reaches at an index that is no constant, and
+// `param_slice_called` at one a call returns, so either may be any element of
+// the view, while a branch only shortens the view
 // `local_shortened` reaches through, which leaves where it starts known. In
 // `param_map` the pointer is read out of a map's element. A
 // `read_only` place is
@@ -69,6 +70,7 @@ MATRIX_PLACES := [?]Matrix_Place {
 	{"param_indexed", "p: ^mut [1]List", "", "p[0]", "&mut p[0]", "", false},
 	{"param_slice", "s: []mut List", "", "s[0]", "&mut s[0]", "s[1]", false},
 	{"param_slice_indexed", "s: []mut List, k: int", "", "s[k]", "&mut s[k]", "s[1]", false},
+	{"param_slice_called", "s: []mut List", "", "s[at()]", "&mut s[at()]", "s[1]", false},
 	{"param_map", "m: ^mut map[int]^mut List", "", "m^[1]^", "m^[1]", "", false},
 	{
 		"local_slice", "",
@@ -101,15 +103,6 @@ MATRIX_PLACES := [?]Matrix_Place {
 	},
 	{"param_read_only", "list: ^List", "", "list^", "list", "", true},
 	{"param_read_only_two_pointers", "p: ^^List", "", "p^^", "p^", "", true},
-}
-
-// A place form only `reserved_matrix` takes: the view is indexed by what a call
-// returns, which is evaluated once, where the lending argument is. A switch over
-// such a place is known-gaps.md "A switch over a place whose index calls
-// suspends the whole view", so `borrow_matrix` leaves it out.
-@(private = "file")
-RESERVED_PLACES := [?]Matrix_Place {
-	{"param_slice_called", "s: []mut List", "", "s[at()]", "&mut s[at()]", "s[1]", false},
 }
 
 // What is taken: a mutable carrier copied out of `head`, or bound as the
@@ -226,12 +219,12 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 		return ""
 	}
 	if same := matrix_same_element(use); same != "" {
-		if place.name != "param_slice_indexed" {
+		if !matrix_any_element(place) {
 			return ""
 		}
 		return matrix_expected(place, take, Matrix_Use{name = same}, shape, later)
 	}
-	if (place.name == "local_chosen" || place.name == "param_slice_indexed") && take == .Copy && use.name == "replace_head" &&
+	if (place.name == "local_chosen" || matrix_any_element(place)) && take == .Copy && use.name == "replace_head" &&
 	   shape == .Loop_Whole {
 		return "L0641"
 	}
@@ -288,6 +281,12 @@ matrix_expected :: proc(place: Matrix_Place, take: Matrix_Take, use: Matrix_Use,
 		}
 	}
 	return ""
+}
+
+// A view reached at an index that is no constant, which may be any element.
+@(private = "file")
+matrix_any_element :: proc(place: Matrix_Place) -> bool {
+	return place.name == "param_slice_indexed" || place.name == "param_slice_called"
 }
 
 // `replace_head` and the uses of `head` say nothing about a binding of
@@ -363,6 +362,7 @@ matrix_program :: proc(place: Matrix_Place, take: Matrix_Take, cases: ^[dynamic]
 	line(&b, &lines, "List :: struct { head: ^mut Node, tail: ^mut Node, count: int, first: Option(^mut Node), cells: [2]int, items: [dynamic]int }")
 	line(&b, &lines, "sink :: proc(value: int) {}")
 	line(&b, &lines, "cond :: proc() -> bool { return true; }")
+	line(&b, &lines, "at :: proc() -> int { return 0; }")
 	line(&b, &lines, "touch :: proc(list: ^mut List) { list^.head^.value += 1; }")
 	line(&b, &lines, "look :: proc(list: ^List) -> int { return list^.head^.value; }")
 	line(&b, &lines, "bump :: proc(n: ^mut int) { n^ += 1; }")
@@ -756,10 +756,7 @@ reserved_matrix :: proc(t: ^testing.T) {
 	}
 	programs := make([dynamic]Program, context.temp_allocator)
 	jobs := make([dynamic]Exec, context.temp_allocator)
-	places := make([dynamic]Matrix_Place, context.temp_allocator)
-	append(&places, ..MATRIX_PLACES[:])
-	append(&places, ..RESERVED_PLACES[:])
-	for place in places {
+	for place in MATRIX_PLACES {
 		for lend in Reserved_Lend {
 			program := Program{place = place, lend = lend, cases = make([dynamic]Reserved_Case, context.temp_allocator)}
 			source := reserved_program(place, lend, &program.cases)

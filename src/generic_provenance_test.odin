@@ -61,11 +61,6 @@ main :: proc() { probe(); }
 	for shape in shapes {
 		for route in routes {
 			for flow in flows {
-				// known-gaps.md "A returned mutable carrier keeps sibling borrows"
-				// and "Delegated indexing keeps sibling slice borrows". Do not
-				// turn either false rejection into the expected language behavior.
-				if flow.name == "other_root" && route.name != "field" &&
-				   (shape.name != "slice" || route.name == "delegated") { continue }
 				for scalar_first in ([2]bool{false, true}) {
 					body := flow.body
 					other, _ := strings.replace_all(shape.write, "left", "right", context.temp_allocator)

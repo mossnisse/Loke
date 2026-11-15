@@ -114,7 +114,11 @@ Prov_Case_View :: struct {
 // A `.name(&mut binding)` case borrows the subject exclusively for the case, as
 // `&mut subject` would (design.md "Switch ownership"). A field binding, `slot`
 // at or above zero, borrows only its field of the payload where the subject is
-// a place with a path, or is reached through carriers.
+// a place with a path, or is reached through carriers. The switch evaluated the
+// subject already, so a place reached through carriers is found again without
+// running its indices a second time (`prov_reach_hop`): the view holds the
+// carriers themselves, not a capture of them, and lends only its place, as
+// `s[k].first` does (design.md "Places and overlap").
 @(private)
 prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot: int, shared: ^Prov_Case_View) -> []int {
 	if subject == nil {
@@ -145,7 +149,7 @@ prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot
 		return prov_borrow(graph, root, path, true, span, "payload", access_block, access_index)
 	}
 	if mutable && slot >= 0 {
-		if carriers, below, through := prov_read_through_carrier(graph, subject, reads = false); through {
+		if carriers, below, through := prov_read_through_carrier(graph, subject, reads = false, again = true); through {
 			below = prov_payload_path(graph, below, slot)
 			prov_write_through(graph, carriers, below, span, "mutable borrow", subject)
 			return prov_place_loan(graph, carriers, below, true, "payload", subject, borrows = true)
@@ -159,7 +163,7 @@ prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr, mutable: bool, slot
 	// would borrow. A carrier loaded on the way, as `p^` for `p^^.first`,
 	// only holds that storage's loans for the view: it no more suspends
 	// what it was loaded out of than `p` does for `p^.first`.
-	carriers, below, through := prov_read_through_carrier(graph, subject, reads = false)
+	carriers, below, through := prov_read_through_carrier(graph, subject, reads = false, again = true)
 	if !through {
 		return nil
 	}

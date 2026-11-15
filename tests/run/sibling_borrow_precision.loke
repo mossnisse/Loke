@@ -1,0 +1,50 @@
+// design.md "Procedure result contracts", "Delegating operators", "Places and
+// overlap": a result read from one field of a record argument borrows that
+// field's roots only, a delegated operator has the contract of the overload it
+// forwards to, and a switch over a place reached through an index that calls lends
+// that place only. Each sibling stays free while the result or binding is in use.
+package main;
+
+import "core:fmt";
+
+Pair :: struct { first, second: ^mut int }
+first :: proc(pair: Pair) -> ^mut int { return pair.first; }
+
+Box :: struct($T: type) { first, second: T }
+get :: operator([]) proc(box: Box($T), index: int) -> T { return box.first; }
+Wrapped :: distinct Box([]int);
+impl Wrapped { delegate([]); }
+
+Node :: struct { value: int }
+List :: struct { first: Option(^mut Node), cells: [2]int }
+at :: proc() -> int { return 0; }
+bump :: proc(n: ^mut int) { n^ += 1; }
+
+called :: proc(s: []mut List) {
+	switch (s[at()].first) {
+	case .some(node):
+		bump(&mut s[at()].cells[1]);
+		node^.value = 7;
+	case .none:
+	}
+}
+
+main :: proc() {
+	left := 1; right := 2;
+	pair := Pair{&mut left, &mut right};
+	held := first(pair);
+	right = 3;
+	held^ = 4;
+	fmt.println(left, right);
+
+	low := [2]int{1, 2}; high := [2]int{3, 4};
+	wrapped := Wrapped(Box([]int){low[:], high[:]});
+	view := wrapped[0];
+	high[0] = 5;
+	fmt.println(view[1], high[0]);
+
+	node := Node{0};
+	lists := [1]List{List{.some(&mut node), [2]int{0, 0}}};
+	called(&mut lists[:]);
+	fmt.println(node.value, lists[0].cells[1]);
+}
