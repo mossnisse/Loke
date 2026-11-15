@@ -1392,7 +1392,6 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 	}
 }
 
-@(private = "file")
 parameter_is_poly :: proc(parameter: Parameter) -> bool {
 	for entry in parameter.names {
 		if entry.is_poly {

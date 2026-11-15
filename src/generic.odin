@@ -293,11 +293,7 @@ reject_generic_parameter_type :: proc(k: ^Checker, stand_ins: ^Scope, name: Name
 @(private = "file")
 check_independent_poly_defaults :: proc(k: ^Checker, params: []Parameter, stand_ins: ^Scope) {
 	for parameter in params {
-		poly := false
-		for entry in parameter.names {
-			poly ||= entry.is_poly
-		}
-		if !poly || parameter.default == nil {
+		if !parameter_is_poly(parameter) || parameter.default == nil {
 			continue
 		}
 		// The parameter's type may still name `$T`; then only constness is known.
@@ -364,12 +360,7 @@ proc_signature_is_generic :: proc(literal: ^Expr_Proc) -> bool {
 		return false
 	}
 	for parameter in literal.signature.params {
-		for entry in parameter.names {
-			if entry.is_poly {
-				return true
-			}
-		}
-		if type_syntax_has_poly(parameter.type) {
+		if parameter_is_poly(parameter) || type_syntax_has_poly(parameter.type) {
 			return true
 		}
 	}
