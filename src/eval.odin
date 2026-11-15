@@ -1930,11 +1930,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Ev
 		// The borrow the checker bound.
 		return eval_expr(ev, v.bound[0])
 
-	case .Math_Wrap, .Math_Fma_Available, .Math_Fma_Instruction, .Math_Sqrt_Instruction,
-	     .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction,
-	     .Math_Mod_Instruction, .Math_Rotate_Left, .Math_Rotate_Right,
-	     .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width,
-	     .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
+	case .Math_Wrap ..= .Math_Checked_Next_Power_Of_Two:
 		return eval_math_builtin(ev, v, symbol)
 
 	case .Simd_Cast, .Simd_Select, .Simd_Reduce:

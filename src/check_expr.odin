@@ -1320,7 +1320,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	is_comparison := v.op == .Eq_Eq || v.op == .Not_Eq || v.op == .Lt || v.op == .Lt_Eq || v.op == .Gt || v.op == .Gt_Eq
+	is_comparison := comparison_operator(v.op)
 	shift := v.op == .Shl || v.op == .Shr
 
 	hint := is_comparison ? INVALID_TYPE : expected

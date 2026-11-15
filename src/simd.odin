@@ -9,12 +9,10 @@ import "core:reflect"
 SIMD_MAX_LANES :: 64
 SIMD_MAX_BYTES :: 64
 
-// `Simd(T, N)` in type position. Reports rather than staying silent: once the
-// name is the predeclared one there is no other reading to fall back to.
+// `Simd(T, N)` in type position, for `resolve_predeclared_application`. Reports
+// rather than staying silent: once the name is the predeclared one there is no
+// other reading to fall back to.
 resolve_simd_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
-	if v.denoted_type != INVALID_TYPE {
-		return v.denoted_type
-	}
 	if len(v.args) != 2 || v.args[0].name.text != "" || v.args[1].name.text != "" ||
 	   v.args[0].mode != .Value || v.args[1].mode != .Value {
 		errorf(k.c, v.span, "L0681", "`Simd` takes an element type and a lane count, as in `Simd(f32, 4)`")
@@ -36,10 +34,7 @@ resolve_simd_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if !counted || !simd_lane_count_permitted(k, v.args[1].value, element, count) {
 		return INVALID_TYPE
 	}
-	v.denoted_type = simd_of(k.c, element, count)
-	v.resolution.kind = .Type
-	v.value_category = .Type
-	return v.denoted_type
+	return simd_of(k.c, element, count)
 }
 
 @(private = "file")

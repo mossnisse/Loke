@@ -65,11 +65,8 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return type
 }
 
-// `Range(T)` in type position.
+// `Range(T)` in type position, for `resolve_predeclared_application`.
 resolve_range_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
-	if v.denoted_type != INVALID_TYPE {
-		return v.denoted_type
-	}
 	if !has_one_plain_argument(v) {
 		errorf(k.c, v.span, "L0689", "`Range` takes one endpoint type, as in `Range(int)`")
 		return INVALID_TYPE
@@ -82,11 +79,9 @@ resolve_range_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 	if !require_range_endpoint(k, element, expr_span(v.args[0].value)) {
 		return INVALID_TYPE
 	}
-	v.denoted_type = range_type(k.c, element)
-	ensure_iteration_members(k, v.denoted_type)
-	v.resolution.kind = .Type
-	v.value_category = .Type
-	return v.denoted_type
+	range := range_type(k.c, element)
+	ensure_iteration_members(k, range)
+	return range
 }
 
 @(private = "file")

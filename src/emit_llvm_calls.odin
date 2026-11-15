@@ -101,11 +101,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	case .Math_Wrap:
 		source := expr_base(v.bound[0]).type
 		return emit_value_conversion(e, emit_expr(e, v.bound[0]), source, as_type, checked = false)
-	case .Math_Fma_Available, .Math_Fma_Instruction, .Math_Sqrt_Instruction,
-	     .Math_Floor_Instruction, .Math_Ceil_Instruction, .Math_Trunc_Instruction, .Math_Round_Instruction,
-	     .Math_Mod_Instruction, .Math_Rotate_Left, .Math_Rotate_Right,
-	     .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width,
-	     .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
+	case .Math_Fma_Available ..= .Math_Checked_Next_Power_Of_Two:
 		return emit_math_builtin(e, v, kind, as_type)
 	case .Unsafe_Take:
 		return load_place(e, as_type, emit_address(e, v.bound[0]))

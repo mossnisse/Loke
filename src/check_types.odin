@@ -589,20 +589,34 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 	return type
 }
 
+// A predeclared type constructor's application, `Simd(f32, 4)`, `Range(int)` or
+// `Box(Node)` (design.md "SIMD vectors", "Ranges", and "Owned values"), resolved
+// once and cached on the call. False when the callee is none of them; the type is
+// INVALID_TYPE when the application was rejected.
+resolve_predeclared_application :: proc(k: ^Checker, v: ^Expr_Call) -> (type: Type_Id, predeclared: bool) {
+	build: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id
+	switch {
+	case predeclared_callee(k, v.callee, "Simd"):  build = resolve_simd_application
+	case predeclared_callee(k, v.callee, "Range"): build = resolve_range_application
+	case predeclared_callee(k, v.callee, "Box"):   build = resolve_box_application
+	case:                                          return INVALID_TYPE, false
+	}
+	if v.denoted_type == INVALID_TYPE {
+		v.denoted_type = build(k, v)
+		if v.denoted_type != INVALID_TYPE {
+			v.resolution.kind = .Type
+			v.value_category = .Type
+		}
+	}
+	return v.denoted_type, true
+}
+
 // A call in type position: a predeclared type constructor, a generic application,
 // or a procedure that computes a type.
 @(private = "file")
 resolve_call_type :: proc(k: ^Checker, value: ^Expr_Call) -> Type_Id {
-	// Predeclared type constructors: design.md "SIMD vectors", "Ranges", and
-	// "Owned values".
-	if predeclared_callee(k, value.callee, "Simd") {
-		return resolve_simd_application(k, value)
-	}
-	if predeclared_callee(k, value.callee, "Range") {
-		return resolve_range_application(k, value)
-	}
-	if predeclared_callee(k, value.callee, "Box") {
-		return resolve_box_application(k, value)
+	if type, predeclared := resolve_predeclared_application(k, value); predeclared {
+		return type
 	}
 	// `Index_Type(1000)`: a call to a procedure that computes a type (design.md
 	// "`type` and `typeid`"), folded where it is checked. Any other procedure's

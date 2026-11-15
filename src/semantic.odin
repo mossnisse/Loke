@@ -439,7 +439,9 @@ Builtin_Kind :: enum u8 {
 	Unsafe_Try_New,
 	// design.md "`unsafe.transmute`": its first argument is a *type*.
 	Unsafe_Transmute,
-	// design.md "Type conversion".
+	// design.md "Type conversion". `Math_Wrap` through
+	// `Math_Checked_Next_Power_Of_Two` stay together: the evaluator and the
+	// emitter dispatch them as one range.
 	Math_Wrap,
 	// compiler-guide.md "CPU levels". Package-private to `core:math`.
 	Math_Fma_Available,

@@ -58,11 +58,8 @@ boxed_payload :: proc(c: ^Compiler, v: ^Expr_Call) -> Expr {
 	return v.bound[0]
 }
 
-// `Box(T)` in type position.
+// `Box(T)` in type position, for `resolve_predeclared_application`.
 resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
-	if v.denoted_type != INVALID_TYPE {
-		return v.denoted_type
-	}
 	if !has_one_plain_argument(v) {
 		errorf(k.c, v.span, "L0713", "`Box` takes one element type, as in `Box(Node)`")
 		return INVALID_TYPE
@@ -76,10 +73,7 @@ resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 		errorf(k.c, expr_span(v.args[0].value), "L0713", "a box holds a runtime value, found `%s`", type_name(k.c, element))
 		return INVALID_TYPE
 	}
-	v.denoted_type = box_of(k.c, element)
-	v.resolution.kind = .Type
-	v.value_category = .Type
-	return v.denoted_type
+	return box_of(k.c, element)
 }
 
 // design.md "Owned values": the value is taken as an initialization takes it.
