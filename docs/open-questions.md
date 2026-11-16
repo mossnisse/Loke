@@ -106,8 +106,8 @@ decisions remain open:
 - **The cost of normalization.** Normalization is still the largest provenance
   phase: about 40% of checking time on `bench/workspace` and
   `examples/corpus_runner.loke`, even with skipped visits and lock-free scratch
-  arenas ([Skipped summary visits and lock-free scratch
-  arenas](../bench/baselines/README.md#skipped-summary-visits-and-lock-free-scratch-arenas)).
+  arenas ("Skipped summary visits and lock-free scratch arenas" in the
+  repository's `bench/baselines/README.md`).
   A sampling profile of the builds left interning as the largest single cost:
   the key is hashed byte by byte on every value and call lookup
   (`prov_intern_value`, `prov_input_call`, about 7% of build time). The keys

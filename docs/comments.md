@@ -3128,7 +3128,7 @@ and `core:math/repro`'s fixed-point slow paths are such functions: inlined, each
 made every call of its public function pay its frame, 968 bytes for `exp`, and
 the saves and restores of the callee-saved registers it uses. Marked, `hypot`
 went from 17.9 to 13.4 ns a call and `pow` from 58.4 to 55.2, with every result
-unchanged, measured with [bench/math_compare](../bench/math_compare/README.md).
+unchanged, measured with the repository's `bench/math_compare`.
 `core:math/geometry`'s predicates had the same shape: LLVM inlined each exact
 path into its filter, its one caller, and the `f64` `orient2d` filter then
 cost 1265 against the inliner's threshold of 225, so no caller inlined it.
@@ -4517,9 +4517,9 @@ read; retaining every graph until its diagnostic pass would also have held
 tens of megabytes. The summary worklist instead skips a visit when no summary
 the body reads has grown since its last one, which leaves about three builds
 per body: one collecting global writes, one discovering summaries, and one
-reporting diagnostics. The profiling records under
-[Provenance normalization](../bench/baselines/README.md#provenance-normalization)
-distinguish normalization, fact replay, and event materialization cost.
+reporting diagnostics. The profiling records in the repository's
+`bench/baselines/README.md`, under "Provenance normalization", distinguish
+normalization, fact replay, and event materialization cost.
 
 ### A store's links come from where it lands
 

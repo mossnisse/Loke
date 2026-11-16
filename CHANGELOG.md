@@ -1533,8 +1533,9 @@ checklist.
   The literal stays a runtime value: a constant's value cannot be or hold one,
   and a `dyn proc` view of one is still rejected, both with `L0341`.
 
-- A [repeatable math benchmark](bench/math_compare/README.md#reproduce) comparing
-  UCRT and reproducible functions with seeded, grid, and dependent inputs.
+- A repeatable math benchmark comparing UCRT and reproducible functions with
+  seeded, grid, and dependent inputs; the repository's
+  `bench/math_compare/README.md` says how to reproduce it.
 
 - A block comment starting with `/**` is a
   [doc comment](docs/design.md#doc-comments), for documentation longer than a
