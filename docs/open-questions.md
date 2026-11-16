@@ -804,6 +804,97 @@ operations. Left out until a caller settles their contracts:
 - **Bit field extract and deposit** (`pext` and `pdep`), which exist only from
   `x86-64-v3` and would need a portable fallback with the same result.
 
+## Alias facts for the optimizer
+
+The emitter writes `nonnull` on pointer parameters and nothing else, and a
+slice parameter carries no attribute at all. Yet [the one
+rule](design.md#capabilities-and-the-one-rule) promises a great deal: while a
+borrow is live its root is not written through any other path, and a mutable
+borrow excludes every other access. So for the duration of a call:
+
+- a `^mut T`, `inout T`, or `self: ^mut` parameter is the only live path to its
+  pointee;
+- a `^T` parameter's pointee is written by no one, unless its type reaches a
+  [`@(synchronized)`](design.md#synchronized) field, as `Atomic(T)`, `Mutex(T)`,
+  and `Monitor(T)` do;
+- a `value: T` parameter passed by pointer, which is one over 4096 bytes, is
+  under the same exclusion unchanged.
+
+The language design review of 2026-10-31 proposed giving the optimizer these
+facts, and settled their form. The programs behind each claim are in its
+[probes](design-review-2026-10-31.md#probes).
+
+**The form is scoped metadata, not `noalias`.** A `noalias` parameter says that
+nothing else reaches the pointee while the procedure runs, the panic call
+included. Under the default `unwind` strategy that is false: the runtime runs
+every frame's cleanup inside the panic call
+([runtime/panic.c](../runtime/panic.c)), so a caller's drop hooks and `defer`s
+read its locals while the callee still holds the pointer. LLVM then drops a
+store before the panic as dead, and a drop hook prints `0` where
+[Panic strategy](design.md#panic-strategy) requires `3`; an `inout` dynamic
+array grown before a panic would be freed twice. `!alias.scope` and `!noalias`
+metadata on the body's loads and stores say only that those accesses do not
+overlap. The panic call carries none, so LLVM still treats it as reading
+everything. The metadata also leaves the calling convention alone, so a slice
+needs no split into scalar parameters. What it cannot give is what `noalias`
+gives across a call: a callee not passed the pointer is still assumed to reach
+the pointee. That remainder is all that `-panic=abort` would add, and it is not
+worth a second set of optimization semantics.
+
+**No capture attributes.** Escape levels restrict retained borrows, not
+observed addresses: a procedure may return whether two pointer arguments are
+equal, which LLVM counts as [address
+capture](https://llvm.org/docs/LangRef.html#address-capture) though no borrow
+survives. Every Loke procedure is `internal`, and LLVM already infers
+`readonly` and `captures(none)` where they hold.
+
+**Facts between parameters buy little.** Measured on 2026-11-16 by adding the
+metadata by hand and comparing the IR Clang 22 leaves at `-O2`; nothing was
+timed, and the `bench/` kernels were not touched:
+
+| Loop | As emitted | With metadata between parameters |
+| --- | --- | --- |
+| Two slices, `dst[i] = dst[i] +% src[i]` | Vectorized behind the overlap check LLVM inserts | Not run: at most that one check per entry to the loop |
+| A record parameter read in the loop | Vectorized: a value up to 4096 bytes is passed by value | Nothing to gain |
+| An `inout` scalar updated beside a slice store | 4 loads and 2 stores per iteration | 2 loads and 2 stores |
+| A store through `self.data` beside `self`'s own fields | 5 loads and 2 stores per iteration, not vectorized | No change |
+
+Two things are missing. Hoisting a load above a bounds check needs the pointer
+parameter to be `align`ed and `dereferenceable` as well as `nonnull`: with
+both, the `inout` scalar is loaded once before the loop, and its store stays in
+the loop because the panic must see it. Alone, the two attributes change
+nothing. And the last row is the shape most container methods have. Its store
+goes through a pointer loaded from `self`, which facts between parameters leave
+as one that may alias anything. Only with a further fact, that storage `self`
+owns does not overlap `self`, do the loads leave the loop, and then it
+vectorizes.
+
+A program already has the fast form with every check kept: copy the scalar
+into a local before the loop and write it back after.
+
+Open:
+
+- Is the further fact true, and for which fields? An owning field such as a
+  `[dynamic]T`'s storage is a separate allocation. Whether a stored `^mut T`
+  or `[]mut T` can point into the record that holds it is for [Values that
+  contain borrows](design.md#values-that-contain-borrows) to answer, and
+  unchecked code can make either overlap.
+- Does it pay? With that fact and the two attributes, measure on the `bench/`
+  kernels, after [Overflow checks in index
+  arithmetic](#overflow-checks-in-index-arithmetic), whose branches block
+  vectorization before aliasing does.
+- What unchecked code must then promise. [What is not
+  checked](design.md#what-is-not-checked) would have to say that it may not
+  make two checked carriers that break the one rule. A cast that only drops
+  provenance, as `Channel`'s `queue_of` does, needs no audit, and an access
+  through a `rawptr`, a C pointer, or a pointer of unknown provenance gets no
+  metadata.
+- The metadata turns a borrow the checker wrongly accepts into undefined
+  behavior that the optimizer exploits. [known-gaps.md](known-gaps.md#gaps)
+  listed no borrow-checker gap on 2026-11-11, but several were found and
+  closed in the ten days before, so it would be emitted behind an option until
+  "none known" has held for a while.
+
 ## Targeting x86-64 levels
 
 Programs target baseline x86-64 (SSE2), which every 64-bit x86 processor runs,

@@ -22,7 +22,6 @@ review that was split from this one is in git, last at `057b4ad2` as
 
 - [Summary](#summary)
 - [The shape of the language](#the-shape-of-the-language)
-- [Recommended](#recommended)
 - [Judgment calls](#judgment-calls)
 - [Not recommended](#not-recommended)
 - [Open items from the 2026-10-03 review](#open-items-from-the-2026-10-03-review)
@@ -45,10 +44,9 @@ is independent of the others unless noted.
 | Step | Proposal | Removes | Loses | Verdict |
 | --- | --- | --- | --- | --- |
 | 1 | [`some I`](#some-i-the-static-twin-of-dyn-i) | The longest repeated `where` clause | One more contextual keyword; a generic procedure without a `$` | Judgment call |
-| 2 | [Alias facts as scoped metadata](#alias-facts-from-the-one-rule) | Reloads and runtime overlap checks | Nothing, if the borrow checker is sound | Measure first |
-| 3 | [Narrow the splat](#the-splat-of-a-typed-scalar) | One conversion and two exceptions | A typed scalar as a vector argument, initializer, or result | Weakest; an exchange of rules |
-| 4 | [Delete success returns](#success-returns) | A rule that decides by syntactic form | Four characters per return | Judgment call; this review would delete |
-| 5 | [Fold `inout` into `^mut T`](#inout-and-mut-t) | A parameter mode and a receiver form | The marker on every mutated argument; carets on scalar writes | Judgment call; leaning against |
+| 2 | [Narrow the splat](#the-splat-of-a-typed-scalar) | One conversion and two exceptions | A typed scalar as a vector argument, initializer, or result | Weakest; an exchange of rules |
+| 3 | [Delete success returns](#success-returns) | A rule that decides by syntactic form | Four characters per return | Judgment call; this review would delete |
+| 4 | [Fold `inout` into `^mut T`](#inout-and-mut-t) | A parameter mode and a receiver form | The marker on every mutated argument; carets on scalar writes | Judgment call; leaning against |
 
 One finding is independent of any proposal: the standard library attaches
 provenance to a rebuilt pointer by calling through a plain procedure type, using
@@ -108,74 +106,6 @@ two spellings. The places left are not that:
   ([`inout` and `^mut T`](#inout-and-mut-t)).
 - `via` gives a declaration's fields and elements an allocator, which
   construction with an allocator does not ([Not recommended](#not-recommended)).
-
-## Recommended
-
-### Alias facts from the one rule
-
-The emitter writes `nonnull` on pointer parameters and nothing else, and a
-slice parameter carries no attribute at all ([Probes](#probes)). Yet the
-one rule promises a great deal: while a borrow is live its root is not written
-through any other path, and a mutable borrow excludes every other access. So
-for the duration of a call:
-
-- a `^mut T`, `inout T`, or `self: ^mut` parameter is the only live path to its
-  pointee;
-- a `^T` parameter's pointee is written by no one, unless its type reaches a
-  [`@(synchronized)`](design.md#synchronized) field, as `Atomic(T)`, `Mutex(T)`,
-  and `Monitor(T)` do;
-- a `value: T` parameter passed by pointer is, under the same exclusion,
-  unchanged.
-
-**The form of the fact is scoped metadata, not `noalias`.** A `noalias`
-parameter says that nothing else reaches the pointee while the procedure runs,
-the panic call included. Under the default `unwind` strategy that is false: the
-runtime runs every frame's cleanup inside the panic call
-([runtime/panic.c](../runtime/panic.c)), so a caller's drop hooks and `defer`s
-read its locals while the callee still holds the pointer. LLVM then drops a
-store before the panic as dead, and in the probe a drop hook prints `0` where
-[Panic strategy](design.md#panic-strategy) requires `3`; an `inout` dynamic array
-grown before a panic would be freed twice. `!alias.scope` and `!noalias`
-metadata on the body's loads and stores say only that those accesses do not
-overlap. The panic call carries none, so LLVM still treats it as reading
-everything, and the drop hook sees `3` ([Probes](#probes)). The metadata also
-leaves the calling convention alone, so a slice needs no split into scalar
-parameters.
-
-What metadata cannot give is what `noalias` gives across a call: a callee not
-passed the pointer is still assumed to reach the pointee. That remainder is all
-that `-panic=abort` would add, and it is not worth a second set of optimization
-semantics.
-
-**No capture attributes.** Escape levels restrict retained borrows, not
-observed addresses: a procedure may return whether two pointer arguments are
-equal, which LLVM counts as [address
-capture](https://llvm.org/docs/LangRef.html#address-capture) though no borrow
-survives ([Probes](#probes)). Proving more is not worth building, since every
-Loke procedure is `internal` and LLVM already infers `readonly` and
-`captures(none)` where they hold.
-
-**Proposal.**
-
-1. Measure first. After the work on
-   [overflow checks in index arithmetic](open-questions.md#overflow-checks-in-index-arithmetic),
-   whose branches block vectorization before aliasing does, add the metadata by
-   hand to the `bench/` kernels' IR. In the probe's kernel it let LLVM load a
-   pointee once instead of after every store and vectorize the loop. On slices
-   the gain is mostly the runtime overlap check LLVM's vectorizer already
-   inserts, so expect it to be modest.
-2. If it pays, emit the metadata on accesses through checked carriers, under
-   both panic strategies. An access through a `rawptr`, a C pointer, or a
-   pointer of unknown provenance gets none and may alias anything.
-3. State in [What is not checked](design.md#what-is-not-checked) that unchecked
-   code may not make two checked carriers that break the one rule. A cast that
-   only drops provenance, as `Channel`'s `queue_of` does, needs no audit.
-
-**Prerequisite.** The metadata turns a borrow the checker wrongly accepts into
-undefined behavior that the optimizer exploits. On 2026-11-11
-[known-gaps.md](known-gaps.md#gaps) lists no borrow-checker gap, but several
-were found and closed in the ten days before, so "none known" is weaker than
-"none". Emit it behind an option until that has held for a while.
 
 ## Judgment calls
 
@@ -385,8 +315,13 @@ the reason, so that it is not proposed again without an answer to it.
   C. Unwinding through those frames would let a C++ host's `catch (...)` catch
   the panic, stop at frames without unwind tables, or skip the cleanup of Loke
   frames above an abort pad, which changes a specified result.
-- *`noalias` parameters, and capture attributes from a proof of their own.* See
-  [Alias facts from the one rule](#alias-facts-from-the-one-rule).
+- *Alias facts between parameters,* as `noalias`, as capture attributes from a
+  proof of their own, or as scoped metadata. `noalias` is false under `unwind`,
+  LLVM already infers the capture attributes, and metadata between parameters
+  leaves the loops of a container method as they were ([Probes](#probes)).
+  This review recommended the metadata until it was measured on 2026-11-16;
+  what is still open is in [Alias facts for the
+  optimizer](open-questions.md#alias-facts-for-the-optimizer).
 
 **Syntax that costs less than its fix.**
 
@@ -465,8 +400,8 @@ specified result:
   Choosing those niches is a compiler change to measure, in `union_layout` and
   the emitter's tag reads ([Union layout](compiler-architecture.md#union-layout)).
   `@(repr=...)` waits for the first program that needs a stable layout.
-- **Alias facts.** See [Alias facts from the one
-  rule](#alias-facts-from-the-one-rule).
+- **Alias facts.** See [Alias facts for the
+  optimizer](open-questions.md#alias-facts-for-the-optimizer).
 - **Explicit reductions.** A floating-point sum is ordered, and the default
   arithmetic stays strict. Separately named reassociating or tree reductions,
   with their numerical differences documented, would let a kernel ask for the
@@ -661,7 +596,9 @@ followed as a procedure-typed one is. Three conservative limits remain:
 ## Probes
 
 Programs run to confirm claims this review still depends on, with the compiler
-each ran against. The emitted-IR and register-passing observations, among them
+each ran against. The four about aliasing are also what [Alias facts for the
+optimizer](open-questions.md#alias-facts-for-the-optimizer) rests on. The
+emitted-IR and register-passing observations, among them
 that a slice parameter carries no alias attribute, are in the compiler
 review's probes, in git at `057b4ad2`.
 
@@ -738,6 +675,50 @@ marked `noinline`, LLVM specialized the one call's length of four. As emitted,
 the body is four scalar adds, each after a fresh load of `k`. With
 `!alias.scope` on the store to `dst` and `!noalias` naming that scope on the
 loads from `src` and `k`, it loads `k` once and does two `<2 x i64>` adds.
+
+**Metadata between parameters does not reach a container method**
+(2026-11-16, `lokec` built at `0a615d93`, Clang 22.1.8 at `-O2`). Two loops
+whose length LLVM cannot specialize, with a bounds check in each:
+
+```loke
+Stack :: struct { data: [dynamic]int, count: int, total: int }
+
+sum_into :: proc(dst: []mut int, src: []int, total: inout int) {
+	foreach (i in 0 ..< dst.len()) {
+		dst[i] = src[i] +% total;
+		total = total +% src[i];
+	}
+}
+
+fill :: proc(self: inout Stack, xs: []int) {
+	foreach (i in 0 ..< xs.len()) {
+		self.data[i] = xs[i] +% self.total;
+		self.count = self.count +% 1;
+	}
+}
+```
+
+Each was given external linkage in the `-emit-ll` IR and optimized, then
+marked by hand and optimized again. "Between parameters" is `!alias.scope` on
+the accesses through one parameter and `!noalias` naming that scope on the
+accesses through another; the store through `self.data` is through a loaded
+pointer and gets none. The counts are loads and stores per iteration of the
+scalar loop:
+
+| Marking | `sum_into` | `fill` |
+| --- | --- | --- |
+| As emitted | 4 loads, 2 stores | 5 loads, 2 stores |
+| `align 8 dereferenceable(n)` on the pointer parameter | no change | no change |
+| Metadata between parameters | 2 loads, 2 stores | no change |
+| Both | 1 load, 2 stores | no change |
+| Both, and `!noalias` naming `self`'s scope on the store through `self.data` | | 1 load, 2 stores, after a vectorized loop |
+
+With both, `total` is loaded once before the loop; its store stays in the loop,
+where the panic can see it. In the last row every load through `self` is before
+the loop and `count` is stored once after the vectorized part. In the same
+module `dst[i] = dst[i] +% src[i]` over two slices is vectorized as emitted,
+behind LLVM's `vector.memcheck`, and so is a loop that reads fields of a 64-byte
+or 512-byte record parameter, which is passed by value.
 
 **Language probes** (2026-11-11, `lokec` 0.9.0 built at `41c0e2d4`, and from a
 modified tree at `267ab0f9` for the last two):
