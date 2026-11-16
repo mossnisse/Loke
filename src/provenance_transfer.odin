@@ -206,6 +206,12 @@ prov_call_transfer :: proc(graph: ^Flow_Graph, v: ^Expr_Call, type: Type_Id) -> 
 		if union_widens_to(c, from, type) {
 			return prov_widening_transfer(graph, prov_operand_value(graph, v.bound[0]), from, type, operation.clones, allocator)
 		}
+		// design.md "Region tracking", "Distinct types": a distinct type and its
+		// underlying type share one shape, so the result is its operand field by
+		// field, and a place is cloned.
+		if type_underlying(c, from) == type_underlying(c, type) {
+			return prov_parts(graph, prov_component(graph, prov_operand_value(graph, v.bound[0]), copy_type = operation.clones ? from : INVALID_TYPE))
+		}
 	}
 	if contract := symbol_of(c, call_contract_declaration(c, v)); contract != nil && (contract.synth == .Clone || contract.synth == .Try_Clone) {
 		prefix := contract.synth == .Try_Clone ? prov_success_path(graph, type) : nil

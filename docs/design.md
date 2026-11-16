@@ -11764,7 +11764,9 @@ this rule to each copied field, without invoking the containing record's copy
 hook. Implicit copies into union variants, declarations and assignments that
 widen a union, checked variant copies with `as`, and error payloads copied by
 `or_return` follow the same rule. Widening remaps the copied payload's region
-paths by label after the copy has replaced its backing allocations. Unboxing
+paths by label after the copy has replaced its backing allocations. A conversion
+between a [distinct type](#distinct-types) and its underlying type keeps each
+field's dependencies, an allocator handle's region included. Unboxing
 transfers the payload's dependencies without retaining the allocation released
 by `unbox`. The same separation applies to a shared control block and its
 payload: payload owners constrain its lifetime, but a payload's allocator handle

@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A record keeps the regions of its fields through a conversion to or from a `distinct` type
+  of it ([Region tracking](docs/design.md#region-tracking)). With `Wrapped :: distinct Maker`,
+  `wrapped := Wrapped(Maker{arena.allocator()}); held := build(wrapped);
+  free_all(arena.allocator());` compiled, and so did returning `held` or storing it in a
+  global, though `build` allocates `held` in `arena`: a call given the converted record whole
+  forgot the region of the handle in it. Each is now `L0537`, `L0592`, `L0536`, or `L0732`, as
+  for the record before its conversion. Upgrade by ending the use of the owner before its
+  region is reset or ends.
 - A carrier that a `foreach` binding copies out mutably on one path of its body and only reads
   on another stays suspended, for a read too, while the copy is live ([Weakening and
   reborrows](docs/design.md#weakening-and-reborrows)).

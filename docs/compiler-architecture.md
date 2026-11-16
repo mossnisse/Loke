@@ -1397,6 +1397,8 @@ reclamation. The integration harness is in `tests/`:
 | `checker_fuzz_test.odin` | Deterministic source mutation; failures reduced and saved under `tests/tmp/fuzz/`. |
 | `borrow_matrix_test.odin` | Generated programs crossing place forms with mutable copies, payload bindings, borrows, slices, and traversals, and the uses beside them in straight-line code, branches, and loops, judged against `matrix_expected`, a model of the reborrow rules written apart from the compiler. |
 | `carrier_store_matrix_test.odin` | Carriers stored through carriers, copied or reordered, as fields or in records, with a temporary or in a statement, through each place form, against verdicts worked out by hand. |
+| `region_matrix_test.odin` | Generated programs building an owner in a local, received, or default allocator region through an inline value, generic calls, a generic operator, a method, a delegated operator, conversions, and moved or written arguments, then resetting the region, letting the owner leave it, or handing it to a task, judged against `region_expected`, a model of the region rules written apart from the compiler. |
+| `overload_matrix_test.odin` | Generated procedure groups of two or three members in either order, crossing conversions, parameter modes, variadic and defaulted parameters, bounds, and specialization, called with each of a list of arguments. `overload_expected`, a model of the ranking rules written apart from the compiler, names the member each call selects, and each member's own result type makes any other selection a compile error. |
 
 `every_diagnostic_code_is_pinned` requires each diagnostic to have a test or a
 reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become
@@ -1413,9 +1415,9 @@ The interactive LSP and Windows debugger harnesses also enforce a deadline for
 the whole child process: five minutes for LSP and one minute for the debugger.
 An LSP server that stops reading cannot hold a pipe write indefinitely, and
 repeated debug events do not extend a debuggee's run.
-The generated borrow and store matrices require the expected compiler exit
-status as well as the expected diagnostics; unrelated or unmatched errors fail
-the matrices. Concurrent example tests use separate build outputs.
+The generated borrow, store, region, and overload matrices require the expected
+compiler exit status as well as the expected diagnostics; unrelated or unmatched
+errors fail the matrices. Concurrent example tests use separate build outputs.
 
 For individual suites:
 

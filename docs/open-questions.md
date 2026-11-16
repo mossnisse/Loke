@@ -12,13 +12,29 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 2026-10-31, and the proposals from them not yet decided, are in
 [design-review-2026-10-31.md](design-review-2026-10-31.md).
 
-## Compiler test coverage
+## What the region and overload matrices left open
 
-A coverage review on 2026-11-15 found strong
-independent borrow/store models but less systematic coverage of generic and
-operator interactions. The new borrow-result matrix covers 252 combinations;
-owner/allocator-region interactions and an independent overload-ranking matrix
-remain priorities.
+The [region matrix](../tests/region_matrix_test.odin) and the [overload
+matrix](../tests/overload_matrix_test.odin) each judge the compiler against a
+model of the rules written apart from it. Writing the models met two places
+where [design.md](design.md) does not decide, and each model follows the
+compiler there (2026-11-16):
+
+- **A received resettable allocator beside the default provider.** A reset of
+  an `@(allocator_reset)` parameter is `L0537` while an owner backed by the
+  default provider is live, because a received allocator [may be any
+  region](design.md#allocator-regions-and-region-provenance). No checked call
+  can pass the default provider there: handing it, or an allocator read from a
+  global, to such a parameter is `L0538`. So the two regions could be told
+  apart, which would accept more programs and reject none. Whether that
+  precision is wanted is open.
+- **A pattern binding through an implicit conversion.** `proc(values: []$E)`
+  called with a `[dynamic]int` or a `[3]int` binds `E` to `int` and ranks as
+  the view conversion does, 3.
+  [Specialization](design.md#specialization) says the argument must convert to
+  the type the pattern produces, and its example calls the pattern one that
+  allows only read-only slices; it does not say that binding looks through the
+  conversion. The text should say which.
 
 ## Provenance architecture
 
