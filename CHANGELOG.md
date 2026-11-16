@@ -8,6 +8,8 @@ checklist.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-16
+
 ### Breaking changes
 
 - A record keeps the regions of its fields through a conversion to or from a `distinct` type

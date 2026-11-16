@@ -91,7 +91,7 @@ OPT_CLANG_FLAGS := [Opt_Mode]string {
 	.Aggressive = "-O3",
 }
 
-LOKE_VERSION_STRING :: "0.9.0"
+LOKE_VERSION_STRING :: "0.10.0"
 
 // The revision this binary was built from, which `build-stamp.ps1` passes as
 // `-define:LOKEC_REVISION=...`: `git describe` output, so `v0.9.0` at the tag
