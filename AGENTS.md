@@ -57,9 +57,10 @@ bug.
   Unit tests live in `src` and `lsp`; integration tests live in `tests`.
   Rebuild `lokec.exe` and `loke-lsp.exe` before direct integration runs after
   compiler changes.
-- For documentation-only changes, check links by hand (no script checks them),
-  run `check-citations.ps1`, and run any affected examples or tutorial tests. A
-  full compiler gate is unnecessary.
+- For documentation-only changes, check links by hand (`bundle.ps1` checks only
+  that shipped documents' `.md` links stay inside the release zip), run
+  `check-citations.ps1` and `bundle.ps1`, and run any affected examples or
+  tutorial tests. A full compiler gate is unnecessary.
 - Run `.\test-all.ps1 -Full` locally only for changes targeting its additional
   coverage (optimization levels and the mutation fuzzer), or to investigate a
   CI failure. CI runs `-Full -RequireTools` on pushes to `main` and pull requests.

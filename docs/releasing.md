@@ -56,8 +56,9 @@ become the release's upgrade notes.
 
 ## Release checklist
 
-1. Confirm `main` is green in CI and that the `## Gaps` section of
-   [known-gaps.md](known-gaps.md) reads exactly `None.`; the release workflow
+1. Confirm `main` is green in CI, whose gate runs `bundle.ps1` to check that
+   the release zip's documents link only to documents it ships, and that the
+   `## Gaps` section of [known-gaps.md](known-gaps.md) reads exactly `None.`; the release workflow
    checks that text and refuses anything else. Run
    `.\test-all.ps1 -Exhaustive` locally, about 25 minutes, which CI does not.
    Choose `X.Y.Z` using the [version policy](#version-policy).

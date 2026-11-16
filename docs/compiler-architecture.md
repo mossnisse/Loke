@@ -1372,7 +1372,9 @@ From the repository root:
 .\test-all.ps1 -Exhaustive          # quick gate and the exhaustive f32 sweep
 ```
 
-The quick gate checks heading citations and layering, runs unit tests, rebuilds
+The quick gate checks heading citations, that every bundled document's links to
+other documents resolve inside the release zip (`bundle.ps1`, which also stages
+that zip for release.yml), and layering, runs unit tests, rebuilds
 `lokec.exe`, and runs baseline integration tests. `-Full` adds the checker
 mutation fuzzer, reruns optimization-sensitive corpora at every supported
 level, and builds `lokec.exe` and `loke-lsp.exe` with Odin's `-o:speed`, as a
@@ -1474,7 +1476,8 @@ then handles an access violation of its own; Odin's test runner catches every
 access violation with a vectored exception handler and stops the running test
 as a `Segmentation_Fault`, intermittently and in whichever test was deleting.
 
-For documentation-only changes, check local links and run `check-citations.ps1`;
+For documentation-only changes, check local links, and run `check-citations.ps1`
+and `bundle.ps1`;
 compile affected examples or run the tutorial suite when needed. A full compiler
 gate is unnecessary. Preserve cited headings when reorganizing this guide.
 

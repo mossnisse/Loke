@@ -52,6 +52,10 @@ try {
     & "$repoRoot/check-citations.ps1"
     if ($LASTEXITCODE -ne 0) { throw "spec citation check failed ($LASTEXITCODE)" }
 
+    # A document linking to one the release zip leaves out would otherwise fail
+    # only the release workflow, after tagging.
+    & "$repoRoot/bundle.ps1"
+
     # The backend consumes a checked compilation and never reaches back into the
     # checker; nothing else stops a convenient `^Checker` from creeping in.
     $layering = Get-ChildItem src/emit_llvm*.odin, src/emission_contract.odin |
