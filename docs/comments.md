@@ -3017,7 +3017,15 @@ covers:
 - `move`, since `move(x)` reads as a call;
 - `in`, an operator;
 - `default`, a case label;
-- the words that begin a type in an expression.
+- the words that begin a type in an expression;
+- `static` and `thread_local`, since after a declaration's `:` both a modifier
+  and a type fit.
+
+`static` and `thread_local` used to be contextual. Telling the modifier from a
+type of that name took four cases, and `static (int, bool)`
+still read as a type named `static` applied to two arguments, so a static
+unlabeled record needed an alias. No program needs a type named `static`, and
+C, C++, Rust, and Java reserve the word too.
 
 A reserved word also never names a local, a parameter, a generic parameter, or
 a file-scope declaration, so code always reads a keyword in statement and

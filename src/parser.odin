@@ -595,7 +595,14 @@ parse_attributes :: proc(p: ^Parser) -> []Attribute {
 			}
 			attribute.path = path[:]
 			if allow(p, .Assign) {
-				attribute.value = parse_expr(p)
+				// grammar.md "Attributes": a bare reserved word is a value, as in
+				// `@(escape=static)`; no expression is a keyword alone.
+				next := peek_token(p, 1).kind
+				if reserved_keyword(current(p).kind) && (next == .Comma || next == .Rparen) {
+					attribute.value = ident_expr(p, take_as(p, .Ident))
+				} else {
+					attribute.value = parse_expr(p)
+				}
 			}
 			attribute.span = span_to_here(p, start)
 			named := len(attribute.path) > 0
@@ -1086,27 +1093,11 @@ end_declaration :: proc(p: ^Parser, d: ^Decl, start: Token) -> ^Decl {
 	return d
 }
 
-// `static` and `thread_local` remain type names unless a type or `=` follows.
+// grammar.md "Declarations": `Storage_Modifier`.
 @(private = "file")
 parse_storage_modifiers :: proc(p: ^Parser, d: ^Decl) {
-	for at(p, .Ident) {
-		duration := Duration.None
-		switch text_of(p, current(p)) {
-		case "static":
-			duration = .Static
-		case "thread_local":
-			duration = .Thread_Local
-		case:
-			return
-		}
-
-		next := peek_token(p, 1).kind
-		// A labelled `(` opens a record type; `static(int)` applies a type named `static`.
-		record := next == .Lparen && scans_label_list_colon(p, 2)
-		if next != .Assign && next != .Ident && !starts_type(next) && !record {
-			return // a type named `static`, not a modifier
-		}
-
+	for at(p, .Static) || at(p, .Thread_Local) {
+		duration := at(p, .Static) ? Duration.Static : .Thread_Local
 		word := advance(p)
 		if d.duration != .None {
 			parse_error(

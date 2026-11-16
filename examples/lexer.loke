@@ -26,7 +26,8 @@ Kind :: enum {
 	// keywords, reserved in every position
 	Break, Case, Continue, Default, Defer, Distinct, Dyn, Else, Enum, Errdefer, For,
 	Foreach, Foreign, If, Impl, Import, In, Inout, Interface, Map, Move,
-	Mut, Or_Else, Or_Return, Package, Proc, Return, Struct, Switch, Type, Union, When,
+	Mut, Or_Else, Or_Return, Package, Proc, Return, Static, Struct, Switch, Thread_Local,
+	Type, Union, When,
 	// operators and punctuation
 	Plus, Minus, Star, Plus_Wrap, Minus_Wrap, Star_Wrap, Slash, Percent, Amp,
 	Amp_Tilde, Pipe, Tilde, Shl, Shr, And_And, Or_Or, Not, Eq_Eq, Not_Eq, Lt, Lt_Eq,
@@ -292,8 +293,10 @@ keyword :: proc(src: []u8, lo: int, hi: int) -> Kind {
 	case "package":   return .Package;
 	case "proc":      return .Proc;
 	case "return":    return .Return;
+	case "static":    return .Static;
 	case "struct":    return .Struct;
 	case "switch":    return .Switch;
+	case "thread_local": return .Thread_Local;
 	case "type":      return .Type;
 	case "union":     return .Union;
 	case "when":      return .When;

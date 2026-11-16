@@ -10,6 +10,19 @@ checklist.
 
 ### Breaking changes
 
+- `static` and `thread_local` are reserved words ([Keywords](docs/grammar.md#keywords), rationale
+  under ["Keywords as member names, and contextual keywords"](docs/comments.md#keywords-as-member-names-and-contextual-keywords)).
+  They were contextual: a storage modifier after a declaration's `:` only when a type or `=`
+  followed, and otherwise a name, so `static(int)` applied a type named `static` and a static
+  unlabeled record needed an alias. `n: static (int, bool);` now declares one directly. Like every
+  reserved word they still name a field, an enum member, or another member, and an attribute value
+  may be a reserved word, so `@(escape=static)` is unchanged. A local, parameter, or file-scope
+  declaration named either word is now `L0206`, `L0220`, or `L0237`. Upgrade by renaming it:
+
+  ```
+  static :: struct($T: type) { v: T }           // before
+  Static :: struct($T: type) { v: T }           // after
+  ```
 - Mutable slicing is written `a[mut lo:hi]` ([Slices](docs/design.md#slices), rationale under
   ["Mutable slicing is written `a[mut lo:hi]`"](docs/comments.md#mutable-slicing-is-written-amut-lohi)).
   `&mut a[lo:hi]` was a slicing form in the address operator's spelling: a slice is a value, so

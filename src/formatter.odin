@@ -370,12 +370,13 @@ maybe_prefix :: proc(kind: Token_Kind) -> bool {
 	return false
 }
 
-// Control keywords that take a space before their `(`.
+// Keywords that take a space before a `(` or `[`: the control keywords, and the
+// storage modifiers of `storage: static [256]u8`.
 @(private = "file")
 spaced_keyword :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
 	case .If, .For, .Foreach, .Switch, .When, .Return, .Case, .In, .Else, .Or_Else, .Via, .Where, .Defer, .Errdefer,
-	     .Parallel:
+	     .Parallel, .Static, .Thread_Local:
 		return true
 	}
 	return false
@@ -431,13 +432,6 @@ spacing :: proc(l: ^Layout, next: Token, written: string) -> string {
 		// keyword hugs its bracket: `proc(`, `move(x)`, `hook(drop)`, `map[K]V`.
 		if last == .Inout || last == .Mut || last == .Distinct || last == .Or_Return {
 			return written
-		}
-		// The contextual keywords of `storage: static [256]u8`.
-		if last == .Ident {
-			switch l.text[l.last.lo:l.last.hi] {
-			case "static", "thread_local":
-				return written
-			}
 		}
 		if operand || any_keyword(last) && (next.kind == .Lparen || last == .Map) {
 			return ""

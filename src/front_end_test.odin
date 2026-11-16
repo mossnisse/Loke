@@ -927,8 +927,8 @@ path_digest_separates_paths_and_folds_case :: proc(t: ^testing.T) {
 @(test)
 lexer_golden :: proc(t: ^testing.T) {
 	text := `name 123 1.5 "text" ` + "`raw`" + ` 'x'
-break case continue default defer distinct dyn dynamic else enum errdefer for foreach foreign if impl import in inout interface map move mut operator or_else or_return package proc return struct switch type union via when where
-static self slot using delegate thread_local manual
+break case continue default defer distinct dyn dynamic else enum errdefer for foreach foreign if impl import in inout interface map move mut operator or_else or_return package proc return static struct switch thread_local type union via when where
+self slot using delegate manual
 + - * +% -% *% / % & &~ | ~ << >> && || ! == != < <= > >= = += -= *= +%= -%= *%= /= %= |= ~= &= &~= <<= >>= : ; , . .. ..= ..< -> --- ? $ ^ @ ( ) [ ] { }
 /* nested /* block */ comment */`
 	c := test_compiler(text)
@@ -942,8 +942,9 @@ static self slot using delegate thread_local manual
 		.Break, .Case, .Continue, .Default, .Defer, .Distinct, .Dyn, .Ident, .Else,
 		.Enum, .Errdefer, .For, .Foreach, .Foreign, .If, .Impl, .Import, .In,
 		.Inout, .Interface, .Map, .Move, .Mut, .Ident, .Or_Else, .Or_Return,
-		.Package, .Proc, .Return, .Struct, .Switch, .Type, .Union, .Ident, .When, .Ident,
-		.Ident, .Ident, .Ident, .Ident, .Ident, .Ident, .Ident,
+		.Package, .Proc, .Return, .Static, .Struct, .Switch, .Thread_Local, .Type, .Union, .Ident,
+		.When, .Ident,
+		.Ident, .Ident, .Ident, .Ident, .Ident,
 		.Plus, .Minus, .Star, .Plus_Wrap, .Minus_Wrap, .Star_Wrap, .Slash, .Percent, .Amp,
 		.Amp_Tilde, .Pipe, .Tilde, .Shl, .Shr, .And_And, .Or_Or, .Not, .Eq_Eq, .Not_Eq,
 		.Lt, .Lt_Eq, .Gt, .Gt_Eq, .Assign, .Plus_Eq, .Minus_Eq, .Star_Eq, .Plus_Wrap_Eq,

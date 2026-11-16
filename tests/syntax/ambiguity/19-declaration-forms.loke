@@ -26,7 +26,7 @@ element_set :: operator([]=) proc(a: int) ---;
 
 counter: static int = 0;
 inferred: thread_local = 1;
-not_a_modifier: static;
+static_record: static (int, bool);
 buffer: [dynamic]u8 via arena.allocator() = a;
 blank: [4]int = ---;
 callback: proc(a: int) -> int = a;

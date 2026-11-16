@@ -23,9 +23,9 @@ duration_inferred: static = 0;
 thread_inferred: thread_local = 0;
 container_inferred: [dynamic]int = {1, 2, 3};
 
-// `static` is a type name where no modifier can follow it, and `manual` is an
-// ordinary identifier everywhere now that it names no modifier at all.
-plain_type: static;
+// A modifier applies to any type, an unlabeled record included, and `manual` is
+// an ordinary identifier everywhere now that it names no modifier at all.
+duration_record: static (int, bool);
 plain_field: manual;
 manual := 0;
 manual_typed: manual = manual;

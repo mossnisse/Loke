@@ -59,11 +59,11 @@ wherever a name is bound but introduces no binding.
 Reserved in every position:
 
 ```
-break       case       continue   default    defer      distinct   dyn
-else        enum       errdefer   for        foreach    foreign    if
-impl        import     in         inout      interface  map        move
-mut         or_else    or_return  package    proc       return     struct
-switch      type       union      when
+break        case         continue     default      defer        distinct     dyn
+else         enum         errdefer     for          foreach      foreign      if
+impl         import       in           inout        interface    map          move
+mut          or_else      or_return    package      proc         return       static
+struct       switch       thread_local type         union        when
 ```
 
 A production writes any of them as `Keyword`. A reserved word is still a
@@ -78,7 +78,6 @@ Contextual keywords, reserved only in the positions given:
 
 | Word | Position |
 | --- | --- |
-| `static`, `thread_local` | in the storage-modifier position of a declaration, after its `:` |
 | `self` | the first parameter name of a procedure declared in an `impl` block, or of an interface `slot` |
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
@@ -163,12 +162,14 @@ A raw string literal contains no escapes and may span lines.
 Attributes     = Attribute_Group+
 Attribute_Group= "@" "(" Attribute ("," Attribute)* ","? ")"
 Attribute      = Identifier ("." Identifier)* ("=" Attribute_Value)?
-Attribute_Value= Expression
+Attribute_Value= Expression | Keyword
 ```
 
 The qualified form is an [extension attribute](design.md#extension-attributes),
 for example `@(tool.name)`. Attributes attach to declarations, package
 clauses, statements, blocks, parameters, record fields, and foreign blocks; which attribute is valid where is semantic, not grammatical.
+A value may be a reserved word alone, as in `@(escape=static)`; the attribute
+gives it its meaning.
 
 # Source files
 
@@ -799,11 +800,9 @@ The productions above use the following deterministic parsing rules:
 - An `Init_Statement` is a `Variable_Decl` when the comma-separated list of
   names that opens it is followed by `:`, and a `Simple_Statement` otherwise.
   This is the same bounded scan `Declaration` performs at statement position.
-- After the first `:` of a declaration, `static` and `thread_local` are storage
-  modifiers only when followed by an identifier, by a type-start token, by a
-  labeled `(` that opens a `Record_Type`, or by `=`. Otherwise they are
-  ordinary type names, so `static(int)` and `static(int, bool)` apply a type
-  named `static`; a `static` unlabeled record is written through an alias.
+- An `Attribute_Value` is a `Keyword` when it is a reserved word followed by `,`
+  or `)`, and an `Expression` otherwise, so `@(x = proc() {})` is a procedure
+  literal.
 - After the `:` of a parameter, a `^` closed by `,` or `)` is the receiver form
   `self: ^`; followed by anything else it starts a pointer type.
 - At the start of an `impl` member, `delegate` is the contextual keyword only

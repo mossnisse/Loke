@@ -10,4 +10,10 @@ main :: proc() {
 	default := 2;
 }
 
+g :: proc() {
+	static := 3;
+}
+
+thread_local :: struct { }
+
 sentinel :: proc() { }

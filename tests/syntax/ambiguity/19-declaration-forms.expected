@@ -38,7 +38,7 @@
   (var names=["inferred"] thread_local
     (int "1")
   )
-  (var names=["not_a_modifier"] type=(ident "static"))
+  (var names=["static_record"] static type=(record (field [] (ident "int")) (field [] (ident "bool"))))
   (var names=["buffer"] type=(dyn-array (ident "u8")) via=(call (selector (ident "arena") "allocator"))
     (ident "a")
   )

@@ -2,7 +2,8 @@
 // `type`, a keyed literal naming that field, a storage modifier
 // before a record type, and a type-only type in a comparison once
 // parenthesised, a trailing comma after a plain receiver, and a call of a
-// procedure literal inside parentheses. `static(int)` still names a type.
+// procedure literal inside parentheses. A reserved word names a field, and
+// `static` applies directly to an unlabeled record.
 package main;
 
 import "core:fmt";
@@ -10,12 +11,19 @@ import "core:fmt";
 A :: struct { x: int }
 B :: struct { type: A }
 
-static :: struct($T: type) { v: T }
+Storage :: struct { static: int, thread_local: int }
 
 count :: proc() -> int {
 	n: static (calls: int, last: int);
 	n.calls += 1;
 	return n.calls;
+}
+
+pairs :: proc() -> int {
+	p: static (int, int);
+	a, b := p;
+	p = {a + 1, b + 2};
+	return a + b;
 }
 
 impl A { plus :: proc(self,) -> int { return self.x + 1; } }
@@ -32,8 +40,10 @@ main :: proc() {
 	_ = count();
 	fmt.println(count());
 
-	s: static(int) = {v = 3};
-	fmt.println(s.v);
+	s := Storage{static = 3, thread_local = 4};
+	fmt.println(s.static + s.thread_local);
+	_ = pairs();
+	fmt.println(pairs());
 
 	y := 1;
 	fmt.println(pointer_only(&y));

@@ -32,7 +32,7 @@ review that was split from this one is in git, last at `057b4ad2` as
 
 Loke's individual decisions are well argued, and comments.md records the
 argument for nearly every one. The problem is the sum: a specification of about
-11,700 lines with 29 attributes, 21 implicit conversions, and 16 contextual
+11,700 lines with 29 attributes, 21 implicit conversions, and 14 contextual
 keywords. The pairs that said one thing twice, such as `Status` beside
 `Result(Unit, E)` and `any_view` beside `dyn`, are gone. The pairs that remain
 differ in ways that matter ([The shape of the
@@ -44,13 +44,12 @@ is independent of the others unless noted.
 
 | Step | Proposal | Removes | Loses | Verdict |
 | --- | --- | --- | --- | --- |
-| 1 | [Reserve `static` and `thread_local`](#reserve-static-and-thread_local) | A four-case disambiguation rule | Those two words as names | Recommended; needs `lokec -migrate` |
-| 2 | [Predeclare the interface catalogue](#predeclare-the-interface-catalogue) | `interfaces.` in every bound | Nothing; the names stay shadowable | Recommended |
-| 2 | [`some I`](#some-i-the-static-twin-of-dyn-i), after the catalogue | The longest repeated `where` clause | One more contextual keyword; a generic procedure without a `$` | Judgment call, judged after the catalogue |
-| 3 | [Alias facts as scoped metadata](#alias-facts-from-the-one-rule) | Reloads and runtime overlap checks | Nothing, if the borrow checker is sound | Measure first |
-| 4 | [Narrow the splat](#the-splat-of-a-typed-scalar) | One conversion and two exceptions | A typed scalar as a vector argument, initializer, or result | Weakest; an exchange of rules |
-| 5 | [Delete success returns](#success-returns) | A rule that decides by syntactic form | Four characters per return | Judgment call; this review would delete |
-| 6 | [Fold `inout` into `^mut T`](#inout-and-mut-t) | A parameter mode and a receiver form | The marker on every mutated argument; carets on scalar writes | Judgment call; leaning against |
+| 1 | [Predeclare the interface catalogue](#predeclare-the-interface-catalogue) | `interfaces.` in every bound | Nothing; the names stay shadowable | Recommended |
+| 1 | [`some I`](#some-i-the-static-twin-of-dyn-i), after the catalogue | The longest repeated `where` clause | One more contextual keyword; a generic procedure without a `$` | Judgment call, judged after the catalogue |
+| 2 | [Alias facts as scoped metadata](#alias-facts-from-the-one-rule) | Reloads and runtime overlap checks | Nothing, if the borrow checker is sound | Measure first |
+| 3 | [Narrow the splat](#the-splat-of-a-typed-scalar) | One conversion and two exceptions | A typed scalar as a vector argument, initializer, or result | Weakest; an exchange of rules |
+| 4 | [Delete success returns](#success-returns) | A rule that decides by syntactic form | Four characters per return | Judgment call; this review would delete |
+| 5 | [Fold `inout` into `^mut T`](#inout-and-mut-t) | A parameter mode and a receiver form | The marker on every mutated argument; carets on scalar writes | Judgment call; leaning against |
 
 One finding is independent of any proposal: the standard library attaches
 provenance to a rebuilt pointer by calling through a plain procedure type, using
@@ -63,12 +62,13 @@ program can express.
 
 ## The shape of the language
 
-An inventory, counted from design.md and grammar.md on 2026-11-11:
+An inventory, counted from design.md and grammar.md on 2026-11-11, with the
+keywords recounted on 2026-11-16:
 
 | Area | Count | Where it is |
 | --- | --- | --- |
-| Reserved words | 32 | [Keywords](grammar.md#keywords) |
-| Contextual keywords, each with a disambiguation rule | 16 | [Keywords](grammar.md#keywords) |
+| Reserved words | 34 | [Keywords](grammar.md#keywords) |
+| Contextual keywords, each with a disambiguation rule | 14 | [Keywords](grammar.md#keywords) |
 | Attributes | 29 | [Attribute categories](design.md#attribute-categories) |
 | Implicit conversions | 21 | [Implicit type conversions](design.md#implicit-type-conversions) |
 | Spellings of a sum type | 3 | `enum`, `union`, `(a: A \| b: B)` |
@@ -111,14 +111,6 @@ two spellings. The places left are not that:
   construction with an allocator does not ([Not recommended](#not-recommended)).
 
 ## Recommended
-
-### Reserve `static` and `thread_local`
-
-Each contextual keyword has a disambiguation rule in [Resolved
-ambiguities](grammar.md#resolved-ambiguities) that every tool must follow, and
-the rule for `static` and `thread_local` has four cases. As reserved words they
-need none: no program needs a type named `static`, and a keyword may still name
-a field or member ([Predeclared names](design.md#predeclared-names)).
 
 ### Predeclare the interface catalogue
 

@@ -5108,8 +5108,8 @@ main :: proc() {
 #### Storage modifiers
 
 Storage modifiers follow `:` and specify duration: where and how long a variable
-exists. `static` and `thread_local` are mutually exclusive; omitting both gives
-lexical storage.
+exists. `static` and `thread_local` are [reserved words](grammar.md#keywords)
+and mutually exclusive; omitting both gives lexical storage.
 
 - `static` creates one instance for the life of the process. The value remains
   available between calls.
