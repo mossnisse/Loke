@@ -2038,6 +2038,10 @@ checklist.
   on a loaded machine: a run that ended before the program reached its loop is
   repeated with twice the deadline. A failed cdb run reports cdb's exit code
   and output, which is on standard output.
+- The debugger test probes each cdb candidate. Every probe ran the last
+  candidate's command, the Windows SDK's path, so a machine with only that one
+  then launched the first name, `cdb`, and failed, and a machine with only an
+  earlier one skipped the test.
 - `fs.replace_atomic`, `fs.replace_atomic_text`, and `fs.rename` replace a
   target file that another process holds open with delete sharing, as a virus
   scanner or search indexer briefly does to a file just written

@@ -900,7 +900,9 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 	// test thread catches those as failures, so probe on the harness workers.
 	probes := make([]Exec, len(candidates), context.temp_allocator)
 	for candidate, i in candidates {
-		probes[i].command = []string{candidate, "-version"}
+		// Cloned: a slice literal's storage is this iteration's, and the next
+		// one's candidate would overwrite it before any probe ran.
+		probes[i].command = slice.clone([]string{candidate, "-version"}, context.temp_allocator)
 	}
 	exec_all(probes)
 	for candidate, i in candidates {
