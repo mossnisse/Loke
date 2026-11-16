@@ -983,6 +983,20 @@ The runtime entries that end the program (`loke_rt_v1_panic`, `panic_end`,
 the module and `LOKE_RT_FAILURE` in `loke_rt.h`, and the branch to a checked
 operation's panic carries `!prof` weights (`branch_if_unlikely`).
 
+An index written as a signed `a + b` or `a - b` has one such branch, not two
+(`emit_index_sum_below`). The operation wraps, and its
+[overflow](design.md#integer-overflow) is tested only in the block the bounds
+comparison fails to, where it chooses between the two panic messages. This is
+sound because an overflow never yields an index that passes: a result above
+the type's range wraps to a negative index, and one below it needs a negative
+`a` and, for `+`, a negative `b`, for `-`, a `b` that is not negative, which
+the comparison also sends to that block, as an exact result from such
+operands is negative and out of bounds anyway. LLVM vectorizes a loop past a
+bounds comparison and not past an overflow branch, so `xs[i + offset]` in a
+loop costs what `xs[i]` does. An unsigned sum can wrap into bounds, and a
+product to any index, so each keeps its own check, as does every operation
+below the last one of a longer index expression.
+
 Under `-panic=unwind` a procedure that registers a cleanup pushes a frame whose
 thunk replays the registered actions. The thunk is emitted before the
 procedure's prologue, and only the locals it names are published: `bind_local`
@@ -1399,6 +1413,7 @@ reclamation. The integration harness is in `tests/`:
 | `carrier_store_matrix_test.odin` | Carriers stored through carriers, copied or reordered, as fields or in records, with a temporary or in a statement, through each place form, against verdicts worked out by hand. |
 | `region_matrix_test.odin` | Generated programs building an owner in a local, received, or default allocator region through an inline value, generic calls, a generic operator, a method, a delegated operator, conversions, and moved or written arguments, then resetting the region, letting the owner leave it, or handing it to a task, judged against `region_expected`, a model of the region rules written apart from the compiler. |
 | `overload_matrix_test.odin` | Generated procedure groups of two or three members in either order, crossing conversions, parameter modes, variadic and defaulted parameters, bounds, and specialization, called with each of a list of arguments. `overload_expected`, a model of the ranking rules written apart from the compiler, names the member each call selects, and each member's own result type makes any other selection a compile error. |
+| `index_sum_test.odin` | One generated program indexing a fixed array, a slice, and a dynamic array with `a + b` and `a - b` in four index types, run once for each pair of boundary operands, unoptimized and optimized. `index_sum_expected`, exact arithmetic written apart from the compiler, names the element each run prints or the panic that ends it. |
 
 `every_diagnostic_code_is_pinned` requires each diagnostic to have a test or a
 reasoned entry in `UNPINNED` in `tests/corpus_test.odin`. Fuzzer failures become

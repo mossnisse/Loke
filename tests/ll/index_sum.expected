@@ -1,0 +1,11 @@
+= add i16 %t*, %t*
+= and i16 %t*, %t*
+= sub i16 %t*, %t*
+= xor i16 %t*, -1
+icmp slt i16 %t*, 0
+call { i16, i1 } @llvm.sadd.with.overflow.i16(
+call { i16, i1 } @llvm.ssub.with.overflow.i16(
+call { i32, i1 } @llvm.uadd.with.overflow.i32(i32 %t*, i32 %t*)
+not = add i32
+call { i16, i1 } @llvm.smul.with.overflow.i16(i16 %t*, i16 %t*)
+not = mul i16

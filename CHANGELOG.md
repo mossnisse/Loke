@@ -1727,6 +1727,14 @@ checklist.
 
 ### Changed
 
+- An index written as a signed sum or difference, `xs[i + offset]` or `xs[i - offset]`, is
+  checked for [overflow](docs/design.md#integer-overflow) and for bounds behind one branch
+  instead of two, and ends the program with the same panics. A loop over such an index now
+  vectorizes as one over `xs[i]` does. Eight column-major products of 256 by 256 matrices
+  over slices, written `out[i + j*n]`, take 38 ms at `-opt=aggressive`, from 115, and at
+  `-opt=speed` 102 ms, from 134, or 38 ms, from 118, with `j*n` computed before the inner
+  loop: the multiplication keeps its own check, and `-opt=speed` leaves that in the loop
+  ([Overflow checks in index arithmetic](docs/open-questions.md#overflow-checks-in-index-arithmetic)).
 - The fourteen interfaces of the [standard interface catalogue](docs/standard-library.md#standard-interface-catalogue)
   are [predeclared names](docs/design.md#predeclared-names), rationale under
   ["The interface catalogue is predeclared"](docs/comments.md#the-interface-catalogue-is-predeclared).

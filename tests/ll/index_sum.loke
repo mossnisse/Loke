@@ -1,0 +1,17 @@
+package main; import "core:fmt";
+
+main :: proc() {
+	xs := [4]int{1, 2, 3, 4};
+
+	// A signed sum or difference written as an index wraps, and one branch
+	// covers its overflow and the bounds; the checked operation is asked
+	// which panic it is only in the block that branch fails to.
+	i: i16 = 1;
+	j: i16 = 2;
+	fmt.println(xs[i + j], xs[j - i]);
+
+	// An unsigned sum wraps to an index that can be in bounds, and a product
+	// to any index, so each keeps a check of its own.
+	u: u32 = 1;
+	fmt.println(xs[u + u], xs[i*j]);
+}

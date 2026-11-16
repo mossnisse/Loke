@@ -975,38 +975,43 @@ package copies at the boundary.
 
 ### Overflow checks in index arithmetic
 
-A spike before [`core:math/dense`](standard-library.md#coremathdense)
-measured a column-major product written as an ordinary loop over raw pointers. With the
-index computed as `k*n + i`, it ran 3.5 times slower than with `k*%n +% i`
-at the baseline CPU level and 5.7 times slower at `x86-64-v3`, for the same
-bits. The checked operators panic on overflow
-([Integer overflow](design.md#integer-overflow)), and that branch per element
-keeps the optimizer from vectorizing the loop, even where the induction
-variable and the bound make an overflow impossible. A library kernel can write
-the wrapping operators once it has checked its extents. A program's own
-two-dimensional loop over a slice pays the cost.
+The checked operators panic on overflow
+([Integer overflow](design.md#integer-overflow)), and a branch per element
+keeps the optimizer from vectorizing a loop, even where the induction
+variable and the bound make an overflow impossible. A signed sum or
+difference written as an index no longer has a branch of its own: its
+overflow is tested behind the bounds comparison
+([Runtime and library boundary](compiler-architecture.md#runtime-and-library-boundary)),
+and LLVM vectorizes past that, so `xs[i + offset]` and `xs[i - offset]` in a
+loop cost what the wrapping forms do. Three shapes still pay, measured on
+2026-11-16 after `c2645cd2` with Clang 22.1.8:
 
-Measured again on 2026-11-15 over slices, at `b96b045f` with Clang 22.1.8 (the
-probes and timings are in git, in `docs/compiler-optimizations-2026-10-31.md`
-at `057b4ad2`): `hand_multiply` in `bench/dense.loke` runs 3.8 times slower with `i + j*n`
-than with `i +% j*%n`. Bounds checks add nothing to it, since the optimizer
-vectorizes with them in place. The checked `+` in `xs[i + offset]` is the
-cause, and at `-opt=speed` so is a checked `*` that does not vary in the
-inner loop. A program avoids both with every check kept by slicing once and
-indexing from zero: `column := out[mut j*n : j*n + n]`, then `column[i]`,
-which runs as fast as the wrapping form. That is a checked-once form of
-indexing, and the language already has it.
+- **A check that does not vary in the loop, behind one that does.**
+  `hand_multiply` in `bench/dense.loke` writes
+  `out[i + j*n] = out[i + j*n] + a[i + k*n]*factor`. The checked `k*n` comes
+  after the bounds comparison of `out[i + j*n]`, so LLVM hoists the
+  multiplication and leaves the branch on its overflow in the loop. It removes
+  that by unswitching the loop, which Clang does at `-O3` only: eight products
+  of 256 by 256 matrices take 38 ms at `-opt=aggressive` and 102 ms at
+  `-opt=speed`. A bounds check that does not vary, `b[round]` after
+  `a[r*n + c]`, is held the same way. A program avoids it at `-opt=speed` by
+  writing `j*n` and `k*n` before the inner loop, or by slicing once and
+  indexing from zero, `column := out[mut j*n : j*n + n]` and then `column[i]`:
+  38 ms and 36 ms. `-O2` with `-mllvm -enable-nontrivial-unswitch` vectorizes
+  each kernel that `-O3` does; the IR was read, and nothing was timed. Open:
+  whether `-opt=speed` should pass it, for what build time and code size.
+- **An operation below the last one.** In `xs[base + i + 1]` the inner
+  `base + i` keeps its branch. The bounds comparison cannot stand in for it,
+  since a valid index may pass through a negative result, as `xs[i - 10 + 20]`
+  does, and a sum that wrapped looks the same. `xs[i + (base + 1)]` is the
+  fast form.
+- **A product**, which can wrap to any index.
 
-Open: whether the direct form should be made as fast. The cheapest candidate
-lets the bounds check stand in for the overflow check of an index addition
-with a non-negative operand: such a sum overflows only upward, and the wrapped
-sum is negative and fails the unsigned bounds comparison, so the overflow test
-can move to the cold block that comparison branches to, where it chooses the
-panic message. That needs no loop analysis. Proving the common
-shapes overflow-free (an index affine in loop variables whose ranges are
-known before the loop) does not reach `hand_multiply`, where nothing bounds
-`n` before the loops; versioning the loop would, at the cost of a second copy
-of it.
+Proving the common shapes overflow-free (an index affine in loop variables
+whose ranges are known before the loop) does not reach `hand_multiply`, where
+nothing bounds `n` before the loops; versioning the loop would, at the cost of
+a second copy of it. A descending index, `xs[last - i]`, is not vectorized
+with `-%` either, so its checks are not what holds it.
 
 ### Slots through a record's bound
 

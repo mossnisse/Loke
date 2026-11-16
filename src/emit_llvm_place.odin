@@ -359,8 +359,49 @@ emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 // The checked i64 index of `v`, which must be below the runtime `length`.
 @(private = "file")
 emit_index_below :: proc(e: ^Emitter, v: ^Expr_Index, length: string) -> string {
-	index := checked_index_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
+	written := v.indices[0]
+	if sum, summed := written.(^Expr_Binary); summed && index_sum_is_deferred(e, sum) {
+		return emit_index_sum_below(e, sum, length)
+	}
+	index := checked_index_to_i64(e, emit_expr(e, written), expr_base(written).type)
 	emit_bounds_check(e, index, length, "index out of range")
+	return index
+}
+
+// A signed built-in `a + b` or `a - b` evaluated at run time, which
+// `emit_index_sum_below` checks together with the bounds.
+@(private = "file")
+index_sum_is_deferred :: proc(e: ^Emitter, v: ^Expr_Binary) -> bool {
+	return (v.op == .Plus || v.op == .Minus) && v.resolution.kind == .Builtin_Operator &&
+		!base_is_const(&v.base) && conversion_source(&v.base) == INVALID_TYPE &&
+		type_is_integer(e.c, v.type) && type_signed(e.c, v.type)
+}
+
+// The index `a + b` or `a - b`, with the overflow check of design.md "Integer
+// overflow" and the bounds check behind one branch, which leaves a loop over
+// it no branch of the addition's own for the optimizer to vectorize past. An
+// exact result above the type's range wraps to a negative index, which is out
+// of bounds. One below it comes only from a negative `a` with, for `+`, a
+// negative `b`, and for `-`, a `b` that is not negative; every such result is
+// negative, so it panics one way or the other. Both reach the failure block,
+// where the checked operation says which panic it is.
+@(private = "file")
+emit_index_sum_below :: proc(e: ^Emitter, v: ^Expr_Binary, length: string) -> string {
+	llvm := llvm_type(e, v.type)
+	lhs, rhs := emit_expr(e, v.lhs), emit_expr(e, v.rhs)
+	wrapped := emit_value(e, "%s %s %s, %s", v.op == .Plus ? "add" : "sub", llvm, lhs, rhs)
+	added := v.op == .Plus ? rhs : emit_value(e, "xor %s %s, -1", llvm, rhs)
+	signs := emit_value(e, "and %s %s, %s", llvm, lhs, added)
+	both_negative := emit_value(e, "icmp slt %s %s, 0", llvm, signs)
+	index := checked_index_to_i64(e, wrapped, v.type)
+	outside := emit_value(e, "icmp uge i64 %s, %s", index, length)
+
+	fail, ok := new_label(e, "bounds"), new_label(e, "ok")
+	branch_if_unlikely(e, combine_or(e, both_negative, outside), fail, ok)
+	place_label(e, fail)
+	emit_checked_integer(e, v.op, true, llvm, lhs, rhs)
+	emit_panic(e, "index out of range")
+	place_label(e, ok)
 	return index
 }
 
