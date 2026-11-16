@@ -158,11 +158,25 @@ jobs:
 
       # The notes are the version's CHANGELOG.md section, up to the next one.
       # Its links are repository-relative (AGENTS.md), which resolve nowhere on
-      # the releases page, so they are pointed at the tagged revision.
+      # the releases page, so they are pointed at the tagged revision. GitHub
+      # refuses notes over 125000 characters; a longer section is replaced by a
+      # link to it and, when they fit, its Breaking changes.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          awk -v heading="## [${GITHUB_REF_NAME#v}]" 'index($0, heading) == 1 { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md |
-            perl -pe 's{\]\((?!https?://|#)([^)]+)\)}{](https://github.com/$ENV{GITHUB_REPOSITORY}/blob/$ENV{GITHUB_REF_NAME}/$1)}g' > notes.md
+          heading="## [${GITHUB_REF_NAME#v}]"
+          section() { awk -v heading="$heading" 'index($0, heading) == 1 { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md; }
+          absolute() { perl -pe 's{\]\((?!https?://|#)([^)]+)\)}{](https://github.com/$ENV{GITHUB_REPOSITORY}/blob/$ENV{GITHUB_REF_NAME}/$1)}g'; }
+          fits() { [ "$(wc -c < "$1")" -le 125000 ]; }
+          section | absolute > notes.md
+          if ! fits notes.md; then
+            title=$(awk -v heading="$heading" 'index($0, heading) == 1 { print substr($0, 4); exit }' CHANGELOG.md)
+            anchor=$(printf '%s' "$title" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9 _-' | tr ' ' '-')
+            printf 'The full notes are too long for this page; they are in [CHANGELOG.md](https://github.com/%s/blob/%s/CHANGELOG.md#%s).\n\n' \
+              "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$anchor" > notes.md
+            cp notes.md link.md
+            section | awk '/^### / { on = ($0 == "### Breaking changes") } on' | absolute >> notes.md
+            if ! fits notes.md; then mv link.md notes.md; fi
+          fi
           gh release create "$GITHUB_REF_NAME" loke-*.zip perf.json --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md

@@ -74,6 +74,9 @@ become the release's upgrade notes.
    `git push origin vX.Y.Z`.
 6. Wait for the [Release workflow](../.github/workflows/release.yml), then check
    the published notes, zip, and `perf.json` used as the next release's baseline.
+   The notes are the version's CHANGELOG.md section; one over GitHub's limit of
+   125000 characters becomes a link to the section and, when they fit, its
+   **Breaking changes**.
    The workflow refuses binaries whose `-version` shows a
    [build stamp](compiler-guide.md#inspecting-a-compilation): only a clean
    checkout of the tag prints the version alone.

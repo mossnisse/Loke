@@ -1,7 +1,8 @@
 # Changelog
 
 User-visible changes to the language, the compiler, and the standard library.
-Each release's section is its GitHub release notes. A change lands under
+Each release's section is its GitHub release notes, or, when it is too long
+for GitHub, a link to it and its breaking changes. A change lands under
 **Unreleased**, and a break also gets an upgrade note under **Breaking
 changes**. [releasing.md](docs/releasing.md) has the version policy and the release
 checklist.
