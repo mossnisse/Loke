@@ -46,4 +46,22 @@ not_a_reordering :: proc(twos: []mut Two) {
 	node^.value = 2;
 }
 
+// A copy kept on one path, beside a read of the same carrier on another: the
+// carrier stays suspended, for a read too, while the copy is live.
+copied_beside_a_read :: proc(twos: []mut Two, @(escape=stored) outer: ^mut Node) -> int {
+	kept := outer;
+	total := 0;
+	foreach (&mut two in twos) {
+		if (flip()) {
+			kept = two.b;
+			break;
+		} else {
+			total += two.b^.value;
+		}
+	}
+	seen: ^Node = twos[0].b;
+	kept^.value = 2;
+	return total + seen^.value;
+}
+
 main :: proc() {}

@@ -297,11 +297,15 @@ prov_reborrow_loaded :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	if !prov_slot_is_loaded_mutable(graph, event.slot) {
 		return
 	}
-	// Its capability is the one the copy is stored with, or none for a read.
+	// Its capability is the one the copy is stored with, or none for a read. A
+	// binding's copy may be stored more than once, as a traversal's is in two
+	// branches of its body, and is mutable when any of those is.
 	mutable := !event.reads_only
-	taken := prov_reborrows_from(graph, event.slot)
-	for reborrow in prov_next_reborrow(graph, &taken) {
-		mutable = reborrow.mutable && !event.reads_only
+	if taken := prov_reborrows_from(graph, event.slot); mutable && taken.next != 0 {
+		mutable = false
+		for reborrow in prov_next_reborrow(graph, &taken) {
+			mutable ||= reborrow.mutable
+		}
 	}
 	passes_on := graph.prov_slots[event.slot].viewed
 	for source in event.sources {

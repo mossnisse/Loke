@@ -143,16 +143,11 @@ a demonstrably smaller set of semantic rules.
 
 ## Compiler review findings not yet acted on (2026-11-09)
 
-The 2026-11-09 compiler code review found these (its report,
-`compiler-code-review-2026-11-09.md`, is now only in git history), and none has
-a probe program that shows a wrong result. Each needs a decision or a
+The 2026-11-09 compiler code review found this (its report,
+`compiler-code-review-2026-11-09.md`, is now only in git history), and it has
+no probe program that shows a wrong result. It needs a decision or a
 reproduction before a change.
 
-- **Which reborrow's capability a loaded copy takes** (bug 12).
-  `prov_reborrow_loaded` takes the capability of the last reborrow whose source
-  is the loaded slot, so with several the result follows list order. Taking the
-  most recent store may be the intent; mutable if any is mutable would be the
-  conservative choice, and could report conflicts that are accepted today.
 - **Which type a slot holds** (group 4). Four places fall back differently
   when a carrier slot records no content type: `slot_carrier_type` in
   `borrow.odin` takes the symbol's type only for the bare slot of a

@@ -10,6 +10,14 @@ checklist.
 
 ### Breaking changes
 
+- A carrier that a `foreach` binding copies out mutably on one path of its body and only reads
+  on another stays suspended, for a read too, while the copy is live ([Weakening and
+  reborrows](docs/design.md#weakening-and-reborrows)).
+  `foreach (&mut two in twos) { if (c) { kept = two.b; break; } else { total += two.b^.value; } }
+  seen: ^Node = twos[0].b; kept^.value = 2;` compiled, with `seen` a live read-only pointer to
+  the node `kept` writes: the binding's copy took the capability of whichever use the body
+  wrote last. It is now `L0641`. Upgrade by ending the use of the copy before reading through
+  the element.
 - `static` and `thread_local` are reserved words ([Keywords](docs/grammar.md#keywords), rationale
   under ["Keywords as member names, and contextual keywords"](docs/comments.md#keywords-as-member-names-and-contextual-keywords)).
   They were contextual: a storage modifier after a declaration's `:` only when a type or `=`
