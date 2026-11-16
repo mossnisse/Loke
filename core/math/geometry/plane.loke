@@ -3,7 +3,6 @@
 @(public)
 package geometry;
 
-import "base:interfaces";
 import "core:math/linalg";
 
 /**
@@ -12,7 +11,7 @@ import "core:math/linalg";
 	normal, which makes `signed_distance` a distance and `offset` the plane's
 	distance from the origin along the normal; a literal is taken as written.
 */
-Plane :: struct($T: type) where interfaces.Numeric(T) { normal: linalg.Vector3(T), offset: T }
+Plane :: struct($T: type) where Numeric(T) { normal: linalg.Vector3(T), offset: T }
 
 impl Plane($T) {
 	/// The plane with `normal` and `offset` as given, unnormalized.

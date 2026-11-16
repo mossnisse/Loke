@@ -444,9 +444,9 @@ resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Order_P
 		return Order_Policy{kind = .Builtin}, ""
 	}
 	if blocker := record_order_blocker(c, element); blocker != "" {
-		return Order_Policy{}, fmt.tprintf("does not satisfy `interfaces.Ordered`: %s", blocker)
+		return Order_Policy{}, fmt.tprintf("does not satisfy `Ordered`: %s", blocker)
 	}
-	return Order_Policy{}, "does not satisfy `interfaces.Ordered`: it has no `<`"
+	return Order_Policy{}, "does not satisfy `Ordered`: it has no `<`"
 }
 
 resolved_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> Order_Policy {

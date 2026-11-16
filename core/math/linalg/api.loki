@@ -12,7 +12,7 @@
 	Space is right-handed; only the camera constructors depend on handedness,
 	and each has an `_lh` twin.
 
-	Arithmetic needs only `interfaces.Numeric(T)`, so integers and user number
+	Arithmetic needs only `Numeric(T)`, so integers and user number
 	types get it. Members that need a square root, trigonometry, or a check for
 	a degenerate input need `Real(T)`, which this package implements for `f32`
 	and `f64` and a user type implements with its own methods.
@@ -33,7 +33,6 @@
 */
 package linalg;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:math";
 
@@ -60,8 +59,8 @@ import "core:math";
 	precision; it is what the degenerate input checks test.
 */
 Real :: interface($T: type) {
-	interfaces.Numeric(T);
-	interfaces.Ordered(T);
+	Numeric(T);
+	Ordered(T);
 	(value: T) - value -> T;
 	(value: f64) T(value) -> T;
 	slot sqrt:      proc(self) -> T;
@@ -97,7 +96,7 @@ Real :: interface($T: type) {
 	    }
 */
 Scalar :: interface($T: type) {
-	interfaces.Numeric(T);
+	Numeric(T);
 	T.Real -> type;
 	Real(T.Real);
 	(value: T.Real) T(value) -> T;
@@ -177,7 +176,7 @@ approx_equal_quaternion :: proc(a, b: math.Quaternion($T), absolute, relative: T
 	expects; `to_array` gives it flat. `Matrix(f32, 4, 4)` has the layout of
 	`[16]f32`.
 */
-Matrix :: struct($T: type, $R, $C: int) where interfaces.Numeric(T), R >= 1, C >= 1 {
+Matrix :: struct($T: type, $R, $C: int) where Numeric(T), R >= 1, C >= 1 {
 	columns: [C][R]T,
 }
 
@@ -243,7 +242,7 @@ impl Matrix($T, $R, $C) {
 	scale_left :: operator(*) proc(left: T, right: Matrix(T, R, C)) -> Matrix(T, R, C) ---;
 
 	// Exact and element-wise: a NaN element is unequal.
-	equal :: operator(==) proc(left, right: Matrix(T, R, C)) -> bool where interfaces.Equatable(T) ---;
+	equal :: operator(==) proc(left, right: Matrix(T, R, C)) -> bool where Equatable(T) ---;
 
 	// The column matrix of a vector, `Matrix(T, N, 1)` for `N` from 2 to 4.
 	from_vector :: proc{from_vector2, from_vector3, from_vector4};
@@ -308,7 +307,7 @@ impl Matrix($T, $R, $C) {
 	`v` rotated by the unit quaternion `q`, `q v q*`, an active rotation. `q`
 	and `-q` rotate alike, and `rotate(a * b, v)` rotates by `b` first.
 */
-rotate :: proc(q: math.Quaternion($T), v: Vector3(T)) -> Vector3(T) where interfaces.Numeric(T) ---;
+rotate :: proc(q: math.Quaternion($T), v: Vector3(T)) -> Vector3(T) where Numeric(T) ---;
 
 /*
 	The rotation by `angle` about `axis`: `(cos(angle/2), sin(angle/2)*axis)`.
@@ -575,19 +574,19 @@ impl Matrix($T, $R, $C) {
 
 // A 2-component column vector, laid out as `[2]T`.
 @(positional)
-Vector2 :: struct($T: type) where interfaces.Numeric(T) {
+Vector2 :: struct($T: type) where Numeric(T) {
 	x, y: T,
 }
 
 // A 3-component column vector, laid out as `[3]T`.
 @(positional)
-Vector3 :: struct($T: type) where interfaces.Numeric(T) {
+Vector3 :: struct($T: type) where Numeric(T) {
 	x, y, z: T,
 }
 
 // A 4-component column vector, laid out as `[4]T`.
 @(positional)
-Vector4 :: struct($T: type) where interfaces.Numeric(T) {
+Vector4 :: struct($T: type) where Numeric(T) {
 	x, y, z, w: T,
 }
 
@@ -626,7 +625,7 @@ impl Vector2($T) {
 	divide_scalar :: operator(/) proc(left: Vector2(T), right: T) -> Vector2(T) ---;
 
 	// Exact and component-wise: a NaN component is unequal.
-	equal :: operator(==) proc(left, right: Vector2(T)) -> bool where interfaces.Equatable(T) ---;
+	equal :: operator(==) proc(left, right: Vector2(T)) -> bool where Equatable(T) ---;
 
 	// The component at `index`, 0 for `x`; any other index panics.
 	get :: operator([]) proc(self, index: int) -> T ---;
@@ -658,10 +657,10 @@ impl Vector2($T) {
 	reflect :: proc(self, normal: Vector2(T)) -> Vector2(T) ---;
 
 	// Component-wise `math.min`.
-	min :: proc(self, other: Vector2(T)) -> Vector2(T) where interfaces.Ordered(T) ---;
+	min :: proc(self, other: Vector2(T)) -> Vector2(T) where Ordered(T) ---;
 
 	// Component-wise `math.max`.
-	max :: proc(self, other: Vector2(T)) -> Vector2(T) where interfaces.Ordered(T) ---;
+	max :: proc(self, other: Vector2(T)) -> Vector2(T) where Ordered(T) ---;
 
 	// The square root of `length_squared`.
 	length :: proc(self) -> T where Real(T) ---;
@@ -737,7 +736,7 @@ impl Vector3($T) {
 	divide_scalar :: operator(/) proc(left: Vector3(T), right: T) -> Vector3(T) ---;
 
 	// Exact and component-wise: a NaN component is unequal.
-	equal :: operator(==) proc(left, right: Vector3(T)) -> bool where interfaces.Equatable(T) ---;
+	equal :: operator(==) proc(left, right: Vector3(T)) -> bool where Equatable(T) ---;
 
 	// The component at `index`, 0 for `x`; any other index panics.
 	get :: operator([]) proc(self, index: int) -> T ---;
@@ -768,10 +767,10 @@ impl Vector3($T) {
 	reflect :: proc(self, normal: Vector3(T)) -> Vector3(T) ---;
 
 	// Component-wise `math.min`.
-	min :: proc(self, other: Vector3(T)) -> Vector3(T) where interfaces.Ordered(T) ---;
+	min :: proc(self, other: Vector3(T)) -> Vector3(T) where Ordered(T) ---;
 
 	// Component-wise `math.max`.
-	max :: proc(self, other: Vector3(T)) -> Vector3(T) where interfaces.Ordered(T) ---;
+	max :: proc(self, other: Vector3(T)) -> Vector3(T) where Ordered(T) ---;
 
 	// The square root of `length_squared`.
 	length :: proc(self) -> T where Real(T) ---;
@@ -849,7 +848,7 @@ impl Vector4($T) {
 	divide_scalar :: operator(/) proc(left: Vector4(T), right: T) -> Vector4(T) ---;
 
 	// Exact and component-wise: a NaN component is unequal.
-	equal :: operator(==) proc(left, right: Vector4(T)) -> bool where interfaces.Equatable(T) ---;
+	equal :: operator(==) proc(left, right: Vector4(T)) -> bool where Equatable(T) ---;
 
 	// The component at `index`, 0 for `x`; any other index panics.
 	get :: operator([]) proc(self, index: int) -> T ---;
@@ -875,10 +874,10 @@ impl Vector4($T) {
 	reflect :: proc(self, normal: Vector4(T)) -> Vector4(T) ---;
 
 	// Component-wise `math.min`.
-	min :: proc(self, other: Vector4(T)) -> Vector4(T) where interfaces.Ordered(T) ---;
+	min :: proc(self, other: Vector4(T)) -> Vector4(T) where Ordered(T) ---;
 
 	// Component-wise `math.max`.
-	max :: proc(self, other: Vector4(T)) -> Vector4(T) where interfaces.Ordered(T) ---;
+	max :: proc(self, other: Vector4(T)) -> Vector4(T) where Ordered(T) ---;
 
 	// The square root of `length_squared`.
 	length :: proc(self) -> T where Real(T) ---;

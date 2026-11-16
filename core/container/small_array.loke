@@ -22,7 +22,6 @@
 @(public)
 package container;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:unsafe";
 
@@ -319,7 +318,7 @@ impl Small_Array($T, $N) {
 	// ------------------------------------------------------- whole values --
 
 	/// Equal lengths and equal elements, in order.
-	equal :: operator(==) proc(left, right: Small_Array(T, N)) -> bool where interfaces.Equatable(T) {
+	equal :: operator(==) proc(left, right: Small_Array(T, N)) -> bool where Equatable(T) {
 		if (left.count != right.count) { return false; }
 		foreach (i in 0 ..< left.count) {
 			if (left.view()[i] != right.view()[i]) { return false; }

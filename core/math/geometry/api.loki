@@ -44,7 +44,6 @@
 */
 package geometry;
 
-import "base:interfaces";
 import "core:math/linalg";
 import "core:mem";
 
@@ -54,12 +53,12 @@ import "core:mem";
 	points. A box with `max.x < min.x` or `max.y < min.y`, or a NaN corner, is
 	empty: it contains nothing and is the identity of `union`.
 */
-Aabb2 :: struct($T: type) where interfaces.Numeric(T) {
+Aabb2 :: struct($T: type) where Numeric(T) {
 	min, max: linalg.Vector2(T),
 }
 
 // The axis-aligned box of the points from `min` to `max`, as for `Aabb2`.
-Aabb3 :: struct($T: type) where interfaces.Numeric(T) {
+Aabb3 :: struct($T: type) where Numeric(T) {
 	min, max: linalg.Vector3(T),
 }
 
@@ -68,40 +67,40 @@ impl Aabb2($T) {
 	from_min_max :: proc(min, max: linalg.Vector2(T)) -> Aabb2(T) ---;
 
 	// The box with corners `a` and `b`, in either order.
-	from_corners :: proc(a, b: linalg.Vector2(T)) -> Aabb2(T) where interfaces.Ordered(T) ---;
+	from_corners :: proc(a, b: linalg.Vector2(T)) -> Aabb2(T) where Ordered(T) ---;
 
 	// The box holding the one point `p`.
 	from_point :: proc(p: linalg.Vector2(T)) -> Aabb2(T) ---;
 
 	// The smallest box holding every point, or `.none` for no points.
-	from_points :: proc(points: []linalg.Vector2(T)) -> Option(Aabb2(T)) where interfaces.Ordered(T) ---;
+	from_points :: proc(points: []linalg.Vector2(T)) -> Option(Aabb2(T)) where Ordered(T) ---;
 
 	// The empty box `min = +inf`, `max = -inf`, from which `union` accumulates.
 	empty :: proc() -> Aabb2(T) where linalg.Real(T) ---;
 
-	is_empty :: proc(self) -> bool where interfaces.Ordered(T) ---;
+	is_empty :: proc(self) -> bool where Ordered(T) ---;
 
 	// Whether the point is in the box, faces included, or the box in this one.
 	contains :: proc{contains_point, contains_box};
 
 	// Private to the package, but a public declaration names it.
-	contains_point :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) ---;
+	contains_point :: proc(self, p: linalg.Vector2(T)) -> bool where Ordered(T) ---;
 
 	// Private to the package, but a public declaration names it.
 	// An empty box is in every box.
-	contains_box :: proc(self, other: Aabb2(T)) -> bool where interfaces.Ordered(T) ---;
+	contains_box :: proc(self, other: Aabb2(T)) -> bool where Ordered(T) ---;
 
 	// The smallest box holding both boxes, or the box and the point; an empty one adds nothing.
 	union :: proc{union_box, union_point};
 
 	// Private to the package, but a public declaration names it.
-	union_box :: proc(self, other: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) ---;
+	union_box :: proc(self, other: Aabb2(T)) -> Aabb2(T) where Ordered(T) ---;
 
 	// Private to the package, but a public declaration names it.
-	union_point :: proc(self, p: linalg.Vector2(T)) -> Aabb2(T) where interfaces.Ordered(T) ---;
+	union_point :: proc(self, p: linalg.Vector2(T)) -> Aabb2(T) where Ordered(T) ---;
 
 	// The points in both boxes, empty when they do not overlap or either is empty.
-	intersection :: proc(self, other: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) ---;
+	intersection :: proc(self, other: Aabb2(T)) -> Aabb2(T) where Ordered(T) ---;
 
 	// Every face moved out by `amount`, or in for a negative one.
 	expand :: proc(self, amount: T) -> Aabb2(T) ---;
@@ -119,16 +118,16 @@ impl Aabb2($T) {
 	corner :: proc(self, index: int) -> linalg.Vector2(T) ---;
 
 	// `size().x * size().y`, 0 for an empty box.
-	area :: proc(self) -> T where interfaces.Ordered(T) ---;
+	area :: proc(self) -> T where Ordered(T) ---;
 
 	// `2*(size().x + size().y)`, 0 for an empty box.
-	perimeter :: proc(self) -> T where interfaces.Ordered(T) ---;
+	perimeter :: proc(self) -> T where Ordered(T) ---;
 
 	// The point of the box nearest `p`, which is `p` inside it. It panics for an empty box.
-	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where interfaces.Ordered(T) ---;
+	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where Ordered(T) ---;
 
 	// The squared distance from `p` to the box, 0 inside it, exact for integers. It panics for an empty box.
-	distance_squared :: proc(self, p: linalg.Vector2(T)) -> T where interfaces.Ordered(T) ---;
+	distance_squared :: proc(self, p: linalg.Vector2(T)) -> T where Ordered(T) ---;
 
 	// The square root of `distance_squared`. It panics for an empty box.
 	distance :: proc(self, p: linalg.Vector2(T)) -> T where linalg.Real(T) ---;
@@ -139,40 +138,40 @@ impl Aabb3($T) {
 	from_min_max :: proc(min, max: linalg.Vector3(T)) -> Aabb3(T) ---;
 
 	// The box with corners `a` and `b`, in either order.
-	from_corners :: proc(a, b: linalg.Vector3(T)) -> Aabb3(T) where interfaces.Ordered(T) ---;
+	from_corners :: proc(a, b: linalg.Vector3(T)) -> Aabb3(T) where Ordered(T) ---;
 
 	// The box holding the one point `p`.
 	from_point :: proc(p: linalg.Vector3(T)) -> Aabb3(T) ---;
 
 	// The smallest box holding every point, or `.none` for no points.
-	from_points :: proc(points: []linalg.Vector3(T)) -> Option(Aabb3(T)) where interfaces.Ordered(T) ---;
+	from_points :: proc(points: []linalg.Vector3(T)) -> Option(Aabb3(T)) where Ordered(T) ---;
 
 	// The empty box `min = +inf`, `max = -inf`, from which `union` accumulates.
 	empty :: proc() -> Aabb3(T) where linalg.Real(T) ---;
 
-	is_empty :: proc(self) -> bool where interfaces.Ordered(T) ---;
+	is_empty :: proc(self) -> bool where Ordered(T) ---;
 
 	// Whether the point is in the box, faces included, or the box in this one.
 	contains :: proc{contains_point, contains_box};
 
 	// Private to the package, but a public declaration names it.
-	contains_point :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) ---;
+	contains_point :: proc(self, p: linalg.Vector3(T)) -> bool where Ordered(T) ---;
 
 	// Private to the package, but a public declaration names it.
 	// An empty box is in every box.
-	contains_box :: proc(self, other: Aabb3(T)) -> bool where interfaces.Ordered(T) ---;
+	contains_box :: proc(self, other: Aabb3(T)) -> bool where Ordered(T) ---;
 
 	// The smallest box holding both boxes, or the box and the point; an empty one adds nothing.
 	union :: proc{union_box, union_point};
 
 	// Private to the package, but a public declaration names it.
-	union_box :: proc(self, other: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) ---;
+	union_box :: proc(self, other: Aabb3(T)) -> Aabb3(T) where Ordered(T) ---;
 
 	// Private to the package, but a public declaration names it.
-	union_point :: proc(self, p: linalg.Vector3(T)) -> Aabb3(T) where interfaces.Ordered(T) ---;
+	union_point :: proc(self, p: linalg.Vector3(T)) -> Aabb3(T) where Ordered(T) ---;
 
 	// The points in both boxes, empty when they do not overlap or either is empty.
-	intersection :: proc(self, other: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) ---;
+	intersection :: proc(self, other: Aabb3(T)) -> Aabb3(T) where Ordered(T) ---;
 
 	// Every face moved out by `amount`, or in for a negative one.
 	expand :: proc(self, amount: T) -> Aabb3(T) ---;
@@ -190,16 +189,16 @@ impl Aabb3($T) {
 	corner :: proc(self, index: int) -> linalg.Vector3(T) ---;
 
 	// The product of the sides, 0 for an empty box.
-	volume :: proc(self) -> T where interfaces.Ordered(T) ---;
+	volume :: proc(self) -> T where Ordered(T) ---;
 
 	// `2*(xy + yz + zx)` of the sides, 0 for an empty box.
-	surface_area :: proc(self) -> T where interfaces.Ordered(T) ---;
+	surface_area :: proc(self) -> T where Ordered(T) ---;
 
 	// The point of the box nearest `p`, which is `p` inside it. It panics for an empty box.
-	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where interfaces.Ordered(T) ---;
+	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where Ordered(T) ---;
 
 	// The squared distance from `p` to the box, 0 inside it, exact for integers. It panics for an empty box.
-	distance_squared :: proc(self, p: linalg.Vector3(T)) -> T where interfaces.Ordered(T) ---;
+	distance_squared :: proc(self, p: linalg.Vector3(T)) -> T where Ordered(T) ---;
 
 	// The square root of `distance_squared`. It panics for an empty box.
 	distance :: proc(self, p: linalg.Vector3(T)) -> T where linalg.Real(T) ---;
@@ -210,7 +209,7 @@ impl Aabb3($T) {
 	order left, right, bottom, top, near, far: a point is inside when its
 	`signed_distance` to every plane is at least 0.
 */
-Frustum :: struct($T: type) where interfaces.Numeric(T) {
+Frustum :: struct($T: type) where Numeric(T) {
 	planes: [6]Plane(T),
 }
 
@@ -231,7 +230,7 @@ impl Frustum($T) {
 	from_matrix :: proc(clip: linalg.Matrix(T, 4, 4), depth: linalg.Depth_Range) -> Option(Frustum(T)) where linalg.Real(T) ---;
 
 	// Whether `p` is inside or on every plane.
-	contains :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) ---;
+	contains :: proc(self, p: linalg.Vector3(T)) -> bool where Ordered(T) ---;
 }
 
 /*
@@ -287,28 +286,28 @@ intersects :: proc{
 };
 
 // Private to the package, but a public declaration names it.
-intersects_box2_box2 :: proc(a, b: Aabb2($T)) -> bool where interfaces.Ordered(T) ---;
+intersects_box2_box2 :: proc(a, b: Aabb2($T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_box3_box3 :: proc(a, b: Aabb3($T)) -> bool where interfaces.Ordered(T) ---;
+intersects_box3_box3 :: proc(a, b: Aabb3($T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_circle_circle :: proc(a, b: Circle($T)) -> bool where interfaces.Ordered(T) ---;
+intersects_circle_circle :: proc(a, b: Circle($T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_sphere_sphere :: proc(a, b: Sphere($T)) -> bool where interfaces.Ordered(T) ---;
+intersects_sphere_sphere :: proc(a, b: Sphere($T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_circle_box2 :: proc(circle: Circle($T), box: Aabb2(T)) -> bool where interfaces.Ordered(T) ---;
+intersects_circle_box2 :: proc(circle: Circle($T), box: Aabb2(T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_box2_circle :: proc(box: Aabb2($T), circle: Circle(T)) -> bool where interfaces.Ordered(T) ---;
+intersects_box2_circle :: proc(box: Aabb2($T), circle: Circle(T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_sphere_box3 :: proc(sphere: Sphere($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) ---;
+intersects_sphere_box3 :: proc(sphere: Sphere($T), box: Aabb3(T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_box3_sphere :: proc(box: Aabb3($T), sphere: Sphere(T)) -> bool where interfaces.Ordered(T) ---;
+intersects_box3_sphere :: proc(box: Aabb3($T), sphere: Sphere(T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
 intersects_sphere_plane :: proc(sphere: Sphere($T), plane: Plane(T)) -> bool where linalg.Real(T) ---;
@@ -317,31 +316,31 @@ intersects_sphere_plane :: proc(sphere: Sphere($T), plane: Plane(T)) -> bool whe
 intersects_plane_sphere :: proc(plane: Plane($T), sphere: Sphere(T)) -> bool where linalg.Real(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_box3_plane :: proc(box: Aabb3($T), plane: Plane(T)) -> bool where interfaces.Ordered(T) ---;
+intersects_box3_plane :: proc(box: Aabb3($T), plane: Plane(T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_plane_box3 :: proc(plane: Plane($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) ---;
+intersects_plane_box3 :: proc(plane: Plane($T), box: Aabb3(T)) -> bool where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_segment2_segment2 :: proc(a, b: Segment2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+intersects_segment2_segment2 :: proc(a, b: Segment2($T)) -> bool where Numeric(T), Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_segment2_box2 :: proc(segment: Segment2($T), box: Aabb2(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+intersects_segment2_box2 :: proc(segment: Segment2($T), box: Aabb2(T)) -> bool where Numeric(T), Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_box2_segment2 :: proc(box: Aabb2($T), segment: Segment2(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+intersects_box2_segment2 :: proc(box: Aabb2($T), segment: Segment2(T)) -> bool where Numeric(T), Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_segment3_box3 :: proc(segment: Segment3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+intersects_segment3_box3 :: proc(segment: Segment3($T), box: Aabb3(T)) -> bool where Numeric(T), Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_box3_segment3 :: proc(box: Aabb3($T), segment: Segment3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+intersects_box3_segment3 :: proc(box: Aabb3($T), segment: Segment3(T)) -> bool where Numeric(T), Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_triangle3_box3 :: proc(triangle: Triangle3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+intersects_triangle3_box3 :: proc(triangle: Triangle3($T), box: Aabb3(T)) -> bool where Numeric(T), Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-intersects_box3_triangle3 :: proc(box: Aabb3($T), triangle: Triangle3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+intersects_box3_triangle3 :: proc(box: Aabb3($T), triangle: Triangle3(T)) -> bool where Numeric(T), Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
 intersects_frustum_sphere :: proc(frustum: Frustum($T), sphere: Sphere(T)) -> bool where linalg.Real(T) ---;
@@ -361,7 +360,7 @@ intersects_box3_frustum :: proc(box: Aabb3($T), frustum: Frustum(T)) -> bool whe
 	normal, which makes `signed_distance` a distance and `offset` the plane's
 	distance from the origin along the normal; a literal is taken as written.
 */
-Plane :: struct($T: type) where interfaces.Numeric(T) {
+Plane :: struct($T: type) where Numeric(T) {
 	normal: linalg.Vector3(T),
 	offset: T,
 }
@@ -414,7 +413,7 @@ Fill_Rule :: enum { Nonzero, Even_Odd }
 	origin accurate and is exact for integers. 0 for fewer than three
 	vertices.
 */
-signed_area_doubled :: proc(polygon: []linalg.Vector2($T)) -> T where interfaces.Numeric(T) ---;
+signed_area_doubled :: proc(polygon: []linalg.Vector2($T)) -> T where Numeric(T) ---;
 
 // The signed area of the polygon, `signed_area_doubled(polygon)*0.5`.
 signed_area :: proc(polygon: []linalg.Vector2($T)) -> T where linalg.Real(T) ---;
@@ -436,14 +435,14 @@ centroid :: proc(polygon: []linalg.Vector2($T)) -> Option(linalg.Vector2(T)) whe
 	downward with `p` to its right counts -1, each side an exact `orient2d`.
 	An empty polygon winds 0 times around every point.
 */
-winding_number :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T)) -> Option(int) where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+winding_number :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T)) -> Option(int) where Numeric(T), Ordered(T) ---;
 
 /*
 	Whether the polygon's region under `rule` holds `p`, its boundary
 	included, as for every solid. The rule is required: a self-intersecting
 	polygon fills different points under each.
 */
-contains :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T), rule: Fill_Rule) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+contains :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T), rule: Fill_Rule) -> bool where Numeric(T), Ordered(T) ---;
 
 /*
 	Whether the polygon bounds a convex region, traversed once in either
@@ -454,7 +453,7 @@ contains :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T), rule: Fill
 	convex. A ring that repeats its first vertex at its end, as some formats
 	write one, needs that vertex dropped first.
 */
-is_convex :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+is_convex :: proc(polygon: []linalg.Vector2($T)) -> bool where Numeric(T), Ordered(T) ---;
 
 /*
 	Whether the polygon's edges meet only where consecutive edges share a
@@ -463,7 +462,7 @@ is_convex :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeri
 	segment test, so it is exact and quadratic in the vertices. Fewer than
 	three vertices are not simple.
 */
-is_simple :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+is_simple :: proc(polygon: []linalg.Vector2($T)) -> bool where Numeric(T), Ordered(T) ---;
 
 /*
 	The convex hull of the points by Andrew's monotone chain (1979), each turn
@@ -480,10 +479,10 @@ is_simple :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeri
 convex_hull :: proc{convex_hull_into, convex_hull_allocated};
 
 // Private to the package, but a public declaration names it.
-convex_hull_into :: proc(points: []mut linalg.Vector2($T), out: []mut linalg.Vector2(T)) -> int where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+convex_hull_into :: proc(points: []mut linalg.Vector2($T), out: []mut linalg.Vector2(T)) -> int where Numeric(T), Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-convex_hull_allocated :: proc(points: []linalg.Vector2($T), allocator: Allocator = mem.default_allocator()) -> [dynamic]linalg.Vector2(T) where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+convex_hull_allocated :: proc(points: []linalg.Vector2($T), allocator: Allocator = mem.default_allocator()) -> [dynamic]linalg.Vector2(T) where Numeric(T), Ordered(T) ---;
 
 /*
 	Which side of the line through `a` and `b` the point `c` is on:
@@ -497,7 +496,7 @@ convex_hull_allocated :: proc(points: []linalg.Vector2($T), allocator: Allocator
 	formula in `T`. A NaN or infinite coordinate gives a sign that is the same
 	everywhere but means nothing.
 */
-orient2d :: proc(a, b, c: linalg.Vector2($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+orient2d :: proc(a, b, c: linalg.Vector2($T)) -> Sign where Numeric(T), Ordered(T) ---;
 
 /*
 	Which side of the plane through `a`, `b`, and `c` the point `d` is on:
@@ -510,7 +509,7 @@ orient2d :: proc(a, b, c: linalg.Vector2($T)) -> Sign where interfaces.Numeric(T
 	magnitudes are 0 or between `2^-280` and `2^300`, and for integers whose
 	products do not overflow; otherwise as for `orient2d`.
 */
-orient3d :: proc(a, b, c, d: linalg.Vector3($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+orient3d :: proc(a, b, c, d: linalg.Vector3($T)) -> Sign where Numeric(T), Ordered(T) ---;
 
 /*
 	Whether `d` is inside the circle through `a`, `b`, and `c`, given in
@@ -523,7 +522,7 @@ orient3d :: proc(a, b, c, d: linalg.Vector3($T)) -> Sign where interfaces.Numeri
 	magnitudes are 0 or between `2^-200` and `2^220`, and for integers whose
 	products do not overflow; otherwise as for `orient2d`.
 */
-incircle :: proc(a, b, c, d: linalg.Vector2($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+incircle :: proc(a, b, c, d: linalg.Vector2($T)) -> Sign where Numeric(T), Ordered(T) ---;
 
 /*
 	Whether `e` is inside the sphere through `a`, `b`, `c`, and `d`, given so
@@ -538,15 +537,15 @@ incircle :: proc(a, b, c, d: linalg.Vector2($T)) -> Sign where interfaces.Numeri
 	products do not overflow; otherwise as for `orient2d`. Its exact path, met
 	only near a degenerate configuration, uses about 120 KB of stack.
 */
-insphere :: proc(a, b, c, d, e: linalg.Vector3($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+insphere :: proc(a, b, c, d, e: linalg.Vector3($T)) -> Sign where Numeric(T), Ordered(T) ---;
 
 // The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
-Ray2 :: struct($T: type) where interfaces.Numeric(T) {
+Ray2 :: struct($T: type) where Numeric(T) {
 	origin, direction: linalg.Vector2(T),
 }
 
 // The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
-Ray3 :: struct($T: type) where interfaces.Numeric(T) {
+Ray3 :: struct($T: type) where Numeric(T) {
 	origin, direction: linalg.Vector3(T),
 }
 
@@ -555,7 +554,7 @@ Ray3 :: struct($T: type) where interfaces.Numeric(T) {
 	`barycentric.x*a + barycentric.y*b + barycentric.z*c`, its coordinates
 	summing to 1.
 */
-Triangle_Hit :: struct($T: type) where interfaces.Numeric(T) {
+Triangle_Hit :: struct($T: type) where Numeric(T) {
 	t: T,
 	barycentric: linalg.Vector3(T),
 }
@@ -648,22 +647,22 @@ cast_ray3_plane :: proc(ray: Ray3($T), plane: Plane(T), t_min, t_max: T) -> Opti
 cast_ray3_triangle3 :: proc(ray: Ray3($T), triangle: Triangle3(T), t_min, t_max: T) -> Option(Triangle_Hit(T)) where linalg.Real(T) ---;
 
 // The points from `a` to `b`, both ends included.
-Segment2 :: struct($T: type) where interfaces.Numeric(T) {
+Segment2 :: struct($T: type) where Numeric(T) {
 	a, b: linalg.Vector2(T),
 }
 
 // The points from `a` to `b`, both ends included.
-Segment3 :: struct($T: type) where interfaces.Numeric(T) {
+Segment3 :: struct($T: type) where Numeric(T) {
 	a, b: linalg.Vector3(T),
 }
 
 // The solid triangle with corners `a`, `b`, and `c`, its edges included.
-Triangle2 :: struct($T: type) where interfaces.Numeric(T) {
+Triangle2 :: struct($T: type) where Numeric(T) {
 	a, b, c: linalg.Vector2(T),
 }
 
 // The solid triangle with corners `a`, `b`, and `c`, its edges included.
-Triangle3 :: struct($T: type) where interfaces.Numeric(T) {
+Triangle3 :: struct($T: type) where Numeric(T) {
 	a, b, c: linalg.Vector3(T),
 }
 
@@ -689,7 +688,7 @@ impl Segment2($T) {
 
 	length :: proc(self) -> T where linalg.Real(T) ---;
 
-	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) ---;
+	bounds :: proc(self) -> Aabb2(T) where Ordered(T) ---;
 
 	// The point of the segment nearest `p`.
 	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where linalg.Real(T) ---;
@@ -707,7 +706,7 @@ impl Segment3($T) {
 
 	length :: proc(self) -> T where linalg.Real(T) ---;
 
-	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) ---;
+	bounds :: proc(self) -> Aabb3(T) where Ordered(T) ---;
 
 	// The point of the segment nearest `p`.
 	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where linalg.Real(T) ---;
@@ -726,12 +725,12 @@ impl Triangle2($T) {
 		holds for either winding. A triangle of no area is the segment, or
 		the point, its corners span.
 	*/
-	contains :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) ---;
+	contains :: proc(self, p: linalg.Vector2(T)) -> bool where Ordered(T) ---;
 
 	// Half the absolute cross product of two edges.
 	area :: proc(self) -> T where linalg.Real(T) ---;
 
-	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) ---;
+	bounds :: proc(self) -> Aabb2(T) where Ordered(T) ---;
 
 	// The point of the triangle nearest `p`: `p` itself when `contains(p)`, and otherwise a point of an edge.
 	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where linalg.Real(T) ---;
@@ -756,7 +755,7 @@ impl Triangle3($T) {
 	// Half the length of the cross product of two edges.
 	area :: proc(self) -> T where linalg.Real(T) ---;
 
-	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) ---;
+	bounds :: proc(self) -> Aabb3(T) where Ordered(T) ---;
 
 	// The point of the triangle nearest `p`.
 	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where linalg.Real(T) ---;
@@ -773,13 +772,13 @@ impl Triangle3($T) {
 }
 
 // The disc of the points at most `radius` from `center`, its boundary included.
-Circle :: struct($T: type) where interfaces.Numeric(T) {
+Circle :: struct($T: type) where Numeric(T) {
 	center: linalg.Vector2(T),
 	radius: T,
 }
 
 // The ball of the points at most `radius` from `center`, its surface included.
-Sphere :: struct($T: type) where interfaces.Numeric(T) {
+Sphere :: struct($T: type) where Numeric(T) {
 	center: linalg.Vector3(T),
 	radius: T,
 }
@@ -788,10 +787,10 @@ impl Circle($T) {
 	from_center_radius :: proc(center: linalg.Vector2(T), radius: T) -> Circle(T) ---;
 
 	// Whether `p` is in the disc, `|p - center|^2 <= radius^2`, exact for integers and free of overflow and underflow for `f32` and `f64`.
-	contains :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) ---;
+	contains :: proc(self, p: linalg.Vector2(T)) -> bool where Ordered(T) ---;
 
 	// The square around the disc.
-	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) ---;
+	bounds :: proc(self) -> Aabb2(T) where Ordered(T) ---;
 
 	/*
 		The point of the disc nearest `p`: `p` inside it, and otherwise
@@ -807,10 +806,10 @@ impl Sphere($T) {
 	from_center_radius :: proc(center: linalg.Vector3(T), radius: T) -> Sphere(T) ---;
 
 	// Whether `p` is in the ball, `|p - center|^2 <= radius^2`, exact for integers and free of overflow and underflow for `f32` and `f64`.
-	contains :: proc(self, p: linalg.Vector3(T)) -> bool where interfaces.Ordered(T) ---;
+	contains :: proc(self, p: linalg.Vector3(T)) -> bool where Ordered(T) ---;
 
 	// The cube around the ball.
-	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) ---;
+	bounds :: proc(self) -> Aabb3(T) where Ordered(T) ---;
 
 	/*
 		The point of the ball nearest `p`: `p` inside it, and otherwise
@@ -835,10 +834,10 @@ impl Sphere($T) {
 transform_box :: proc{transform_box2, transform_box3};
 
 // Private to the package, but a public declaration names it.
-transform_box3 :: proc(m: linalg.Matrix($T, 4, 4), box: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) ---;
+transform_box3 :: proc(m: linalg.Matrix($T, 4, 4), box: Aabb3(T)) -> Aabb3(T) where Ordered(T) ---;
 
 // Private to the package, but a public declaration names it.
-transform_box2 :: proc(m: linalg.Matrix($T, 3, 3), box: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) ---;
+transform_box2 :: proc(m: linalg.Matrix($T, 3, 3), box: Aabb2(T)) -> Aabb2(T) where Ordered(T) ---;
 
 /*
 	The plane `m` moves `plane` to, for a 4 x 4 affine `m`: its normal through

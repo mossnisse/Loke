@@ -4,22 +4,21 @@
 @(public)
 package geometry;
 
-import "base:interfaces";
 import "core:math";
 import "core:math/linalg";
 import "core:simd";
 
 /// The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
-Ray2 :: struct($T: type) where interfaces.Numeric(T) { origin, direction: linalg.Vector2(T) }
+Ray2 :: struct($T: type) where Numeric(T) { origin, direction: linalg.Vector2(T) }
 /// The points `origin + t*direction`; `direction` need not be a unit vector, and `t` is in units of its length.
-Ray3 :: struct($T: type) where interfaces.Numeric(T) { origin, direction: linalg.Vector3(T) }
+Ray3 :: struct($T: type) where Numeric(T) { origin, direction: linalg.Vector3(T) }
 
 /**
 	Where a ray meets a triangle: at distance `t`, the point
 	`barycentric.x*a + barycentric.y*b + barycentric.z*c`, its coordinates
 	summing to 1.
 */
-Triangle_Hit :: struct($T: type) where interfaces.Numeric(T) { t: T, barycentric: linalg.Vector3(T) }
+Triangle_Hit :: struct($T: type) where Numeric(T) { t: T, barycentric: linalg.Vector3(T) }
 
 impl Ray2($T) {
 	from_origin_direction :: proc(origin, direction: linalg.Vector2(T)) -> Ray2(T) { return {origin, direction}; }

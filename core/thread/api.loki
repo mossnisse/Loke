@@ -12,8 +12,6 @@
 */
 package thread;
 
-import "base:interfaces";
-
 /*
 	A bounded queue between tasks, owning its queued items. A task reaches it
 	through an endpoint that borrows it: a `Sender` sends and a `Receiver`
@@ -339,7 +337,7 @@ impl Monitor($T) {
 		not check this.
 	*/
 	lock_when :: proc(self: ^, ready: $C) -> Option(Monitor_Guard(T))
-		where interfaces.Callable(C, proc(value: ^T) -> bool) ---;
+		where Callable(C, proc(value: ^T) -> bool) ---;
 
 	/*
 		Closes the monitor and wakes every waiter. From then on a `lock_when`

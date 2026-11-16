@@ -6,18 +6,17 @@
 @(public)
 package geometry;
 
-import "base:interfaces";
 import "core:math/linalg";
 
 /// The points from `a` to `b`, both ends included.
-Segment2 :: struct($T: type) where interfaces.Numeric(T) { a, b: linalg.Vector2(T) }
+Segment2 :: struct($T: type) where Numeric(T) { a, b: linalg.Vector2(T) }
 /// The points from `a` to `b`, both ends included.
-Segment3 :: struct($T: type) where interfaces.Numeric(T) { a, b: linalg.Vector3(T) }
+Segment3 :: struct($T: type) where Numeric(T) { a, b: linalg.Vector3(T) }
 
 /// The solid triangle with corners `a`, `b`, and `c`, its edges included.
-Triangle2 :: struct($T: type) where interfaces.Numeric(T) { a, b, c: linalg.Vector2(T) }
+Triangle2 :: struct($T: type) where Numeric(T) { a, b, c: linalg.Vector2(T) }
 /// The solid triangle with corners `a`, `b`, and `c`, its edges included.
-Triangle3 :: struct($T: type) where interfaces.Numeric(T) { a, b, c: linalg.Vector3(T) }
+Triangle3 :: struct($T: type) where Numeric(T) { a, b, c: linalg.Vector3(T) }
 
 // The point of the segment from `a` to `b` nearest `p`: `a` when the
 // projection's parameter is at most 0, which covers a segment of no length,
@@ -150,7 +149,7 @@ impl Segment2($T) {
 	/// `a + (b - a)*t`.
 	at :: proc(self, t: T) -> linalg.Vector2(T) { return self.a + (self.b - self.a)*t; }
 	length :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).length(); }
-	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) { return Aabb2(T).from_corners(self.a, self.b); }
+	bounds :: proc(self) -> Aabb2(T) where Ordered(T) { return Aabb2(T).from_corners(self.a, self.b); }
 	/// The point of the segment nearest `p`.
 	closest_point :: proc(self, p: linalg.Vector2(T)) -> linalg.Vector2(T) where linalg.Real(T) {
 		return closest_on_segment(self.a, self.b, p, T(0));
@@ -166,7 +165,7 @@ impl Segment3($T) {
 	/// `a + (b - a)*t`.
 	at :: proc(self, t: T) -> linalg.Vector3(T) { return self.a + (self.b - self.a)*t; }
 	length :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).length(); }
-	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) { return Aabb3(T).from_corners(self.a, self.b); }
+	bounds :: proc(self) -> Aabb3(T) where Ordered(T) { return Aabb3(T).from_corners(self.a, self.b); }
 	/// The point of the segment nearest `p`.
 	closest_point :: proc(self, p: linalg.Vector3(T)) -> linalg.Vector3(T) where linalg.Real(T) {
 		return closest_on_segment(self.a, self.b, p, T(0));
@@ -185,7 +184,7 @@ impl Triangle2($T) {
 		holds for either winding. A triangle of no area is the segment, or
 		the point, its corners span.
 	*/
-	contains :: proc(self, p: linalg.Vector2(T)) -> bool where interfaces.Ordered(T) {
+	contains :: proc(self, p: linalg.Vector2(T)) -> bool where Ordered(T) {
 		s1 := orient2d(self.a, self.b, p);
 		s2 := orient2d(self.b, self.c, p);
 		s3 := orient2d(self.c, self.a, p);
@@ -199,7 +198,7 @@ impl Triangle2($T) {
 	}
 	/// Half the absolute cross product of two edges.
 	area :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).cross(self.c - self.a).abs()*T(0.5); }
-	bounds :: proc(self) -> Aabb2(T) where interfaces.Ordered(T) {
+	bounds :: proc(self) -> Aabb2(T) where Ordered(T) {
 		return Aabb2(T).from_corners(self.a, self.b).union(self.c);
 	}
 	/// The point of the triangle nearest `p`: `p` itself when `contains(p)`, and otherwise a point of an edge.
@@ -228,7 +227,7 @@ impl Triangle3($T) {
 	}
 	/// Half the length of the cross product of two edges.
 	area :: proc(self) -> T where linalg.Real(T) { return (self.b - self.a).cross(self.c - self.a).length()*T(0.5); }
-	bounds :: proc(self) -> Aabb3(T) where interfaces.Ordered(T) {
+	bounds :: proc(self) -> Aabb3(T) where Ordered(T) {
 		return Aabb3(T).from_corners(self.a, self.b).union(self.c);
 	}
 	/// The point of the triangle nearest `p`.

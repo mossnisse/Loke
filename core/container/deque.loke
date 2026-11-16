@@ -37,7 +37,6 @@
 @(public)
 package container;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:mem";
 import "core:slice";
@@ -299,7 +298,7 @@ impl Deque($T) {
 	}
 
 	/// Keeps the order, and drops each element for which `keep(item)` is false, in O(n).
-	retain :: proc(self: inout, keep: $F) where interfaces.Callable(F, proc(item: T) -> bool) {
+	retain :: proc(self: inout, keep: $F) where Callable(F, proc(item: T) -> bool) {
 		kept := 0;
 		foreach (i in 0 ..< self.count) {
 			if (keep(self.slots()[self.wrap(i)])) {
@@ -444,7 +443,7 @@ impl Deque($T) {
 	// ----------------------------------------------------------- lifecycle --
 
 	/// Equal lengths and equal elements in order, regardless of where the ring starts.
-	equal :: operator(==) proc(left, right: Deque(T)) -> bool where interfaces.Equatable(T) {
+	equal :: operator(==) proc(left, right: Deque(T)) -> bool where Equatable(T) {
 		if (left.count != right.count) { return false; }
 		foreach (i in 0 ..< left.count) {
 			if (left.slots()[left.wrap(i)] != right.slots()[right.wrap(i)]) { return false; }

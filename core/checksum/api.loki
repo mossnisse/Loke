@@ -20,7 +20,6 @@
 */
 package checksum;
 
-import "base:interfaces";
 import "core:io";
 
 /*
@@ -28,7 +27,7 @@ import "core:io";
 	implied, whatever the reflection: CRC-32 is `0x04C11DB7`, never its reversed
 	form `0xEDB88320`. `T` is an unsigned integer as wide as `width` or wider.
 */
-Crc_Params :: struct($T: type) where interfaces.Integral(T) {
+Crc_Params :: struct($T: type) where Integral(T) {
 	width:       int,
 	polynomial:  T,
 	initial:     T,

@@ -5,7 +5,6 @@
 @(public)
 package geometry;
 
-import "base:interfaces";
 import "core:math/linalg";
 
 /**
@@ -21,13 +20,13 @@ import "core:math/linalg";
 transform_box :: proc{transform_box2, transform_box3};
 
 @(private)
-smaller :: proc(a, b: $T) -> T where interfaces.Ordered(T) { return a if at_most(a, b) else b; }
+smaller :: proc(a, b: $T) -> T where Ordered(T) { return a if at_most(a, b) else b; }
 
 @(private)
-larger :: proc(a, b: $T) -> T where interfaces.Ordered(T) { return b if at_most(a, b) else a; }
+larger :: proc(a, b: $T) -> T where Ordered(T) { return b if at_most(a, b) else a; }
 
 @(private)
-transform_box3 :: proc(m: linalg.Matrix($T, 4, 4), box: Aabb3(T)) -> Aabb3(T) where interfaces.Ordered(T) {
+transform_box3 :: proc(m: linalg.Matrix($T, 4, 4), box: Aabb3(T)) -> Aabb3(T) where Ordered(T) {
 	if (box.is_empty()) { return box; }
 	c := m.columns;
 	low, high := box.min, box.max;
@@ -42,7 +41,7 @@ transform_box3 :: proc(m: linalg.Matrix($T, 4, 4), box: Aabb3(T)) -> Aabb3(T) wh
 }
 
 @(private)
-transform_box2 :: proc(m: linalg.Matrix($T, 3, 3), box: Aabb2(T)) -> Aabb2(T) where interfaces.Ordered(T) {
+transform_box2 :: proc(m: linalg.Matrix($T, 3, 3), box: Aabb2(T)) -> Aabb2(T) where Ordered(T) {
 	if (box.is_empty()) { return box; }
 	c := m.columns;
 	low, high := box.min, box.max;

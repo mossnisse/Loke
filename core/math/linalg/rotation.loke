@@ -4,7 +4,6 @@
 @(public)
 package linalg;
 
-import "base:interfaces";
 import "core:math";
 
 /**
@@ -12,7 +11,7 @@ import "core:math";
 	and `-q` rotate alike, and `rotate(a * b, v)` rotates by `b` first.
 */
 // With `u` the vector part: `t = 2(u x v)`, then `v + real*t + u x t`.
-rotate :: proc(q: math.Quaternion($T), v: Vector3(T)) -> Vector3(T) where interfaces.Numeric(T) {
+rotate :: proc(q: math.Quaternion($T), v: Vector3(T)) -> Vector3(T) where Numeric(T) {
 	u := Vector3(T){q.i, q.j, q.k};
 	c := u.cross(v);
 	t := c + c;
@@ -337,7 +336,7 @@ axis_rotation :: proc(axis: int, angle: $T) -> math.Quaternion(T) where Real(T) 
 
 // The vector component of `q` along the coordinate axis `axis`.
 @(private)
-quaternion_part :: proc(q: math.Quaternion($T), axis: int) -> T where interfaces.Numeric(T) {
+quaternion_part :: proc(q: math.Quaternion($T), axis: int) -> T where Numeric(T) {
 	switch (axis) {
 	case 0: return q.i;
 	case 1: return q.j;

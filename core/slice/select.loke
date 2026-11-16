@@ -8,8 +8,6 @@
 @(public)
 package slice;
 
-import "base:interfaces";
-
 /**
 	Reorders the slice so every element `keep` accepts comes before every element
 	it rejects, and returns how many it accepted. `keep` is called exactly once
@@ -21,7 +19,7 @@ import "base:interfaces";
 // `values[:low]` is known accepted and `values[high:]` known rejected. Each
 // element is tested once: a swap trades two that are already tested, and both
 // cursors step past them.
-partition :: proc(values: []mut $T, keep: $P) -> int where interfaces.Callable(P, proc(value: T) -> bool) {
+partition :: proc(values: []mut $T, keep: $P) -> int where Callable(P, proc(value: T) -> bool) {
 	low := 0;
 	high := values.len();
 	for (;;) {
@@ -41,7 +39,7 @@ partition :: proc(values: []mut $T, keep: $P) -> int where interfaces.Callable(P
 
 /// Whether no element `keep` accepts comes after one it rejects.
 // standard-library.md "Partitioning and selection".
-is_partitioned :: proc(values: []$T, keep: $P) -> bool where interfaces.Callable(P, proc(value: T) -> bool) {
+is_partitioned :: proc(values: []$T, keep: $P) -> bool where Callable(P, proc(value: T) -> bool) {
 	at := 0;
 	for (at < values.len() && keep(values[at])) { at += 1; }
 	for (at < values.len()) {
@@ -58,7 +56,7 @@ is_partitioned :: proc(values: []$T, keep: $P) -> bool where interfaces.Callable
 	`binary_search`, by any key.
 */
 // standard-library.md "Partitioning and selection".
-partition_point :: proc(values: []$T, keep: $P) -> int where interfaces.Callable(P, proc(value: T) -> bool) {
+partition_point :: proc(values: []$T, keep: $P) -> int where Callable(P, proc(value: T) -> bool) {
 	low := 0;
 	high := values.len();
 	for (low < high) {
@@ -81,7 +79,7 @@ partition_point :: proc(values: []$T, keep: $P) -> int where interfaces.Callable
 	every call terminates.
 */
 // standard-library.md "Partitioning and selection".
-select_nth_by :: proc(values: []mut $T, n: int, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+select_nth_by :: proc(values: []mut $T, n: int, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	count := values.len();
 	if (n < 0 || n >= count) { panic("selection index is out of range"); }
 	select_in(values, 0, count, n, less, 0);
@@ -92,7 +90,7 @@ select_nth_by :: proc(values: []mut $T, n: int, less: $C) where interfaces.Calla
 	`sort_by`. A NaN leaves an unspecified permutation, as it does for `sort`.
 */
 // standard-library.md "Partitioning and selection".
-select_nth :: proc(values: []mut $T, n: int) where interfaces.Ordered(T) {
+select_nth :: proc(values: []mut $T, n: int) where Ordered(T) {
 	select_nth_by(values, n, Ascending(T){});
 }
 
@@ -129,7 +127,7 @@ select_nth :: proc(values: []mut $T, n: int) where interfaces.Ordered(T) {
 // most 3/4, and 1/5 + 3/4 < 1.
 @(private)
 select_in :: proc(values: []mut $T, low_in: int, high_in: int, n: int, less: $C, bad_in: int)
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	where Callable(C, proc(left, right: T) -> bool) {
 	low := low_in;
 	high := high_in;
 	bad := bad_in;
@@ -166,7 +164,7 @@ select_in :: proc(values: []mut $T, low_in: int, high_in: int, n: int, less: $C,
 // equivalent to it begins.
 @(private)
 gather_before :: proc(values: []mut $T, low: int, p: int, less: $C) -> int
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	where Callable(C, proc(left, right: T) -> bool) {
 	end := low;
 	foreach (i in low ..< p) {
 		if (less(values[i], values[p])) {
@@ -182,7 +180,7 @@ gather_before :: proc(values: []mut $T, low: int, p: int, less: $C) -> int
 // comes strictly after it begins.
 @(private)
 gather_equivalent :: proc(values: []mut $T, p: int, high: int, less: $C) -> int
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	where Callable(C, proc(left, right: T) -> bool) {
 	end := p + 1;
 	foreach (i in p + 1 ..< high) {
 		if (!less(values[p], values[i])) {
@@ -197,7 +195,7 @@ gather_equivalent :: proc(values: []mut $T, p: int, high: int, less: $C) -> int
 // time, so no copy of it is held anywhere.
 @(private)
 insertion_sort_range :: proc(values: []mut $T, low: int, high: int, less: $C)
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	where Callable(C, proc(left, right: T) -> bool) {
 	foreach (i in low + 1 ..< high) {
 		j := i;
 		for (j > low && less(values[j], values[j - 1])) {
@@ -210,7 +208,7 @@ insertion_sort_range :: proc(values: []mut $T, low: int, high: int, less: $C)
 // Orders three distinct slots by swaps, so the median lands in `b`.
 @(private)
 order_three :: proc(values: []mut $T, a: int, b: int, c: int, less: $C)
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	where Callable(C, proc(left, right: T) -> bool) {
 	if (less(values[b], values[a])) { values.swap(a, b); }
 	if (less(values[c], values[b])) {
 		values.swap(b, c);
@@ -222,7 +220,7 @@ order_three :: proc(values: []mut $T, a: int, b: int, c: int, less: $C)
 // `low`.
 @(private)
 pivot_sample :: proc(values: []mut $T, low: int, high: int, less: $C)
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	where Callable(C, proc(left, right: T) -> bool) {
 	middle := low + (high - low)/2;
 	last := high - 1;
 	if (high - low >= SELECT_NINTHER) {
@@ -243,7 +241,7 @@ pivot_sample :: proc(values: []mut $T, low: int, high: int, less: $C)
 // the same procedure, on a fifth of the range.
 @(private)
 pivot_median_of_medians :: proc(values: []mut $T, low: int, high: int, less: $C)
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	where Callable(C, proc(left, right: T) -> bool) {
 	groups := 0;
 	at := low;
 	for (at + 5 <= high) {
@@ -264,7 +262,7 @@ pivot_median_of_medians :: proc(values: []mut $T, low: int, high: int, less: $C)
 // its final slot, which is returned.
 @(private)
 partition_at_low :: proc(values: []mut $T, low: int, high: int, less: $C) -> int
-	where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	where Callable(C, proc(left, right: T) -> bool) {
 	i := low;
 	j := high;
 	for (;;) {

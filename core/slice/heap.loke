@@ -4,20 +4,18 @@
 @(public)
 package slice;
 
-import "base:interfaces";
-
 /**
 	Callable as `left < right`, for `sort_by`, the heap algorithms, and a
 	`Priority_Queue`. Zero-sized: `slice.Ascending(int){}`.
 */
-Ascending :: struct($T: type) where interfaces.Ordered(T) {}
+Ascending :: struct($T: type) where Ordered(T) {}
 
 impl Ascending($T) {
 	call :: proc(self, left, right: T) -> bool { return left < right; }
 }
 
 /// Callable as `right < left`, the opposite order of `Ascending`.
-Descending :: struct($T: type) where interfaces.Ordered(T) {}
+Descending :: struct($T: type) where Ordered(T) {}
 
 impl Descending($T) {
 	call :: proc(self, left, right: T) -> bool { return right < left; }
@@ -34,7 +32,7 @@ impl Descending($T) {
 	nothing worse: the slice is still a permutation of what it held, and every
 	call terminates.
 */
-make_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+make_heap :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	at := values.len() / 2;
 	for (at > 0) {
 		at -= 1;
@@ -46,7 +44,7 @@ make_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(
 	The last element joins the heap formed by those before it, in O(log n).
 	Append to the storage first. An empty slice is a no-op.
 */
-push_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+push_heap :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	at := values.len() - 1;
 	for (at > 0) {
 		parent := (at - 1) / 2;
@@ -61,7 +59,7 @@ push_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(
 	again, in O(log n). Remove it from the storage afterwards. An empty slice is
 	a no-op.
 */
-pop_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+pop_heap :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	last := values.len() - 1;
 	if (last < 1) { return; }
 	values.swap(0, last);
@@ -69,12 +67,12 @@ pop_heap :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(l
 }
 
 /// Restores the order after the first element changed, in O(log n).
-sift_heap_top :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+sift_heap_top :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	sift_down(values, 0, less);
 }
 
 /// Whether no element is `less` than its parent. An empty slice is a heap.
-is_heap :: proc(values: []$T, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
+is_heap :: proc(values: []$T, less: $C) -> bool where Callable(C, proc(left, right: T) -> bool) {
 	foreach (child in 1 ..< values.len()) {
 		if (less(values[child], values[(child - 1) / 2])) { return false; }
 	}
@@ -82,7 +80,7 @@ is_heap :: proc(values: []$T, less: $C) -> bool where interfaces.Callable(C, pro
 }
 
 @(private)
-sift_down :: proc(values: []mut $T, start: int, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+sift_down :: proc(values: []mut $T, start: int, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	at := start;
 	count := values.len();
 	for (;;) {

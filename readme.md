@@ -120,8 +120,9 @@ describes.
 The library covers text, containers, files and paths, processes, threads,
 synchronization, time, random numbers, JSON, logging, terminal input, math, and
 allocators. Import the packages you use, such as `core:fmt` or `core:thread`.
-Packages under `base:` hold only what the language itself depends on, such as
-the interface catalogue in `base:interfaces`; import them like any other.
+Packages under `base:` hold only what the language itself depends on; import
+them like any other. The interface catalogue needs no import: `Ordered`,
+`Iterable`, and the rest of it are predeclared.
 
 ## Compiler development
 

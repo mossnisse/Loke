@@ -218,7 +218,17 @@ name. They are:
   `drop`, `exchange`, `box`, `try_box`, `shared`, and `try_shared`;
 - [build constants](#build-constants): `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`,
   `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_LOG_LEVEL`,
-  `LOKE_VENDOR`, and `LOKE_VERSION`.
+  `LOKE_VENDOR`, and `LOKE_VERSION`;
+- interfaces: `Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`,
+  `Cloneable`, `Callable`, `Iterator`, `Iterable`, `Reverse_Iterable`,
+  `Mutable_Iterable`, `Sequence`, `Mutable_Sequence`, and `Growable_Sequence`.
+
+The interfaces are the [standard interface
+catalogue](standard-library.md#standard-interface-catalogue). Each name is the
+declaration that package makes, not a second interface: after
+`import "base:interfaces";`, `interfaces.Sequence` and `Sequence` are one
+interface, and the qualified name still reaches it in a package whose own
+`Sequence` shadows the predeclared one.
 
 `type` and `move` are keywords, not predeclared names.
 
@@ -1515,7 +1525,7 @@ get a stable order, collect and sort the keys. Map iteration is not valid on an
 executed [compile-time path](#compile-time-procedure-evaluation), because
 compile-time results must be reproducible.
 
-Any type can be a map key when it satisfies `interfaces.Hashable`, with a
+Any type can be a map key when it satisfies `Hashable`, with a
 **coherent** `==` and `value.hash(seed: uint) -> uint` (equal values produce
 equal hashes). Built-in conformances are the list under the [standard interface
 catalogue](standard-library.md#standard-interface-catalogue). For a user-defined key, both
@@ -3241,17 +3251,17 @@ of the type's `call` method, unless the type declares its own `Result`. A type
 whose `call` methods return different types, or nothing, has none. A bare bound
 `Callable(C, ...)`, written directly or composed by another interface, lets the
 body call a value of type `C`, reaching its `call` method even where the declaring
-package could not otherwise see it. `dyn interfaces.Callable(Signature)` is the
+package could not otherwise see it. `dyn Callable(Signature)` is the
 [borrowed callable view](#borrowed-callable-views) `dyn proc(...)`:
 
 ```loke
 apply_twice :: proc(value: int, f: $C) -> int
-	where interfaces.Callable(C, proc(n: int) -> int) {
+	where Callable(C, proc(n: int) -> int) {
 	return f(f(value));
 }
 
 map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
-	where interfaces.Callable(C, proc(error: move E) -> C.Result) { ... }
+	where Callable(C, proc(error: move E) -> C.Result) { ... }
 ```
 
 #### Generic types
@@ -3893,7 +3903,7 @@ remains valid, and starts a fresh traversal on each `iter()` call.
 ```loke
 scores := map[string]int{"a" = 1, "b" = 2};
 
-total :: proc(numbers: $S) -> int where interfaces.Iterable(S), S.Element == int {
+total :: proc(numbers: $S) -> int where Iterable(S), S.Element == int {
 	sum := 0;
 	foreach (n in numbers) { sum += n; }
 	return sum;
@@ -4571,7 +4581,7 @@ the only construct that erases a concrete type behind an interface.
 For runtime use, erasure substitutes the concrete implementation type for the
 subject, while every other generic parameter stays an explicit type or
 constant-value argument of the dynamic type. The catalogue's
-`interfaces.Iterator(Self, Item)` is one such interface, and so is this one:
+`Iterator(Self, Item)` is one such interface, and so is this one:
 
 ```loke
 Drawable :: interface($Self: type) {
@@ -4630,8 +4640,8 @@ the hidden representation.
 plus a pointer to the interface's coherent implementation for the erased type.
 The subject argument is omitted, being the erased type. Remaining arguments may
 be types or constant values and are normalized before becoming part of the
-dynamic type's identity. For example, `dyn interfaces.Iterator(u8)` may hold a
-borrow of any concrete value for which `interfaces.Iterator(Concrete, u8)` is
+dynamic type's identity. For example, `dyn Iterator(u8)` may hold a
+borrow of any concrete value for which `Iterator(Concrete, u8)` is
 satisfied, and `dyn Window(2 + 2)` is the same type as `dyn Window(4)` when
 `Window` declares `$Count: int`.
 
@@ -4722,7 +4732,7 @@ owner and callbacks; a `dyn` view never extends the payload's lifetime.
 
 `dyn proc(parameters) -> Result` borrows any [callable](#calling-a-value) with
 that signature. It abbreviates
-`dyn interfaces.Callable(proc(parameters) -> Result)`; both spellings name the
+`dyn Callable(proc(parameters) -> Result)`; both spellings name the
 same type. Its two words hold a data pointer and the code pointer to call,
 rather than a slot table.
 
@@ -5379,7 +5389,7 @@ record and `call` method it creates. Its captures are taken where it is
 evaluated: a copied or moved capture is a field, and a borrowed capture
 addresses evaluator storage, so a `&mut` capture writes the evaluated local
 itself. It may be called directly, through `call`, or through a generic
-`interfaces.Callable` parameter:
+`Callable` parameter:
 
 ```loke
 count_below :: proc(values: []int, limit: int) -> int {
@@ -6617,10 +6627,10 @@ and result. Each literal has a distinct type, as does each generic
 instantiation, following the [body-local
 type](#methods-and-implementation-blocks) rules. The value is
 [callable](#calling-a-value) and can be passed to generic APIs through
-[`interfaces.Callable`](standard-library.md#standard-interface-catalogue):
+[`Callable`](standard-library.md#standard-interface-catalogue):
 
 ```loke
-apply :: proc(value: int, f: $C) -> int where interfaces.Callable(C, proc(n: int) -> int) {
+apply :: proc(value: int, f: $C) -> int where Callable(C, proc(n: int) -> int) {
 	return f(value);
 }
 
@@ -6655,7 +6665,7 @@ as for any destination under [Retaining a borrow](#retaining-a-borrow):
 
 ```loke
 collect :: proc(@(escape=stored) nodes: []^Node, f: $C)
-	where interfaces.Callable(C, proc(@(escape=stored) node: ^Node)) {
+	where Callable(C, proc(@(escape=stored) node: ^Node)) {
 	foreach (node in nodes) { f(node); }
 }
 
@@ -7532,10 +7542,10 @@ exclusion.
 
 Typical uses are a capability check, selecting between generic members of a
 procedure group, and restricting a record's parameters, where a capability such
-as `interfaces.Integral(T)` sits beside a predicate over a value such as `N > 2`:
+as `Integral(T)` sits beside a predicate over a value such as `N > 2`:
 
 ```loke
-cross_2d :: proc(a, b: [2]$E) -> E where interfaces.Numeric(E) {
+cross_2d :: proc(a, b: [2]$E) -> E where Numeric(E) {
 	return a[0]*b[1] - a[1]*b[0];
 }
 
@@ -7544,7 +7554,7 @@ pick_short :: proc(x: [$N]int) -> bool where 0 < N, N <= 2 { return false; }
 is_long :: proc{pick_long, pick_short}
 assert(is_long([3]int{1, 2, 3}));   // only `pick_long` is viable
 
-Stencil :: struct($T: type, $N: int) where interfaces.Integral(T), N > 2 {
+Stencil :: struct($T: type, $N: int) where Integral(T), N > 2 {
 	full: [N]T,
 	interior: [N-2]T,   // `full` without its two edges
 }

@@ -48,7 +48,6 @@
 @(public)
 package math;
 
-import "base:interfaces";
 import "core:unsafe";
 
 // ------------------------------------------------------------- constants --
@@ -189,12 +188,12 @@ copy_sign_f32 :: proc(magnitude: f32, sign: f32) -> f32 {
 	select the second argument — including two signed zeros, and a NaN in either
 	position.
 */
-min :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
+min :: proc(a, b: $T) -> T where Numeric(T), Ordered(T) {
 	return a if a < b else b;
 }
 
 /// `a` when `b < a`, and `b` otherwise, with the same tie and NaN rule as `min`.
-max :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
+max :: proc(a, b: $T) -> T where Numeric(T), Ordered(T) {
 	return a if b < a else b;
 }
 
@@ -204,7 +203,7 @@ max :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
 	A NaN `value` is returned unchanged, and a NaN bound is unordered against
 	everything and so does not clamp on that side.
 */
-clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
+clamp :: proc(value, low, high: $T) -> T where Numeric(T), Ordered(T) {
 	assert(!(high < low), "math.clamp needs low <= high");
 	if (value < low) { return low; }
 	if (high < value) { return high; }
@@ -243,8 +242,8 @@ wrap :: proc($To: type, value: $From) -> To ---;
 // that. `Integral` is here to exclude floats, whose conversions round rather
 // than wrap; nothing in the body needs its bit operations.
 to :: proc($To: type, value: $From) -> Option(To)
-	where interfaces.Integral(From), interfaces.Ordered(From),
-	interfaces.Integral(To), interfaces.Ordered(To) {
+	where Integral(From), Ordered(From),
+	Integral(To), Ordered(To) {
 	converted := wrap(To, value);
 	if (wrap(From, converted) != value) { return .none; }
 	if ((value < From(0)) != (converted < To(0))) { return .none; }
@@ -281,7 +280,7 @@ from_bits_u64 :: proc(bits: u64) -> f64 { return unsafe.transmute(f64, bits); }
 // for generic code and procedure values. `floor_div` and `floor_mod` are the
 // floored counterparts of the truncating `/` and `%`.
 //
-// `interfaces.Integral` does not require the wrapping operators, so a distinct
+// `Integral` does not require the wrapping operators, so a distinct
 // integer that satisfies it may have none. The low bits of a sum, difference,
 // or product depend only on the low bits of its operands, so the wrapping forms
 // compute in `u128`, which holds every integer's bits, and wrap back. The
@@ -296,40 +295,40 @@ wrapping_add :: proc{wrapping_add_integer, wrapping_add_lanes};
 wrapping_sub :: proc{wrapping_sub_integer, wrapping_sub_lanes};
 wrapping_mul :: proc{wrapping_mul_integer, wrapping_mul_lanes};
 
-wrapping_add_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+wrapping_add_integer :: proc(a: $T, b: T) -> T where Integral(T) {
 	return wrap(T, wrap(u128, a) +% wrap(u128, b));
 }
 
-wrapping_sub_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+wrapping_sub_integer :: proc(a: $T, b: T) -> T where Integral(T) {
 	return wrap(T, wrap(u128, a) -% wrap(u128, b));
 }
 
-wrapping_mul_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) {
+wrapping_mul_integer :: proc(a: $T, b: T) -> T where Integral(T) {
 	return wrap(T, wrap(u128, a) *% wrap(u128, b));
 }
 
-wrapping_add_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
+wrapping_add_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where Integral(T) {
 	return a +% b;
 }
 
-wrapping_sub_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
+wrapping_sub_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where Integral(T) {
 	return a -% b;
 }
 
-wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) {
+wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where Integral(T) {
 	return a *% b;
 }
 
 /// `a + b`, or `.none` when the sum does not fit in `T`.
 // An overflowing sum wraps past the end that `b`'s sign points to, so it lands
 // on the wrong side of `a`.
-checked_add :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
+checked_add :: proc(a: $T, b: T) -> Option(T) where Integral(T), Ordered(T) {
 	sum := wrapping_add(a, b);
 	if ((b < T(0)) != (sum < a)) { return .none; }
 	return sum;
 }
 
-checked_sub :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
+checked_sub :: proc(a: $T, b: T) -> Option(T) where Integral(T), Ordered(T) {
 	difference := wrapping_sub(a, b);
 	if ((b < T(0)) != (a < difference)) { return .none; }
 	return difference;
@@ -341,7 +340,7 @@ checked_sub :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), inte
 // the one value whose negation does not fit — and there the product is `b`.
 // `a + 1 == 0` names -1 without the constant `0 - 1`, which an unsigned `T`
 // cannot hold.
-checked_mul :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) {
+checked_mul :: proc(a: $T, b: T) -> Option(T) where Integral(T), Ordered(T) {
 	product := wrapping_mul(a, b);
 	if (a == T(0)) { return product; }
 	if (a < T(0) && wrapping_add(a, T(1)) == T(0)) {
@@ -361,7 +360,7 @@ checked_mul :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), inte
 // exactly when the division is inexact and the operands' signs differ. The
 // correction cannot overflow: an inexact division has `|y| >= 2`, so the
 // truncated quotient is at most half of `T`'s range.
-floor_div :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) {
+floor_div :: proc(x: $T, y: T) -> T where Integral(T), Ordered(T) {
 	quotient := x / y;
 	if (x % y != T(0) && (x < T(0)) != (y < T(0))) { quotient = quotient - T(1); }
 	return quotient;
@@ -375,7 +374,7 @@ floor_div :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ord
 */
 // The truncated remainder has `x`'s sign. Where that is not `y`'s, adding `y`
 // brings it into range, and cannot overflow, since the two signs differ.
-floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) {
+floor_mod :: proc(x: $T, y: T) -> T where Integral(T), Ordered(T) {
 	remainder := x % y;
 	if (remainder != T(0) && (remainder < T(0)) != (y < T(0))) { remainder = remainder + y; }
 	return remainder;
@@ -389,7 +388,7 @@ floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ord
 // written as one instruction in Loke, and each is one where the CPU level has
 // it: `rol` and `ror` everywhere, `popcnt` from `x86-64-v2`, `lzcnt` and
 // `tzcnt` from `x86-64-v3`, and a short sequence below those. Written over
-// `interfaces.Integral(T)` instead, they would accept a record that has the
+// `Integral(T)` instead, they would accept a record that has the
 // operators but no width to count or rotate at. The bit width, the reversal,
 // and the power-of-two operations are compiler-known for that type rule and so
 // that a constant argument gives a constant, as it does for the counts.

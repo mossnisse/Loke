@@ -30,8 +30,6 @@
 */
 package runtime;
 
-import "base:interfaces";
-
 /*
 	The pointer-sized handle to an allocation provider: the predeclared
 	`Allocator`, under this package's name.
@@ -138,7 +136,7 @@ Uninit :: struct($T: type) {
 
 impl Result($T, $E) {
 	map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
-		where interfaces.Callable(C, proc(error: move E) -> C.Result) ---;
+		where Callable(C, proc(error: move E) -> C.Result) ---;
 }
 
 impl Option($T) {

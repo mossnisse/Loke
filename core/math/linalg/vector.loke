@@ -6,22 +6,21 @@
 @(public)
 package linalg;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:math";
 
 /// A 2-component column vector, laid out as `[2]T`.
-@(positional) Vector2 :: struct($T: type) where interfaces.Numeric(T) {
+@(positional) Vector2 :: struct($T: type) where Numeric(T) {
 	x, y: T,
 }
 
 /// A 3-component column vector, laid out as `[3]T`.
-@(positional) Vector3 :: struct($T: type) where interfaces.Numeric(T) {
+@(positional) Vector3 :: struct($T: type) where Numeric(T) {
 	x, y, z: T,
 }
 
 /// A 4-component column vector, laid out as `[4]T`.
-@(positional) Vector4 :: struct($T: type) where interfaces.Numeric(T) {
+@(positional) Vector4 :: struct($T: type) where Numeric(T) {
 	x, y, z, w: T,
 }
 
@@ -65,7 +64,7 @@ impl Vector2($T) {
 		return {left.x/right, left.y/right};
 	}
 	/// Exact and component-wise: a NaN component is unequal.
-	equal :: operator(==) proc(left, right: Vector2(T)) -> bool where interfaces.Equatable(T) {
+	equal :: operator(==) proc(left, right: Vector2(T)) -> bool where Equatable(T) {
 		return left.x == right.x && left.y == right.y;
 	}
 
@@ -112,11 +111,11 @@ impl Vector2($T) {
 	}
 
 	/// Component-wise `math.min`.
-	min :: proc(self, other: Vector2(T)) -> Vector2(T) where interfaces.Ordered(T) {
+	min :: proc(self, other: Vector2(T)) -> Vector2(T) where Ordered(T) {
 		return {math.min(self.x, other.x), math.min(self.y, other.y)};
 	}
 	/// Component-wise `math.max`.
-	max :: proc(self, other: Vector2(T)) -> Vector2(T) where interfaces.Ordered(T) {
+	max :: proc(self, other: Vector2(T)) -> Vector2(T) where Ordered(T) {
 		return {math.max(self.x, other.x), math.max(self.y, other.y)};
 	}
 
@@ -210,7 +209,7 @@ impl Vector3($T) {
 		return {left.x/right, left.y/right, left.z/right};
 	}
 	/// Exact and component-wise: a NaN component is unequal.
-	equal :: operator(==) proc(left, right: Vector3(T)) -> bool where interfaces.Equatable(T) {
+	equal :: operator(==) proc(left, right: Vector3(T)) -> bool where Equatable(T) {
 		return left.x == right.x && left.y == right.y && left.z == right.z;
 	}
 
@@ -262,11 +261,11 @@ impl Vector3($T) {
 	}
 
 	/// Component-wise `math.min`.
-	min :: proc(self, other: Vector3(T)) -> Vector3(T) where interfaces.Ordered(T) {
+	min :: proc(self, other: Vector3(T)) -> Vector3(T) where Ordered(T) {
 		return {math.min(self.x, other.x), math.min(self.y, other.y), math.min(self.z, other.z)};
 	}
 	/// Component-wise `math.max`.
-	max :: proc(self, other: Vector3(T)) -> Vector3(T) where interfaces.Ordered(T) {
+	max :: proc(self, other: Vector3(T)) -> Vector3(T) where Ordered(T) {
 		return {math.max(self.x, other.x), math.max(self.y, other.y), math.max(self.z, other.z)};
 	}
 
@@ -364,7 +363,7 @@ impl Vector4($T) {
 		return {left.x/right, left.y/right, left.z/right, left.w/right};
 	}
 	/// Exact and component-wise: a NaN component is unequal.
-	equal :: operator(==) proc(left, right: Vector4(T)) -> bool where interfaces.Equatable(T) {
+	equal :: operator(==) proc(left, right: Vector4(T)) -> bool where Equatable(T) {
 		return left.x == right.x && left.y == right.y && left.z == right.z && left.w == right.w;
 	}
 
@@ -409,14 +408,14 @@ impl Vector4($T) {
 	}
 
 	/// Component-wise `math.min`.
-	min :: proc(self, other: Vector4(T)) -> Vector4(T) where interfaces.Ordered(T) {
+	min :: proc(self, other: Vector4(T)) -> Vector4(T) where Ordered(T) {
 		return {
 			math.min(self.x, other.x), math.min(self.y, other.y),
 			math.min(self.z, other.z), math.min(self.w, other.w),
 		};
 	}
 	/// Component-wise `math.max`.
-	max :: proc(self, other: Vector4(T)) -> Vector4(T) where interfaces.Ordered(T) {
+	max :: proc(self, other: Vector4(T)) -> Vector4(T) where Ordered(T) {
 		return {
 			math.max(self.x, other.x), math.max(self.y, other.y),
 			math.max(self.z, other.z), math.max(self.w, other.w),

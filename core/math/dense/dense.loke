@@ -20,7 +20,7 @@
 	clones its storage, which the copy-cost diagnostic reports.
 
 	Storage, views, products, and the element-wise operations need only
-	`interfaces.Numeric(T)`. The norms, the comparisons with a tolerance, and
+	`Numeric(T)`. The norms, the comparisons with a tolerance, and
 	the factorizations need `linalg.Scalar(T)`, which `f32`, `f64`, and
 	`math.Complex` of either meet, and a user real type, such as a dual
 	number, with four more members than `linalg.Real` asks. For a complex
@@ -50,7 +50,6 @@
 @(public)
 package dense;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:math/linalg";
 import "core:mem";
@@ -75,7 +74,7 @@ Error :: enum {
 // that `data` always holds exactly `row_count*column_count` elements, which
 // `view` relies on; accessors cannot share a field's name, so the fields are
 // `row_count` and `column_count`.
-Matrix :: struct($T: type) where interfaces.Numeric(T) {
+Matrix :: struct($T: type) where Numeric(T) {
 	@(private) row_count:    int,
 	@(private) column_count: int,
 	@(private) data:         [dynamic]T,

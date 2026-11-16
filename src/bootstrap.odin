@@ -42,6 +42,16 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 
 	// design.md "Container insertion": `Status(Allocator_Error)`.
 	c.alloc_result_type = result_type(k, c.unit_type, TYPE_ALLOCATOR_ERROR)
+
+	// design.md "Predeclared names": the catalogue's interfaces. `base:runtime`
+	// imports `base:interfaces`, so its shells exist by now.
+	if catalogue := standard_package(c, STD_INTERFACES); catalogue != nil && catalogue.scope != nil {
+		for name, id in catalogue.scope.names {
+			if sym := symbol_of(c, id); sym != nil && sym.public && sym.kind == .Type && type_kind(c, sym.type) == .Interface {
+				c.universe.names[name] = id
+			}
+		}
+	}
 }
 
 // Binds the name into the universe when `base:runtime` declares it as wanted.

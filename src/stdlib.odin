@@ -25,7 +25,8 @@ STD_THREAD :: "core:thread"
 STD_SIMD :: "core:simd"
 STD_LOG :: "core:log"
 STD_META :: "base:meta"
-// Contributes nothing; `interface.odin` finds its `Callable` by this key.
+// Contributes nothing; `interface.odin` finds its `Callable` by this key, and
+// `bootstrap.odin` its interfaces.
 STD_INTERFACES :: "base:interfaces"
 STD_MATH :: "core:math"
 

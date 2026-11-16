@@ -299,7 +299,8 @@ CTFE to cooperate until selection stabilizes.
 `bootstrap.odin` binds ordinary `base:runtime` declarations into the predeclared
 universe instead of synthesizing duplicate types. These include `Unit`,
 `Option`, `Result`, `Shared`, `Weak`, `Uninit`, and the constructor groups
-`shared` and `try_shared`. `Uninit(T)` is an ordinary record of one private
+`shared` and `try_shared`. It binds the public interfaces of `base:interfaces`
+the same way; `base:runtime` imports that package, so every program loads it. `Uninit(T)` is an ordinary record of one private
 field that the compiler knows by name (`type_info_is_uninit`): lifecycle, zero
 values, equality, hashing, and constants leave the field out, the borrow
 analysis sees it as the field it is, and `check_storage_builtin` and

@@ -9,7 +9,6 @@
 @(public)
 package geometry;
 
-import "base:interfaces";
 import "core:math/linalg";
 
 // 2^-53, the unit roundoff of `f64`.
@@ -22,7 +21,7 @@ import "core:math/linalg";
 @(private) INSPHERE_BOUND :: (16.0 + 224.0*EPSILON)*EPSILON;
 
 @(private)
-sign_of :: proc(x: $T) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+sign_of :: proc(x: $T) -> Sign where Numeric(T), Ordered(T) {
 	if (T(0) < x) { return .Positive; }
 	if (x < T(0)) { return .Negative; }
 	return .Zero;
@@ -43,7 +42,7 @@ magnitude :: proc(x: f64) -> f64 { return -x if x < 0.0 else x; }
 	formula in `T`. A NaN or infinite coordinate gives a sign that is the same
 	everywhere but means nothing.
 */
-orient2d :: proc(a, b, c: linalg.Vector2($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+orient2d :: proc(a, b, c: linalg.Vector2($T)) -> Sign where Numeric(T), Ordered(T) {
 	when (T == f64 || T == f32) {
 		return orient2d_f64(f64(a.x), f64(a.y), f64(b.x), f64(b.y), f64(c.x), f64(c.y));
 	} else {
@@ -84,7 +83,7 @@ orient2d_f64 :: proc(ax, ay, bx, by, cx, cy: f64) -> Sign {
 	magnitudes are 0 or between `2^-280` and `2^300`, and for integers whose
 	products do not overflow; otherwise as for `orient2d`.
 */
-orient3d :: proc(a, b, c, d: linalg.Vector3($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+orient3d :: proc(a, b, c, d: linalg.Vector3($T)) -> Sign where Numeric(T), Ordered(T) {
 	when (T == f64 || T == f32) {
 		return orient3d_f64(point(a), point(b), point(c), point(d));
 	} else {
@@ -130,7 +129,7 @@ orient3d_f64 :: proc(a, b, c, d: Point) -> Sign {
 	magnitudes are 0 or between `2^-200` and `2^220`, and for integers whose
 	products do not overflow; otherwise as for `orient2d`.
 */
-incircle :: proc(a, b, c, d: linalg.Vector2($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+incircle :: proc(a, b, c, d: linalg.Vector2($T)) -> Sign where Numeric(T), Ordered(T) {
 	when (T == f64 || T == f32) {
 		return incircle_f64(point2(a), point2(b), point2(c), point2(d));
 	} else {
@@ -175,7 +174,7 @@ incircle_f64 :: proc(a, b, c, d: Point) -> Sign {
 	products do not overflow; otherwise as for `orient2d`. Its exact path, met
 	only near a degenerate configuration, uses about 120 KB of stack.
 */
-insphere :: proc(a, b, c, d, e: linalg.Vector3($T)) -> Sign where interfaces.Numeric(T), interfaces.Ordered(T) {
+insphere :: proc(a, b, c, d, e: linalg.Vector3($T)) -> Sign where Numeric(T), Ordered(T) {
 	when (T == f64 || T == f32) {
 		return insphere_f64(point(a), point(b), point(c), point(d), point(e));
 	} else {

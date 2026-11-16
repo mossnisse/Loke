@@ -44,11 +44,10 @@
 */
 package math;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:unsafe";
 
-Complex :: struct($T: type) where interfaces.Numeric(T) {
+Complex :: struct($T: type) where Numeric(T) {
 	real:      T,
 	imaginary: T,
 }
@@ -93,7 +92,7 @@ impl Complex($T) {
 	The Hamilton quaternions: one real part and three imaginary units with
 	`i*j == k` and `j*i == -k`, so multiplication does not commute.
 */
-Quaternion :: struct($T: type) where interfaces.Numeric(T) {
+Quaternion :: struct($T: type) where Numeric(T) {
 	real: T,
 	i:    T,
 	j:    T,
@@ -262,10 +261,10 @@ copy_sign_f32 :: proc(magnitude: f32, sign: f32) -> f32 ---;
 	select the second argument — including two signed zeros, and a NaN in either
 	position.
 */
-min :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+min :: proc(a, b: $T) -> T where Numeric(T), Ordered(T) ---;
 
 // `a` when `b < a`, and `b` otherwise, with the same tie and NaN rule as `min`.
-max :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+max :: proc(a, b: $T) -> T where Numeric(T), Ordered(T) ---;
 
 /*
 	`value` brought inside `[low, high]`. Reversed bounds are a caller mistake
@@ -273,7 +272,7 @@ max :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) --
 	A NaN `value` is returned unchanged, and a NaN bound is unordered against
 	everything and so does not clamp on that side.
 */
-clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) ---;
+clamp :: proc(value, low, high: $T) -> T where Numeric(T), Ordered(T) ---;
 
 /*
 	`value` as a `To`, keeping the low bits of its two's-complement
@@ -298,8 +297,8 @@ wrap :: proc($To: type, value: $From) -> To ---;
 	traps nor silently narrows.
 */
 to :: proc($To: type, value: $From) -> Option(To)
-	where interfaces.Integral(From), interfaces.Ordered(From),
-	interfaces.Integral(To), interfaces.Ordered(To) ---;
+	where Integral(From), Ordered(From),
+	Integral(To), Ordered(To) ---;
 
 /*
 	The IEEE-754 encoding of `value`, and the float with that encoding. Each width
@@ -332,32 +331,32 @@ wrapping_sub :: proc{wrapping_sub_integer, wrapping_sub_lanes};
 
 wrapping_mul :: proc{wrapping_mul_integer, wrapping_mul_lanes};
 
-wrapping_add_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) ---;
+wrapping_add_integer :: proc(a: $T, b: T) -> T where Integral(T) ---;
 
-wrapping_sub_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) ---;
+wrapping_sub_integer :: proc(a: $T, b: T) -> T where Integral(T) ---;
 
-wrapping_mul_integer :: proc(a: $T, b: T) -> T where interfaces.Integral(T) ---;
+wrapping_mul_integer :: proc(a: $T, b: T) -> T where Integral(T) ---;
 
-wrapping_add_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) ---;
+wrapping_add_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where Integral(T) ---;
 
-wrapping_sub_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) ---;
+wrapping_sub_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where Integral(T) ---;
 
-wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where interfaces.Integral(T) ---;
+wrapping_mul_lanes :: proc(a: Simd($T, $N), b: Simd(T, N)) -> Simd(T, N) where Integral(T) ---;
 
 // `a + b`, or `.none` when the sum does not fit in `T`.
-checked_add :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) ---;
+checked_add :: proc(a: $T, b: T) -> Option(T) where Integral(T), Ordered(T) ---;
 
-checked_sub :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) ---;
+checked_sub :: proc(a: $T, b: T) -> Option(T) where Integral(T), Ordered(T) ---;
 
 // `a * b`, or `.none` when the product does not fit in `T`.
-checked_mul :: proc(a: $T, b: T) -> Option(T) where interfaces.Integral(T), interfaces.Ordered(T) ---;
+checked_mul :: proc(a: $T, b: T) -> Option(T) where Integral(T), Ordered(T) ---;
 
 /*
 	`x / y` rounded toward negative infinity, where `/` truncates toward zero:
 	`floor_div(-1, 16)` is `-1`, not `0`. A zero divisor panics, and so does
 	`floor_div(MIN, -1)`, whose quotient does not fit, as for `/`.
 */
-floor_div :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) ---;
+floor_div :: proc(x: $T, y: T) -> T where Integral(T), Ordered(T) ---;
 
 /*
 	The remainder that goes with `floor_div`, so that
@@ -365,7 +364,7 @@ floor_div :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ord
 	sign, so for a positive `y` it lies in `[0, y)`: `floor_mod(-1, 16)` is
 	`15`. A zero divisor panics; `floor_mod(MIN, -1)` is `0`, as for `%`.
 */
-floor_mod :: proc(x: $T, y: T) -> T where interfaces.Integral(T), interfaces.Ordered(T) ---;
+floor_mod :: proc(x: $T, y: T) -> T where Integral(T), Ordered(T) ---;
 
 /*
 	The number of set bits in `value`, which is a value of an integer type:

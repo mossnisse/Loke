@@ -99,7 +99,6 @@
 */
 package container;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:mem";
 import "core:slice";
@@ -274,7 +273,7 @@ impl Deque($T) {
 	remove :: proc(self: inout, index: int) -> T ---;
 
 	// Keeps the order, and drops each element for which `keep(item)` is false, in O(n).
-	retain :: proc(self: inout, keep: $F) where interfaces.Callable(F, proc(item: T) -> bool) ---;
+	retain :: proc(self: inout, keep: $F) where Callable(F, proc(item: T) -> bool) ---;
 
 	/*
 		Makes room for at least `capacity` elements in all, following the allocator's
@@ -324,7 +323,7 @@ impl Deque($T) {
 	iter_mut_reverse :: proc(self: inout) -> Deque_Mut_Iterator(T) ---;
 
 	// Equal lengths and equal elements in order, regardless of where the ring starts.
-	equal :: operator(==) proc(left, right: Deque(T)) -> bool where interfaces.Equatable(T) ---;
+	equal :: operator(==) proc(left, right: Deque(T)) -> bool where Equatable(T) ---;
 
 	// Prints as an array, in order.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) ---;
@@ -797,7 +796,7 @@ impl Index_Iterator {
 	A queue of `T` in the order `C` defines. Use `Min_Queue` or `Max_Queue` for an
 	element's own order.
 */
-Priority_Queue :: struct($T, $C: type) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+Priority_Queue :: struct($T, $C: type) where Callable(C, proc(left, right: T) -> bool) {
 	// and fields private to the package
 }
 
@@ -813,7 +812,7 @@ Max_Queue :: Priority_Queue($T, slice.Descending(T));
 */
 priority_queue :: proc(
 	$T: type, less: move $C, capacity: int = 0, allocator: Allocator = mem.default_allocator(),
-) -> Priority_Queue(T, C) where interfaces.Callable(C, proc(left, right: T) -> bool) ---;
+) -> Priority_Queue(T, C) where Callable(C, proc(left, right: T) -> bool) ---;
 
 impl Priority_Queue($T, $C) {
 	Element :: T;
@@ -888,10 +887,10 @@ impl Priority_Queue($T, $C) {
 		false when the queue is empty. It is the only way to reach an element mutably,
 		so the order cannot be left wrong.
 	*/
-	update_top :: proc(self: inout, change: $F) -> bool where interfaces.Callable(F, proc(top: inout T)) ---;
+	update_top :: proc(self: inout, change: $F) -> bool where Callable(F, proc(top: inout T)) ---;
 
 	// Drops each element for which `keep(item)` is false, then restores the order, in O(n).
-	retain :: proc(self: inout, keep: $F) where interfaces.Callable(F, proc(item: T) -> bool) ---;
+	retain :: proc(self: inout, keep: $F) where Callable(F, proc(item: T) -> bool) ---;
 
 	reserve :: proc(self: inout, capacity: int) ---;
 
@@ -1069,7 +1068,7 @@ impl Small_Array($T, $N) {
 	clear :: proc(self: inout) ---;
 
 	// Equal lengths and equal elements, in order.
-	equal :: operator(==) proc(left, right: Small_Array(T, N)) -> bool where interfaces.Equatable(T) ---;
+	equal :: operator(==) proc(left, right: Small_Array(T, N)) -> bool where Equatable(T) ---;
 
 	// Prints as an array, in order.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) ---;

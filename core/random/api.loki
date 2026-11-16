@@ -83,7 +83,6 @@
 */
 package random;
 
-import "base:interfaces";
 import "core:mem";
 
 /*
@@ -194,7 +193,7 @@ impl Seed_Path {
 		The result is required: `path.with(x);` alone changes nothing.
 	*/
 	@(require_results)
-	with :: proc(self, word: $T) -> Seed_Path where interfaces.Integral(T), size_of(T) <= 8 ---;
+	with :: proc(self, word: $T) -> Seed_Path where Integral(T), size_of(T) <= 8 ---;
 
 	/*
 		The path's value: one more step, with the number of words, the seed
@@ -295,7 +294,7 @@ Source :: interface($Self: type) {
 	to be narrow.
 */
 in_range :: proc(source: inout $G, range: Range($T)) -> T
-	where Source(G), interfaces.Ordered(T), size_of(T) <= 8 ---;
+	where Source(G), Ordered(T), size_of(T) <= 8 ---;
 
 // True or false, equally likely: the top bit of one draw.
 boolean :: proc(source: inout $G) -> bool where Source(G) ---;

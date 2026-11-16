@@ -22,7 +22,7 @@
 	clones its storage, which the copy-cost diagnostic reports.
 
 	Storage, views, products, and the element-wise operations need only
-	`interfaces.Numeric(T)`. The norms, the comparisons with a tolerance, and
+	`Numeric(T)`. The norms, the comparisons with a tolerance, and
 	the factorizations need `linalg.Scalar(T)`, which `f32`, `f64`, and
 	`math.Complex` of either meet, and a user real type, such as a dual
 	number, with four more members than `linalg.Real` asks. For a complex
@@ -50,7 +50,6 @@
 */
 package dense;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:math/linalg";
 import "core:mem";
@@ -71,7 +70,7 @@ Error :: enum {
 	`(r, c)` is at `c*rows + r`, the order LAPACK and `linalg.Matrix` use. Its
 	allocator is the one chosen when it was made.
 */
-Matrix :: struct($T: type) where interfaces.Numeric(T) {
+Matrix :: struct($T: type) where Numeric(T) {
 	// and fields private to the package
 }
 
@@ -642,7 +641,7 @@ impl Svd($T) {
 	view made by `adjoint`. It borrows its slice, so it cannot outlive the
 	storage.
 */
-View :: struct($T: type) where interfaces.Numeric(T) {
+View :: struct($T: type) where Numeric(T) {
 	// and fields private to the package
 }
 
@@ -650,7 +649,7 @@ View :: struct($T: type) where interfaces.Numeric(T) {
 	A mutable view, laid out as `View`. It borrows its slice exclusively, so
 	no other view of the same elements is live while it is.
 */
-View_Mut :: struct($T: type) where interfaces.Numeric(T) {
+View_Mut :: struct($T: type) where Numeric(T) {
 	// and fields private to the package
 }
 

@@ -8,7 +8,7 @@ compatibility is not a constraint. Each proposal says what it would cost, so
 that it can be judged on its merits for a general-purpose language and not by
 how often the repository happens to use what it removes.
 
-This file holds only what is still open, as it stands on 2026-11-15 after
+This file holds only what is still open, as it stands on 2026-11-16 after
 several passes over the proposals and reviews of the steps taken. Proposals
 that landed are described by the specification, [CHANGELOG.md](../CHANGELOG.md),
 and [comments.md](comments.md); earlier drafts and their reasoning are in git.
@@ -44,8 +44,7 @@ is independent of the others unless noted.
 
 | Step | Proposal | Removes | Loses | Verdict |
 | --- | --- | --- | --- | --- |
-| 1 | [Predeclare the interface catalogue](#predeclare-the-interface-catalogue) | `interfaces.` in every bound | Nothing; the names stay shadowable | Recommended |
-| 1 | [`some I`](#some-i-the-static-twin-of-dyn-i), after the catalogue | The longest repeated `where` clause | One more contextual keyword; a generic procedure without a `$` | Judgment call, judged after the catalogue |
+| 1 | [`some I`](#some-i-the-static-twin-of-dyn-i) | The longest repeated `where` clause | One more contextual keyword; a generic procedure without a `$` | Judgment call |
 | 2 | [Alias facts as scoped metadata](#alias-facts-from-the-one-rule) | Reloads and runtime overlap checks | Nothing, if the borrow checker is sound | Measure first |
 | 3 | [Narrow the splat](#the-splat-of-a-typed-scalar) | One conversion and two exceptions | A typed scalar as a vector argument, initializer, or result | Weakest; an exchange of rules |
 | 4 | [Delete success returns](#success-returns) | A rule that decides by syntactic form | Four characters per return | Judgment call; this review would delete |
@@ -111,20 +110,6 @@ two spellings. The places left are not that:
   construction with an allocator does not ([Not recommended](#not-recommended)).
 
 ## Recommended
-
-### Predeclare the interface catalogue
-
-Nearly every generic procedure names an interface from the catalogue, and must
-qualify it: `where interfaces.Iterable(C)`. The test that keeps `Allocator`,
-`Shared`, and `Weak` predeclared, that the language's own rules name them,
-covers the catalogue too: `foreach` is defined over `Iterable` and `Iterator`,
-a `dyn proc` is a `dyn Callable`, a map key must be `Hashable` and `Equatable`,
-and a copy is `Cloneable`'s slot.
-
-**Proposal.** Predeclare the fourteen catalogue interfaces. A predeclared name
-may be shadowed, so a program's own `Iterable` keeps working. The alternative, a
-project setting that imports `base:` unqualified, would add an import form the
-language otherwise does not have.
 
 ### Alias facts from the one rule
 
@@ -196,7 +181,7 @@ were found and closed in the ten days before, so "none known" is weaker than
 
 ### `some I`, the static twin of `dyn I`
 
-`f: $C` with `where interfaces.Callable(C, proc(n: int) -> int)` is the common
+`f: $C` with `where Callable(C, proc(n: int) -> int)` is the common
 way to take a callback, and the longest repeated `where` clause in generic code.
 A sugar for callables alone would be a keyword bought for one interface. The
 general form is better: in a parameter's type, `some I(args)` is a fresh
@@ -209,9 +194,10 @@ word in the other position.
 
 **Costs.** A procedure becomes generic with no `$` in its signature, so it is
 instantiated per argument type and has no single procedure value, which `some`
-must be documented as saying. `some` is one more contextual keyword. Decide it
-after the catalogue is predeclared, since that shortens every bound and the
-sugar should be judged on what remains.
+must be documented as saying. `some` is one more contextual keyword. The
+catalogue is [predeclared](design.md#predeclared-names) as of 2026-11-16, which
+shortened every bound, so the sugar is judged on what remains: the bound above
+against `f: some proc(n: int) -> int`.
 
 ### Success returns
 

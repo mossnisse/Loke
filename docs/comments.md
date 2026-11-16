@@ -869,7 +869,7 @@ It would also pass the caller's current environment, not a callback's captured
 environment.
 
 Generic callback APIs instead accept a procedure or a record with `call`, checked
-by `interfaces.Callable`. Captures remain typed and can borrow without allocation.
+by `Callable`. Captures remain typed and can borrow without allocation.
 For one non-generic callback type, use a borrowed callable view.
 
 ### The subsystem is chosen in source
@@ -922,7 +922,7 @@ The main rejected alternatives were:
 - **A structural environment plus code pointer:** it would expose captures in
   type identity and make calls indirect. An ordinary generated record keeps
   generic calls direct and optimizable.
-- **New generic parameter syntax:** `interfaces.Callable` and its associated
+- **New generic parameter syntax:** `Callable` and its associated
   result type reuse existing constraints rather than giving `proc(...)` a
   different meaning when a `$` appears inside it.
 
@@ -1239,7 +1239,7 @@ fields, so it keeps writing its own `<`.
 The first unequal field decides, rather than the first field where either
 operand is less. A record of one float then orders exactly as the float does,
 NaN included, and the four operators need only each field's `==` and `<`, as
-`interfaces.Ordered` provides. A field whose type declares its own comparison
+`Ordered` provides. A field whose type declares its own comparison
 makes the record unordered. Comparing that field by the built-in operator would
 contradict its type, and calling the type's operators would make record order
 run user code; that can come later if programs need it. See
@@ -2186,6 +2186,39 @@ A file-level gate makes these operations searchable without adding an unsafe
 expression language. `base:` packages are exempt because they implement runtime
 facilities and cannot import `core:`.
 
+### The interface catalogue is predeclared
+
+A bound used to reach its interface through the package:
+`where interfaces.Ordered(T)`, and `dyn interfaces.Iterator(u8)` in a type. The
+qualifier said only that the name is an interface, which `where`, `dyn`, and an
+interface body already say by position. A qualifier that stays says more:
+`meta.Field` and `runtime.Type_Info` tell the two reflection tiers apart.
+
+The catalogue is not a library in the sense of ["Small packages and explicit
+imports"](standard-library.md#small-packages-and-explicit-imports) either. Each
+interface names what built-in types do through members the compiler contributes.
+`foreach` runs over `Iterable`, a `dyn proc` is a `dyn Callable`, a map key is
+`Hashable`, and a copy is `Cloneable`'s slot; `Numeric`, `Integral`, `Ordered`,
+and the sequence interfaces are the built-in operators, comparisons, and
+indexing under a name. That is why the package is in `base:`, and why
+[Predeclared names](design.md#predeclared-names) lists its interfaces beside
+`Option` and `Result`.
+
+All fourteen are predeclared, not only those a language rule names, because a
+reader would otherwise have to remember which of them need the import. Each
+stays an ordinary declaration of `base:interfaces`, bound as `Option` is bound
+from `base:runtime`. So a program's own `Sequence` shadows the predeclared one,
+adding an interface to the catalogue breaks no program, and the qualified name
+reaches the catalogue's interface from a package that shadows it. An import
+form that brings a package's names in unqualified would have shortened the
+bound as well, but it is a mechanism any package could then use to hide where a
+name comes from.
+
+The rest of `base:` stays qualified. `runtime.Type_Info` and
+`runtime.Source_Code_Location` arrive from built-ins and are seldom written,
+and `meta.Field`, `meta.Variant`, and `meta.Enum_Value` are nouns a program
+wants for its own types.
+
 ### `Uninit(T)` instead of a counted field
 
 [Uninitialized capacity](design.md#uninitialized-capacity) was once an
@@ -2413,7 +2446,7 @@ float has no low bits to keep.
 A wrapping operator also replaces the idioms that relied on unsigned wrap.
 `c - '0' < 10`, a digit test in one comparison, panics for a byte below `'0'`;
 it is written `c >= '0' && c <= '9'`, or `c -% '0' < 10` where the trick is
-wanted. Generic code over `interfaces.Integral` cannot write the constant
+wanted. Generic code over `Integral` cannot write the constant
 `T(0) - T(1)` for an unsigned `T`, even in a branch that never runs for one,
 because the fold is checked; `math.wrapping_add(a, T(1)) == T(0)` tests for -1
 instead. `Integral` does not require `+%`, so a distinct integer can satisfy it
@@ -3945,7 +3978,7 @@ boundaries and API shapes follow a few common choices:
   rotation whose direction is computed. A shift's count panics when
   negative because a negative shift has no single meaning; a negative
   rotation does. The rotations are compiler-known for the same type rule as
-  the counts: written in Loke over `interfaces.Integral(T)`, a record that
+  the counts: written in Loke over `Integral(T)`, a record that
   merely has the operators would be rotated at a width it does not have.
 - **The power-of-two operations read the value, and the round-up is checked
   arithmetic.** A power of two is a number, so `is_power_of_two` answers for
@@ -3962,7 +3995,7 @@ boundaries and API shapes follow a few common choices:
   `checked_next_power_of_two`, is kept, while a wrapping one is not, since
   the low bits of the power that does not fit are zero, never a power of
   two. The checked form is compiler-known like the rest, not written over
-  `interfaces.Integral(T)` as `checked_add` is, because a `distinct`
+  `Integral(T)` as `checked_add` is, because a `distinct`
   integer has no arithmetic until it is given some and would fail that
   constraint where the other bit operations accept it. `bit_width` is C++20's
   name for `W - leading_zeros(x)`, Go's `bits.Len`, and reads the pattern as

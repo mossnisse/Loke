@@ -4,7 +4,6 @@
 @(public)
 package linalg;
 
-import "base:interfaces";
 import "core:fmt";
 
 /**
@@ -16,7 +15,7 @@ import "core:fmt";
 	expects; `to_array` gives it flat. `Matrix(f32, 4, 4)` has the layout of
 	`[16]f32`.
 */
-Matrix :: struct($T: type, $R, $C: int) where interfaces.Numeric(T), R >= 1, C >= 1 {
+Matrix :: struct($T: type, $R, $C: int) where Numeric(T), R >= 1, C >= 1 {
 	columns: [C][R]T,
 }
 
@@ -176,7 +175,7 @@ impl Matrix($T, $R, $C) {
 		return result;
 	}
 	/// Exact and element-wise: a NaN element is unequal.
-	equal :: operator(==) proc(left, right: Matrix(T, R, C)) -> bool where interfaces.Equatable(T) {
+	equal :: operator(==) proc(left, right: Matrix(T, R, C)) -> bool where Equatable(T) {
 		foreach (c in 0 ..< C) {
 			foreach (r in 0 ..< R) {
 				if (!(left.columns[c][r] == right.columns[c][r])) { return false; }
@@ -341,7 +340,7 @@ impl Matrix($T, $R, $C) {
 // The determinant of the rows `(a, b, c)`, `(d, e, f)`, `(g, h, i)`, along the
 // first row.
 @(private)
-determinant3 :: proc(a, b, c, d, e, f, g, h, i: $T) -> T where interfaces.Numeric(T) {
+determinant3 :: proc(a, b, c, d, e, f, g, h, i: $T) -> T where Numeric(T) {
 	return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
 }
 

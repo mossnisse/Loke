@@ -1,0 +1,46 @@
+package main;
+
+import "base:interfaces";
+import "core:fmt";
+
+// design.md "Predeclared names": a declaration shadows a predeclared interface,
+// one a `when` branch selects included, and the package's qualified name still
+// reaches the catalogue's, which is the same interface the bare name was.
+
+Sequence :: struct { items: [3]int }
+
+when (size_of(int) > 0) {
+	// Asks for `==` alone, so `bool` meets it though `<` does not order `bool`.
+	Ordered :: interface($T: type) {
+		(a, b: T) a == b -> bool;
+	}
+}
+
+static_assert(Ordered(bool));
+static_assert(!interfaces.Ordered(bool));
+static_assert(interfaces.Sequence([3]int));
+
+count :: proc(values: $S) -> int where interfaces.Sequence(S) {
+	return values.len();
+}
+
+// Unshadowed, so the bare and the qualified name are one interface: a bound
+// stated either way admits the other's generic argument.
+total :: proc(values: $S) -> int where Iterable(S), S.Element == int {
+	sum := 0;
+	foreach (value in values) { sum += value; }
+	return sum;
+}
+
+total_qualified :: proc(values: $S) -> int where interfaces.Iterable(S), S.Element == int {
+	return total(values);
+}
+
+main :: proc() {
+	held := Sequence{items = {1, 2, 3}};
+	fmt.println(count(held.items[:]));
+	fmt.println(total_qualified(held.items));
+	local: dyn interfaces.Callable(proc() -> int) = proc() -> int { return 7; };
+	same: dyn Callable(proc() -> int) = local;
+	fmt.println(same());
+}

@@ -6,7 +6,6 @@
 @(public)
 package geometry;
 
-import "base:interfaces";
 import "core:math/linalg";
 import "core:mem";
 import "core:slice";
@@ -26,7 +25,7 @@ Fill_Rule :: enum { Nonzero, Even_Odd }
 	origin accurate and is exact for integers. 0 for fewer than three
 	vertices.
 */
-signed_area_doubled :: proc(polygon: []linalg.Vector2($T)) -> T where interfaces.Numeric(T) {
+signed_area_doubled :: proc(polygon: []linalg.Vector2($T)) -> T where Numeric(T) {
 	total := T(0);
 	if (polygon.len() < 3) { return total; }
 	origin := polygon[0];
@@ -74,7 +73,7 @@ centroid :: proc(polygon: []linalg.Vector2($T)) -> Option(linalg.Vector2(T)) whe
 	downward with `p` to its right counts -1, each side an exact `orient2d`.
 	An empty polygon winds 0 times around every point.
 */
-winding_number :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T)) -> Option(int) where interfaces.Numeric(T), interfaces.Ordered(T) {
+winding_number :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T)) -> Option(int) where Numeric(T), Ordered(T) {
 	n := polygon.len();
 	winding := 0;
 	foreach (i in 0 ..< n) {
@@ -96,7 +95,7 @@ winding_number :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T)) -> O
 	included, as for every solid. The rule is required: a self-intersecting
 	polygon fills different points under each.
 */
-contains :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T), rule: Fill_Rule) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+contains :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T), rule: Fill_Rule) -> bool where Numeric(T), Ordered(T) {
 	switch (winding_number(polygon, p)) {
 	case .none:
 		return true;
@@ -112,14 +111,14 @@ contains :: proc(polygon: []linalg.Vector2($T), p: linalg.Vector2(T), rule: Fill
 // turns back at `b`, which is then not between `a` and `c`. Collinear
 // distinct points differ in `x` unless their line is vertical.
 @(private)
-turns_back :: proc(a, b, c: linalg.Vector2($T)) -> bool where interfaces.Ordered(T) {
+turns_back :: proc(a, b, c: linalg.Vector2($T)) -> bool where Ordered(T) {
 	if (!(a.x == b.x)) { return (a.x < b.x) != (b.x < c.x); }
 	return (a.y < b.y) != (b.y < c.y);
 }
 
 // The sign of `b.x - a.x`, by comparison.
 @(private)
-x_direction :: proc(a, b: linalg.Vector2($T)) -> Sign where interfaces.Ordered(T) {
+x_direction :: proc(a, b: linalg.Vector2($T)) -> Sign where Ordered(T) {
 	if (a.x < b.x) { return .Positive; }
 	if (b.x < a.x) { return .Negative; }
 	return .Zero;
@@ -134,7 +133,7 @@ x_direction :: proc(a, b: linalg.Vector2($T)) -> Sign where interfaces.Ordered(T
 	convex. A ring that repeats its first vertex at its end, as some formats
 	write one, needs that vertex dropped first.
 */
-is_convex :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+is_convex :: proc(polygon: []linalg.Vector2($T)) -> bool where Numeric(T), Ordered(T) {
 	n := polygon.len();
 	if (n < 3) { return false; }
 	turn := Sign.Zero;
@@ -175,7 +174,7 @@ is_convex :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeri
 	segment test, so it is exact and quadratic in the vertices. Fewer than
 	three vertices are not simple.
 */
-is_simple :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+is_simple :: proc(polygon: []linalg.Vector2($T)) -> bool where Numeric(T), Ordered(T) {
 	n := polygon.len();
 	if (n < 3) { return false; }
 	foreach (i in 0 ..< n) {
@@ -215,7 +214,7 @@ is_simple :: proc(polygon: []linalg.Vector2($T)) -> bool where interfaces.Numeri
 convex_hull :: proc{convex_hull_into, convex_hull_allocated};
 
 @(private)
-convex_hull_into :: proc(points: []mut linalg.Vector2($T), out: []mut linalg.Vector2(T)) -> int where interfaces.Numeric(T), interfaces.Ordered(T) {
+convex_hull_into :: proc(points: []mut linalg.Vector2($T), out: []mut linalg.Vector2(T)) -> int where Numeric(T), Ordered(T) {
 	assert(points.len() <= out.len(), "geometry.convex_hull needs room in `out` for every point");
 	slice.sort_by(points, proc(a, b: linalg.Vector2(T)) -> bool { return a.x < b.x || (a.x == b.x && a.y < b.y); });
 	n := points.len();
@@ -249,7 +248,7 @@ convex_hull_into :: proc(points: []mut linalg.Vector2($T), out: []mut linalg.Vec
 }
 
 @(private)
-convex_hull_allocated :: proc(points: []linalg.Vector2($T), allocator: Allocator = mem.default_allocator()) -> [dynamic]linalg.Vector2(T) where interfaces.Numeric(T), interfaces.Ordered(T) {
+convex_hull_allocated :: proc(points: []linalg.Vector2($T), allocator: Allocator = mem.default_allocator()) -> [dynamic]linalg.Vector2(T) where Numeric(T), Ordered(T) {
 	sorted := make([dynamic]linalg.Vector2(T), 0, points.len(), allocator);
 	result := make([dynamic]linalg.Vector2(T), 0, points.len(), allocator);
 	foreach (p in points) {

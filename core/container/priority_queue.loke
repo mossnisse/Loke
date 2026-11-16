@@ -30,7 +30,6 @@
 @(public)
 package container;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:mem";
 import "core:slice";
@@ -39,7 +38,7 @@ import "core:slice";
 	A queue of `T` in the order `C` defines. Use `Min_Queue` or `Max_Queue` for an
 	element's own order.
 */
-Priority_Queue :: struct($T, $C: type) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+Priority_Queue :: struct($T, $C: type) where Callable(C, proc(left, right: T) -> bool) {
 	@(private) items: [dynamic]T,
 	@(private) less: C,
 }
@@ -56,7 +55,7 @@ Max_Queue :: Priority_Queue($T, slice.Descending(T));
 */
 priority_queue :: proc(
 	$T: type, less: move $C, capacity: int = 0, allocator: Allocator = mem.default_allocator(),
-) -> Priority_Queue(T, C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+) -> Priority_Queue(T, C) where Callable(C, proc(left, right: T) -> bool) {
 	return Priority_Queue(T, C).init(move(less), capacity, allocator);
 }
 
@@ -172,7 +171,7 @@ impl Priority_Queue($T, $C) {
 		false when the queue is empty. It is the only way to reach an element mutably,
 		so the order cannot be left wrong.
 	*/
-	update_top :: proc(self: inout, change: $F) -> bool where interfaces.Callable(F, proc(top: inout T)) {
+	update_top :: proc(self: inout, change: $F) -> bool where Callable(F, proc(top: inout T)) {
 		if (self.items.len() == 0) { return false; }
 		change(inout self.items[0]);
 		slice.sift_heap_top(self.items[mut :], self.less);
@@ -180,7 +179,7 @@ impl Priority_Queue($T, $C) {
 	}
 
 	/// Drops each element for which `keep(item)` is false, then restores the order, in O(n).
-	retain :: proc(self: inout, keep: $F) where interfaces.Callable(F, proc(item: T) -> bool) {
+	retain :: proc(self: inout, keep: $F) where Callable(F, proc(item: T) -> bool) {
 		at := 0;
 		for (at < self.items.len()) {
 			if (keep(self.items[at])) {
@@ -237,7 +236,7 @@ impl Priority_Queue($T, $C) {
 }
 
 @(private)
-top_is_before :: proc(values: []$T, value: T, less: $C) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
+top_is_before :: proc(values: []$T, value: T, less: $C) -> bool where Callable(C, proc(left, right: T) -> bool) {
 	return less(values[0], value);
 }
 

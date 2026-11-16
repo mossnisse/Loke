@@ -492,7 +492,7 @@ outweighs the smaller API.
 
 A record with a `call` method is the callable convention: `x(args)` calls it
 ([Calling a value](design.md#calling-a-value)),
-[`interfaces.Callable`](standard-library.md#standard-interface-catalogue) lets one generic
+[`Callable`](standard-library.md#standard-interface-catalogue) lets one generic
 signature accept a procedure or such a record, a
 [capture literal](design.md#capture-literals) declares the record from a
 clause, and a [`dyn proc` view](design.md#borrowed-callable-views) erases
@@ -524,7 +524,7 @@ in a file-scope type. A callable that is returned or kept past its frame is
 either a file-scope record written by hand or an owning erased value under
 [Owning runtime polymorphism](#owning-runtime-polymorphism). Revisit when the
 first returned closure is needed. One answer then is an opaque result type,
-`-> some interfaces.Callable(proc(a, b: int) -> bool)`, as Rust's `-> impl Fn`
+`-> some Callable(proc(a, b: int) -> bool)`, as Rust's `-> impl Fn`
 is; it makes a caller depend on the body for the result's size, which works
 against [Public borrow contracts should stand on their
 own](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own), and it overlaps an

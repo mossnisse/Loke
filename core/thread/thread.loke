@@ -16,7 +16,6 @@
 @(public)
 package thread;
 
-import "base:interfaces";
 import "core:sync";
 import "core:unsafe";
 
@@ -358,7 +357,7 @@ impl Monitor($T) {
 	// releases it atomically, so a change made between them is impossible: it
 	// waits for the lock until this thread is asleep and registered to be woken.
 	lock_when :: proc(self: ^, ready: $C) -> Option(Monitor_Guard(T))
-		where interfaces.Callable(C, proc(value: ^T) -> bool) {
+		where Callable(C, proc(value: ^T) -> bool) {
 		// A panic out of `ready` drops the guard on the unwind, unlocking.
 		guard := self.lock();
 		for (;;) {

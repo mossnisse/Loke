@@ -1,0 +1,72 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Predeclared names": the catalogue's fourteen interfaces need no
+// import, in a bound, as a predicate, in a `dyn` view, and in an interface body.
+
+static_assert(Equatable(int));
+static_assert(Ordered(f64));
+static_assert(Hashable(rune));
+static_assert(Numeric(f64));
+static_assert(Integral(int) && !Integral(f64));
+static_assert(Cloneable(string));
+static_assert(Callable(proc(n: int) -> int, proc(n: int) -> int));
+static_assert(Iterator(Countdown, int));
+static_assert(Iterable([3]int) && !Iterable(int));
+static_assert(Reverse_Iterable([]int));
+static_assert(Mutable_Iterable([dynamic]int));
+static_assert(Sequence([]int));
+static_assert(Mutable_Sequence([2]int));
+static_assert(Growable_Sequence([dynamic]int));
+
+Countdown :: struct { left: int }
+
+impl Countdown {
+	next :: proc(self: inout) -> Option(int) {
+		if (self.left == 0) { return .none; }
+		self.left -= 1;
+		return .some(self.left);
+	}
+}
+
+// A predeclared interface composes like any other.
+Sortable_Key :: interface($T: type) {
+	Ordered(T);
+	Hashable(T);
+}
+
+largest :: proc(values: $S) -> S.Element where Sequence(S), Sortable_Key(S.Element) {
+	best := values[0];
+	foreach (value in values) {
+		if (best < value) { best = value; }
+	}
+	return best;
+}
+
+apply :: proc(value: int, f: $C) -> int where Callable(C, proc(n: int) -> int) {
+	return f(value);
+}
+
+double :: proc(n: int) -> int { return n * 2; }
+
+drain :: proc(source: dyn mut Iterator(int)) -> int {
+	total := 0;
+	for (true) {
+		switch (source.next()) {
+		case .some(value): total += value;
+		case .none: break;
+		}
+	}
+	return total;
+}
+
+main :: proc() {
+	values := [4]int{3, 9, 4, 1};
+	fmt.println(largest(values[:]));
+	fmt.println(apply(21, double));
+	view: dyn Callable(proc(n: int) -> int) = double;
+	fmt.println(view(5));
+	countdown := Countdown{left = 4};
+	fmt.println(drain((dyn mut Iterator(int))(&mut countdown)));
+}

@@ -11,8 +11,6 @@
 */
 package sync;
 
-import "base:interfaces";
-
 /*
 	The ordering an atomic operation asks for: `base:runtime`'s enum, so an
 	ordering forwarded through a `$` parameter keeps meaning what it meant.
@@ -168,7 +166,7 @@ impl Lazy($T) {
 		holds nothing `@(thread_affine)`, and owns nothing in a region that ends
 		sooner.
 	*/
-	get :: proc(self: ^, @(escape=static) init: $F) -> ^T where interfaces.Callable(F, proc() -> T) ---;
+	get :: proc(self: ^, @(escape=static) init: $F) -> ^T where Callable(F, proc() -> T) ---;
 
 	/*
 		Has the value been made? A `false` may be stale the moment it is read;

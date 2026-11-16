@@ -6,6 +6,10 @@
 	visible to the same structural checks a user type goes through — `hash` for
 	the built-in `Hashable` types, `len` and indexing for the built-in sequences,
 	and the iteration members for ranges, text, arrays, slices, and maps.
+
+	Each is a predeclared name, so a bound writes `Ordered(T)` with no import.
+	Import the package to reach one that a declaration of your own shadows, as
+	`interfaces.Ordered`.
 */
 // standard-library.md "Standard interface catalogue".
 @(public)

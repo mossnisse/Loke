@@ -20,7 +20,6 @@
 @(public)
 package checksum;
 
-import "base:interfaces";
 import "core:io";
 
 /**
@@ -28,7 +27,7 @@ import "core:io";
 	implied, whatever the reflection: CRC-32 is `0x04C11DB7`, never its reversed
 	form `0xEDB88320`. `T` is an unsigned integer as wide as `width` or wider.
 */
-Crc_Params :: struct($T: type) where interfaces.Integral(T) {
+Crc_Params :: struct($T: type) where Integral(T) {
 	width:       int,
 	polynomial:  T,
 	initial:     T,
@@ -52,7 +51,7 @@ valid_params :: proc($T: type, P: Crc_Params(T)) -> bool {
 
 // The low `width` bits of `value`, in the opposite order.
 @(private)
-reversed :: proc(value: $T, width: int) -> T where interfaces.Integral(T) {
+reversed :: proc(value: $T, width: int) -> T where Integral(T) {
 	result := T(0);
 	rest := value;
 	foreach (_ in 0 ..< width) {

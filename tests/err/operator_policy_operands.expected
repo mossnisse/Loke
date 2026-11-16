@@ -3,7 +3,7 @@ L0586
 `[]int` cannot be a map key
 L0651
 @21:2
-its element `Score` does not satisfy `interfaces.Ordered`
+its element `Score` does not satisfy `Ordered`
 L0586
 @22:2
 has an inherent `hash` but no inherent `==`

@@ -7,7 +7,6 @@
 @(public)
 package dense;
 
-import "base:interfaces";
 import "core:math/linalg";
 
 // `|z|`: for a real `T` its `abs`, otherwise `hypot` of the parts.
@@ -170,7 +169,7 @@ reals_finite :: proc(x: []$R) -> bool where linalg.Real(R) {
 
 // `n` zeros, allocated from `allocator`.
 @(private)
-zeros_of :: proc($T: type, n: int, allocator: Allocator) -> [dynamic]T where interfaces.Numeric(T) {
+zeros_of :: proc($T: type, n: int, allocator: Allocator) -> [dynamic]T where Numeric(T) {
 	result := make([dynamic]T, 0, n, allocator);
 	foreach (_ in 0 ..< n) { result.append(T(0)); }
 	return result;

@@ -21,7 +21,6 @@
 @(public)
 package sync;
 
-import "base:interfaces";
 import "core:unsafe";
 
 // The compiler contributes `Memory_Order`, the `base:runtime` enum, publicly as
@@ -371,7 +370,7 @@ impl Lazy($T) {
 	// carries the receiver's provenance; only the one write goes through an
 	// unchecked address, as `Mutex`'s guard does, after `publish`'s parameter
 	// has checked what it keeps.
-	get :: proc(self: ^, @(escape=static) init: $F) -> ^T where interfaces.Callable(F, proc() -> T) {
+	get :: proc(self: ^, @(escape=static) init: $F) -> ^T where Callable(F, proc() -> T) {
 		if (self.once.claim()) {
 			finished := false;
 			defer self.once.settle(finished);

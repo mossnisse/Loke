@@ -20,7 +20,6 @@
 @(public)
 package binary;
 
-import "base:interfaces";
 import "core:endian";
 import "core:fmt";
 import "core:io";
@@ -75,7 +74,7 @@ impl Error {
 // 64` must not report zero.
 @(private)
 reported_length :: proc(value: $N) -> u64
-	where interfaces.Integral(N), interfaces.Ordered(N) {
+	where Integral(N), Ordered(N) {
 	if (value < N(0)) { return math.wrap(u64, value); }
 	switch (math.to(u64, value)) {
 	case .some(fits): return fits;
@@ -141,7 +140,7 @@ impl Reader {
 		one is `Invalid_Length`, and one too big for `int` is `Unexpected_End`.
 	*/
 	take :: proc(self: inout, length: $N) -> Result([]u8, Error)
-		where interfaces.Integral(N), interfaces.Ordered(N) {
+		where Integral(N), Ordered(N) {
 		count := self.available(length) or_return;
 		part := self.bytes[self.position:self.position + count];
 		self.position += count;
@@ -150,7 +149,7 @@ impl Reader {
 
 	/// Moves past `length` bytes, with `take`'s checks.
 	skip :: proc(self: inout, length: $N) -> Status(Error)
-		where interfaces.Integral(N), interfaces.Ordered(N) {
+		where Integral(N), Ordered(N) {
 		count := self.available(length) or_return;
 		self.position += count;
 		return .ok;
@@ -163,7 +162,7 @@ impl Reader {
 		order and keeps absolute offsets.
 	*/
 	sub :: proc(self: inout, length: $N) -> Result(Reader, Error)
-		where interfaces.Integral(N), interfaces.Ordered(N) {
+		where Integral(N), Ordered(N) {
 		start := self.offset();
 		part := self.take(length) or_return;
 		return Reader{part, 0, start, self.byte_order};
@@ -201,7 +200,7 @@ impl Reader {
 		negative value is `Invalid_Length`. A negative `limit` panics.
 	*/
 	get_length :: proc(self: inout, $T: type, limit: int) -> Result(int, Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T) {
+		where endian.is_fixed_width(T), Integral(T) {
 		length := self.length_field(T, limit) or_return;
 		self.position += size_of(T);
 		return length;
@@ -215,7 +214,7 @@ impl Reader {
 		or an `item_size` below one panics.
 	*/
 	get_count :: proc(self: inout, $T: type, item_size: int, limit: int) -> Result(int, Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T) {
+		where endian.is_fixed_width(T), Integral(T) {
 		if (item_size < 1) { panic("binary.Reader.get_count: item_size below one"); }
 		count := self.length_field(T, limit) or_return;
 		// Division, so that a large count cannot overflow the comparison.
@@ -253,7 +252,7 @@ impl Reader {
 	// `length` as an `int` no larger than what remains.
 	@(private)
 	available :: proc(self, length: $N) -> Result(int, Error)
-		where interfaces.Integral(N), interfaces.Ordered(N) {
+		where Integral(N), Ordered(N) {
 		if (length < N(0)) {
 			return .err(Error{.Invalid_Length, self.offset(), reported_length(length)});
 		}
@@ -345,7 +344,7 @@ impl Writer($W) {
 		and nothing is written.
 	*/
 	put_length :: proc(self: inout, $T: type, length: int) -> Status(io.Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T) {
+		where endian.is_fixed_width(T), Integral(T) {
 		if (length < 0) { return .err(io.make_error(.Limit_Exceeded, .Write)); }
 		switch (math.to(T, length)) {
 		case .some(field): return self.put(field);

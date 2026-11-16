@@ -24,7 +24,6 @@
 @(public)
 package random;
 
-import "base:interfaces";
 import "core:math";
 
 /**
@@ -60,7 +59,7 @@ Source :: interface($Self: type) {
 	to be narrow.
 */
 in_range :: proc(source: inout $G, range: Range($T)) -> T
-	where Source(G), interfaces.Ordered(T), size_of(T) <= 8 {
+	where Source(G), Ordered(T), size_of(T) <= 8 {
 	if ((range.high < range.low) if range.closed else (range.high <= range.low)) {
 		panic("random.in_range: the range is empty");
 	}

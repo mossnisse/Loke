@@ -22,11 +22,10 @@
 @(public)
 package endian;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:math";
 
-Little_Endian :: struct($T: type) where interfaces.Integral(T) {
+Little_Endian :: struct($T: type) where Integral(T) {
 	// Little-endian bytes of the value, held in a `T` because that is the only
 	// storage of the right size and alignment the language offers. Reading it
 	// directly is meaningless on a big-endian target, which is what `@(private)`
@@ -70,7 +69,7 @@ impl Little_Endian($T) {
 	}
 }
 
-Big_Endian :: struct($T: type) where interfaces.Integral(T) {
+Big_Endian :: struct($T: type) where Integral(T) {
 	@(private) stored: T,
 }
 
@@ -112,7 +111,7 @@ host_order :: proc() -> Order {
 // run — in a type whose whole purpose is to make the swap free where it is not
 // needed.
 @(private)
-host_to :: proc(value: $T, $wanted: Order) -> T where interfaces.Integral(T) {
+host_to :: proc(value: $T, $wanted: Order) -> T where Integral(T) {
 	when (host_order() == wanted) {
 		return value;
 	} else {
@@ -126,7 +125,7 @@ host_to :: proc(value: $T, $wanted: Order) -> T where interfaces.Integral(T) {
 */
 // The `when` keeps the wide-mask arithmetic below out of checking for a
 // one-byte `T`: `T(0xFF)` does not fit in an `i8`.
-byte_swap :: proc(value: $T) -> T where interfaces.Integral(T) {
+byte_swap :: proc(value: $T) -> T where Integral(T) {
 	when (size_of(T) == 1) {
 		return value;
 	} else {

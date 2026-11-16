@@ -22,10 +22,9 @@
 */
 package endian;
 
-import "base:interfaces";
 import "core:fmt";
 
-Little_Endian :: struct($T: type) where interfaces.Integral(T) {
+Little_Endian :: struct($T: type) where Integral(T) {
 	// and fields private to the package
 }
 
@@ -50,7 +49,7 @@ impl Little_Endian($T) {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) ---;
 }
 
-Big_Endian :: struct($T: type) where interfaces.Integral(T) {
+Big_Endian :: struct($T: type) where Integral(T) {
 	// and fields private to the package
 }
 
@@ -74,7 +73,7 @@ host_order :: proc() -> Order ---;
 	`value` with its bytes in the opposite order. A one-byte value comes back
 	unchanged.
 */
-byte_swap :: proc(value: $T) -> T where interfaces.Integral(T) ---;
+byte_swap :: proc(value: $T) -> T where Integral(T) ---;
 
 /*
 	Whether a format can name `T`: `u8` through `u128`, `i8` through `i128`, `f16`,

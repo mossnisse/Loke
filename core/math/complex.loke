@@ -14,9 +14,8 @@
 package math;
 
 import "core:fmt";
-import "base:interfaces";
 
-Complex :: struct($T: type) where interfaces.Numeric(T) {
+Complex :: struct($T: type) where Numeric(T) {
 	real:      T,
 	imaginary: T,
 }
@@ -100,7 +99,7 @@ impl Complex($T) {
 	The Hamilton quaternions: one real part and three imaginary units with
 	`i*j == k` and `j*i == -k`, so multiplication does not commute.
 */
-Quaternion :: struct($T: type) where interfaces.Numeric(T) {
+Quaternion :: struct($T: type) where Numeric(T) {
 	real: T,
 	i:    T,
 	j:    T,
@@ -176,7 +175,7 @@ impl Quaternion($T) {
 // takes the `+`. A `T` with no order prints no `-` that this could know about.
 @(private)
 join :: proc(writer: fmt.Writer, options: fmt.Options, component: $T, unit: string_view)
-	where interfaces.Numeric(T) {
+	where Numeric(T) {
 	negative := false;
 	when (T == f64) {
 		negative = sign_bit(component) && !is_nan(component);
@@ -184,7 +183,7 @@ join :: proc(writer: fmt.Writer, options: fmt.Options, component: $T, unit: stri
 		negative = sign_bit_f32(component) && !is_nan_f32(component);
 	} else when (T == f16) {
 		negative = sign_bit_f32(f32(component)) && !is_nan_f32(f32(component));
-	} else when (interfaces.Ordered(T)) {
+	} else when (Ordered(T)) {
 		negative = component < T(0);
 	}
 	if (!negative) { fmt.format_to(writer, "+"); }
@@ -195,7 +194,7 @@ join :: proc(writer: fmt.Writer, options: fmt.Options, component: $T, unit: stri
 // ------------------------------------------------ the floating instances --
 //
 // standard-library.md "core:math". The generic blocks above are
-// constrained by `interfaces.Numeric(T)`, which admits integers and implies no
+// constrained by `Numeric(T)`, which admits integers and implies no
 // ordering, so nothing in them can call an `f32`/`f64` `hypot`. Narrowing the
 // types would break existing source, so the new operations live in exact
 // specialization blocks instead — a lookup form the language already has, where

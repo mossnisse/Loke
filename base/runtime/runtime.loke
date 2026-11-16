@@ -21,6 +21,8 @@
 @(public)
 package runtime;
 
+// Every program loads this package, and so the catalogue, whose interfaces are
+// predeclared (design.md "Predeclared names"): `Callable` below is one of them.
 import "base:interfaces";
 
 /**
@@ -162,7 +164,7 @@ Uninit :: struct($T: type) {
 // type (standard-library.md "Standard interface catalogue").
 impl Result($T, $E) {
 	map_error :: proc(self: move, f: $C) -> Result(T, C.Result)
-		where interfaces.Callable(C, proc(error: move E) -> C.Result) {
+		where Callable(C, proc(error: move E) -> C.Result) {
 		switch (move(self)) {
 		case .ok(payload):  return .ok(move(payload));
 		case .err(payload): return .err(f(move(payload)));

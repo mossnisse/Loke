@@ -5,7 +5,6 @@
 @(public)
 package dense;
 
-import "base:interfaces";
 import "core:fmt";
 import "core:math/linalg";
 import "core:unsafe";
@@ -16,7 +15,7 @@ import "core:unsafe";
 	view made by `adjoint`. It borrows its slice, so it cannot outlive the
 	storage.
 */
-View :: struct($T: type) where interfaces.Numeric(T) {
+View :: struct($T: type) where Numeric(T) {
 	@(private) data:          []T,
 	@(private) row_count:     int,
 	@(private) column_count:  int,
@@ -29,7 +28,7 @@ View :: struct($T: type) where interfaces.Numeric(T) {
 	A mutable view, laid out as `View`. It borrows its slice exclusively, so
 	no other view of the same elements is live while it is.
 */
-View_Mut :: struct($T: type) where interfaces.Numeric(T) {
+View_Mut :: struct($T: type) where Numeric(T) {
 	@(private) data:          []mut T,
 	@(private) row_count:     int,
 	@(private) column_count:  int,
@@ -73,7 +72,7 @@ offset :: proc(row, column, row_stride, column_stride: int) -> int {
 // An element as a view reads it: conjugated in an adjoint. Only a complex
 // `T` is ever conjugated, so for any other the test folds away.
 @(private)
-conjugate_if :: proc(value: $T, conjugated: bool) -> T where interfaces.Numeric(T) {
+conjugate_if :: proc(value: $T, conjugated: bool) -> T where Numeric(T) {
 	when (linalg.Scalar(T)) {
 		return scalar_conjugate_if(value, conjugated);
 	} else {

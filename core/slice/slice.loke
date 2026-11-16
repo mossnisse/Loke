@@ -23,7 +23,6 @@
 @(public)
 package slice;
 
-import "base:interfaces";
 import "core:mem";
 
 // ---------------------------------------------------------------- ordering --
@@ -41,7 +40,7 @@ import "core:mem";
 // for this call and generates a typed adapter to its `call`. `Ordering` makes
 // that record of either kind of `less`, so the public operation and all
 // callback state remain ordinary Loke.
-sort_by :: proc(values: []mut $T, less: $C) where interfaces.Callable(C, proc(left, right: T) -> bool) {
+sort_by :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	ordering := Ordering(T, C){&less};
 	sort_by_intrinsic(values, &ordering);
 }
@@ -52,7 +51,7 @@ Ordering :: struct($T, $C: type) { less: ^C }
 // The bound is repeated here because it is what grants `less(...)` the
 // caller's `call` method, which this package could not otherwise see.
 impl Ordering($T, $C) {
-	call :: proc(self, left, right: T) -> bool where interfaces.Callable(C, proc(left, right: T) -> bool) {
+	call :: proc(self, left, right: T) -> bool where Callable(C, proc(left, right: T) -> bool) {
 		return self.less^(left, right);
 	}
 }
@@ -66,7 +65,7 @@ impl Ordering($T, $C) {
 // This is standard-library.md's free spelling of the contributed `values.sort()` member,
 // and it forwards to it: one introsort in the runtime, reached by both, so the
 // two spellings cannot drift apart.
-sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
+sort :: proc(values: []mut $T) where Ordered(T) {
 	values.sort();
 }
 
@@ -74,7 +73,7 @@ sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
 // Sorting with the comparison reversed, not sorting and then reversing: the
 // two differ for equal-comparing elements only, and neither order is stable,
 // so one pass is enough.
-reverse_sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
+reverse_sort :: proc(values: []mut $T) where Ordered(T) {
 	values.reverse_sort();
 }
 
@@ -84,14 +83,14 @@ reverse_sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
 	true of a slice a NaN sits in the middle of, and `sort` may still move it.
 	The two agree that no pair is out of order, which is all either claims.
 */
-is_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
+is_sorted :: proc(values: []$T) -> bool where Ordered(T) {
 	foreach (i in 1 ..< values.len()) {
 		if (values[i] < values[i - 1]) { return false; }
 	}
 	return true;
 }
 
-is_reverse_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
+is_reverse_sorted :: proc(values: []$T) -> bool where Ordered(T) {
 	foreach (i in 1 ..< values.len()) {
 		if (values[i - 1] < values[i]) { return false; }
 	}
@@ -104,7 +103,7 @@ is_reverse_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
 	ascending; a caller who has not sorted gets a meaningless answer, not a trap.
 */
 binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
-	where interfaces.Ordered(T) {
+	where Ordered(T) {
 	low := 0;
 	high := values.len();
 	for (low < high) {
@@ -153,14 +152,14 @@ fill :: proc(values: []mut $T, @(escape=stored) value: T) {
 
 // ----------------------------------------------------------------- queries --
 
-index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.Equatable(T) {
+index_of :: proc(values: []$T, wanted: T) -> Option(int) where Equatable(T) {
 	foreach (value, i in values.indexed()) {
 		if (value == wanted) { return i; }
 	}
 	return .none;
 }
 
-last_index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.Equatable(T) {
+last_index_of :: proc(values: []$T, wanted: T) -> Option(int) where Equatable(T) {
 	i := values.len();
 	for (i > 0) {
 		i -= 1;
@@ -169,7 +168,7 @@ last_index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.E
 	return .none;
 }
 
-contains :: proc(values: []$T, wanted: T) -> bool where interfaces.Equatable(T) {
+contains :: proc(values: []$T, wanted: T) -> bool where Equatable(T) {
 	switch (index_of(values, wanted)) {
 	case .some: return true;
 	case .none: return false;
@@ -177,7 +176,7 @@ contains :: proc(values: []$T, wanted: T) -> bool where interfaces.Equatable(T) 
 	return false;
 }
 
-equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
+equal :: proc(left: []$T, right: []T) -> bool where Equatable(T) {
 	if (left.len() != right.len()) { return false; }
 	foreach (value, i in left.indexed()) {
 		if (value != right[i]) { return false; }
@@ -197,7 +196,7 @@ equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
 // The search keeps the winner's index rather than a copy of it, so the only
 // element copy is the one the result needs: a candidate whose copy hook
 // allocates is not cloned at every improvement.
-min :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
+min :: proc(values: []$T) -> Option(T) where Ordered(T) {
 	if (values.len() == 0) { return .none; }
 	best := 0;
 	foreach (i in 1 ..< values.len()) {
@@ -206,7 +205,7 @@ min :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 	return values[best];
 }
 
-max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
+max :: proc(values: []$T) -> Option(T) where Ordered(T) {
 	if (values.len() == 0) { return .none; }
 	best := 0;
 	foreach (i in 1 ..< values.len()) {

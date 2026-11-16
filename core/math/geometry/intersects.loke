@@ -4,7 +4,6 @@
 @(public)
 package geometry;
 
-import "base:interfaces";
 import "core:math/linalg";
 
 /**
@@ -54,14 +53,14 @@ intersects :: proc{
 };
 
 @(private)
-intersects_box2_box2 :: proc(a, b: Aabb2($T)) -> bool where interfaces.Ordered(T) {
+intersects_box2_box2 :: proc(a, b: Aabb2($T)) -> bool where Ordered(T) {
 	if (a.is_empty() || b.is_empty()) { return false; }
 	return at_most(a.min.x, b.max.x) && at_most(b.min.x, a.max.x)
 		&& at_most(a.min.y, b.max.y) && at_most(b.min.y, a.max.y);
 }
 
 @(private)
-intersects_box3_box3 :: proc(a, b: Aabb3($T)) -> bool where interfaces.Ordered(T) {
+intersects_box3_box3 :: proc(a, b: Aabb3($T)) -> bool where Ordered(T) {
 	if (a.is_empty() || b.is_empty()) { return false; }
 	return at_most(a.min.x, b.max.x) && at_most(b.min.x, a.max.x)
 		&& at_most(a.min.y, b.max.y) && at_most(b.min.y, a.max.y)
@@ -70,14 +69,14 @@ intersects_box3_box3 :: proc(a, b: Aabb3($T)) -> bool where interfaces.Ordered(T
 
 // `|a.center - b.center|^2 <= (a.radius + b.radius)^2`, by `ball_reaches`.
 @(private)
-intersects_circle_circle :: proc(a, b: Circle($T)) -> bool where interfaces.Ordered(T) {
+intersects_circle_circle :: proc(a, b: Circle($T)) -> bool where Ordered(T) {
 	check_radius(a.radius);
 	check_radius(b.radius);
 	return ball_reaches(b.center, a.center, a.radius, b.radius);
 }
 
 @(private)
-intersects_sphere_sphere :: proc(a, b: Sphere($T)) -> bool where interfaces.Ordered(T) {
+intersects_sphere_sphere :: proc(a, b: Sphere($T)) -> bool where Ordered(T) {
 	check_radius(a.radius);
 	check_radius(b.radius);
 	return ball_reaches(b.center, a.center, a.radius, b.radius);
@@ -86,26 +85,26 @@ intersects_sphere_sphere :: proc(a, b: Sphere($T)) -> bool where interfaces.Orde
 // The box's squared distance from the center at most the squared radius,
 // from the center's offset to its nearest point of the box, by `ball_reaches`.
 @(private)
-intersects_circle_box2 :: proc(circle: Circle($T), box: Aabb2(T)) -> bool where interfaces.Ordered(T) {
+intersects_circle_box2 :: proc(circle: Circle($T), box: Aabb2(T)) -> bool where Ordered(T) {
 	check_radius(circle.radius);
 	if (box.is_empty()) { return false; }
 	return ball_reaches(circle.center, box.closest_point(circle.center), circle.radius, T(0));
 }
 
 @(private)
-intersects_box2_circle :: proc(box: Aabb2($T), circle: Circle(T)) -> bool where interfaces.Ordered(T) {
+intersects_box2_circle :: proc(box: Aabb2($T), circle: Circle(T)) -> bool where Ordered(T) {
 	return intersects_circle_box2(circle, box);
 }
 
 @(private)
-intersects_sphere_box3 :: proc(sphere: Sphere($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) {
+intersects_sphere_box3 :: proc(sphere: Sphere($T), box: Aabb3(T)) -> bool where Ordered(T) {
 	check_radius(sphere.radius);
 	if (box.is_empty()) { return false; }
 	return ball_reaches(sphere.center, box.closest_point(sphere.center), sphere.radius, T(0));
 }
 
 @(private)
-intersects_box3_sphere :: proc(box: Aabb3($T), sphere: Sphere(T)) -> bool where interfaces.Ordered(T) {
+intersects_box3_sphere :: proc(box: Aabb3($T), sphere: Sphere(T)) -> bool where Ordered(T) {
 	return intersects_sphere_box3(sphere, box);
 }
 
@@ -128,7 +127,7 @@ intersects_plane_sphere :: proc(plane: Plane($T), sphere: Sphere(T)) -> bool whe
 // between theirs, each computed from the corner itself, with no center or
 // extent.
 @(private)
-extreme_corners :: proc(box: Aabb3($T), n: linalg.Vector3(T)) -> (low: linalg.Vector3(T), high: linalg.Vector3(T)) where interfaces.Ordered(T) {
+extreme_corners :: proc(box: Aabb3($T), n: linalg.Vector3(T)) -> (low: linalg.Vector3(T), high: linalg.Vector3(T)) where Ordered(T) {
 	return {
 		linalg.Vector3(T).from_components(
 			box.min.x if at_most(T(0), n.x) else box.max.x,
@@ -144,14 +143,14 @@ extreme_corners :: proc(box: Aabb3($T), n: linalg.Vector3(T)) -> (low: linalg.Ve
 // The plane separates or touches the box's two extreme corners along its
 // normal.
 @(private)
-intersects_box3_plane :: proc(box: Aabb3($T), plane: Plane(T)) -> bool where interfaces.Ordered(T) {
+intersects_box3_plane :: proc(box: Aabb3($T), plane: Plane(T)) -> bool where Ordered(T) {
 	if (box.is_empty()) { return false; }
 	low, high := extreme_corners(box, plane.normal);
 	return at_most(plane.signed_distance(low), T(0)) && at_most(T(0), plane.signed_distance(high));
 }
 
 @(private)
-intersects_plane_box3 :: proc(plane: Plane($T), box: Aabb3(T)) -> bool where interfaces.Ordered(T) {
+intersects_plane_box3 :: proc(plane: Plane($T), box: Aabb3(T)) -> bool where Ordered(T) {
 	return intersects_box3_plane(box, plane);
 }
 
@@ -164,7 +163,7 @@ same_side :: proc(a, b: Sign) -> bool { return a == b && a != .Zero; }
 // its point: its orientations against the other are all zero, so the other
 // segment's line decides, and then the bounds.
 @(private)
-intersects_segment2_segment2 :: proc(a, b: Segment2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+intersects_segment2_segment2 :: proc(a, b: Segment2($T)) -> bool where Numeric(T), Ordered(T) {
 	o1 := orient2d(a.a, a.b, b.a);
 	o2 := orient2d(a.a, a.b, b.b);
 	o3 := orient2d(b.a, b.b, a.a);
@@ -180,7 +179,7 @@ intersects_segment2_segment2 :: proc(a, b: Segment2($T)) -> bool where interface
 // rectangle from `low` to `high` strictly on one side of it, by exact
 // `orient2d` tests. A line of no direction separates nothing.
 @(private)
-line_separates :: proc(a, b, low, high: linalg.Vector2($T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+line_separates :: proc(a, b, low, high: linalg.Vector2($T)) -> bool where Numeric(T), Ordered(T) {
 	s0 := orient2d(a, b, low);
 	s1 := orient2d(a, b, linalg.Vector2(T).from_components(high.x, low.y));
 	s2 := orient2d(a, b, high);
@@ -193,13 +192,13 @@ line_separates :: proc(a, b, low, high: linalg.Vector2($T)) -> bool where interf
 // each of them, which separate exactly when the segment's line separates the
 // box in the projection along that axis.
 @(private)
-intersects_segment2_box2 :: proc(segment: Segment2($T), box: Aabb2(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+intersects_segment2_box2 :: proc(segment: Segment2($T), box: Aabb2(T)) -> bool where Numeric(T), Ordered(T) {
 	if (!intersects_box2_box2(segment.bounds(), box)) { return false; }
 	return !line_separates(segment.a, segment.b, box.min, box.max);
 }
 
 @(private)
-intersects_box2_segment2 :: proc(box: Aabb2($T), segment: Segment2(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+intersects_box2_segment2 :: proc(box: Aabb2($T), segment: Segment2(T)) -> bool where Numeric(T), Ordered(T) {
 	return intersects_segment2_box2(segment, box);
 }
 
@@ -211,7 +210,7 @@ zx :: proc(v: linalg.Vector3($T)) -> linalg.Vector2(T) { return linalg.Vector2(T
 xy :: proc(v: linalg.Vector3($T)) -> linalg.Vector2(T) { return linalg.Vector2(T).from_components(v.x, v.y); }
 
 @(private)
-intersects_segment3_box3 :: proc(segment: Segment3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+intersects_segment3_box3 :: proc(segment: Segment3($T), box: Aabb3(T)) -> bool where Numeric(T), Ordered(T) {
 	if (!intersects_box3_box3(segment.bounds(), box)) { return false; }
 	a, b := segment.a, segment.b;
 	return !line_separates(yz(a), yz(b), yz(box.min), yz(box.max))
@@ -220,7 +219,7 @@ intersects_segment3_box3 :: proc(segment: Segment3($T), box: Aabb3(T)) -> bool w
 }
 
 @(private)
-intersects_box3_segment3 :: proc(box: Aabb3($T), segment: Segment3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+intersects_box3_segment3 :: proc(box: Aabb3($T), segment: Segment3(T)) -> bool where Numeric(T), Ordered(T) {
 	return intersects_segment3_box3(segment, box);
 }
 
@@ -228,7 +227,7 @@ intersects_box3_segment3 :: proc(box: Aabb3($T), segment: Segment3(T)) -> bool w
 // triangle's projections all below the box's lowest, or all above its
 // highest. A zero axis separates nothing.
 @(private)
-axis_separates :: proc(axis, a, b, c: linalg.Vector3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+axis_separates :: proc(axis, a, b, c: linalg.Vector3($T), box: Aabb3(T)) -> bool where Numeric(T), Ordered(T) {
 	pa, pb, pc := axis.dot(a), axis.dot(b), axis.dot(c);
 	low, high := extreme_corners(box, axis);
 	box_low, box_high := axis.dot(low), axis.dot(high);
@@ -241,7 +240,7 @@ axis_separates :: proc(axis, a, b, c: linalg.Vector3($T), box: Aabb3(T)) -> bool
 // crossed with each box axis. `e_x` crossed with an edge `f` is
 // `(0, -f.z, f.y)`, written out so that it needs no negation.
 @(private)
-intersects_triangle3_box3 :: proc(triangle: Triangle3($T), box: Aabb3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+intersects_triangle3_box3 :: proc(triangle: Triangle3($T), box: Aabb3(T)) -> bool where Numeric(T), Ordered(T) {
 	if (!intersects_box3_box3(triangle.bounds(), box)) { return false; }
 	a, b, c := triangle.a, triangle.b, triangle.c;
 	f0 := b - a;
@@ -261,7 +260,7 @@ intersects_triangle3_box3 :: proc(triangle: Triangle3($T), box: Aabb3(T)) -> boo
 }
 
 @(private)
-intersects_box3_triangle3 :: proc(box: Aabb3($T), triangle: Triangle3(T)) -> bool where interfaces.Numeric(T), interfaces.Ordered(T) {
+intersects_box3_triangle3 :: proc(box: Aabb3($T), triangle: Triangle3(T)) -> bool where Numeric(T), Ordered(T) {
 	return intersects_triangle3_box3(triangle, box);
 }
 

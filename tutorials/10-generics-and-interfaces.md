@@ -15,11 +15,10 @@ slice of `int` and `T` is `int`.
 ```loke file=generic_procs.loke
 package main;
 
-import "base:interfaces";
 import "core:fmt";
 
 // `$T` is filled in from the argument: a slice of any type that has `<`.
-largest :: proc(values: []$T) -> T where interfaces.Ordered(T) {
+largest :: proc(values: []$T) -> T where Ordered(T) {
 	best := values[0];
 	foreach (value in values) {
 		if (best < value) { best = value; }
@@ -51,7 +50,7 @@ plum
 ["hi", "hi", "hi"] [7.5, 7.5]
 ```
 
-- `where interfaces.Ordered(T)` says `T` must have `<`. The body compares
+- `where Ordered(T)` says `T` must have `<`. The body compares
   values, so it needs that, and the compiler checks it at every call.
 - `$N: int` is a value known at compile time, which is why it can be the length
   of the array type `[N]T`. A call passes it like any argument, `filled(3, "hi")`.
@@ -186,7 +185,8 @@ Prefer generics, and use `dyn` when values of different types have to be mixed
 at run time.
 
 The standard interfaces, such as `Ordered`, `Equatable`, `Hashable`, and
-`Iterable`, are in `base:interfaces`; the `where` clause above uses one.
+`Iterable`, are predeclared, so they need no import; the `where` clause above
+uses one.
 
 When a type does not meet an interface, the compiler says which requirement it
 missed:

@@ -15,8 +15,6 @@
 @(public)
 package fmt;
 
-import "base:interfaces";
-
 /**
 	One byte sink. Any record with this `write` is one, so the same view serves a
 	stream, a buffer, and a counting sink; `(fmt.Writer)(&mut sink)` makes it.
@@ -234,7 +232,7 @@ pad_right :: proc(value: $T, width: int) -> Padded(T) {
 	but prints as its character, so it is rejected; `int(r)` pads its code point.
 */
 @(public)
-zero_pad :: proc(value: $T, width: int) -> Padded(T) where interfaces.Integral(T), T != rune {
+zero_pad :: proc(value: $T, width: int) -> Padded(T) where Integral(T), T != rune {
 	return Padded(T){value, width, .Zero};
 }
 

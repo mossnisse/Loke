@@ -1711,6 +1711,14 @@ checklist.
 
 ### Changed
 
+- The fourteen interfaces of the [standard interface catalogue](docs/standard-library.md#standard-interface-catalogue)
+  are [predeclared names](docs/design.md#predeclared-names), rationale under
+  ["The interface catalogue is predeclared"](docs/comments.md#the-interface-catalogue-is-predeclared).
+  A bound is `where Ordered(T)` and a view `dyn Iterator(u8)`, with no import. `interfaces.Ordered`
+  after `import "base:interfaces";` names the same interface, so existing code compiles unchanged,
+  and it is how a package that declares its own `Ordered`, which shadows the predeclared one,
+  reaches the catalogue's. The bundled packages and their `api.loki` files use the bare names, and
+  a diagnostic that said `interfaces.Ordered` says `Ordered`.
 - An unfixed constant filling a parameter written `$T`, or an element of a `..$T` pack, binds `T`
   only when no typed argument does, and otherwise converts to the type that argument binds
   ([Procedures with inferred generic parameters](docs/design.md#procedures-with-inferred-generic-parameters)).

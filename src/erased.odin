@@ -3,7 +3,7 @@
 //   dyn Interface  { ptr data, ptr witness }
 //   dyn proc(...)  { ptr data, ptr code }
 //
-// A `dyn proc` view is `dyn interfaces.Callable(...)`, whose one slot is held
+// A `dyn proc` view is `dyn Callable(...)`, whose one slot is held
 // directly: its second word is the code to call, not a table of slots.
 //
 // A witness is one private global per `(Interface, Concrete, arguments)`. Its
@@ -312,7 +312,7 @@ install_dyn_call_slot :: proc(k: ^Checker, dyn, signature: Type_Id) {
 	type_of(k.c, dyn).members = members
 }
 
-// design.md "Borrowed callable views": `dyn interfaces.Callable(Signature)`,
+// design.md "Borrowed callable views": `dyn Callable(Signature)`,
 // spelled `dyn proc(...)`.
 @(private = "file")
 dyn_is_callable :: proc(c: ^Compiler, info: ^Type_Info) -> bool {

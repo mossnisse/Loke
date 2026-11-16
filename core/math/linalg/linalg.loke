@@ -10,7 +10,7 @@
 	Space is right-handed; only the camera constructors depend on handedness,
 	and each has an `_lh` twin.
 
-	Arithmetic needs only `interfaces.Numeric(T)`, so integers and user number
+	Arithmetic needs only `Numeric(T)`, so integers and user number
 	types get it. Members that need a square root, trigonometry, or a check for
 	a degenerate input need `Real(T)`, which this package implements for `f32`
 	and `f64` and a user type implements with its own methods.
@@ -34,7 +34,6 @@
 @(public)
 package linalg;
 
-import "base:interfaces";
 import "core:math";
 import "core:math/repro";
 
@@ -64,8 +63,8 @@ import "core:math/repro";
 // the generic bodies here compare with those alone: a user type need not
 // declare `<=`, and `!(a < b)` would wrongly hold for a NaN.
 Real :: interface($T: type) {
-	interfaces.Numeric(T);
-	interfaces.Ordered(T);
+	Numeric(T);
+	Ordered(T);
 	(value: T) - value -> T;
 	(value: f64) T(value) -> T;
 	slot sqrt:      proc(self) -> T;
@@ -143,7 +142,7 @@ impl f64 {
 // of each step; every requirement agrees with it for a real type, so the
 // two forms give the same bits.
 Scalar :: interface($T: type) {
-	interfaces.Numeric(T);
+	Numeric(T);
 	T.Real -> type;
 	Real(T.Real);
 	(value: T.Real) T(value) -> T;

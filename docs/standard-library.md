@@ -45,6 +45,12 @@ There is no implicit convenience prelude. Programs import the facilities they
 use. Packages should be cohesive and should not become broad collections of
 unrelated helpers.
 
+A bundled declaration is a [predeclared name](design.md#predeclared-names) only
+when code must write it to use a language feature and its package qualifier
+would say nothing the position does not. The [standard interface
+catalogue](#standard-interface-catalogue) meets both; `meta.Field` and
+`runtime.Type_Info` do not, and no `core:` declaration can.
+
 `base:` is reserved for declarations that participate in the language or its
 runtime ABI. General-purpose code belongs in `core:`. Adding a package to
 `base:` should require a compiler or language-design reason.
@@ -431,9 +437,11 @@ the remaining arguments. For another sink, format in memory and call
 
 ## Standard interface catalogue
 
-`base:interfaces` exports the standard catalogue. Outside that package, use its
-qualifier, as in `interfaces.Sequence(S)`. Built-in and user-defined types use
-the same structural checks.
+`base:interfaces` declares the standard catalogue, and every interface in it is
+a [predeclared name](design.md#predeclared-names): write `Sequence(S)`, with no
+import. A package that declares its own `Sequence` imports `base:interfaces`
+and writes `interfaces.Sequence(S)` for the catalogue's. Built-in and
+user-defined types use the same structural checks.
 
 ```loke
 Equatable :: interface($T: type) {
@@ -726,7 +734,7 @@ Mutex(T).lock(self: ^) -> Guard(T)
 Guard(T).get(self: inout) -> inout T
 Monitor(T).lock(self: ^) -> Monitor_Guard(T)
 Monitor(T).lock_when(self: ^, ready: $C) -> Option(Monitor_Guard(T))
-	where interfaces.Callable(C, proc(value: ^T) -> bool)
+	where Callable(C, proc(value: ^T) -> bool)
 Monitor(T).close(self: ^)
 Monitor_Guard(T).get(self: inout) -> inout T
 Monitor_Guard(T).read(self: ^) -> ^T
@@ -1434,7 +1442,7 @@ Padded :: struct($T: type) { /* private */ }
 fixed(value: f64, digits: int) -> Fixed
 pad_left(value: $T, width: int) -> Padded(T)
 pad_right(value: $T, width: int) -> Padded(T)
-zero_pad(value: $T, width: int) -> Padded(T) where interfaces.Integral(T), T != rune
+zero_pad(value: $T, width: int) -> Padded(T) where Integral(T), T != rune
 
 Backend_Error :: enum { Out_Of_Memory, Unavailable }
 FLOAT_SPELLING_MAX :: 32
@@ -2108,9 +2116,9 @@ impl Reader {
 	expect     :: proc(self: inout, bytes: []u8) -> Status(Error);
 
 	get_length :: proc(self: inout, $T: type, limit: int) -> Result(int, Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T);
+		where endian.is_fixed_width(T), Integral(T);
 	get_count  :: proc(self: inout, $T: type, item_size: int, limit: int) -> Result(int, Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T);
+		where endian.is_fixed_width(T), Integral(T);
 
 	finish     :: proc(self) -> Status(Error);
 	read       :: proc(self: inout, destination: []mut u8) -> Result(int, io.Error);
@@ -2206,7 +2214,7 @@ impl Writer($W) {
 	put        :: proc(self: inout, value: $T) -> Status(io.Error) where endian.is_fixed_width(T);
 	put_bytes  :: proc(self: inout, bytes: []u8) -> Status(io.Error);
 	put_length :: proc(self: inout, $T: type, length: int) -> Status(io.Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T);
+		where endian.is_fixed_width(T), Integral(T);
 	fill       :: proc(self: inout, length: int, value: u8 = 0) -> Status(io.Error);
 
 	write      :: proc(self: inout, source: []u8) -> Result(int, io.Error);
@@ -2266,7 +2274,7 @@ fields of the [CRC RevEng catalogue](https://reveng.sourceforge.io/crc-catalogue
 so a format's CRC is pinned by copying its row.
 
 ```loke
-Crc_Params :: struct($T: type) where interfaces.Integral(T) {
+Crc_Params :: struct($T: type) where Integral(T) {
 	width:       int,
 	polynomial:  T,
 	initial:     T,
@@ -2428,7 +2436,7 @@ comparator:
 
 ```loke
 sort_by :: proc(values: []mut $T, less: $C)
-	where interfaces.Callable(C, proc(left, right: T) -> bool)
+	where Callable(C, proc(left, right: T) -> bool)
 ```
 
 The comparator may be a plain `proc(left, right: T) -> bool`, or a record
@@ -2459,13 +2467,13 @@ select_nth_by   :: proc(values: []mut $T, n: int, less: $C)     // what sort_by 
 select_nth      :: proc(values: []mut $T, n: int)               // the same, ascending by Ordered
 ```
 
-`keep` requires `interfaces.Callable(P, proc(value: T) -> bool)`, and `less`
-requires `interfaces.Callable(C, proc(left, right: T) -> bool)` as for
+`keep` requires `Callable(P, proc(value: T) -> bool)`, and `less`
+requires `Callable(C, proc(left, right: T) -> bool)` as for
 [`sort_by`](#sorting-slices): either may be a plain procedure or a record whose
 `call` method decides, is borrowed for the call, and is retained nowhere.
 Nothing allocates, and nothing copies an element: elements only move by
 [`swap`](#swapping-elements), so a move-only element and one with no zero value
-are fine. `select_nth` requires `interfaces.Ordered(T)`, and relates to
+are fine. `select_nth` requires `Ordered(T)`, and relates to
 `select_nth_by` as `sort` does to `sort_by`; a descending selection passes
 [`slice.Descending(T){}`](#heaps).
 
@@ -2526,11 +2534,11 @@ pop_heap      :: proc(values: []mut $T, less: $C)          // the first element 
 sift_heap_top :: proc(values: []mut $T, less: $C)          // restore the order after the first element changed
 is_heap       :: proc(values: []$T, less: $C) -> bool
 
-Ascending  :: struct($T: type) where interfaces.Ordered(T) {}   // callable: left < right
-Descending :: struct($T: type) where interfaces.Ordered(T) {}   // callable: right < left
+Ascending  :: struct($T: type) where Ordered(T) {}   // callable: left < right
+Descending :: struct($T: type) where Ordered(T) {}   // callable: right < left
 ```
 
-Each algorithm requires `interfaces.Callable(C, proc(left, right: T) -> bool)`,
+Each algorithm requires `Callable(C, proc(left, right: T) -> bool)`,
 borrows its comparator for the call, retains nothing, and allocates nothing, as
 [`sort_by`](#sorting-slices) does. None copies an element, so a move-only element
 is fine. An empty slice is a no-op, and is a heap. `Ascending` and `Descending` are
@@ -2562,7 +2570,7 @@ is still a permutation of what it held, and each call terminates.
 
 `core:slice` also has these procedures. Only `fill` writes, and it takes
 `[]mut T`; the rest read a `[]T`. The ordering queries require
-`interfaces.Ordered(T)` and the searches `interfaces.Equatable(T)`.
+`Ordered(T)` and the searches `Equatable(T)`.
 
 | Procedure | Result |
 | --- | --- |
@@ -2680,7 +2688,7 @@ compared, so that a call reads the same.
 
 ```loke
 Priority_Queue :: struct($T, $C: type)
-	where interfaces.Callable(C, proc(left, right: T) -> bool) { /* private */ }
+	where Callable(C, proc(left, right: T) -> bool) { /* private */ }
 
 Min_Queue :: Priority_Queue($T, slice.Ascending(T));
 Max_Queue :: Priority_Queue($T, slice.Descending(T));
@@ -2995,10 +3003,10 @@ a caller remembers it.
 ```loke
 Order :: enum { Little, Big }
 host_order() -> Order
-byte_swap(value: $T) -> T where interfaces.Integral(T)
+byte_swap(value: $T) -> T where Integral(T)
 
-Little_Endian :: struct($T: type) where interfaces.Integral(T) { /* private */ }
-Big_Endian    :: struct($T: type) where interfaces.Integral(T) { /* private */ }
+Little_Endian :: struct($T: type) where Integral(T) { /* private */ }
+Big_Endian    :: struct($T: type) where Integral(T) { /* private */ }
 
 impl Little_Endian($T) {   // Big_Endian likewise
 	store     :: proc(value: T) -> Little_Endian(T);
@@ -3973,7 +3981,7 @@ fmt.println(value +% 1, math.checked_add(value, 1)); // 0 .none
 The wrapping forms also accept two vectors of one integer-lane `Simd` type and
 wrap each lane.
 
-For any `interfaces.Numeric(T)`, `Complex(T)` has the fields `real` and
+For any `Numeric(T)`, `Complex(T)` has the fields `real` and
 `imaginary`, and `Quaternion(T)` has `real`, `i`, `j`, and `k`. Both have
 `from_components`, a conversion hook from `T` written `Complex(f64)(x)`, `+`,
 unary and binary `-`, `*`, `==`, `conjugate`, and `norm_squared`; `Complex` also
@@ -4250,7 +4258,7 @@ and `x, y, z := v` takes one apart; `from_components` builds the same value. The
 package exports no short names; a program's own alias,
 `Vec3 :: linalg.Vector3(f32);`, is the same type.
 
-Arithmetic needs only `interfaces.Numeric(T)`, so integers, whose overflow
+Arithmetic needs only `Numeric(T)`, so integers, whose overflow
 panics as for the scalar, and user number types get:
 
 - on every vector: `from_components`, `splat`, `unit_x` to `unit_w`,
@@ -4474,7 +4482,7 @@ as a column-major matrix's rows do. `as_view()` reads the same elements, and
 `fill(value)`, `copy_from(view)`, `scale_by(s)`, and `add_scaled(s, view)`,
 which adds `s*view` element by element, write them.
 
-With `interfaces.Numeric(T)`, so for integers and user number types too:
+With `Numeric(T)`, so for integers and user number types too:
 
 - `multiply(a, b)` and `multiply_into(out, a, b)`, each element
   `(a[i, 0]*b[0, j] + a[i, 1]*b[1, j]) + ...` from the first product, the order

@@ -20,7 +20,6 @@
 */
 package binary;
 
-import "base:interfaces";
 import "core:endian";
 import "core:fmt";
 import "core:io";
@@ -103,11 +102,11 @@ impl Reader {
 		one is `Invalid_Length`, and one too big for `int` is `Unexpected_End`.
 	*/
 	take :: proc(self: inout, length: $N) -> Result([]u8, Error)
-		where interfaces.Integral(N), interfaces.Ordered(N) ---;
+		where Integral(N), Ordered(N) ---;
 
 	// Moves past `length` bytes, with `take`'s checks.
 	skip :: proc(self: inout, length: $N) -> Status(Error)
-		where interfaces.Integral(N), interfaces.Ordered(N) ---;
+		where Integral(N), Ordered(N) ---;
 
 	/*
 		A subrecord: a reader of exactly the next `length` bytes, which cannot read
@@ -116,7 +115,7 @@ impl Reader {
 		order and keeps absolute offsets.
 	*/
 	sub :: proc(self: inout, length: $N) -> Result(Reader, Error)
-		where interfaces.Integral(N), interfaces.Ordered(N) ---;
+		where Integral(N), Ordered(N) ---;
 
 	/*
 		Moves to an absolute `offset`, in the coordinates of `offset()`. A child's
@@ -133,7 +132,7 @@ impl Reader {
 		negative value is `Invalid_Length`. A negative `limit` panics.
 	*/
 	get_length :: proc(self: inout, $T: type, limit: int) -> Result(int, Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T) ---;
+		where endian.is_fixed_width(T), Integral(T) ---;
 
 	/*
 		A count field, refused above `limit` and when that many items cannot fit in
@@ -143,7 +142,7 @@ impl Reader {
 		or an `item_size` below one panics.
 	*/
 	get_count :: proc(self: inout, $T: type, item_size: int, limit: int) -> Result(int, Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T) ---;
+		where endian.is_fixed_width(T), Integral(T) ---;
 
 	/*
 		`Trailing_Data` unless everything was consumed. A format that allows an
@@ -200,7 +199,7 @@ impl Writer($W) {
 		and nothing is written.
 	*/
 	put_length :: proc(self: inout, $T: type, length: int) -> Status(io.Error)
-		where endian.is_fixed_width(T), interfaces.Integral(T) ---;
+		where endian.is_fixed_width(T), Integral(T) ---;
 
 	/*
 		`length` copies of `value`, as padding. A negative length is `Limit_Exceeded`

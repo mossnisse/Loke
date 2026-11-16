@@ -13,7 +13,6 @@
 @(public)
 package random;
 
-import "base:interfaces";
 import "core:math";
 
 /**
@@ -89,7 +88,7 @@ impl Seed_Path {
 		The result is required: `path.with(x);` alone changes nothing.
 	*/
 	@(require_results)
-	with :: proc(self, word: $T) -> Seed_Path where interfaces.Integral(T), size_of(T) <= 8 {
+	with :: proc(self, word: $T) -> Seed_Path where Integral(T), size_of(T) <= 8 {
 		return Seed_Path{
 			state  = absorb(self.state, math.wrap(u64, word)),
 			length = self.length + 1,

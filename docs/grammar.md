@@ -335,7 +335,7 @@ around the binding, as in `[]$Element`, and Boolean constraints use a
 the parameter-list production; see [Generics](design.md#generics).
 
 The selectors in `Type_Name` are classified during name resolution. The first
-is either a package-qualified type such as `interfaces.Sequence` or an
+is either a package-qualified type such as `mem.Arena` or an
 associated type such as `S.Element` made available by an active interface
 constraint. Each later selector names an associated type of the type before it,
 as in `S.Iterator.Item`.
