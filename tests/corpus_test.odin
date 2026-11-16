@@ -41,6 +41,8 @@
 //     expected}                    create a file link (tests/os_test.odin)
 //   tests/obj/process_output_      a program linked with a C allocator that
 //     fault.{loke,c}               fails, run under a time limit
+//   tests/obj/microsoft_linker.    a stand-in for a clang whose linker reports
+//     loke                         a failed link on standard output
 //   tests/obj/numeric_locale_      a C host over its own copy of format.c
 //     fault.c                      whose "C" locale cannot be created
 //   tests/obj/dispatch_kernels.    an object build disassembled function by
@@ -576,13 +578,12 @@ a_partial_seed_runtime_is_not_a_foreign_failure :: proc(t: ^testing.T) {
 	)
 }
 
-// A failed link reports the linker's errors and nothing ahead of them. Linking
-// the bundled runtime's cached objects compiles no C, so a header flag would
-// draw clang's unused-argument warning first.
-@(test)
-a_failed_link_reports_no_unused_arguments :: proc(t: ^testing.T) {
+// A program calling a foreign function no library defines, written as
+// `<name>.loke`: it compiles, and its link fails.
+@(private = "file")
+missing_foreign_program :: proc(t: ^testing.T, name: string) -> (source: string, ok: bool) {
 	os.make_directory(TMP)
-	source := fmt.tprintf("%s/missing-foreign.loke", TMP)
+	source = fmt.tprintf("%s/%s.loke", TMP, name)
 	text := `package main;
 
 foreign import kernel32 "system:kernel32.lib";
@@ -596,7 +597,16 @@ main :: proc() {
 	missing();
 }
 `
-	if !testing.expectf(t, os.write_entire_file(source, transmute([]u8)text) == nil, "cannot write %s", source) {
+	return source, testing.expectf(t, os.write_entire_file(source, transmute([]u8)text) == nil, "cannot write %s", source)
+}
+
+// A failed link reports the linker's errors and nothing ahead of them. Linking
+// the bundled runtime's cached objects compiles no C, so a header flag would
+// draw clang's unused-argument warning first.
+@(test)
+a_failed_link_reports_no_unused_arguments :: proc(t: ^testing.T) {
+	source, written := missing_foreign_program(t, "missing-foreign")
+	if !written {
 		return
 	}
 	state, _, stderr, err := exec(
@@ -618,6 +628,35 @@ main :: proc() {
 		!strings.contains(string(stderr), "unused-command-line-argument"),
 		"the link report carries clang's unused-argument warning:\n%s",
 		string(stderr),
+	)
+}
+
+// Microsoft's linker reports on standard output, where lld-link and clang use
+// standard error, and clang's version decides which of them links an
+// unoptimized build. A stand-in for a clang whose linker reported there pins
+// that half on a machine whose own clang runs the other. `-runtime` keeps the
+// stand-in from being asked to build the runtime's cache first.
+@(test)
+a_failed_link_reports_what_either_linker_said :: proc(t: ^testing.T) {
+	if _, _, has_clang := host_toolchain(); !has_clang {
+		skipped_capability(t, "no usable clang, so the stand-in for one is not linked")
+		return
+	}
+	source, written := missing_foreign_program(t, "missing-foreign-stdout")
+	stand_in := fmt.tprintf("%s/microsoft-linker.exe", TMP)
+	if !written || !compile_example(t, "tests/obj/microsoft_linker.loke", stand_in, nil) {
+		return
+	}
+	inherited, environ_err := os.environ(context.allocator)
+	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
+		return
+	}
+	expect_diagnostic_with_env(
+		t,
+		{compiler_path(), source, "-runtime=runtime", "-o", fmt.tprintf("%s/missing-foreign-stdout.exe", TMP)},
+		append_env(inherited, fmt.tprintf("LOKE_CLANG=%s", launch_path(stand_in))),
+		"L0633",
+		"LNK2019: unresolved external symbol LokeNoSuchKernelFunction",
 	)
 }
 
@@ -889,7 +928,11 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 		os.Process_Desc{command = []string{cdb, "-lines", "-y", dir, "-c", commands, exe}},
 		context.allocator,
 	)
-	if !testing.expectf(t, err2 == nil && run.exit_code == 0, "%s failed:\n%s", cdb, string(stderr2)) {
+	// cdb reports on standard output, a failure to start the program included.
+	if !testing.expectf(
+		t, err2 == nil && run.exit_code == 0,
+		"%s failed (%v, exit %d):\n%s%s", cdb, err2, run.exit_code, string(stdout), string(stderr2),
+	) {
 		return
 	}
 	for shown in ([]string{

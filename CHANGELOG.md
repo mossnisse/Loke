@@ -2029,6 +2029,15 @@ checklist.
 
 ### Fixed
 
+- A failed link reports what Microsoft's linker said. `link.exe` writes its
+  errors to standard output, which `lokec` did not read, so where clang linked
+  with it rather than lld-link, as it does for an unoptimized build depending
+  on clang's version, the report held clang's closing line alone, and a foreign
+  link name no library defines was `L0403` instead of `L0633`.
+- The debugger-deadline test no longer fails when its program is slow to start
+  on a loaded machine: a run that ended before the program reached its loop is
+  repeated with twice the deadline. A failed cdb run reports cdb's exit code
+  and output, which is on standard output.
 - `fs.replace_atomic`, `fs.replace_atomic_text`, and `fs.rename` replace a
   target file that another process holds open with delete sharing, as a virus
   scanner or search indexer briefly does to a file just written

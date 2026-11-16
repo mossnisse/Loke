@@ -1,0 +1,14 @@
+package main;
+
+import "core:fmt";
+import "core:os";
+
+// tests/corpus_test.odin `a_failed_link_reports_what_either_linker_said` names
+// this program in `LOKE_CLANG`: clang as it fails a link through Microsoft's
+// linker, whose report is on standard output and clang's own line on standard
+// error.
+main :: proc() {
+	fmt.println("module.o : error LNK2019: unresolved external symbol LokeNoSuchKernelFunction referenced in function loke.p.main");
+	fmt.eprintln("clang: error: linker command failed with exit code 1120 (use -v to see invocation)");
+	os.exit(1120);
+}

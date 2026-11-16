@@ -182,7 +182,7 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 	}
 	append(&command, ..toolchain)
 
-	state, _, stderr, err := subprocess.run(
+	state, stdout, stderr, err := subprocess.run(
 		os.Process_Desc{command = command[:]},
 		context.allocator,
 	)
@@ -191,22 +191,17 @@ link :: proc(c: ^Compiler, ll_path, natvis_path, exe_path: string, opts: Emissio
 		return 2
 	}
 	if state.exit_code != 0 {
+		// Microsoft's linker reports on standard output; lld-link and clang, which
+		// speaks after either, on standard error. Which linker clang runs for an
+		// unoptimized build depends on its version.
+		report := strings.concatenate({string(stdout), string(stderr)})
 		// With nothing foreign linked, an undefined name is the runtime's fault.
 		if len(foreign_inputs) > 0 &&
-		   (strings.contains(string(stderr), "unresolved external symbol") ||
-		    strings.contains(string(stderr), "undefined symbol")) {
-			errorf(
-				c, NO_SPAN, "L0633",
-				"a foreign link name was not found in any imported library:\n%s",
-				string(stderr),
-			)
+		   (strings.contains(report, "unresolved external symbol") || strings.contains(report, "undefined symbol")) {
+			errorf(c, NO_SPAN, "L0633", "a foreign link name was not found in any imported library:\n%s", report)
 			return 2
 		}
-		errorf(
-			c, NO_SPAN, "L0403",
-			"`%s` failed (seed runtime: `%s`):\n%s",
-			clang, runtime_dir, string(stderr),
-		)
+		errorf(c, NO_SPAN, "L0403", "`%s` failed (seed runtime: `%s`):\n%s", clang, runtime_dir, report)
 		return 2
 	}
 	return 0

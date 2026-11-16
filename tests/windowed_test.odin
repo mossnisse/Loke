@@ -279,10 +279,22 @@ debugger_deadline_ends_a_process_sending_events :: proc(t: ^testing.T) {
 		return
 	}
 	path, _ := filepath.abs(windowed, context.temp_allocator)
-	started := time.tick_now()
-	// Leave time for a fresh executable to start on a busy integration worker.
-	_, sent, err := run_debugged(path, "forever", 10 * time.Second)
-	testing.expectf(t, err == os.General_Error.Timeout, "event stream did not time out: %v", err)
-	testing.expect(t, strings.contains(sent, "still running"), "the debuggee never reached its event loop")
-	testing.expectf(t, time.tick_since(started) < 30 * time.Second, "debug events renewed the deadline")
+	// The deadline counts from the launch, and how long a fresh executable takes
+	// to start on a busy integration worker has no bound worth waiting out every
+	// time. A run that ended before the program reached its loop shows nothing
+	// either way, so it is repeated with twice as long.
+	for deadline := 2 * time.Second;; deadline *= 2 {
+		started := time.tick_now()
+		_, sent, err := run_debugged(path, "forever", deadline)
+		if !testing.expectf(t, err == os.General_Error.Timeout, "event stream did not time out: %v", err) {
+			return
+		}
+		testing.expectf(t, time.tick_since(started) < deadline + 20 * time.Second, "debug events renewed the %v deadline", deadline)
+		if strings.contains(sent, "still running") {
+			return
+		}
+		if !testing.expectf(t, deadline < time.Minute, "the debuggee never reached its event loop in %v; it sent %q", deadline, sent) {
+			return
+		}
+	}
 }
