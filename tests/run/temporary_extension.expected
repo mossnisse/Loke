@@ -20,3 +20,4 @@ after loop
 header 30
 drop 30
 after if
+members 1 0

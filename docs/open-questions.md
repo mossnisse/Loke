@@ -191,17 +191,6 @@ diagnostic, needs a decision, or reaches further than such a cleanup should.
   `report_unresolved_type` unconditionally after `resolve_type_syntax`.
   Switching them would drop a second report where resolution already reported
   one; decide with a review of the affected diagnostics corpus.
-- **The temporary that holds a place (P3).** `extended_temporary`
-  ([cfg_provenance.odin](../src/cfg_provenance.odin)) and
-  `mark_borrowed_temporary`
-  ([extended_temporaries.odin](../src/extended_temporaries.odin)) each follow a
-  selector, a non-operator index, or a boxed postfix up to the temporary that
-  holds the place, and `place_in_temporary` ([parallel.odin](../src/parallel.odin))
-  follows the same steps while asking that none goes through a pointer or slice.
-  Their selector tests differ: `.Field` in `extended_temporary` and
-  `place_in_temporary`, `!= .Value` in `mark_borrowed_temporary`. Decide whether
-  that difference is intended; if not, one shared step procedure serves all
-  three.
 - **Semantic stores on one allocator (P3).** `init_semantic_stores`
   ([semantic.odin](../src/semantic.odin)) points about 90 containers at
   `semantic_allocator` one `make` at a time, and they are spread through

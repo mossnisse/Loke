@@ -73,6 +73,16 @@ header :: proc() {
 	fmt.println("after if");
 }
 
+Mode :: enum { narrow, wide }
+
+members :: proc() {
+	// An enum member is a whole constant, part of no value, written with its
+	// type or without.
+	a := &Mode.wide;
+	b: ^Mode = &.narrow;
+	fmt.println("members", int(a^), int(b^));
+}
+
 main :: proc() {
 	declarations();
 	assignments();
@@ -80,4 +90,5 @@ main :: proc() {
 	callable();
 	loop();
 	header();
+	members();
 }

@@ -2158,8 +2158,9 @@ prov_temp_root_of :: proc(graph: ^Flow_Graph, e: Expr, content: []int) -> Root_I
 	extended.extended = extends
 	// Dropped with the block's locals, so its drop hooks run there and read
 	// what it borrows then, as a named local's would (design.md "Global write
-	// effects", "Capabilities and the one rule").
-	holder := extended_temporary(e)
+	// effects", "Capabilities and the one rule"). What is dropped is the whole
+	// temporary holding `e`, at its own type, which an erased value's source has.
+	holder := whole_of(e)
 	extended.dropped = prov_type(graph, holder)
 	if erased := prov_repr(graph, holder).erased_from; erased != INVALID_TYPE {
 		extended.dropped = erased
@@ -2206,40 +2207,15 @@ prov_temp_root_content :: proc(graph: ^Flow_Graph, root: Root_Id, type: Type_Id,
 	prov_define_content(graph, slots, content, span, value_type = type)
 }
 
-// The temporary that holds the borrowed value `e`: a field, an element, or a
-// box's payload is part of it. An erased value's own type is its source's.
-@(private = "file")
-extended_temporary :: proc(e: Expr) -> Expr {
-	node := e
-	for {
-		#partial switch v in node {
-		case ^Expr_Selector:
-			if v.resolution.kind == .Field {
-				node = v.operand
-				continue
-			}
-		case ^Expr_Index:
-			if v.resolution.kind != .User_Operator {
-				node = v.operand
-				continue
-			}
-		case ^Expr_Postfix:
-			if v.boxed {
-				node = v.operand
-				continue
-			}
-		}
-		break
-	}
-	return node
-}
-
 // A value no name holds, which ends with its statement: a call or literal
 // result, an operator's (`a + "yz"`), a conditional's or `or_else`'s, or a
 // moved value. A field or element of one is part of it, so `build().items[:]`
 // ends with its statement too.
 @(private)
 prov_expr_is_temporary :: proc(e: Expr) -> bool {
+	if whole := part_of(e); whole != nil {
+		return prov_expr_is_temporary(whole)
+	}
 	#partial switch v in e {
 	case ^Expr_Composite, ^Expr_Call, ^Expr_Cond, ^Expr_Or_Else, ^Expr_Move, ^Expr_Propagated_Error:
 		return true
@@ -2249,17 +2225,10 @@ prov_expr_is_temporary :: proc(e: Expr) -> bool {
 		return v.resolution.kind == .User_Operator && v.value_category != .Place
 	case ^Expr_Slice:
 		return v.resolution.kind == .User_Operator && v.value_category != .Place
-	case ^Expr_Postfix:
-		// A temporary box's payload ends with the box.
-		return v.op == .Or_Return || (v.boxed && prov_expr_is_temporary(v.operand))
-	case ^Expr_Selector:
-		// `pkg.name` is a whole global, not a field of its operand.
-		return v.resolution.kind != .Value && prov_expr_is_temporary(v.operand)
 	case ^Expr_Index:
-		if v.resolution.kind == .User_Operator {
-			return v.value_category != .Place
-		}
-		return prov_expr_is_temporary(v.operand)
+		return v.resolution.kind == .User_Operator && v.value_category != .Place
+	case ^Expr_Postfix:
+		return v.op == .Or_Return
 	}
 	return false
 }

@@ -189,22 +189,8 @@ emit_lent_address :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 // order"), so its read does not fold to the constant it would select.
 @(private)
 projects_managed_literal :: proc(e: ^Emitter, expr: Expr) -> bool {
-	node := expr
-	for {
-		#partial switch v in node {
-		case ^Expr_Selector:
-			if v.resolution.kind != .Field {
-				return false
-			}
-			node = v.operand
-		case ^Expr_Index:
-			node = v.operand
-		case ^Expr_Composite:
-			return node != expr && emit_lifecycle(e, v.type).managed
-		case:
-			return false
-		}
-	}
+	literal, is_literal := whole_of(expr).(^Expr_Composite)
+	return is_literal && Expr(literal) != expr && emit_lifecycle(e, literal.type).managed
 }
 
 // Storage for the temporary `expr` makes. A large one is shared between full

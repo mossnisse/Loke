@@ -96,34 +96,41 @@ explicit_view_operand :: proc(value: Expr) -> (Expr, bool) {
 	return operand, true
 }
 
-// A borrowed value and the projections leading to the temporary holding it:
-// a field, an element, or a box's payload is part of its owner.
+// A borrowed value and the projections leading to the temporary holding it.
 @(private = "file")
 mark_borrowed_temporary :: proc(value: Expr) {
-	for node := value; node != nil; {
-		base := expr_base(node)
-		if base == nil {
-			return
+	for node := value; node != nil; node = part_of(node) {
+		expr_base(node).extended = true
+	}
+}
+
+// The value `e` is a part of, in whose storage it is, or nil for a whole value:
+// what holds a field or a built-in element, and the box of a payload (design.md
+// "Owned values"). An enum's `Type.member` resolves as a field too and is part
+// of no value, as `pkg.name` and a user operator's result are not.
+part_of :: proc(e: Expr) -> Expr {
+	#partial switch v in e {
+	case ^Expr_Selector:
+		if v.resolution.kind == .Field && v.operand != nil && expr_base(v.operand).value_category != .Type {
+			return v.operand
 		}
-		base.extended = true
-		#partial switch v in node {
-		case ^Expr_Selector:
-			if v.resolution.kind == .Value {
-				return
-			}
-			node = v.operand
-		case ^Expr_Index:
-			if v.resolution.kind == .User_Operator {
-				return
-			}
-			node = v.operand
-		case ^Expr_Postfix:
-			if !v.boxed {
-				return
-			}
-			node = v.operand
-		case:
-			return
+	case ^Expr_Index:
+		if v.resolution.kind != .User_Operator {
+			return v.operand
+		}
+	case ^Expr_Postfix:
+		if v.boxed {
+			return v.operand
 		}
 	}
+	return nil
+}
+
+// The whole value `e` is a part of: itself, when it is part of none.
+whole_of :: proc(e: Expr) -> Expr {
+	whole := e
+	for outer := part_of(whole); outer != nil; outer = part_of(whole) {
+		whole = outer
+	}
+	return whole
 }

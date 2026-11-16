@@ -617,19 +617,12 @@ place_in_temporary :: proc(c: ^Compiler, place: Expr) -> bool {
 	if !expression_is_borrowed_place(place) {
 		return true
 	}
-	#partial switch v in place {
-	case ^Expr_Selector:
-		return v.resolution.kind == .Field && !type_is_pointer(c, expr_base(v.operand).type) && place_in_temporary(c, v.operand)
-	case ^Expr_Postfix:
-		return v.boxed && place_in_temporary(c, v.operand)
-	case ^Expr_Index:
-		#partial switch underlying_kind(c, expr_base(v.operand).type) {
-		case .Slice, .C_Pointer, .Pointer:
-			return false
-		}
-		return len(v.bound) == 0 && place_in_temporary(c, v.operand)
+	whole := part_of(place)
+	if whole == nil {
+		return false
 	}
-	return false
+	type := expr_base(whole).type
+	return !type_is_pointer(c, type) && underlying_kind(c, type) not_in Type_Kinds{.Slice, .C_Pointer} && place_in_temporary(c, whole)
 }
 
 // design.md "Spawn statements": a field or element of a temporary is copied into
