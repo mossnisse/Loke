@@ -14,7 +14,7 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 
 ## Compiler test coverage
 
-The [2026-11-15 coverage review](compiler-test-coverage.md) found strong
+A coverage review on 2026-11-15 found strong
 independent borrow/store models but less systematic coverage of generic and
 operator interactions. The new borrow-result matrix covers 252 combinations;
 owner/allocator-region interactions and an independent overload-ranking matrix
