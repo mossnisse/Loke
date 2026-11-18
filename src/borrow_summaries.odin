@@ -318,24 +318,11 @@ merge_carrier_move :: proc(c: ^Compiler, declaration: Symbol_Id, index: int, mov
 // once a callee is seen to call it, so the set may grow on a later round.
 @(private)
 record_summary_dependencies :: proc(c: ^Compiler, declaration: Symbol_Id, callees: []Symbol_Id) {
+	// Appended, as the worklist registers only what follows those it has.
 	known := c.result_summary_dependencies[declaration]
-	added := 0
-	for callee in callees {
-		if !slice.contains(known, callee) {
-			added += 1
-		}
+	if set_join(&known, callees, c.semantic_allocator) {
+		c.result_summary_dependencies[declaration] = known
 	}
-	if added == 0 {
-		return
-	}
-	grown := make([dynamic]Symbol_Id, 0, len(known) + added, c.semantic_allocator)
-	append(&grown, ..known)
-	for callee in callees {
-		if !slice.contains(grown[:], callee) {
-			append(&grown, callee)
-		}
-	}
-	c.result_summary_dependencies[declaration] = grown[:]
 }
 
 @(private)

@@ -11,4 +11,12 @@ bad_procedure :: proc "c" (value: Option(proc())) {}
 bad_view :: proc "c" (value: Option(dyn Shape)) {}
 bad_box :: proc "c" (value: Option(Box(int))) {}
 
+// Nor a union declared in `Option`'s shape, which `@(align=N)` may pad past its
+// pointer, or one that names itself in the callback it holds.
+Nullable :: union { none, some: ^int }
+@(align=16) Padded :: union { none, some: ^int }
+Recursive :: union { none, some: proc "c" (next: Recursive) }
+bad_nullable :: proc "c" (value: Nullable) {}
+bad_padded :: proc "c" (value: Padded) -> Padded { return value; }
+
 main :: proc() {}

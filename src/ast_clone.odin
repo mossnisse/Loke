@@ -54,9 +54,9 @@ clone_decl :: proc(c: ^Compiler, d: ^Decl) -> ^Decl {
 	return clone_decl_with(&cloner, d)
 }
 
-clone_item :: proc(c: ^Compiler, item: Item) -> Item {
+clone_impl :: proc(c: ^Compiler, item: ^Item_Impl) -> ^Item_Impl {
 	cloner := Cloner{compiler = c}
-	return clone_item_with(&cloner, item)
+	return clone_impl_with(&cloner, item)
 }
 
 clone_requirement :: proc(c: ^Compiler, requirement: Requirement) -> Requirement {
@@ -506,7 +506,7 @@ clone_stmt :: proc(c: ^Cloner, s: Stmt) -> Stmt {
 		return clone_decl_with(c, v)
 
 	case ^Item_Impl:
-		return clone_item_with(c, v).(^Item_Impl)
+		return clone_impl_with(c, v)
 
 	case ^Stmt_Error:
 		n := new_node_clone(c, v)
@@ -635,8 +635,17 @@ clone_decl_with :: proc(c: ^Cloner, d: ^Decl) -> ^Decl {
 	return n
 }
 
-// Entered only with an impl, whose members are declarations, delegates and error
-// items (grammar.md "Source files").
+@(private = "file")
+clone_impl_with :: proc(c: ^Cloner, v: ^Item_Impl) -> ^Item_Impl {
+	n := new_node_clone(c, v)
+	n.kind = v.kind
+	n.type = clone_expr_with(c, v.type)
+	n.members = clone_each(c, v.members, clone_item_with)
+	return n
+}
+
+// An impl's member: a declaration, a delegate, an error item, or a nested impl
+// (grammar.md "Source files").
 @(private = "file")
 clone_item_with :: proc(c: ^Cloner, item: Item) -> Item {
 	switch v in item {
@@ -647,11 +656,7 @@ clone_item_with :: proc(c: ^Cloner, item: Item) -> Item {
 		return new_node_clone(c, v)
 
 	case ^Item_Impl:
-		n := new_node_clone(c, v)
-		n.kind = v.kind
-		n.type = clone_expr_with(c, v.type)
-		n.members = clone_each(c, v.members, clone_item_with)
-		return n
+		return clone_impl_with(c, v)
 
 	case ^Item_Delegate:
 		n := new_node_clone(c, v)

@@ -84,16 +84,9 @@ mark_returned :: proc(e: Expr) {
 // procedure literal's body names none of them, and one with a capture clause
 // names what the clause lists (design.md "Capture literals").
 collect_local_names :: proc(e: Expr, names: ^[dynamic]^Expr_Ident) {
-	#partial switch v in e {
-	case ^Expr_Ident:
-		append(names, v)
+	if ident, is_ident := e.(^Expr_Ident); is_ident {
+		append(names, ident)
 		return
-	case ^Expr_Composite:
-		if v.capture != nil {
-			for entry in v.capture.entries {
-				collect_local_names(entry.value, names)
-			}
-		}
 	}
 	expr_children(e, names, proc(data: rawptr, child: Expr) -> bool {
 		collect_local_names(child, (^[dynamic]^Expr_Ident)(data))

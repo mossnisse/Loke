@@ -48,13 +48,13 @@ impl Atomic($T) {
 	load :: proc(self: ^, $order: Memory_Order = Memory_Order.Sequentially_Consistent) -> T ---;
 
 	store :: proc(
-		self: ^, value: T,
+		self: ^, @(escape=stored) value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) ---;
 
 	// The previous value.
 	exchange :: proc(
-		self: ^, value: T,
+		self: ^, @(escape=stored) value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> T ---;
 
@@ -64,7 +64,7 @@ impl Atomic($T) {
 		it swapped, and the value that stopped it when it did not.
 	*/
 	compare_exchange :: proc(
-		self: ^, expected: T, desired: T,
+		self: ^, expected: T, @(escape=stored) desired: T,
 		$success: Memory_Order = Memory_Order.Sequentially_Consistent,
 		$failure: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> (observed: T, swapped: bool) ---;

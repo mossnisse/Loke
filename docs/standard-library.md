@@ -682,7 +682,10 @@ usable zero values, so each may live in `static` storage with no initializer. A
 `Lazy(T)` holds a `Once`, so it is move-only, and its value is
 `@(synchronized)`: `core:sync` writes it once, before `get` publishes it, and
 only reads it after. An atomic pointer that starts empty is an
-`Atomic(Option(^T))`.
+`Atomic(Option(^T))`. What `store`, `exchange`, and `compare_exchange` write is
+`@(escape=stored)`: an atomic [retains](design.md#retaining-a-borrow) a pointer
+it is given, which must outlive it, and a pointer read back borrows what the
+atomic held.
 
 ## `core:simd`
 

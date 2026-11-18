@@ -212,13 +212,15 @@ validate_attribute_list :: proc(
 		case .Value_Required:
 			if attribute.value == nil {
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a value: `@(%s=...)`", name, name)
-			} else if lit, ok := attribute.value.(^Expr_Literal); !ok ||
-			          (lit.kind != .String && lit.kind != .Raw_String) {
+			} else if _, is_string := attribute_string_literal(attribute); !is_string {
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a string value", name)
 			} else if name == "link_name" {
-				// design.md "`@(link_name=<string>)`".
-				if text, _ := attribute_string_text(k.c, attribute); text == "" {
+				// design.md "`@(link_name=<string>)`": no linker symbol holds a NUL.
+				text, _ := attribute_string_text(k.c, attribute)
+				if text == "" {
 					errorf(k.c, attribute.span, "L0608", "`@(link_name)` needs a symbol name, not an empty string")
+				} else if strings.index_byte(text, 0) >= 0 {
+					errorf(k.c, attribute.span, "L0608", "`@(link_name)` needs a symbol name, which holds no NUL character")
 				}
 			}
 		case .Deferred:
@@ -488,10 +490,17 @@ attribute_string_value :: proc(c: ^Compiler, attributes: []Attribute, name: stri
 	return attribute_string_text(c, attribute)
 }
 
+// An attribute's value, when that is a string literal.
+@(private = "file")
+attribute_string_literal :: proc(attribute: Attribute) -> (^Expr_Literal, bool) {
+	lit, ok := attribute.value.(^Expr_Literal)
+	return lit, ok && (lit.kind == .String || lit.kind == .Raw_String)
+}
+
 // An attribute's value, when that is a string literal, decoded.
 attribute_string_text :: proc(c: ^Compiler, attribute: Attribute) -> (string, bool) {
-	lit, ok := attribute.value.(^Expr_Literal)
-	if !ok || (lit.kind != .String && lit.kind != .Raw_String) {
+	lit, ok := attribute_string_literal(attribute)
+	if !ok {
 		return "", false
 	}
 	return decode_string_literal(c, lit.text, lit.kind == .Raw_String)

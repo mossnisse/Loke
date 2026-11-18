@@ -1,0 +1,24 @@
+L0647
+@13:2
+this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
+L0647
+@18:9
+this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
+L0647
+@24:6
+this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
+L0513
+@34:9
+this pointer is used after `inner`, the local it borrows, has ended
+L0526
+@40:9
+this pointer cannot be returned: `x` ends when this procedure returns
+L0526
+@47:9
+this pointer cannot be returned: `x` ends when this procedure returns
+L0646
+@52:2
+this pointer borrows `value`, which is not written `@(escape=stored)`, so it cannot reach `target`
+L0647
+@59:2
+this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage

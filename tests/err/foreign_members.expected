@@ -46,10 +46,14 @@ L0608
 `@(link_name)` needs a symbol name
 @35:11
 
+L0608
+`@(link_name)` needs a symbol name, which holds no NUL character
+@38:11
+
 L0618
 unknown calling convention `bogus`
-@38:3
+@41:3
 
 L0618
 unknown calling convention ``
-@47:3
+@50:3

@@ -9,6 +9,54 @@ checklist.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- An atomic retains a borrow it stores, and a value read back borrows what the atomic held
+  ([Retaining a borrow](docs/design.md#retaining-a-borrow)). `cell.store(.some(&local))` on a
+  `static` `sync.Atomic(Option(^int))` compiled, as did storing a pointer to a local in an
+  atomic that outlives it and returning `atomic.load()` of a pointer to a local: the operations
+  recorded nothing of what they stored, and a loaded pointer borrowed nothing. Each is now
+  `L0647`, `L0513`, or `L0526`, as for the same assignment to a plain variable. `store`,
+  `exchange`, and `compare_exchange` take the value they write `@(escape=stored)`, so a wrapper
+  that passes its own parameter on needs that too, or it is `L0646`. Upgrade by keeping what an
+  atomic pointer names alive for as long as the atomic, and by marking a forwarding parameter:
+
+  ```
+  publish :: proc(cell: ^sync.Atomic(^int), value: ^int) { cell.store(value); }                    // before
+  publish :: proc(cell: ^sync.Atomic(^int), @(escape=stored) value: ^int) { cell.store(value); }   // after
+  ```
+- Only an `Option` is a nullable C pointer at a foreign boundary
+  ([Foreign-ABI-safe types](docs/design.md#foreign-abi-safe-types)). A union declared with the
+  same shape, `Nullable :: union { none, some: ^int }`, was accepted in a foreign signature,
+  and with `@(align=16)` it was passed as a 16-byte aggregate, by address and through an `sret`
+  result, where the C side passes one pointer. It is now `L0619`, as every other tagged union
+  is. Upgrade by writing the `Option`:
+
+  ```
+  Nullable :: union { none, some: ^int }
+  accept :: proc "c" (value: Nullable) ---;       // before
+  accept :: proc "c" (value: Option(^int)) ---;   // after
+  ```
+
+### Fixed
+
+- A file-scope `when` waits for the names a capture literal's entries read in a procedure its
+  condition calls ([`when` statement](docs/design.md#when-statement)). With
+  `get := proc() -> int capture(n = LATER) { return n; };` in the called body and `LATER`
+  declared by a later `when`, the condition was checked early and reported `L0315` and `L0344`.
+- `@(link_name)` rejects a name holding a NUL character with `L0608`. `link_name="n\x00m"`
+  reached LLVM as `@"n\00m"`, which clang refuses.
+- A replacement `base:runtime` whose `Type_Info` or `Source_Code_Location` carries `@(align=N)`
+  or `@(packed)` is `L0704`. Its fields matched, so it was accepted, and the metadata constants
+  the compiler wrote had fewer members than the padded record's LLVM type.
+- `L0644` on a generic procedure's `@(escape=none)` parameter names the call that instantiated
+  it, as other errors in an instance do.
+- `L0537` says a drop or reset "may" end an allocator control block when the live handle was
+  read out of merged storage, such as an array of more than eight elements, as its
+  precision notes already said.
+- A `when` condition that waits on two names of a conditional expression reports the one
+  written first, the value before `if`.
+
 ## [0.10.0] - 2026-11-16
 
 ### Breaking changes

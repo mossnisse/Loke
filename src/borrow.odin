@@ -2137,21 +2137,7 @@ stored_carrier_at :: proc(c: ^Compiler, stored: Type_Id, below: []Proj_Step, typ
 // `paths_overlap` of `a` and `prefix` followed by `rest`.
 @(private = "file")
 paths_overlap_joined :: proc(a, prefix, rest: []Proj_Step) -> bool {
-	for step, index in a {
-		other: Proj_Step
-		switch {
-		case index < len(prefix):
-			other = prefix[index]
-		case index - len(prefix) < len(rest):
-			other = rest[index - len(prefix)]
-		case:
-			return true
-		}
-		if !steps_overlap(step, other) {
-			return false
-		}
-	}
-	return true
+	return paths_overlap(a, prefix) && paths_overlap(a[min(len(a), len(prefix)):], rest)
 }
 
 // What a slot's liveness was before a replayed event changed it.

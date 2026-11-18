@@ -440,6 +440,9 @@ unresolved_name :: proc(w: ^When_Walk, e: Expr) -> string {
 	case ^Type_Proc:
 		return unresolved_in_signature(w, v)
 	case ^Expr_Composite:
+		if v.capture != nil {
+			return unresolved_in_capture(w, v.capture)
+		}
 		if missing := unresolved_in(w, v.type_expr, v.via); missing != "" {
 			return missing
 		}
@@ -706,6 +709,23 @@ unresolved_in_own_scope :: proc(w: ^When_Walk, e: Expr) -> string {
 		}
 	}
 	return ""
+}
+
+// design.md "Capture literals": each entry's value is read where the literal is
+// written, and the body reads the captures by the names the clause gives them.
+@(private = "file")
+unresolved_in_capture :: proc(w: ^When_Walk, capture: ^Capture_Literal) -> string {
+	for entry in capture.entries {
+		if missing := unresolved_name(w, entry.value); missing != "" {
+			return missing
+		}
+	}
+	bound := len(w.bound)
+	defer resize(&w.bound, bound)
+	for entry in capture.entries {
+		append(&w.bound, entry.name.text)
+	}
+	return unresolved_name(w, capture.procedure)
 }
 
 @(private = "file")

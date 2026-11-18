@@ -273,6 +273,17 @@ union_niche_variant :: proc(c: ^Compiler, type: Type_Id) -> int {
 	return -1
 }
 
+// The payload an `Option` is stored as, when it is its payload alone, as
+// `Option(^T)` is one address; INVALID_TYPE for any other type.
+option_niche_payload :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
+	info := underlying_info(c, type)
+	some := union_niche_variant(c, type)
+	if some < 0 || info.instance_of != c.option_symbol {
+		return INVALID_TYPE
+	}
+	return info.variants[some]
+}
+
 // design.md "Types with no zero value": a non-null type, a reference or an
 // owning handle, whose first word is a non-null address.
 type_is_non_null :: proc(c: ^Compiler, type: Type_Id) -> bool {

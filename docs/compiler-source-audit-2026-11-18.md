@@ -2,24 +2,59 @@
 
 This audit covers the Odin production sources under `src/` at `af7fe93a`. The scope includes the nested subprocess package, `test_runner.odin`, and `test_procedures.odin`. The 15 `*_test.odin` files were excluded from the file-by-file review. Each production file is assigned to a separate reviewer, with up to three file reviews running concurrently. The review considers correctness, necessity, dead code, simpler implementations, choice of data structures and algorithms, duplicate logic, and ownership across compiler phases.
 
-## Findings to address first
+## Resolution
 
-1. **Borrow retention through atomics.** Pointer-valued stores record no retention for provenance, so a process-lifetime atomic can keep the address of a local. Teach provenance which atomic operands can be saved, including the desired value of compare-and-exchange. [Reproduction](known-gaps.md#atomic-stores-can-retain-a-borrow-beyond-its-lifetime), [file review](#srcatomicsodin)
-2. **Foreign nullable-union classification.** The checker accepts an over-aligned pointer-shaped union while the emitter passes it indirectly. Make foreign signature validation enforce the representation promised by the nullable-pointer exception. [Reproduction](known-gaps.md#foreign-exports-accept-an-over-aligned-nullable-union), [file review](#srcabiodin)
-3. **File-scope `when` dependencies.** A capture initializer can read a name supplied by a later conditional declaration, and the dependency walk checks the caller while the name is still missing. Walk the written initializer and signature/body in their respective scopes. [Reproduction](known-gaps.md#file-scope-when-misses-names-in-capture-initializers), [file review](#srcastodin)
-4. **NUL bytes in foreign symbol names.** Attribute validation accepts the decoded NUL and emits LLVM IR that Clang rejects. Diagnose the value where the source attribute appears. [Reproduction](known-gaps.md#a-nul-in-link_name-reaches-llvm), [file review](#srcattributesodin)
-5. **Replacement runtime metadata.** An explicitly aligned replacement `Type_Info` passes validation, though its LLVM type and initializer have different field counts. Enforce the storage shape at bootstrap or share it with constant lowering. [Bootstrap review](#srcbootstrapodin)
+The findings below were worked through after the audit. The file reviews keep
+their original text, so a line number or a "currently" in one describes
+`af7fe93a`.
 
-## Simplifications and data structures
+**Fixed.**
 
-- **Shrink** the three parallel arrays for variadic operands into one ordered slice carrying the operand and its spread flag. This removes order reconstruction from checking and LLVM lowering. [AST review](#srcastodin)
-- **Shrink** wide-integer membership checks to a single exact index. The fallback currently compares each out-of-`i64` value with every prior wide value. [Big integer review](#srcbigintodin)
-- **Shrink** the compile-time lifetime of alias-view clones in overload ranking and avoid allocating borrow-solver rows when there are zero cursor anchors. Measure both on compiler workloads before changing allocators or solver state. [Clone review](#srcast_cloneodin), [borrow solver review](#srcborrow_loaded_belowodin)
-- **Shrink** generic-implementation cloning to a typed entry point, replacing the unused general input and output types at the external entry. [Clone review](#srcast_cloneodin)
-- **Delete** the repeated constant evaluation in atomic order checking, reading the cached constant after the existing predicate succeeds. [Atomics review](#srcatomicsodin)
+- Atomics: `store`, `exchange` and `compare_exchange` retain the borrow they
+  write and a loaded value borrows what the atomic held, with an atomic that
+  can hold a borrow a retention destination through a read-only `^`
+  ([Retaining a borrow](design.md#retaining-a-borrow)). The audit's probe
+  covered the store into process-lifetime storage; a local atomic outliving
+  what it points at and a returned `load()` were the same hole. The redundant
+  `require_const` in ordering checks is gone.
+- Foreign ABI: only an `Option` is a nullable C pointer, as
+  [Foreign-ABI-safe types](design.md#foreign-abi-safe-types) says, which removes
+  the over-aligned union and answers the recursive one; a union still resolving
+  its variants defers as a struct does. `param_mode_is_pointer` moved beside
+  `param_mode_at`.
+- File-scope `when`: a capture literal's written initializers are children of
+  the shared expression walk, and the dependency walk reads its procedure with
+  the captures bound. `expr_children` visits a conditional's value before its
+  condition.
+- Attributes: a NUL in `link_name` is `L0608`, and the string-literal test is
+  one predicate.
+- Bootstrap: a metadata record with `@(align=N)` or `@(packed)` is `L0704`, and
+  the enum check reads `reflect.enum_field_names`.
+- Provenance driver: the instantiation note covers `check_declared_escape`, and
+  the summary worklist queues only bodies already stale.
+- Borrow report: the allocator control-block message merges the live slot's
+  precision before choosing "would" or "may".
+- Smaller ones: the typed `clone_impl` entry, direct writes in `ast_dump.odin`
+  and its foreign-block arm, one division in `decimal_to_float`, temporary
+  digits and an in-place sign in `bi_parse_int_literal`, one loop in
+  `run_loaded_below_event`, `set_join` in `record_summary_dependencies`, and
+  `paths_overlap_joined` over `paths_overlap`.
 
-No dependency removals have been identified in the reviews completed so far. The larger changes cross several file boundaries, so the net line reduction remains unmeasured.
+**Declined.**
 
+- `attributes_are_public` and `written_is_public` each scan a short list; the
+  split keeps the checker's conflict diagnostic apart from the syntax-only rule.
+- `walk_names` asks whether any name matches, so the order of its key pass
+  changes no answer.
+- `interned_rows_make` would trade one allocation per solve for more code.
+- A shared iterator for `prov_slots_overlap` and `view_elements_apart` would be
+  longer than the two loops it replaces.
+
+**Open.** The single ordered variadic operand list, alias-view lifetime, hashed
+wide-integer membership, and the solver's measurement-first hypotheses are in
+[open-questions.md](open-questions.md#compiler-source-audit-follow-ups-2026-11-18).
+Two divergences found while fixing the atomics are in
+[known-gaps.md](known-gaps.md#gaps).
 ## File-by-file reviews
 
 Reviewed 14 of 187 production files.

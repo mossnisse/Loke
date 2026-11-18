@@ -1421,6 +1421,11 @@ param_mode_at :: proc(info: ^Type_Info, index: int) -> Param_Mode {
 	return info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 }
 
+// design.md "Receiver forms": inout and borrowed receivers cross as pointers.
+param_mode_is_pointer :: proc(mode: Param_Mode) -> bool {
+	return mode == .Inout || mode == .Borrow
+}
+
 proc_parameter_mode :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Param_Mode {
 	return param_mode_at(underlying_info(c, proc_type), index)
 }

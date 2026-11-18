@@ -302,7 +302,8 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Ty
 		start = 1
 		if len(v.bound) > 0 && v.bound[0] != nil {
 			type := prov_type(graph, v.bound[0])
-			if sym.receiver == .Inout && type_carries_borrow(c, type).any || prov_type_reaches_destination(c, type) {
+			if sym.receiver == .Inout && type_carries_borrow(c, type).any || prov_receiver_is_synchronized(graph, v) ||
+			   prov_type_reaches_destination(c, type) {
 				append(&out, 0)
 			}
 		}
@@ -320,9 +321,19 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Ty
 	return out[:]
 }
 
+// design.md "Retaining a borrow": whether the call borrows as its receiver a
+// record an atomic operation may store a borrow in, as `cell.store(value)` does.
+@(private = "file")
+prov_receiver_is_synchronized :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> bool {
+	input := prov_input_call(graph, v)
+	return input.has_receiver && input.receiver == .Borrow && len(v.bound) > 0 && v.bound[0] != nil &&
+	       synchronized_field_within(graph.k.c, prov_type(graph, v.bound[0]), borrowing = true) != nil
+}
+
 // One argument receiving what another may leave in it, joined since the callee
-// may leave it alone. An `inout` argument is the place; a `^mut`/`[]mut` one
-// goes through its `carrier` loans.
+// may leave it alone. An `inout` argument is the place, as is a borrowed
+// receiver an atomic operation stores in when a root names it; a `^mut`/`[]mut`
+// one goes through its `carrier` loans.
 @(private = "file")
 prov_retain_into_argument :: proc(
 	graph: ^Flow_Graph,
@@ -339,7 +350,11 @@ prov_retain_into_argument :: proc(
 	if argument == nil && !packed {
 		return
 	}
-	if packed || !prov_argument_is_place(graph, v, index) {
+	place := !packed && prov_argument_is_place(graph, v, index)
+	if !packed && !place && index == 0 && prov_receiver_is_synchronized(graph, v) {
+		_, _, place = prov_place_of(graph, argument)
+	}
+	if !place {
 		prov_retain_through(graph, carrier, prov_parameter_type(graph, v, index), sources, v.span, retained, retained_mutable)
 		return
 	}

@@ -122,6 +122,25 @@ split or one traversal are apart whatever names reach them, and nothing is
 known, or assumed, about two splits or two traversals of the same storage,
 which the suspended source rules out.
 
+### An atomic retains what it stores
+
+An `Atomic(^T)` is the one place checked code writes a pointer through a
+read-only borrow, and [retention](design.md#retaining-a-borrow) once looked
+only where a write could land: an `inout` parameter or a mutable carrier. So an
+atomic operation recorded nothing of the pointer it stored, a `static` atomic
+kept the address of a local, and `load` returned a pointer that borrowed
+nothing. Requiring whatever an atomic stores to outlive the process would have
+closed that, but an atomic that lives in a frame and publishes pointers to
+that frame's data to the tasks of one `parallel` block is ordinary code.
+Instead the compiler follows a storing operation as the assignment it is and a
+load as a read, and an atomic that can hold a borrow is a destination through
+`^T` as a plain record is through `^mut T`. The operations still conflict with
+no other access: only what they keep is tracked.
+
+A `thread.Mutex(T)` is not covered. Its guard reaches the value through a
+`rawptr`, so a store through the guard is checked against the guard and not
+against the mutex it names ([Known gaps](known-gaps.md#gaps)).
+
 ### One temporary-lifetime rule
 
 How long a temporary lives once depended on what viewed it: a slice literal's

@@ -1,0 +1,81 @@
+package main;
+
+// design.md "Retaining a borrow": an atomic operation stores through a read-only
+// receiver, and what it stores the atomic retains, as an assignment would; what
+// it returns borrows what the atomic held.
+import "core:sync";
+
+cell: static sync.Atomic(Option(^int)) = {};
+kept: static int = 7;
+
+published :: proc() {
+	value := 42;
+	cell.store(.some(&value));
+}
+
+exchanged :: proc() -> Option(^int) {
+	value := 42;
+	return cell.exchange(.some(&value));
+}
+
+// It may not swap, but it may.
+raced :: proc() {
+	value := 42;
+	_ = cell.compare_exchange(.none, .some(&value));
+}
+
+outlived :: proc() -> int {
+	start := 0;
+	pointer: sync.Atomic(^int) = {value = &start};
+	{
+		inner := 5;
+		pointer.store(&inner);
+	}
+	return pointer.load()^;
+}
+
+loaded :: proc() -> ^int {
+	x := 1;
+	pointer: sync.Atomic(^int) = {value = &x};
+	return pointer.load();
+}
+
+observed :: proc() -> ^int {
+	x := 1;
+	pointer: sync.Atomic(^int) = {value = &x};
+	seen, _ := pointer.compare_exchange(&x, &kept);
+	return seen;
+}
+
+// A wrapper that passes its parameter on keeps it too.
+forwarded :: proc(target: ^sync.Atomic(Option(^int)), value: ^int) {
+	target.store(.some(value));
+}
+stored :: proc(target: ^sync.Atomic(Option(^int)), @(escape=stored) value: ^int) {
+	target.store(.some(value));
+}
+through_pointer :: proc() {
+	value := 42;
+	stored(&cell, &value);
+}
+
+// What outlives the atomic may be stored, read back, and stored again, and an
+// atomic that holds no borrow retains nothing.
+fine :: proc() -> int {
+	cell.store(.some(&kept));
+	local := 3;
+	pointer: sync.Atomic(^int) = {value = &kept};
+	pointer.store(&local);
+	view := &pointer;
+	view.store(&kept);
+	previous := pointer.exchange(&local);
+	count: sync.Atomic(int) = {};
+	count.store(local);
+	switch (cell.load()) {
+	case .some(p): return p^ + previous^ + view.load()^ + count.load();
+	case .none:
+	}
+	return 0;
+}
+
+main :: proc() {}

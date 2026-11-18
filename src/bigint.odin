@@ -107,7 +107,7 @@ bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int,
 		case 'x': radix, digits = 16, literal[2:]
 		}
 	}
-	digits, _ = strings.remove_all(digits, "_")
+	digits, _ = strings.remove_all(digits, "_", context.temp_allocator)
 	if digits == "" {
 		return bi_zero(c), false
 	}
@@ -120,7 +120,10 @@ bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int,
 	if err := big.int_atoi(&r, digits, i8(radix)); err != nil {
 		return bi_zero(c), false
 	}
-	return negative ? bi_neg(c, r) : r, true
+	if negative {
+		big.int_neg(&r, &r)
+	}
+	return r, true
 }
 
 bi_text :: proc(c: Value_Storage, v: Big_Int) -> string {
@@ -204,22 +207,38 @@ bi_and_not :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 bi_quo :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, bi_school_quo) }
 bi_rem :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, bi_school_rem) }
 
+// Both, from one division.
+bi_quo_rem :: proc(c: Value_Storage, a, b: Big_Int) -> (quotient, remainder: Big_Int) {
+	context.allocator = arena(c)
+	a, b := a, b
+	bi_school_div(&quotient, &remainder, &a, &b)
+	bi_settle(c, &quotient)
+	bi_settle(c, &remainder)
+	return
+}
+
+// Whichever of `quotient` and `remainder` is not nil.
+@(private = "file")
+bi_school_div :: proc(quotient, remainder, a, b: ^Big_Int) -> big.Error {
+	if !big.internal_lt_abs(a, b) {
+		return big._private_int_div_school(quotient, remainder, a, b)
+	}
+	if quotient != nil {
+		big.internal_zero(quotient) or_return
+	}
+	return remainder == nil ? nil : big.internal_copy(remainder, a)
+}
+
 @(private = "file")
 bi_school_quo :: proc(dest, a, b: ^Big_Int, allocator := context.allocator) -> big.Error {
 	context.allocator = allocator
-	if big.internal_lt_abs(a, b) {
-		return big.internal_zero(dest)
-	}
-	return big._private_int_div_school(dest, nil, a, b)
+	return bi_school_div(dest, nil, a, b)
 }
 
 @(private = "file")
 bi_school_rem :: proc(dest, a, b: ^Big_Int, allocator := context.allocator) -> big.Error {
 	context.allocator = allocator
-	if big.internal_lt_abs(a, b) {
-		return big.internal_copy(dest, a)
-	}
-	return big._private_int_div_school(nil, dest, a, b)
+	return bi_school_div(nil, dest, a, b)
 }
 
 bi_shl :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {

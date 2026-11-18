@@ -7,109 +7,53 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Foreign exports accept an over-aligned nullable union
-
-[Foreign-ABI-safe types](design.md#foreign-abi-safe-types) specifies that the
-nullable-pointer case uses the same C pointer representation as its payload.
-The foreign ABI check accepts an explicitly over-aligned user-defined union
-based on its null niche. LLVM lowering then uses an indirect argument and an
-`sret` result for the union.
-
-```loke
-package main;
-
-@(align=16) Nullable :: union { none, some: ^int }
-@(export) accept :: proc "c" (value: Nullable) -> Nullable { return value; }
-main :: proc () {}
-```
-
-Run `lokec <file> -emit-ll`. The compiler accepts `accept` and emits
-`define void @accept(ptr sret(...) align 16 ..., ptr ...)`. See the
-[ABI review](compiler-source-audit-2026-11-18.md#srcabiodin).
-
-### Atomic stores can retain a borrow beyond its lifetime
+### A lock's guard can retain a borrow beyond its lifetime
 
 [Retaining a borrow](design.md#retaining-a-borrow) requires a borrowed value to
-outlive storage that retains it. The compiler accepts a pointer to a local
-stored in a process-lifetime atomic cell.
+outlive storage that retains it, and a destination reached through a carrier
+uses every root that carrier may name. A `thread.Guard(T)` names its mutex, but
+a store through `get` is checked against the guard alone, so a process-lifetime
+`thread.Mutex(T)` keeps a pointer to a local.
 
 ```loke
 package main;
-import "core:sync";
+import "core:thread";
 
-cell: static sync.Atomic(Option(^int)) = {};
+cell: static thread.Mutex(Option(^int)) = {};
 publish :: proc() {
     value := 42;
-    cell.store(.some(&value));
+    guard := cell.lock();
+    guard.get() = .some(&value);
 }
 main :: proc() { publish(); }
 ```
 
-Run `lokec <file> -emit-ll`. The compiler emits IR. Changing the cell to a
-plain `Option(^int)` and using assignment produces `L0647`. See the
-[atomics review](compiler-source-audit-2026-11-18.md#srcatomicsodin).
+Run `lokec <file> -emit-ll`. The compiler emits IR. A guard of a local mutex
+that outlives the stored value is rejected with `L0513`, and the same store
+through `sync.Atomic(Option(^int)).store` is `L0647`. `Guard.get` reaches the
+value through a `rawptr`, which hides from its caller that the result is the
+mutex's storage; `thread.Monitor_Guard(T).get` does the same.
 
-### File-scope `when` misses names in capture initializers
+### A `stored` argument is checked against storage only a read-only carrier reaches
 
-[The `when` statement](design.md#when-statement) specifies that a file-scope
-condition waits for the declarations it reads, including through a procedure
-body. The dependency walk skips the written initializers of capture literals.
-
-```loke
-package main;
-
-choose :: proc() -> bool {
-    get := proc() -> int capture(n = LATER) { return n; };
-    return get() == 42;
-}
-when (choose()) { SELECTED :: true; }
-when (true) { LATER :: 42; }
-```
-
-Run `lokec <file> -doc`. The compiler reports `L0315` for `LATER` and
-`L0344` for the call to `choose`. See the
-[AST review](compiler-source-audit-2026-11-18.md#srcastodin).
-
-### A NUL in `link_name` reaches LLVM
-
-[`link_name`](design.md#link_namestring) specifies a linkable symbol name.
-The compiler accepts a decoded NUL and writes an identifier which LLVM rejects.
+[Retaining a borrow](design.md#retaining-a-borrow) lets a callee write a
+`stored` argument's borrows into any compatible mutable destination it
+receives. The call site also checks the argument against storage a destination
+reaches only through a read-only carrier, where the callee cannot write.
 
 ```loke
 package main;
-@(export, link_name="n\x00m") f :: proc "c" () {}
-```
 
-Run `lokec <file> -build-mode=obj -emit-ll`, then run `clang -c` on the
-generated IR. Loke emits `@"n\00m"`, which Clang rejects with
-“NUL character is not allowed in names.” See the
-[attributes review](compiler-source-audit-2026-11-18.md#srcattributesodin).
-
-### A merged allocator dependency is reported as certain
-
-[Minimum provenance precision](design.md#minimum-provenance-precision)
-requires the diagnostic to describe a dependency as possible when merged paths
-could account for the rejection. The allocator control-block diagnostic says
-“would” while its attached notes acknowledge that array elements merged.
-
-```loke
-package main;
-import "core:mem";
-
+Holder :: struct { view: ^int }
+kept: static int = 7;
+keep :: proc(destination: ^mut Holder, @(escape=stored) value: ^int) { destination.view = value; }
 main :: proc() {
-    safe := mem.Arena.init();
-    owner := mem.Arena.init();
-    values: [9]Allocator = {};
-    values[0] = safe.allocator();
-    values[8] = owner.allocator();
-    allocator := values[0];
-    drop(owner);
-    p := box(0, allocator);
-    p^ = 42;
+    local := 3;
+    holder := Holder{view = &kept};
+    keep(&mut holder, &local);
 }
 ```
 
-Run `lokec <file> -emit-ll`. `L0537` says dropping `owner` “would end an
-allocator control block whose handle is still in use.” The version with eight
-elements and a write at index seven compiles. See the
-[borrow diagnostic review](compiler-source-audit-2026-11-18.md#srcborrow_reportodin).
+Run `lokec <file> -emit-ll`. The compiler reports `L0647`: `local` does not
+outlive `kept`, though `keep` can store only into `holder`. The same call
+through an `inout` receiver compiles.

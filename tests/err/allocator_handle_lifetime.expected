@@ -19,3 +19,6 @@ dropping `owner` would end an allocator control block whose handle is still in u
 L0592
 @46:9
 this result is backed by `owner`, an allocator region that ends when this procedure returns
+L0537
+@58:2
+dropping `owner` may end an allocator control block whose handle is still in use

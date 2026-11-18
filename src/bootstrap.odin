@@ -4,7 +4,7 @@
 // declaration each rather than two that print the same.
 package lokec
 
-import "core:fmt"
+import "core:reflect"
 import "core:slice"
 
 
@@ -180,7 +180,7 @@ runtime_type_named :: proc(k: ^Checker, name: string, layout: []Runtime_Field) -
 	if !runtime_layout_matches(k, type, layout) {
 		errorf(
 			k.c, symbol_of(k.c, package_symbol_named(k.c, runtime, name)).span, "L0704",
-			"`runtime.%s` does not have the layout the compiler writes: the same fields, in the same order, with the same types, and enum members in design.md's order",
+			"`runtime.%s` does not have the layout the compiler writes: the same fields, in the same order, with the same types and no `@(align)` or `@(packed)`, and enum members in design.md's order",
 			name,
 		)
 		// A speculative check's diagnostic is rolled back, so only a real one
@@ -238,10 +238,11 @@ runtime_enum_matches :: proc(c: ^Compiler, type: Type_Id, $E: typeid) -> bool {
 	if info == nil || info.kind != .Enum || len(info.fields) != len(E) {
 		return false
 	}
+	names := reflect.enum_field_names(E)
 	for member, index in info.fields {
 		sym := symbol_of(c, member)
 		value, fits := bi_to_i64(c, sym.const_value.integer)
-		if sym.name != intern_identifier(c, fmt.tprint(E(index))) || !fits || value != i64(index) {
+		if identifier_text(c, sym.name) != names[index] || !fits || value != i64(index) {
 			return false
 		}
 	}
@@ -253,6 +254,11 @@ runtime_layout_matches :: proc(k: ^Checker, type: Type_Id, layout: []Runtime_Fie
 	c := k.c
 	info := type_of(c, type)
 	if info == nil || info.kind != .Struct || len(info.fields) != len(layout) {
+		return false
+	}
+	// The emitter writes one constant per field, into the storage those fields
+	// alone give the record.
+	if info.written_align != 0 || info.packed {
 		return false
 	}
 	for field, index in info.fields {

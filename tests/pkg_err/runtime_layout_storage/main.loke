@@ -1,0 +1,12 @@
+package main;
+
+// design.md "`type` and `typeid`": the compiler writes a metadata record one
+// constant per field, so a `base:runtime` that pads or packs one is reported
+// where it declares it, not given an initializer of another shape.
+
+import "base:runtime";
+
+main :: proc() {
+	info := type_info_of(typeid_of(int));
+	here := source_location();
+}

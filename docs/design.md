@@ -8322,6 +8322,22 @@ A destination is a place: it may be a global field, container element, or
 storage reached through a pointer. A destination reached through a carrier uses
 every root that carrier may name.
 
+An [atomic operation](#concurrency-and-the-memory-model) writes through a
+read-only borrow, so an `Atomic(T)` whose `T` can hold a borrow is a
+destination wherever it is reached: as a borrowed receiver or through a `^T` as
+through a `^mut T`. `store`, `exchange`, and `compare_exchange` retain the value
+they write as an assignment to the atomic would, and what `load`, `exchange`,
+and `compare_exchange` return borrows what the atomic held:
+
+```loke
+latest: static sync.Atomic(Option(^Config)) = {};
+
+publish :: proc() {
+	local := Config{};
+	latest.store(.some(&local));   // ERROR: `local` does not outlive `latest`
+}
+```
+
 Locals, temporaries, and literal backing arrays end with the frame. Static and
 materialized storage outlive every destination. `thread_local` storage satisfies
 only thread-duration retention. An allocation lives until released; unknown
@@ -9929,7 +9945,8 @@ fields are not implicitly atomic.
 
 [`Atomic(T)`](standard-library.md#coresync) holds an atomic object under the rules
 below. Its operations take a read-only receiver and do not conflict with each
-other, and its plain `value` field is [`@(synchronized)`](#synchronized).
+other, and its plain `value` field is [`@(synchronized)`](#synchronized). A
+borrow an operation stores is [retained](#retaining-a-borrow) in the atomic.
 
 Loke adopts the C++20 atomic ordering model, excluding dependency-ordered
 `consume`, as the normative model for atomics. The relevant rules are restated
@@ -11178,8 +11195,8 @@ declarations](compiler-architecture.md#intrinsic-declarations) has the rules.
 #### `@(link_name=<string>)`
 
 This attribute specifies the symbol name of a variable or procedure, which
-cannot be empty. It can occur on an exported declaration or on a declaration in
-a foreign block:
+cannot be empty or hold a NUL character. It can occur on an exported
+declaration or on a declaration in a foreign block:
 
 ```loke
 foreign libc {

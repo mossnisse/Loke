@@ -185,14 +185,8 @@ run_loaded_below_event :: proc(state: ^Prov_Solve, event: Prov_Event) {
 		below.held[event.slot] = intern_row(&below.rows, value)
 		bytes_or(below.used, value)
 	case .Publish, .Rearrange:
-		if event.kind == .Publish && len(event.sources) == 0 {
-			for slot in event.replaces {
-				end_loaded_below(state, slot)
-				below.held[slot] = 0
-			}
-			return
-		}
-		if event.kind == .Rearrange || store_may_relink(state, event.carried) {
+		// A publication of nothing stores no carrier, so it relinks nothing.
+		if event.kind == .Rearrange || len(event.sources) > 0 && store_may_relink(state, event.carried) {
 			mem.zero_slice(below.held)
 			return
 		}

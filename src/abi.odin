@@ -9,11 +9,6 @@ convention_is_foreign :: proc(convention: string) -> bool {
 	return convention == "c" || convention == "stdcall"
 }
 
-// design.md "Receiver forms": inout and borrowed receivers cross as pointers.
-param_mode_is_pointer :: proc(mode: Param_Mode) -> bool {
-	return mode == .Inout || mode == .Borrow
-}
-
 // design.md "Foreign-ABI-safe types": a pointer's pointee need not be ABI-safe.
 foreign_param_is_pointer :: proc(modes: []Param_Mode, by_ptr: []bool, index: int) -> bool {
 	mode := index < len(modes) ? modes[index] : Param_Mode.Value
@@ -146,6 +141,11 @@ abi_walk :: proc(
 	if top_level && info.kind == .Array {
 		return false, "a fixed array (write `[^]T` or `^T` at a C boundary)", ""
 	}
+	// Resolve fields and variants before asking for layout, lifecycle, or niche.
+	if record_resolving(c, info) {
+		walk.incomplete = true
+		return true, "", ""
+	}
 	// Every Type_Kind must define its boundary rule.
 	switch info.kind {
 	case .Int:
@@ -186,11 +186,6 @@ abi_walk :: proc(
 		defer walk.seen[under] = false
 		return abi_walk(c, info.element, false, walk)
 	case .Struct:
-		// Resolve fields before asking for layout or lifecycle.
-		if record_resolving(c, info) {
-			walk.incomplete = true
-			return true, "", ""
-		}
 		if abi_seen(walk, under) {
 			return true, "", ""
 		}
@@ -228,13 +223,13 @@ abi_walk :: proc(
 	case .Map:
 		return false, "a managed map", ""
 	case .Union:
-		// design.md "Foreign-ABI-safe types": a nullable C pointer.
-		if some := union_niche_variant(c, under); some >= 0 {
-			payload := info.variants[some]
-			#partial switch underlying_kind(c, payload) {
-			case .Pointer, .CString_View, .Proc:
-				return abi_walk(c, payload, false, walk)
-			}
+		// design.md "Foreign-ABI-safe types": an `Option` that is a nullable C
+		// pointer. A union a program declares in that shape may be aligned past
+		// its pointer, and is passed as the aggregate it is.
+		payload := option_niche_payload(c, under)
+		#partial switch underlying_kind(c, payload) {
+		case .Pointer, .CString_View, .Proc:
+			return abi_walk(c, payload, false, walk)
 		}
 		return false, "a tagged union", ""
 	case .Dyn:

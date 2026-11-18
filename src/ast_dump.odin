@@ -81,7 +81,7 @@ ARGUMENT_TAG := [Argument_Mode]string {
 @(private = "file")
 dump_indent :: proc(b: ^strings.Builder, depth: int) {
 	for _ in 0 ..< depth {
-		fmt.sbprint(b, "  ")
+		strings.write_string(b, "  ")
 	}
 }
 
@@ -151,7 +151,7 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 		dump_head(b, "(foreign", node.attributes, depth)
 		fmt.sbprintfln(b, " %q", node.library.text)
 		for member in node.members {
-			dump_item(b, member, depth + 1)
+			dump_decl(b, member, depth + 1)
 		}
 		dump_close(b, depth)
 
@@ -444,7 +444,7 @@ dump_or_else_exit :: proc(b: ^strings.Builder, exit: Stmt, depth: int) {
 
 @(private = "file")
 dump_child :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
-	fmt.sbprint(b, " ")
+	strings.write_byte(b, ' ')
 	dump_expr(b, expr, depth)
 }
 

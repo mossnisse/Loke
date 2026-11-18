@@ -57,3 +57,7 @@ L0645
 L0526
 @80:9
 a call through `proc([]int, []int) -> []int` may return a borrow of any argument
+L0644
+@85:50
+`scratch` is written `@(escape=none)`, but the result of `generic_none(int)` may borrow it
+while instantiating `generic_none(int)`

@@ -236,7 +236,16 @@ Call_Union_Construct :: struct { index: int, clone: bool }
 Call_Union_As :: struct { index: int }
 Call_Text_Conversion :: struct { op: Text_Conversion }
 // Orderings and the element type are settled during checking, not runtime args.
-Call_Atomic :: struct { type: Type_Id, order: Memory_Order, failure_order: Memory_Order }
+Call_Atomic :: struct {
+	type: Type_Id,
+	order: Memory_Order,
+	failure_order: Memory_Order,
+	// When `type` can hold a borrow: the place the address names, and for an
+	// operation that stores, the assignment to it that provenance follows
+	// (design.md "Retaining a borrow").
+	place: Expr,
+	store: ^Stmt_Assign,
+}
 Call_Sort_By :: struct { comparator: Symbol_Id }
 Call_Simd_Reduce :: struct { fold: Simd_Fold }
 // The witness the pointed-to type satisfies the interface with.
@@ -1535,7 +1544,8 @@ Expr_Visit :: proc(data: rawptr, child: Expr) -> bool
 // it answers true, and says whether it did. A literal's key that names a field
 // (`key_names_field`) is no expression. A form that binds names of its own, an
 // `Expr_Proc`, `Type_Record`, `Type_Enum` or `Type_Interface`, has no children
-// here, as each walker decides what its body means for its question.
+// here, as each walker decides what its body means for its question; so with a
+// capture literal's procedure, whose captured values are children.
 expr_children :: proc(e: Expr, data: rawptr, visit: Expr_Visit) -> bool {
 	switch v in e {
 	case ^Expr_Error, ^Expr_Literal, ^Expr_Ident, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Propagated_Error,
@@ -1592,12 +1602,20 @@ expr_children :: proc(e: Expr, data: rawptr, visit: Expr_Visit) -> bool {
 	case ^Expr_Or_Else:
 		return visit(data, v.value) || visit(data, v.fallback) || visit(data, or_else_exit_value(v))
 	case ^Expr_Cond:
-		return visit(data, v.cond) || visit(data, v.then) || visit(data, v.otherwise)
+		return visit(data, v.then) || visit(data, v.cond) || visit(data, v.otherwise)
 	case ^Expr_Move:
 		return visit(data, v.value)
 	case ^Expr_Composite:
 		if visit(data, v.type_expr) || visit(data, v.via) {
 			return true
+		}
+		// A capture literal's elements are its entries' values once it is checked.
+		if v.capture != nil && v.elements == nil {
+			for entry in v.capture.entries {
+				if visit(data, entry.value) {
+					return true
+				}
+			}
 		}
 		for element in v.elements {
 			if !key_names_field(v, element.key) && visit(data, element.key) {

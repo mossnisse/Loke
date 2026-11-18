@@ -34,6 +34,9 @@ foreign libc {
 
 @(export, link_name="") exported_nameless :: proc "c" () { }
 
+// Nor does a name hold a NUL, which no object format or LLVM identifier does.
+@(export, link_name="n\x00m") exported_nul :: proc "c" () { }
+
 // A bad default is one mistake, at the attribute, whatever inherits it.
 @(default_calling_convention="bogus")
 foreign libc {

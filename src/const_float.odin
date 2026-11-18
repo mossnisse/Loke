@@ -376,8 +376,7 @@ decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: 
 		// float's 24, and a sticky bit below them for the remainder.
 		scale := max(28 + bi_magnitude_bits(power) - bi_magnitude_bits(significand), 0)
 		scaled := bi_shl(c, significand, scale)
-		quotient := bi_quo(c, scaled, power)
-		remainder := bi_rem(c, scaled, power)
+		quotient, remainder := bi_quo_rem(c, scaled, power)
 		sticky := bi_from_i64(c, bi_is_zero(remainder) ? 0 : 1)
 		doubled := bi_shl(c, quotient, 1)
 		marked := bi_or(c, doubled, sticky)

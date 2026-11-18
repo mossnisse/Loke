@@ -80,7 +80,7 @@ impl Atomic($T) {
 	}
 
 	store :: proc(
-		self: ^, value: T,
+		self: ^, @(escape=stored) value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) {
 		atomic_store(&self.value, value, order);
@@ -88,7 +88,7 @@ impl Atomic($T) {
 
 	/// The previous value.
 	exchange :: proc(
-		self: ^, value: T,
+		self: ^, @(escape=stored) value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> T {
 		return atomic_exchange(&self.value, value, order);
@@ -102,7 +102,7 @@ impl Atomic($T) {
 	// Both orderings stay constants across this boundary, which is what the two
 	// `$` parameters are for.
 	compare_exchange :: proc(
-		self: ^, expected: T, desired: T,
+		self: ^, expected: T, @(escape=stored) desired: T,
 		$success: Memory_Order = Memory_Order.Sequentially_Consistent,
 		$failure: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> (observed: T, swapped: bool) {

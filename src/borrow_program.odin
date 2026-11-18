@@ -23,15 +23,17 @@ analyze_program_provenance :: proc(k: ^Checker) {
 	// `report` sorts diagnostics by position.
 	for body in k.c.checked_bodies {
 		if body.clean {
+			first := len(k.c.diagnostics)
 			analyze_provenance(k, body.literal)
 			check_declared_escape(k, body.literal)
+			note_instance_sites(k, body.literal, first)
 		}
 	}
 }
 
-// A caller may precede its callee, so every body is queued again; one is revisited
-// only if a summary it read grew since its last visit (`clock` stamps `grew_at`
-// and `visited_at`).
+// A caller may precede its callee, so a body is queued again, and revisited, only
+// if a summary it read grew since its last visit (`clock` stamps `grew_at` and
+// `visited_at`).
 @(private = "file")
 settle_result_summaries :: proc(k: ^Checker) {
 	clock := 0
@@ -75,8 +77,10 @@ settle_result_summaries :: proc(k: ^Checker) {
 	}
 	for body, index in k.c.checked_bodies {
 		if body.clean {
-			worklist_wake(&queue, index)
 			register(k.c, &callers, registered, body.literal, index)
+			if stale(k.c, grew_at, visited_at, body.literal) {
+				worklist_wake(&queue, index)
+			}
 		}
 	}
 	for index in worklist_pop(&queue) {
@@ -185,8 +189,6 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 // One concrete body's root and region diagnostics.
 analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	defer free_all(k.c.analysis_allocator)
-	first := len(k.c.diagnostics)
-	defer note_instance_sites(k, literal, first)
 	graph := build_flow_graph(k, literal, .Prov_Diagnose)
 	if graph == nil {
 		return
@@ -194,10 +196,10 @@ analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	solve_provenance(k, graph)
 }
 
-// An error in a generic instance's body names the call that selected it, as
-// the checker's do, which run before this pass: the body may be a library's,
-// and the call the caller's.
-@(private)
+// An error in a generic instance's body, or about its declared escape, names the
+// call that selected it, as the checker's do, which run before this pass: the
+// body may be a library's, and the call the caller's.
+@(private = "file")
 note_instance_sites :: proc(k: ^Checker, literal: ^Expr_Proc, first: int) {
 	instance := k.c.procedure_instances[literal.symbol]
 	if instance == nil || instance.selected_at.file == NO_FILE {

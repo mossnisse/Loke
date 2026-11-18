@@ -46,6 +46,16 @@ inner :: proc() -> int { return LATE_BODY; }
 when (outer() == 1) { BY_BODY :: 1; } else { BY_BODY :: 2; }
 when (true) { LATE_BODY :: 1; }
 
+// A capture literal in a reached body: each entry's value is read where the
+// literal is written, and its body reads the capture, whatever a branch declares
+// under that name.
+captures :: proc() -> int {
+	get := proc() -> int capture(late = LATE_CAPTURE) { return late; };
+	return get();
+}
+when (captures() == 4) { BY_CAPTURE :: 1; late :: 9; } else { BY_CAPTURE :: 2; }
+when (true) { LATE_CAPTURE :: 4; }
+
 // What a declaration binds for itself is not waited on, though a branch declares
 // the same name: not a parameter, a generic parameter, a local or a field key.
 own_names :: proc(a: int) -> int {
@@ -67,5 +77,5 @@ when (own_names(1) == 2 && size_of(Own_Names(i8)) == 1 && POINT.e == 2) {
 
 main :: proc() {
 	fmt.println(BY_CONSTANT, BY_CHAIN, BY_RECORD, BY_GENERIC, BY_ENUM, BY_VARIABLE);
-	fmt.println(BY_LITERAL, BY_SIGNATURE, BY_BODY, BY_OWN_NAMES);
+	fmt.println(BY_LITERAL, BY_SIGNATURE, BY_BODY, BY_OWN_NAMES, BY_CAPTURE);
 }

@@ -1,0 +1,6 @@
+L0704
+@16:1
+`runtime.Type_Info` does not have the layout the compiler writes
+L0704
+@28:1
+`runtime.Source_Code_Location` does not have the layout the compiler writes

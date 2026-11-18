@@ -79,3 +79,8 @@ plain_local :: proc(f: proc(a, b: []int) -> []int, input: []int) -> []int {
 	local := [1]int{7};
 	return f(input, local[:]);
 }
+
+// A generic body's declared escape is checked per instance, and the report names
+// the call that selected it.
+generic_none :: proc(input: []$T, @(escape=none) scratch: []T) -> []T { return scratch; }
+call_generic_none :: proc(a, b: []int) -> []int { return generic_none(a, b); }

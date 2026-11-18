@@ -32,6 +32,39 @@ prov_read_out :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string)
 	return out
 }
 
+// design.md "Retaining a borrow": an atomic returns the value its place held,
+// not a borrow of the address, and what it stores the place retains, as the
+// plain read and assignment the checker wrote for it (`Call_Atomic`). A
+// compare-exchange may leave the place as it was, so it holds either value after.
+@(private = "file")
+prov_atomic :: proc(graph: ^Flow_Graph, v: ^Expr_Call, kind: Builtin_Kind) -> []int {
+	atomic, _ := v.operation.(Call_Atomic)
+	if atomic.place == nil {
+		// No borrow fits the place, or the call failed to check.
+		walk_flow_each(graph, v.bound)
+		return nil
+	}
+	held := prov_project_content(graph, walk_flow_expr(graph, atomic.place), atomic.type, nil, atomic.type, v.span)
+	if atomic.store != nil {
+		for operand in v.bound[1:len(v.bound) - 1] {
+			walk_flow_expr(graph, operand)
+		}
+		stored := walk_flow_expr(graph, atomic.store.rhs[0])
+		if kind == .Atomic_Compare_Exchange {
+			stored = prov_join(graph, stored, held)
+		}
+		prov_assign(graph, atomic.store, {stored})
+	}
+	#partial switch kind {
+	case .Atomic_Store:
+		return nil
+	case .Atomic_Compare_Exchange:
+		// `.some(observed)`: one step below the `Option`.
+		return prov_boxed_content(graph, v, held, atomic.type, false)
+	}
+	return held
+}
+
 // The calls with provenance rules of their own: a shared constructor and the
 // builtins. `handled` is false for every other call.
 @(private)
@@ -130,10 +163,7 @@ prov_builtin_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (result: []int, 
 			return nil, true
 		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
-			// An atomic returns the stored value, not a borrow of its address, or an
-			// `Atomic(^T)` could never load.
-			walk_flow_each(graph, v.bound)
-			return nil, true
+			return prov_atomic(graph, v, sym.builtin), true
 		case .Unsafe_Take:
 			// design.md "The `unsafe` package": the value is read out, and keeps
 			// what it borrows.

@@ -46,4 +46,18 @@ escaped :: proc() -> Allocator {
 	return owner.allocator();
 }
 
+// design.md "Minimum provenance precision": a handle read out of an array of
+// more than eight may be any of them, so the dependency is only possible.
+merged :: proc() {
+	safe := mem.Arena.init();
+	owner := mem.Arena.init();
+	values: [9]Allocator = {};
+	values[0] = safe.allocator();
+	values[8] = owner.allocator();
+	allocator := values[0];
+	drop(owner);
+	p := box(0, allocator);
+	p^ = 42;
+}
+
 main :: proc() {}

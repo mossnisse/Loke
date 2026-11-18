@@ -168,6 +168,11 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 		if path.mutable && (owners || type_carries_borrow(c, info.element).any) {
 			return true
 		}
+		// design.md "Retaining a borrow": an atomic operation stores a borrow
+		// through a read-only carrier too.
+		if !owners && synchronized_field_within(c, info.element, borrowing = true) != nil {
+			return true
+		}
 		if type_reaches_destination(c, info.element, visited, owners) {
 			return true
 		}

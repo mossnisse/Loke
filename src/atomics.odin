@@ -24,7 +24,11 @@ atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
 	case .Pointer, .C_Pointer, .Raw_Pointer:
 		return int(c.target.pointer_bits)
 	case .Union:
-		return atomic_option_of_pointer(c, type) ? int(c.target.pointer_bits) : 0
+		// design.md "Concurrency and the memory model": a one-word `Option` of a
+		// pointer, whose `.none` is the null address.
+		if underlying_kind(c, option_niche_payload(c, type)) == .Pointer {
+			return int(c.target.pointer_bits)
+		}
 	case .Int, .Enum:
 		bits := type_bits(c, type)
 		switch bits {
@@ -33,15 +37,6 @@ atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
 		}
 	}
 	return 0
-}
-
-// design.md "Concurrency and the memory model": a one-word `Option` of a
-// pointer, whose `.none` is the null address.
-@(private = "file")
-atomic_option_of_pointer :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	some := union_niche_variant(c, type)
-	return underlying_info(c, type).instance_of == c.option_symbol &&
-	       some >= 0 && underlying_kind(c, union_variant_payload(c, type, some)) == .Pointer
 }
 
 // Read-modify-write arithmetic is integers only; an enum has no arithmetic.
@@ -117,6 +112,9 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	if !ok {
 		return
 	}
+	if operands > 0 && type_carries_borrow(k.c, element).any {
+		operation.place, operation.store = atomic_place(k, v, bound)
+	}
 
 	v.bound = bound
 	v.operation = operation
@@ -169,6 +167,29 @@ check_atomic_place :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind:
 	return info.element
 }
 
+// design.md "Retaining a borrow": an atomic that stores a borrow leaves it in
+// the place its address names, and one that loads reads what that place holds,
+// so each is also written as the plain assignment and read provenance follows.
+// The value stored is the last operand: a compare-exchange's `desired`.
+@(private = "file")
+atomic_place :: proc(k: ^Checker, v: ^Expr_Call, bound: []Expr) -> (place: Expr, store: ^Stmt_Assign) {
+	address := bound[0]
+	pointer := underlying_info(k.c, expr_base(address).type)
+	// `&place` is the place itself, with no pointer in between.
+	if borrow, written := address.(^Expr_Unary); written && borrow.op == .Amp {
+		place = borrow.operand
+	} else {
+		place = implicit_pointer_deref(k, address, pointer.element, pointer.mutable)
+	}
+	if len(bound) > 1 {
+		store = new(Stmt_Assign, k.c.semantic_allocator)
+		store.span, store.op, store.op_span = v.span, .Assign, v.span
+		store.lhs = bound_exprs(k, place)
+		store.rhs = bound_exprs(k, bound[len(bound) - 1])
+	}
+	return
+}
+
 // One ordering argument: a constant `Memory_Order` this operation permits. Only
 // `base:runtime` and `core:sync` reach an intrinsic, so a non-constant here is a
 // stdlib author's mistake.
@@ -190,10 +211,7 @@ check_atomic_order :: proc(
 		)
 		return .Relaxed, false
 	}
-	folded, evaluated := require_const(k, argument, "an atomic ordering", "L0666")
-	if !evaluated {
-		return .Relaxed, false
-	}
+	folded := expr_base(argument).const_value
 	raw, fits := i64(0), false
 	if folded.kind == .Integer {
 		raw, fits = bi_to_i64(k.c, folded.integer)

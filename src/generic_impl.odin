@@ -344,7 +344,7 @@ declare_generic_impl_block :: proc(k: ^Checker, instance: ^Instance, block: ^Gen
 		}
 	}
 
-	clone := clone_item(k.c, block.item).(^Item_Impl)
+	clone := clone_impl(k.c, block.item)
 	clone.subject = instance.type
 	clone.declared = true
 	k.impl_type = instance.type

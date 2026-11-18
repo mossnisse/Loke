@@ -1,0 +1,67 @@
+// A replaced runtime whose metadata records have the compiler's fields but not
+// their storage: `Type_Info` is over-aligned, which pads it past its last field,
+// and `Source_Code_Location` is packed. The bootstrap declarations are stubs.
+@(public)
+package runtime;
+
+@(public)
+Type_Kind :: enum u8 {
+	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
+	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
+	Struct, Enum, Union, Proc, String, String_View, CString_View,
+	Typeid, Dyn, Distinct, Simd, Allocator, Allocator_Error, Box,
+}
+
+@(public, align=16)
+Type_Info :: struct {
+	id:      typeid,
+	kind:    Type_Kind,
+	name:    string_view,
+	size:    int,
+	align:   int,
+	element: typeid,
+	key:     typeid,
+	count:   int,
+}
+
+@(public, packed)
+Source_Code_Location :: struct {
+	file:      string_view,
+	procedure: string_view,
+	line:      int,
+	column:    int,
+}
+
+@(public)
+Unit :: struct {}
+
+@(public, zero=none, failure=none)
+Option :: union($T: type) { none:, some: T }
+
+@(public, failure=err)
+Result :: union($T, $E: type) { ok: T, err: E }
+
+@(public, failure=err)
+Status :: union($E: type) { ok, err: E }
+
+@(public)
+Shared :: struct($T: type) { @(private) block: rawptr }
+
+@(public)
+Weak :: struct($T: type) { @(private) block: rawptr }
+
+@(public)
+Uninit :: struct($T: type) { @(private) value: T }
+
+@(private)
+shared_stub :: proc(value: $T) -> Shared(T) { return Shared(T){nil}; }
+
+@(public)
+shared :: proc{shared_stub};
+
+@(public)
+try_shared :: proc{shared_stub};
+
+// design.md "`@(intrinsic)`": what the compiler supplies to any `base:runtime`.
+@(intrinsic) Allocator :: ---;
+@(intrinsic) Allocator_Error :: ---;

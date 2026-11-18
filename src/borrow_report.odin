@@ -563,8 +563,12 @@ check_region_reset :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_U
 		if graph.prov_slots[slot].returned && region_is_local_only(root.region) {
 			continue
 		}
-		errorf(state.k.c, event.span, "L0537", "%s %s end an allocator control block whose handle is still in use", event.ends != "" ? event.ends : "this cleanup", would)
+		// The handle may be live only through what its own slot merged.
 		state.diagnostic_precision |= state.precision[slot]
+		if state.diagnostic_precision != {} {
+			would = "may"
+		}
+		errorf(state.k.c, event.span, "L0537", "%s %s end an allocator control block whose handle is still in use", event.ends != "" ? event.ends : "this cleanup", would)
 		add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
 		add_use_note(state, uses[slot])
 		return
@@ -813,18 +817,21 @@ check_retention :: proc(state: ^Prov_Solve, event: Prov_Event) {
 	// Written through a carrier (`p^.view`): the destinations are its loans' roots,
 	// live or not.
 	if len(event.into) > 0 {
+		// A destination a symbol names is reported before what it already holds.
 		seen := make(map[Root_Id]bool, context.temp_allocator)
-		it := slots_loans(state, event.into)
-		for slot, index in next_live_loan(&it) {
-			target := graph.loans[index].root
-			if seen[target] {
-				continue
-			}
-			seen[target] = true
-			destination := graph.roots[int(target)]
-			into := retain_kind_for_root(destination.kind)
-			if into != .None && report_retention(state, event, into, target, destination, state.precision[slot]) {
-				return
+		for named in ([2]bool{true, false}) {
+			it := slots_loans(state, event.into)
+			for slot, index in next_live_loan(&it) {
+				target := graph.loans[index].root
+				destination := graph.roots[int(target)]
+				if seen[target] || (destination.symbol != INVALID_SYMBOL) != named {
+					continue
+				}
+				seen[target] = true
+				into := retain_kind_for_root(destination.kind)
+				if into != .None && report_retention(state, event, into, target, destination, state.precision[slot]) {
+					return
+				}
 			}
 		}
 		return
@@ -912,10 +919,11 @@ report_retention :: proc(
 // The destination place, or the callee parameter that may keep the borrow.
 @(private = "file")
 retain_destination :: proc(event: Prov_Event, destination: Prov_Root) -> string {
-	if destination.symbol == INVALID_SYMBOL || destination.name == "" {
-		return event.verb
+	if destination.symbol != INVALID_SYMBOL && destination.name != "" {
+		return fmt.tprintf("`%s`", destination.name)
 	}
-	return fmt.tprintf("`%s`", destination.name)
+	// A root no symbol names describes itself, as what a global already holds.
+	return event.verb != "" ? event.verb : destination.name
 }
 
 @(private = "file")

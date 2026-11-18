@@ -222,21 +222,19 @@ diagnostic, needs a decision, or reaches further than such a cleanup should.
   every previous value outside `i64`. Keep keys exact and measure generated
   switches and backed enum lookups before changing the representation.
   [Integer review](compiler-source-audit-2026-11-18.md#srcbigintodin)
-- **Decide which nullable unions can cross the foreign boundary.** Validation
-  accepts completed pointer-shaped user unions but rejects a recursive
-  null-niche callback while its variants are still resolving. Define the
-  supported shape before extending incomplete-type deferral.
-  [ABI review](compiler-source-audit-2026-11-18.md#srcabiodin)
-- **Validate the replacement runtime's metadata storage during bootstrap.**
-  An explicitly aligned replacement `Type_Info` can pass the field validator
-  and produce a constant with fewer fields than its LLVM type. Check which
-  layouts the bootstrap contract should admit, and make lowering use that
-  representation. [Bootstrap review](compiler-source-audit-2026-11-18.md#srcbootstrapodin)
+- **Measure the borrow solver's allocation and rescanning hypotheses.** The
+  audit lists changes it could not justify without a workload: skipping the
+  loaded-below rows of a body with no cursor anchor, caching `at_once_reaches`
+  per source, a visited row in `with_held_content`, marking a reaching row
+  dirty only when a join adds a bit, one backing allocation per block table,
+  enumerating set bits in `merge_escape_event`, per-body scratch in
+  `stored_thread_facts`, and collecting an event's released loans once for
+  `mark_released` and `end_loans`. Run `perf.ps1` on borrow-heavy bodies before
+  and after each. [Solver reviews](compiler-source-audit-2026-11-18.md#srcborrowodin)
 
-The [source audit](compiler-source-audit-2026-11-18.md#file-by-file-reviews)
-records the remaining local cleanups and per-file evidence. Reproduced
-specification divergences are in [Known gaps](known-gaps.md#gaps).
-
+The [source audit](compiler-source-audit-2026-11-18.md#resolution) records
+which of its findings were fixed and which were declined. The divergences it
+led to that remain are in [Known gaps](known-gaps.md#gaps).
 ## Literal elements that lend a temporary to a call
 
 A `[dynamic]T` or map literal hands each element to the container as soon as

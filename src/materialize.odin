@@ -112,25 +112,26 @@ materialization_of :: proc(c: ^Compiler, e: Expr) -> ^Materialized {
 
 // A `@(synchronized)` field that a value of `type` holds inline, such as an
 // `Atomic`'s `value`: what synchronizing operations write through a read-only
-// `^`.
-@(private = "file")
-synchronized_field_within :: proc(c: ^Compiler, type: Type_Id) -> ^Symbol {
+// `^`. With `borrowing`, only one an atomic operation can store a borrow in: a
+// pointer, or an `Option` of one. A lock's value of any other type is written
+// only through its guard.
+synchronized_field_within :: proc(c: ^Compiler, type: Type_Id, borrowing := false) -> ^Symbol {
 	seen := make(Type_Walk, context.temp_allocator)
-	return synchronized_field_walk(c, type, &seen)
+	return synchronized_field_walk(c, type, &seen, borrowing)
 }
 
 @(private = "file")
-synchronized_field_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk) -> ^Symbol {
+synchronized_field_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk, borrowing: bool) -> ^Symbol {
 	info := type_of(c, type)
 	if type == INVALID_TYPE || info == nil || !type_walk_enter(seen, type, info) {
 		return nil
 	}
 	#partial switch info.kind {
 	case .Distinct, .Array:
-		return synchronized_field_walk(c, info.element, seen)
+		return synchronized_field_walk(c, info.element, seen, borrowing)
 	case .Union:
 		for variant in info.variants {
-			if found := synchronized_field_walk(c, variant, seen); found != nil {
+			if found := synchronized_field_walk(c, variant, seen, borrowing); found != nil {
 				return found
 			}
 		}
@@ -140,10 +141,10 @@ synchronized_field_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk) -
 			if sym == nil {
 				continue
 			}
-			if sym.synchronized {
+			if sym.synchronized && (!borrowing || atomic_width_bits(c, sym.type) != 0 && type_carries_borrow(c, sym.type).any) {
 				return sym
 			}
-			if found := synchronized_field_walk(c, sym.type, seen); found != nil {
+			if found := synchronized_field_walk(c, sym.type, seen, borrowing); found != nil {
 				return found
 			}
 		}
