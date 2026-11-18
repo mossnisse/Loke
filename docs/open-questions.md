@@ -208,6 +208,35 @@ diagnostic, needs a decision, or reaches further than such a cleanup should.
   what a reached name means, and where a value position stops the walk, would
   remove the parallel traversal.
 
+## Compiler source audit follow-ups (2026-11-18)
+
+- **Use one ordered representation for checked variadic arguments.** Carry the
+  spread flag with each expression so the checker, provenance and LLVM lowering
+  consume the same sequence. Preserve forwarding of a single slice and the
+  existing evaluation order. [AST review](compiler-source-audit-2026-11-18.md#srcastodin)
+- **Shorten the lifetime of overload-ranking alias views.** Alias expansion used
+  to compare candidates allocates transient ASTs in the compilation's semantic
+  arena. Measure an alias-heavy workload before assigning those views to a
+  shorter-lived allocator. [Clone review](compiler-source-audit-2026-11-18.md#srcast_cloneodin)
+- **Use exact hashed membership for wide integers.** Duplicate checking scans
+  every previous value outside `i64`. Keep keys exact and measure generated
+  switches and backed enum lookups before changing the representation.
+  [Integer review](compiler-source-audit-2026-11-18.md#srcbigintodin)
+- **Decide which nullable unions can cross the foreign boundary.** Validation
+  accepts completed pointer-shaped user unions but rejects a recursive
+  null-niche callback while its variants are still resolving. Define the
+  supported shape before extending incomplete-type deferral.
+  [ABI review](compiler-source-audit-2026-11-18.md#srcabiodin)
+- **Validate the replacement runtime's metadata storage during bootstrap.**
+  An explicitly aligned replacement `Type_Info` can pass the field validator
+  and produce a constant with fewer fields than its LLVM type. Check which
+  layouts the bootstrap contract should admit, and make lowering use that
+  representation. [Bootstrap review](compiler-source-audit-2026-11-18.md#srcbootstrapodin)
+
+The [source audit](compiler-source-audit-2026-11-18.md#file-by-file-reviews)
+records the remaining local cleanups and per-file evidence. Reproduced
+specification divergences are in [Known gaps](known-gaps.md#gaps).
+
 ## Literal elements that lend a temporary to a call
 
 A `[dynamic]T` or map literal hands each element to the container as soon as
