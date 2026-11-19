@@ -235,6 +235,55 @@ diagnostic, needs a decision, or reaches further than such a cleanup should.
 The [source audit](compiler-source-audit-2026-11-18.md#resolution) records
 which of its findings were fixed and which were declined. The divergences it
 led to that remain are in [Known gaps](known-gaps.md#gaps).
+
+## Compiler source audit continuation
+
+The [per-file reviews](source-reviews/README.md#review-reports) hold the
+evidence for the continuation at `ea622efe`; the
+[resolution](source-reviews/README.md#resolution) says what was fixed. These
+points remain:
+
+- **Settle the public contracts for two built-ins.** `unsafe.raw_data`
+  accepts `string_view` and `cstring_view` beyond the documented operand list.
+  The compiler and a test support `panic()`, while the built-in table requires
+  a message. [Built-in checker](source-reviews/check_builtin.md#findings)
+- **Type-valued conditionals in postfix position.** `(i32 if true else i64)(7)`
+  reports `L0320` and `(A if true else B).member` reports `L0363`, while
+  binding the conditional to a name first works. Decide whether every constant
+  `type` expression denotes a type before a call or selector.
+  [Expression checker review](source-reviews/check_expr.md#open-question)
+- **Checked pointer to C pointer of another element type.** `([^]u64)(p)` for
+  `p: ^u8` converts without `core:unsafe`, while [C pointers](design.md#c-pointers)
+  describes that direction with matching element types.
+  [Conversions review](source-reviews/conversions.md#simplification-and-boundaries)
+- **Doc comments on a local type's fields.** Decide whether "wherever the type
+  is written" in [Doc comments](design.md#doc-comments) covers a type declared
+  in a procedure body. Its fields warn with `L0260` today, and hover agrees.
+  [Doc comment review](source-reviews/doc_comments.md#findings)
+- **Derived orderings.** A type that declares only `<` gets no `>`, `<=`, or
+  `>=`: `Reverse(1) > Reverse(2)` uses `int`'s built-in `>` for
+  `Reverse :: distinct int`, and on a struct it is `L0355`. Decide whether the
+  other orderings follow from `<`, as sorting already does.
+- **Exact unfixed decimals.** Folding them exactly needs rationals for `/`, a
+  second representation through every consumer of `.float`, and a limit for
+  literals such as `1e-99999999999`. The spec does not yet say how precise
+  unfixed float arithmetic is. [Known gap](known-gaps.md#unfixed-decimal-literals-round-before-constant-folding)
+- **Unreproduced hypotheses.** A drop hook that panics while an assignment
+  drops its destination's old value may not count as a panic after a move made
+  earlier in that statement. A cycle through two generic records, the inner one
+  reached while the outer resolves, may leave the inner instance cached as
+  successful. A literal whose type is known only after checking, such as an
+  untyped argument, still counts return-name uses by the syntactic key rule.
+- **Measure first.** Batching later-read queries per block in `cfg.odin`,
+  ranges per binding for callback arguments, stopping carrier-shape sibling
+  walks after overflow, keyed precision for slices reached through a carrier,
+  a worklist for the private-declaration closure in `doc.odin`, opt-in
+  provenance profiling counters, and grouping disposable compiler state for
+  checkpoints. [Control-flow review](source-reviews/cfg.md#findings) ·
+  [Compiler state review](source-reviews/compiler.md#findings)
+- **Unifying the LLVM naming and emission walks** around one procedure
+  eligibility decision. [LLVM emitter review](source-reviews/emit_llvm.md#simplification-and-compiler-boundaries)
+
 ## Literal elements that lend a temporary to a call
 
 A `[dynamic]T` or map literal hands each element to the container as soon as
