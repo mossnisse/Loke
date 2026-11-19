@@ -145,7 +145,7 @@ hulls :: proc() {
 		foreach (p in points[:]) { ints.append(i2(i32(p.x*1000.0), i32(p.y*1000.0))); }
 		if (!hull_agrees(ints[:])) { wrong += 1; }
 		floats := make([dynamic]F2);
-		foreach (p in points[:]) { floats.append(F2.from_vector(p)); }
+		foreach (p in points[:]) { floats.append(F2(p)); }
 		if (!hull_agrees(floats[:])) { wrong += 1; }
 	}
 	check("convex hulls agree with the brute-force hull", wrong == 0);

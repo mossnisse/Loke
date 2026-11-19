@@ -440,8 +440,12 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	finish_chosen_call(k, v, cand)
 }
 
+// design.md "Conversion hooks", "Lifecycle hooks and resource types": a hook is
+// reached only through the operation it implements, never by its declaration
+// name, whichever call spelling chose it; a generic hook's instance by its
+// template's role.
 reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -> bool {
-	sym := symbol_of(k.c, symbol_id)
+	sym := declaration_of_choice(k, symbol_id)
 	if sym == nil || sym.hook == .None {
 		return false
 	}
@@ -471,7 +475,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id) {
 		members = current.members
 	}
 	cand, resolved := resolve_overload(k, v.span, description, members, args)
-	if !resolved {
+	if !resolved || reject_direct_hook_call(k, v.span, cand.symbol) {
 		return
 	}
 	if len(members) > 1 {
@@ -705,22 +709,24 @@ report_argument_count :: proc(k: ^Checker, span: Span, expected, found: int, at_
 // default, appending the slot to `order`, since defaults run after what is
 // written (design.md "Evaluation order"). `written_ok` is false when a written
 // argument failed, which already explains an empty slot. A missing argument is
-// reported by its parameter's name, or by the count a variadic call needs.
+// reported by its parameter's name, or by the count a variadic call needs when
+// too few arguments, rather than a spread, left it out.
 @(private = "file")
 fill_defaults :: proc(
 	k: ^Checker, v: ^Expr_Call, declared: ^Symbol, bound: []Expr, from: int, written_ok: bool, order: ^[dynamic]int,
 	written: int, variadic := false,
-) -> (defaulted, ok: bool) {
+) -> bool {
+	counted := variadic && written < len(bound) - from
 	for index in from ..< len(bound) {
 		if bound[index] != nil {
 			continue
 		}
 		if !written_ok {
-			return defaulted, false
+			return false
 		}
 		if declared == nil || index >= len(declared.param_defaults) || declared.param_defaults[index] == nil {
 			parameter: ^Symbol
-			if !variadic && declared != nil && index < len(declared.param_symbols) {
+			if !counted && declared != nil && index < len(declared.param_symbols) {
 				parameter = symbol_of(k.c, declared.param_symbols[index])
 			}
 			if parameter != nil {
@@ -728,13 +734,12 @@ fill_defaults :: proc(
 			} else {
 				report_argument_count(k, v.span, len(bound) - from, written, at_least = variadic)
 			}
-			return defaulted, false
+			return false
 		}
 		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
 		append(order, index)
-		defaulted = true
 	}
-	return defaulted, true
+	return true
 }
 
 // The binder for a call with no candidates: a single named procedure or a
@@ -757,7 +762,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	ok := true
 	named := false
 	// design.md "Evaluation order": arguments run in written order, then defaults.
-	order := make([dynamic]int, 0, count, k.c.semantic_allocator)
+	order := make([dynamic]int, 0, count, context.temp_allocator)
 
 	for arg, index in v.args {
 		if arg.mode == .Spread {
@@ -789,18 +794,25 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 		ok = ok && passed
 	}
 
-	if _, filled := fill_defaults(k, v, declared, bound, 0, ok, &order, len(v.args)); !filled {
+	if !fill_defaults(k, v, declared, bound, 0, ok, &order, len(v.args)) {
 		return false
 	}
 
 	v.bound = bound
-	if named {
-		v.bound_order = order[:]
-	}
+	keep_evaluation_order(k.c, v, order[:])
 	if ok {
 		require_argument_ownership(k, v, declaration, info)
 	}
 	return ok
+}
+
+// design.md "Evaluation order": the slots in the order a call evaluates them,
+// built in temporary storage and kept only where that is not slot order.
+@(private = "file")
+keep_evaluation_order :: proc(c: ^Compiler, v: ^Expr_Call, order: []int) {
+	if !slice.is_sorted(order) {
+		v.bound_order = slice.clone(order, c.semantic_allocator)
+	}
 }
 
 // design.md "`@(c_vararg)`": the fixed parameters bind normally, and each later
@@ -896,7 +908,7 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 	}
 	bound, ok := bind_candidate_slots(k, cand, sym, v.span)
 	// design.md "Evaluation order": written arguments first, then defaults.
-	order := make([dynamic]int, 0, len(bound), k.c.semantic_allocator)
+	order := make([dynamic]int, 0, len(bound), context.temp_allocator)
 	append(&order, ..cand.slots)
 	for slot in 0 ..< len(bound) {
 		if !cand.filled[slot] {
@@ -904,9 +916,7 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate) -> bool {
 		}
 	}
 	v.bound = bound
-	if !slice.is_sorted(order[:]) {
-		v.bound_order = order[:]
-	}
+	keep_evaluation_order(k.c, v, order[:])
 	if ok {
 		require_argument_ownership(k, v, cand.symbol)
 	}
@@ -933,8 +943,8 @@ bind_candidate_slots :: proc(k: ^Checker, cand: Candidate, sym: ^Symbol, span: S
 }
 
 // design.md "Arguments typed after inference": each waiting argument is checked
-// against the chosen candidate's parameter, its `$` names now substituted (the
-// element type, for a variadic pack).
+// against the chosen candidate's parameter, its `$` names now substituted (for a
+// variadic pack, what an element is checked against: `pack_element_context`).
 @(private = "file")
 type_waiting_arguments :: proc(k: ^Checker, v: ^Expr_Call, sym: ^Symbol, cand: Candidate) -> bool {
 	info := type_of(k.c, sym.proc_type)
@@ -947,7 +957,7 @@ type_waiting_arguments :: proc(k: ^Checker, v: ^Expr_Call, sym: ^Symbol, cand: C
 		slot := cand.slots[index]
 		target := sym.params[slot]
 		if slot == pack {
-			target = slice_element(k.c, target)
+			target = pack_element_context(k.c, slice_element(k.c, target))
 		}
 		if check_single_expr(k, arg.expr, target) != INVALID_TYPE {
 			continue
@@ -965,9 +975,10 @@ type_waiting_arguments :: proc(k: ^Checker, v: ^Expr_Call, sym: ^Symbol, cand: C
 	return ok
 }
 
+// What the binder reads while binding; the call keeps only the expressions.
 @(private = "file")
 written_arguments :: proc(c: ^Compiler, args: []Arg_Info) -> []Argument {
-	out := make([]Argument, len(args), c.semantic_allocator)
+	out := make([]Argument, len(args), context.temp_allocator)
 	for arg, index in args {
 		name := Name{}
 		if arg.name != INVALID_IDENTIFIER {
@@ -1198,7 +1209,7 @@ bind_variadic_arguments :: proc(
 	// design.md "Evaluation order": kept only when written and slot order
 	// disagree, because a name reorders the fixed parameters or an omitted
 	// default must wait for the pack.
-	slot_order := make([dynamic]int, 0, pack + 1, k.c.semantic_allocator)
+	slot_order := make([dynamic]int, 0, pack + 1, context.temp_allocator)
 	first := 0
 	if receiver != nil {
 		bound[0] = receiver
@@ -1242,13 +1253,10 @@ bind_variadic_arguments :: proc(
 		return false
 	}
 	append(&slot_order, pack)
-	defaulted, filled := fill_defaults(k, v, declared, bound[:pack], first, ok, &slot_order, len(args), variadic = true)
-	if !filled {
+	if !fill_defaults(k, v, declared, bound[:pack], first, ok, &slot_order, len(args), variadic = true) {
 		return false
 	}
-	if named > 0 || defaulted {
-		v.bound_order = slot_order[:]
-	}
+	keep_evaluation_order(k.c, v, slot_order[:])
 
 	rest := args[fixed + named:]
 	if len(rest) == 1 && rest[0].mode == .Spread {

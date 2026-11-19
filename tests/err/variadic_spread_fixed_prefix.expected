@@ -1,0 +1,15 @@
+L0322
+@14:6
+missing an argument for `start`
+L0392
+@15:6
+`need` does not apply: it takes 2 arguments, found 1
+L0392
+@16:6
+`need_generic` does not apply: it needs more arguments than were supplied
+L0371
+@17:20
+a variadic argument cannot be named
+L0392
+@18:6
+`sum` does not apply: a variadic argument cannot be named

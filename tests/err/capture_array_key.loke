@@ -1,0 +1,13 @@
+// design.md "Capture literals": in the body a captured name is the capture,
+// also as a bare array index before `=`, so it is read as a value, which an
+// index must not be, as it is in a range.
+package main;
+
+main :: proc() {
+	f := proc() -> int capture(slot = 1) {
+		bare := [2]int{slot = 10};
+		ranged := [2]int{slot ..= 1 = 10};
+		return bare[0] + ranged[0];
+	};
+	_ = f();
+}

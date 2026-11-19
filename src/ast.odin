@@ -166,6 +166,10 @@ Argument :: struct {
 	name:  Name,
 	mode:  Argument_Mode,
 	value: Expr,
+	// design.md "Capture literals": a bare name a capture literal's body read
+	// as the capture of that name, as written, for a built-in operand that
+	// takes a name rather than a value (`name_operand`).
+	written: ^Expr_Ident,
 	// A spread whose operand the union argument expansion check already
 	// checked and found no union; binding reuses its type.
 	checked: bool,
@@ -705,6 +709,12 @@ composite_element_slots :: proc(v: ^Expr_Composite, index: int) -> (lo, hi: int)
 		return v.field_indices[index], v.slot_ends[index]
 	}
 	return index, index + 1
+}
+
+// design.md "Returned constructions": an array element written with an index or
+// a range, which may fill several slots, is no operand of its literal.
+composite_element_designated :: proc(v: ^Expr_Composite, index: int) -> bool {
+	return index < len(v.slot_ends) && v.elements[index].key != nil
 }
 
 hook_name :: proc(kind: Hook_Kind) -> string {

@@ -455,6 +455,19 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 }
 
+// An operand that is a name rather than a value, as written, or nil. In a
+// capture literal's body the name may also be a capture, which the argument
+// read as its place; the written name takes that place back (design.md
+// "Capture literals").
+@(private = "file")
+name_operand :: proc(arg: ^Argument) -> ^Expr_Ident {
+	if arg.written != nil {
+		arg.value = arg.written
+	}
+	name, _ := arg.value.(^Expr_Ident)
+	return name
+}
+
 // `build_config(NAME, default)`: the name is a token, and the default fixes the
 // result's type and what an override may say.
 @(private = "file")
@@ -466,8 +479,8 @@ check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 	if !builtin_arguments_ok(k, v) {
 		return
 	}
-	name, is_ident := v.args[0].value.(^Expr_Ident)
-	if !is_ident {
+	name := name_operand(&v.args[0])
+	if name == nil {
 		errorf(k.c, expr_span(v.args[0].value), "L0388", "`build_config` needs a name")
 		return
 	}
@@ -568,8 +581,8 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		result = type_align(k.c, operand, expr_span(v.args[0].value))
 	case .Offset_Of:
 		// A member name, not a value: resolving it would find a same-named variable.
-		name, is_ident := v.args[1].value.(^Expr_Ident)
-		if !is_ident {
+		name := name_operand(&v.args[1])
+		if name == nil {
 			errorf(k.c, expr_span(v.args[1].value), "L0386", "`offset_of` needs a field name")
 			return
 		}

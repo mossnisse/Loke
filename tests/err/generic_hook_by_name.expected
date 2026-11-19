@@ -1,0 +1,6 @@
+L0412
+@25:6
+`from` implements `hook(convert)` and is not directly accessible
+L0412
+@26:6
+`conv` implements `hook(convert)` and is not directly accessible

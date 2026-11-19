@@ -1,7 +1,10 @@
 package main;
 
 // design.md "Fixed arrays": a designated element names a constant index or
-// index range inside the array, once, after the positional elements.
+// index range inside the array, once, after the positional elements. A range
+// copies its value, which a move-only one cannot be.
+@(move_only) Ticket :: struct { id: int }
+
 main :: proc() {
 	n := 1;
 	after := [3]int{1 = 2, 3};
@@ -10,10 +13,14 @@ main :: proc() {
 	runtime := [3]int{n = 1};
 	empty := [3]int{2..<2 = 1};
 	lanes := Simd(int, 4){1 = 2};
+	moved := [2]Ticket{0..<2 = Ticket{n}};
+	folded := [2]Ticket{0..=1 = Ticket{1}};
 	_ = after;
 	_ = twice;
 	_ = outside;
 	_ = runtime;
 	_ = empty;
 	_ = lanes;
+	_ = moved;
+	_ = folded;
 }

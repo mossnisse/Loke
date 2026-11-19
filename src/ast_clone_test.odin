@@ -86,7 +86,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 
 		// The parts cloned by their own helpers.
 		{Attribute, "span path value", ""},
-		{Argument, "span name mode value", "checked"},
+		{Argument, "span name mode value written", "checked"},
 		{Element, "span key value", ""},
 		{Capture_Literal, "procedure entries clause_span", "record method"},
 		{Capture_Entry, "span mode name value", ""},

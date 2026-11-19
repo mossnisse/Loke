@@ -1,0 +1,9 @@
+// An array literal the checker rejects has no type, as a rejected struct
+// literal has none, so a `when` condition reading it reports the literal's error
+// once and selects no branch.
+package main;
+
+when ([1]int{0 = 1, 0 = 2}[0] == 2) { MISSING :: unknown; }
+K :: [2]int{3 = 1}[0];
+
+main :: proc() {}

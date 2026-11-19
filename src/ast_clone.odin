@@ -113,12 +113,22 @@ clone_attributes :: proc(c: ^Cloner, list: []Attribute) -> []Attribute {
 @(private = "file")
 clone_arguments :: proc(c: ^Cloner, list: []Argument) -> []Argument {
 	out := clone_slice(c, list)
+	plain := without_capture(c)
 	for entry, index in list {
+		value := clone_expr_with(c, entry.value)
+		// A bare name the rewrite read as a capture is kept as written too.
+		written := entry.written
+		if name, is_name := entry.value.(^Expr_Ident); is_name {
+			if _, kept := value.(^Expr_Ident); !kept {
+				written = name
+			}
+		}
 		out[index] = Argument {
-			span  = entry.span,
-			name  = entry.name,
-			mode  = entry.mode,
-			value = clone_expr_with(c, entry.value),
+			span    = entry.span,
+			name    = entry.name,
+			mode    = entry.mode,
+			value   = value,
+			written = written != nil ? clone_expr_with(&plain, written).(^Expr_Ident) : nil,
 		}
 	}
 	return out

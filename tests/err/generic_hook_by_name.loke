@@ -1,0 +1,27 @@
+// design.md "Conversion hooks": a hook is reached only as `T(value)`, never by
+// its declaration name, also when the call chooses among candidates: a generic
+// hook, or crossed generic blocks' hooks of one name, which stand as a group.
+package main;
+
+Box :: struct($T: type) { value: T }
+impl Box($T) {
+	from :: hook(convert) proc(v: Box($U)) -> Box(T) where U != T {
+		return Box(T){T(v.value)};
+	}
+}
+
+G :: struct($T: type, $U: type) { v: int }
+impl G(int, $U) {
+	conv :: hook(convert) proc(x: int) -> G(int, U) { return G(int, U){x}; }
+}
+impl G($T, int) {
+	conv :: hook(convert) proc(x: string) -> G(T, int) { return G(T, int){99}; }
+}
+
+main :: proc() {
+	// The conversion spellings are allowed.
+	assert(Box(i32)(Box(i64){7}).value == 7);
+	assert(G(int, int)(3).v == 3);
+	_ = Box(i32).from(Box(i64){7});
+	_ = G(int, int).conv(3);
+}

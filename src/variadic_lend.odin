@@ -13,6 +13,13 @@ variadic_lent_pointee :: proc(c: ^Compiler, element: Type_Id) -> (Type_Id, bool)
 	return info.element, true
 }
 
+// The type a pack element that takes its type from the call is checked against:
+// a `..^T` pack's `T`, which it lends, or the element itself.
+pack_element_context :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+	pointee, lends := variadic_lent_pointee(c, element)
+	return lends ? pointee : element
+}
+
 // Whether a value of type `from` written into a `..^T` pack is lent as a `^T`: one
 // of type `T`, or an unfixed constant that fixes at it. A value already a `^T` is
 // passed as it is. `nil` is the null address, not an unfixed constant (design.md

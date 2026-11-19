@@ -5,6 +5,8 @@ package main; import "core:fmt"; import "core:slice"; import "base:interfaces";
 
 Config :: struct { limit: int, label: string }
 
+Pair :: struct { first: i32, second: i64 }
+
 Sorter :: struct { config: Config, sorts: int }
 
 impl Sorter {
@@ -161,6 +163,14 @@ main :: proc() {
 		return counts["k"];
 	};
 	fmt.println(counted());
+
+	// A built-in operand that is a name, not a value, keeps its name where a
+	// capture has it too (design.md "Built-in procedures").
+	second, SIZE := 3, 4;
+	names := proc() -> int capture(second, SIZE) {
+		return second + offset_of(Pair, second) + SIZE * build_config(SIZE, 10);
+	};
+	fmt.println(names());
 
 	// A literal in a body of one written the same way has a record of its own.
 	nested := proc() -> int capture(seven) {

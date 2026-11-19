@@ -22,9 +22,9 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 			return
 		}
 		length := len(v.elements)
-		if composite_is_designated(v) {
-			// The keys set the length, so a key is held to what could be built.
-			needed, resolved := resolve_array_slots(k, v, i64(MAX_CONST_ELEMENTS))
+		if first_key(v) >= 0 {
+			// The keys set the length, which layout then bounds as any other's.
+			needed, resolved := resolve_array_slots(k, v)
 			if !resolved {
 				return
 			}
@@ -113,9 +113,8 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 check_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, type: Type_Id) -> bool {
 	value := v.elements[index].value
 	// design.md "Returned constructions": an element of a returned literal is
-	// returned with it. A capture's entries state their own modes, and a
-	// designated array element may fill several slots.
-	returned := v.returned && v.capture == nil && v.slot_ends == nil
+	// returned with it. A capture's entries state their own modes.
+	returned := v.returned && v.capture == nil && !composite_element_designated(v, index)
 	if returned {
 		mark_returned(value)
 	}
@@ -168,8 +167,12 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 		v.type = INVALID_TYPE
 		return
 	}
-	// Positional elements fill the named fields; padding stays zero.
-	positional := named_fields(k.c, info)
+	// Positional elements fill the named fields; padding stays zero. Only a
+	// literal that starts with one has any.
+	positional: []Symbol_Id
+	if len(v.elements) > 0 && v.elements[0].key == nil {
+		positional = named_fields(k.c, info)
+	}
 	seen := make([]bool, len(info.fields), context.temp_allocator)
 	v.field_indices = make([]int, len(v.elements), k.c.semantic_allocator)
 	for &slot in v.field_indices { slot = -1 }
@@ -304,25 +307,20 @@ reject_keyed_element :: proc(k: ^Checker, element: Element, target: Type_Id) {
 @(private = "file")
 check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
 	count := int(info.count)
-	designated := composite_is_designated(v)
-	// design.md "SIMD vectors": one element per lane, positionally.
-	if designated && info.kind == .Simd {
-		for element in v.elements {
-			if element.key != nil {
-				reject_keyed_element(k, element, target)
-				break
-			}
+	// A `[?]T` literal's keys were resolved to find its length.
+	if key := first_key(v); key >= 0 && v.slot_ends == nil {
+		// design.md "SIMD vectors": one element per lane, positionally.
+		if info.kind == .Simd {
+			reject_keyed_element(k, v.elements[key], target)
+			v.type = INVALID_TYPE
+			return
 		}
-		v.type = INVALID_TYPE
-		return
-	}
-	if designated && v.slot_ends == nil {
-		// Built at run time if need be, so only the length limits a key.
-		if _, resolved := resolve_array_slots(k, v, max(i64) - 1); !resolved {
+		if _, resolved := resolve_array_slots(k, v); !resolved {
 			v.type = INVALID_TYPE
 			return
 		}
 	}
+	designated := v.slot_ends != nil
 	// Written slots, kept for a designated literal: only keys can repeat a slot.
 	written := make([dynamic]Written_Slots, 0, designated ? len(v.elements) : 0, context.temp_allocator)
 	filled := 0
@@ -341,6 +339,17 @@ check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 			ok = false
 			continue
 		}
+		// design.md "Fixed arrays": a range sets each of its slots to a copy of
+		// one value, which a type that cannot be copied has none of.
+		if hi - lo > 1 && type_clone_disabled(k.c, info.element) {
+			errorf(
+				k.c, expr_span(element.key), "L0503",
+				"`%s` is move-only, so one value cannot fill the %d elements of this range",
+				type_name(k.c, info.element), hi - lo,
+			)
+			ok = false
+			continue
+		}
 		if designated {
 			append(&written, Written_Slots{lo, hi, index})
 		}
@@ -349,7 +358,9 @@ check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 			ok = false
 		}
 	}
+	// A rejected literal has no type, as a struct's has none.
 	if report_repeated_slots(k, v, target, written[:]) || !ok {
+		v.type = INVALID_TYPE
 		return
 	}
 	if filled < count && !require_type_has_zero(k, info.element, v.span, "omitted array elements") {
@@ -386,20 +397,22 @@ report_repeated_slots :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, 
 	return reported
 }
 
-composite_is_designated :: proc(v: ^Expr_Composite) -> bool {
-	for element in v.elements {
+// The index of a literal's first keyed element, or -1 when it is positional.
+@(private = "file")
+first_key :: proc(v: ^Expr_Composite) -> int {
+	for element, index in v.elements {
 		if element.key != nil {
-			return true
+			return index
 		}
 	}
-	return false
+	return -1
 }
 
 // design.md "Fixed arrays": positional elements first, then elements keyed by
 // a constant index or index range. Records each element's slots and returns
 // the length they need.
 @(private = "file")
-resolve_array_slots :: proc(k: ^Checker, v: ^Expr_Composite, limit: i64) -> (int, bool) {
+resolve_array_slots :: proc(k: ^Checker, v: ^Expr_Composite) -> (int, bool) {
 	v.field_indices = make([]int, len(v.elements), k.c.semantic_allocator)
 	v.slot_ends = make([]int, len(v.elements), k.c.semantic_allocator)
 	needed := 0
@@ -416,7 +429,8 @@ resolve_array_slots :: proc(k: ^Checker, v: ^Expr_Composite, limit: i64) -> (int
 		} else {
 			keyed = true
 			resolved: bool
-			lo, hi, resolved = array_key_slots(k, element.key, limit)
+			lower_captured_key(k, v, index)
+			lo, hi, resolved = array_key_slots(k, v.elements[index].key)
 			if !resolved {
 				ok = false
 				continue
@@ -430,8 +444,12 @@ resolve_array_slots :: proc(k: ^Checker, v: ^Expr_Composite, limit: i64) -> (int
 
 // A designated key: a constant integer or rune index, or a constant range of
 // them, `lo ..= hi` or `lo ..< hi`. The range is matching syntax, not a value.
+// Only an array's length, an `int`, limits a key: a literal too large to fold is
+// built at run time, and layout bounds the type.
 @(private = "file")
-array_key_slots :: proc(k: ^Checker, key: Expr, limit: i64) -> (lo, hi: int, ok: bool) {
+array_key_slots :: proc(k: ^Checker, key: Expr) -> (lo, hi: int, ok: bool) {
+	LAST :: i64(max(int)) - 1
+	// `limit` is the last slot, or the length for an exclusive end.
 	bound :: proc(k: ^Checker, e: Expr, limit: i64) -> (int, bool) {
 		if !check_integer_index(k, e) {
 			return 0, false
@@ -450,7 +468,7 @@ array_key_slots :: proc(k: ^Checker, key: Expr, limit: i64) -> (lo, hi: int, ok:
 	}
 	range, is_range := key.(^Expr_Range)
 	if !is_range {
-		index := bound(k, key, limit) or_return
+		index := bound(k, key, LAST) or_return
 		return index, index + 1, true
 	}
 	range.type = TYPE_INT
@@ -458,8 +476,8 @@ array_key_slots :: proc(k: ^Checker, key: Expr, limit: i64) -> (lo, hi: int, ok:
 		errorf(k.c, range.op_span, "L0372", "an index range is written `lo ..= hi` or `lo ..< hi`")
 		return 0, 0, false
 	}
-	first := bound(k, range.lo, limit) or_return
-	last := bound(k, range.hi, limit) or_return
+	first := bound(k, range.lo, LAST) or_return
+	last := bound(k, range.hi, range.op == .Range_Incl ? LAST : LAST + 1) or_return
 	end := range.op == .Range_Incl ? last + 1 : last
 	if end <= first {
 		errorf(k.c, range.op_span, "L0372", "this index range is empty")
@@ -487,6 +505,17 @@ check_dynamic_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, 
 	}
 }
 
+// design.md "Capture literals": a bare name before `=`, which the body's rewrite
+// took for a field name, is a capture where it is a map key or an array index.
+@(private = "file")
+lower_captured_key :: proc(k: ^Checker, v: ^Expr_Composite, index: int) {
+	if name, is_name := v.elements[index].key.(^Expr_Ident); is_name {
+		if place := capture_place_of(k, name); place != nil {
+			v.elements[index].key = place
+		}
+	}
+}
+
 // `{key = value, ...}` (design.md "Maps"); allocates like a dynamic array's.
 @(private = "file")
 check_map_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
@@ -501,13 +530,7 @@ check_map_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info
 			)
 			continue
 		}
-		// design.md "Capture literals": a capture's bare name before `=`, which
-		// the body's rewrite took for a field name, is the capture here.
-		if name, is_name := element.key.(^Expr_Ident); is_name {
-			if place := capture_place_of(k, name); place != nil {
-				v.elements[index].key = place
-			}
-		}
+		lower_captured_key(k, v, index)
 		if check_value_expr(k, v.elements[index].key, info.key, "use as a key") {
 			check_composite_element(k, v, index, info.element)
 		}
@@ -518,14 +541,14 @@ check_map_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info
 // for the rest. `fields` is a struct's, and nil for an array.
 @(private = "file")
 fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, fields: []Symbol_Id) {
-	// Too large to build: the literal is constructed at run time instead.
-	if const_element_count(k.c, target) > MAX_CONST_ELEMENTS {
-		return
-	}
 	for element in v.elements {
 		if !is_const_expr(element.value) {
 			return
 		}
+	}
+	// Too large to build: the literal is constructed at run time instead.
+	if const_element_count(k.c, target) > MAX_CONST_ELEMENTS {
+		return
 	}
 	info := underlying_info(k.c, target)
 	elements := make([]Const_Value, fields == nil ? int(info.count) : len(fields), k.c.semantic_allocator)

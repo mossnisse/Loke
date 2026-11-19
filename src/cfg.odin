@@ -573,10 +573,13 @@ note_bound_operands :: proc(graph: ^Flow_Graph, value: Expr, decl: ^Decl, assign
 collect_operand_sites :: proc(graph: ^Flow_Graph, e: Expr) {
 	#partial switch v in e {
 	case ^Expr_Composite:
-		if v.capture != nil || v.slot_ends != nil {
+		if v.capture != nil {
 			return
 		}
 		for &element, index in v.elements {
+			if composite_element_designated(v, index) {
+				continue
+			}
 			note_operand_site(graph, &element.value, index < len(v.element_clones) ? &v.element_clones[index] : nil)
 		}
 	case ^Expr_Cond:

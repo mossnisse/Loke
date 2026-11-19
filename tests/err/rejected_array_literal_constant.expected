@@ -1,0 +1,7 @@
+L0376
+@6:21
+element 0 of `[1]int` is set twice
+L0361
+@7:13
+index 3 is out of range for `[2]int`
+!unknown name

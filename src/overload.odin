@@ -101,7 +101,11 @@ collect_call_arguments :: proc(
 ) -> ([]Arg_Info, bool) {
 	out := make([]Arg_Info, len(args), context.temp_allocator)
 	ok := true
+	// The first spread ends the fixed parameters, so what follows it is the pack's.
+	spread := false
 	for arg, index in args {
+		position := spread ? max(int) : index + offset
+		spread ||= arg.mode == .Spread
 		info := Arg_Info {
 			expr = arg.value,
 			span = arg.span,
@@ -121,11 +125,11 @@ collect_call_arguments :: proc(
 						context_candidates = group.members
 					}
 				}
-				expected = common_argument_type(k, context_candidates, info.name, index + offset)
+				expected = common_argument_type(k, context_candidates, info.name, position)
 				// design.md "Arguments typed after inference": typed once a
 				// candidate is chosen, against its parameter.
 				if expected == INVALID_TYPE && arg.mode == .Value && argument_can_wait(arg.value) &&
-				   argument_waits(k, context_candidates, info.name, index + offset) {
+				   argument_waits(k, context_candidates, info.name, position) {
 					info.waiting = true
 					out[index] = info
 					continue
@@ -209,11 +213,12 @@ common_argument_type :: proc(k: ^Checker, candidates: []Symbol_Id, name: Identif
 		}
 		slot := name != INVALID_IDENTIFIER ? parameter_slot_named(k.c, sym, name) : position
 		if slot < 0 { continue }
-		// A written variadic element wants `T`, not the pack's `[]T`.
+		// A written variadic element wants `T`, not the pack's `[]T`, and a
+		// `..^T` element the `T` it lends.
 		pack := variadic_parameter_index(underlying_info(k.c, sym.proc_type))
 		if pack >= 0 { slot = min(slot, pack) }
 		if slot >= len(sym.params) { continue }
-		type := slot == pack ? slice_element(k.c, sym.params[slot]) : sym.params[slot]
+		type := slot == pack ? pack_element_context(k.c, slice_element(k.c, sym.params[slot])) : sym.params[slot]
 		if common != INVALID_TYPE && common != type { return INVALID_TYPE }
 		common = type
 	}
@@ -474,9 +479,14 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 	}
 	cand.variadic = pack >= 0 || info.c_vararg
 	named := false
+	in_pack := false
 	for arg, index in args {
 		slot := index
 		if arg.name != INVALID_IDENTIFIER {
+			if in_pack {
+				cand.reason = "a variadic argument cannot be named"
+				return cand
+			}
 			named = true
 			slot = parameter_slot_named(k.c, sym, arg.name)
 			if slot < 0 || cand.filled[slot] {
@@ -486,7 +496,10 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		} else if named {
 			cand.reason = "a positional argument cannot follow a named one"
 			return cand
-		} else if pack >= 0 && slot >= pack {
+		} else if pack >= 0 && (in_pack || slot >= pack || arg.mode == .Spread) {
+			// As `bind_variadic_arguments` places them: the first spread ends the
+			// fixed parameters, which any omitted ones then fill as defaults.
+			in_pack = true
 			slot = pack
 		} else if info.c_vararg && slot >= count {
 			if why := c_vararg_rejection(k, arg); why != "" {

@@ -1534,7 +1534,7 @@ Waiting_Argument :: struct {
 generic_parameter_context_type :: proc(
 	k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int,
 ) -> (type: Type_Id, has_parameter: bool) {
-	written, _ := generic_parameter_written(k, template, name, position)
+	written, _, variadic := generic_parameter_written(k, template, name, position)
 	if written == nil {
 		return INVALID_TYPE, false
 	}
@@ -1543,7 +1543,8 @@ generic_parameter_context_type :: proc(
 	}
 	saved := enter_instance(k, template, new_instance_scope(k, template))
 	defer k.location = saved
-	return resolve_type_syntax(k, clone_expr(k.c, written)), true
+	type = resolve_type_syntax(k, clone_expr(k.c, written))
+	return variadic ? pack_element_context(k.c, type) : type, true
 }
 
 // design.md "Arguments typed after inference": whether an argument that needs
@@ -1551,17 +1552,17 @@ generic_parameter_context_type :: proc(
 // the runtime parameter it fills names the procedure's `$` parameters. A `$`
 // parameter's argument never waits, since it selects the instance.
 generic_parameter_waits :: proc(k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int) -> bool {
-	written, compile_time := generic_parameter_written(k, template, name, position)
+	written, compile_time, _ := generic_parameter_written(k, template, name, position)
 	return written != nil && !compile_time && names_poly_parameter_in(template, written)
 }
 
 // The written type of the parameter an argument fills, by name or position (a
-// variadic pack takes every later position), and whether that parameter is a `$`
-// one.
+// variadic pack takes every later position), whether that parameter is a `$`
+// one, and whether it is the pack, whose written type is its element's.
 @(private = "file")
 generic_parameter_written :: proc(
 	k: ^Checker, template: ^Generic_Template, name: Identifier_Id, position: int,
-) -> (written: Expr, compile_time: bool) {
+) -> (written: Expr, compile_time, variadic: bool) {
 	literal := decl_proc_literal(template.decl)
 	if literal == nil || literal.signature == nil {
 		return
@@ -1574,7 +1575,7 @@ generic_parameter_written :: proc(
 				selected = name_identifier(k.c, entry.name) == name
 			}
 			if selected {
-				return parameter.type, entry.is_poly
+				return parameter.type, entry.is_poly, parameter.mode == .Variadic
 			}
 			current += 1
 		}
@@ -1628,6 +1629,13 @@ names_poly_parameter_in :: proc(template: ^Generic_Template, written: Expr) -> b
 	})
 }
 
+// Whether a written signature ends in a variadic pack.
+@(private = "file")
+signature_is_variadic :: proc(signature: ^Type_Proc) -> bool {
+	params := signature.params
+	return len(params) > 0 && params[len(params) - 1].mode == .Variadic
+}
+
 // What a walk over a call's arguments has claimed, bound and left waiting so far.
 @(private = "file")
 Inference_Walk :: struct {
@@ -1639,6 +1647,8 @@ Inference_Walk :: struct {
 	waits:    [dynamic]Waiting_Argument,
 	// Unfixed constants filling a `$T` parameter, until `bind_constants`.
 	constants: [dynamic]Unfixed_Binder,
+	// The signature ends in a pack, which takes the first spread and what follows.
+	spread_ends_fixed: bool,
 }
 
 // An unfixed constant's type, and the `$` name its parameter's type is.
@@ -1719,6 +1729,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		bindings = make([dynamic]Generic_Binding, 0, 4, context.temp_allocator),
 		waits    = make([dynamic]Waiting_Argument, 0, 2, context.temp_allocator),
 		constants = make([dynamic]Unfixed_Binder, 0, 2, context.temp_allocator),
+		spread_ends_fixed = signature_is_variadic(literal.signature),
 	}
 	result.compile_time = make([]bool, len(args), k.c.semantic_allocator)
 	result.compile_targets = make([]Type_Id, len(args), k.c.semantic_allocator)
@@ -1788,7 +1799,7 @@ infer_parameter_argument :: proc(
 	if entry.is_poly {
 		bind_constants(k, walk)
 	}
-	index, found := claim_argument(walk.args, entry.name.id, &walk.next, walk.claimed)
+	index, found := claim_argument(walk.args, entry.name.id, &walk.next, walk.claimed, walk.spread_ends_fixed)
 	if !found {
 		if parameter.default == nil {
 			return "it needs more arguments than were supplied"
@@ -1976,10 +1987,12 @@ bindings_in_declaration_order :: proc(
 // The argument a parameter takes: the one written with its name if any,
 // otherwise the next unclaimed positional argument. Named arguments match
 // first, so `f(reader, limit = 5)` binds `limit` to its own parameter rather
-// than the one it sits next to.
+// than the one it sits next to. With `stop_at_spread`, a fixed parameter of a
+// variadic procedure takes no spread, which is the pack's: one left before it
+// is omitted, as `bind_variadic_arguments` places it.
 @(private = "file")
 claim_argument :: proc(
-	args: []Arg_Info, name: Identifier_Id, next: ^int, claimed: []bool,
+	args: []Arg_Info, name: Identifier_Id, next: ^int, claimed: []bool, stop_at_spread := false,
 ) -> (int, bool) {
 	if name != INVALID_IDENTIFIER {
 		for arg, index in args {
@@ -1997,6 +2010,10 @@ claim_argument :: proc(
 		}
 		if args[index].name != INVALID_IDENTIFIER {
 			continue
+		}
+		if args[index].mode == .Spread && stop_at_spread {
+			next^ = index
+			break
 		}
 		claimed[index] = true
 		return index, true

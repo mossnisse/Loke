@@ -67,7 +67,8 @@ lower_capture_literal :: proc(k: ^Checker, v: ^Expr_Composite) -> Type_Id {
 check_capture_values :: proc(k: ^Checker, v: ^Expr_Composite) -> (types: []Type_Id, checked: bool) {
 	capture := v.capture
 	v.elements = make([]Element, len(capture.entries), k.c.semantic_allocator)
-	types = make([]Type_Id, len(capture.entries), k.c.semantic_allocator)
+	// Each type is kept by the field the record syntax binds to it.
+	types = make([]Type_Id, len(capture.entries), context.temp_allocator)
 	checked = true
 	for entry, index in capture.entries {
 		value := entry.value
@@ -109,7 +110,8 @@ capture_record_syntax :: proc(
 	record.span = span
 	record.kind = .Struct
 	record.fields = make([]Field, len(capture.entries), k.c.semantic_allocator)
-	fields = make([]Capture_Field, len(capture.entries), k.c.semantic_allocator)
+	// Copied by value into the placeholders and the body's rewrite.
+	fields = make([]Capture_Field, len(capture.entries), context.temp_allocator)
 	for entry, index in capture.entries {
 		text := strings.concatenate({CAPTURE_FIELD_PREFIX, entry.name.text}, k.c.semantic_allocator)
 		field := synth_name(k.c, text, entry.name.span)
@@ -281,14 +283,27 @@ capture_call_method :: proc(k: ^Checker, capture: ^Capture_Literal, fields: []Ca
 	return method
 }
 
-// What a reserved capture name reads where the rewrite left it alone, such as a
-// map literal's bare key; nil for any other name.
-capture_place_of :: proc(k: ^Checker, name: ^Expr_Ident) -> Expr {
-	placeholder, reserved := k.c.capture_placeholders[lookup_symbol(k.scope, identifier_of(k.c, name))]
+// The capture a name that resolved to `symbol_id` names in the capture literal
+// body being checked, which the body's rewrite reads through the receiver.
+capture_in_body :: proc(k: ^Checker, symbol_id: Symbol_Id) -> (Capture_Field, bool) {
+	placeholder, reserved := k.c.capture_placeholders[symbol_id]
 	if !reserved || placeholder.method != k.proc_literal {
-		return nil
+		return {}, false
 	}
-	return capture_field_place(k.c, placeholder.field, name.span)
+	return placeholder.field, true
+}
+
+// Whether a name the rewrite left alone, such as a task's result, is a capture.
+names_capture :: proc(k: ^Checker, name: ^Expr_Ident) -> bool {
+	_, captured := capture_in_body(k, lookup_symbol(k.scope, identifier_of(k.c, name)))
+	return captured
+}
+
+// What a capture's name reads where the rewrite left it alone, such as a map
+// literal's bare key; nil for any other name.
+capture_place_of :: proc(k: ^Checker, name: ^Expr_Ident) -> Expr {
+	field, captured := capture_in_body(k, lookup_symbol(k.scope, identifier_of(k.c, name)))
+	return captured ? capture_field_place(k.c, field, name.span) : nil
 }
 
 Capture_Placeholder :: struct {

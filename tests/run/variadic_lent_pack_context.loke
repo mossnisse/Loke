@@ -1,0 +1,18 @@
+// design.md "Variadic parameters": an element of a `..^T` pack that takes its
+// type from the call is a `T`, which the pack lends, however the call reaches
+// the procedure: directly, through a group, or as a generic whose pack element
+// is written with a `$` name or without one.
+package main;
+import "core:fmt";
+
+Box :: struct { value: int }
+
+count :: proc(values: ..^Box) -> int { return values[0]^.value + values.len(); }
+group :: proc{count};
+count_of :: proc($T: type, values: ..^T) -> int { return values.len(); }
+first_of :: proc(scale: $S, values: ..^Box) -> S { return scale * S(values[0]^.value); }
+
+main :: proc() {
+	fmt.println(count({3}), group({3}), group({3}, {4}));
+	fmt.println(count_of(Box, {3}, {4}), first_of(2, {5}));
+}

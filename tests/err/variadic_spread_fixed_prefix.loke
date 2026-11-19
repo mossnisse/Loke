@@ -1,0 +1,19 @@
+// design.md "Variadic parameters": a spread fills the pack, so a fixed
+// parameter before it that the call leaves out needs a default, however the
+// call reaches the procedure; and no name follows the pack's arguments.
+package main;
+
+need :: proc(start: int, values: ..int) -> int { return start + values.len(); }
+needs :: proc{need};
+need_generic :: proc(start: int, values: ..$T) -> int { return start + values.len(); }
+sum :: proc(start := 10, values: ..int) -> int { return start + values.len(); }
+sums :: proc{sum};
+
+main :: proc() {
+	values := []int{3};
+	_ = need(..values);
+	_ = needs(..values);
+	_ = need_generic(..values);
+	_ = sum(..values, start = 1);
+	_ = sums(..values, start = 1);
+}

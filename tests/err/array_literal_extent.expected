@@ -22,9 +22,9 @@ L0362
 @13:14
 an index must be an integer or rune, found `C`
 
-L0361
-@14:14
-index 1099511627776 is out of range
+L0364
+@14:7
+the layout of `[4611686018427387905]int` exceeds the maximum supported size
 
 L0361
 @15:14

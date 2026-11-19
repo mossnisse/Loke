@@ -143,11 +143,11 @@ checked_call_operations_are_cleared_by_syntax_cloning :: proc(t: ^testing.T) {
 	check_for_emission(&p, `package main;
 Color :: enum { red, blue }
 Value :: union { number: int }
-identity :: proc(value: int) -> int { return value; }
+identity :: proc(value: int, scale := 1) -> int { return value * scale; }
 main :: proc() {
     n := 7;
     text: string = "abc";
-    ordinary := identity(value = n);
+    ordinary := identity(scale = 2, value = n);
     converted := i32(n);
     wrapped: Value = .number(n);
     length := text.byte_len();
@@ -176,7 +176,7 @@ main :: proc() {
 	testing.expect(t, ordinary && conversion && wrapped && text_call && enum_call)
 	testing.expect(t, construction.index == 0 && !construction.clone)
 	testing.expect(t, text.op == .Byte_Len && type_is_enum(c, enum_conversion.type))
-	testing.expect(t, len(calls[0].bound_order) == 1 && calls[0].bound_order[0] == 0)
+	testing.expect(t, len(calls[0].bound_order) == 2 && calls[0].bound_order[0] == 1)
 	for call in calls {
 		clone := clone_expr(c, call).(^Expr_Call)
 		testing.expect(t, clone.operation == nil && clone.bound == nil && clone.bound_order == nil,

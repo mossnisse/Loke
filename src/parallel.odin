@@ -209,7 +209,7 @@ check_spawn :: proc(k: ^Checker, s: ^Stmt_Spawn) -> Flow_Info {
 	}
 	result_type := INVALID_TYPE
 	if s.result != nil {
-		if capture_place_of(k, s.result) != nil {
+		if names_capture(k, s.result) {
 			errorf(
 				k.c, s.result.span, "L0728",
 				"a task's result goes to a local variable declared before the `parallel` block, and `%s` is a capture",

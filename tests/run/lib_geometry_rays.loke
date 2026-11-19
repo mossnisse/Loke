@@ -363,7 +363,7 @@ watertight :: proc($T: type, seed: u64) -> int {
 		}
 		// From the center, or from outside within 40 degrees of the
 		// vertex's direction, so the ray crosses the surface.
-		from := target*T(3) + linalg.Vector3(T).from_vector(random.v3()*0.5);
+		from := target*T(3) + linalg.Vector3(T)(random.v3()*0.5);
 		if (k % 2 == 0) { from = linalg.Vector3(T).splat(T(0)); }
 		ray := geometry.Ray3(T).from_origin_direction(from, target - from);
 		rays += 1;
@@ -736,8 +736,8 @@ transforms :: proc() {
 		foreach (k in 1 ..< 8) { corners = corners.union(m.transform_point(box.corner(k))); }
 		if (bound != corners) { wrong += 1; }
 
-		m32 := linalg.Matrix(f32, 4, 4).from_matrix(m);
-		box32 := geometry.Aabb3(f32).from_min_max(linalg.Vector3(f32).from_vector(box.min), linalg.Vector3(f32).from_vector(box.max));
+		m32 := linalg.Matrix(f32, 4, 4)(m);
+		box32 := geometry.Aabb3(f32).from_min_max(linalg.Vector3(f32)(box.min), linalg.Vector3(f32)(box.max));
 		corners32 := geometry.Aabb3(f32).from_point(m32.transform_point(box32.corner(0)));
 		foreach (k in 1 ..< 8) { corners32 = corners32.union(m32.transform_point(box32.corner(k))); }
 		if (geometry.transform_box(m32, box32) != corners32) { wrong += 1; }

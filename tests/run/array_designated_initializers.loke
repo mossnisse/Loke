@@ -4,8 +4,19 @@ import "core:fmt";
 
 // design.md "Fixed arrays": designated initializers set elements by index or
 // index range, after any positional ones, and the rest are zero. A range
-// evaluates its value once and stores a copy in each element.
+// evaluates its value once and stores a copy in each element. Only the length
+// limits a key, whether written or inferred.
 TABLE :: [5]int{1 = 7, 3..=4 = 2};
+
+@(move_only) Ticket :: struct { id: int }
+
+// design.md "Returned constructions": a positional element of a returned
+// literal transfers even when another element is designated, and a move-only
+// value fills a one-slot range.
+tickets :: proc(n: int) -> [3]Ticket {
+	first := Ticket{n};
+	return [3]Ticket{first, 2..<3 = Ticket{n + 2}, 1 = Ticket{n + 1}};
+}
 
 calls: static int = 0;
 
@@ -30,4 +41,10 @@ main :: proc() {
 	lists[0].append(2);
 	fmt.println(values, animals.len(), animals[4], animals[7], mixed, filled, TABLE);
 	fmt.println(lists[0].len(), lists[1].len(), lists[2].len(), calls);
+	made := tickets(1);
+	fmt.println(made[0].id, made[1].id, made[2].id);
+	fmt.println(
+		size_of([?]u8{2000000 = u8(n)}),
+		size_of([9223372036854775807]u8{9223372036854775806..<9223372036854775807 = 1}),
+	);
 }

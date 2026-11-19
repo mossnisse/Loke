@@ -403,7 +403,7 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident, callee: bool) {
 	// design.md "Capture literals": the body's rewrite reads every capture
 	// through the receiver, so a name that reaches the reserved one is in a
 	// position the rewrite cannot see.
-	if placeholder, reserved := k.c.capture_placeholders[symbol_id]; reserved && placeholder.method == k.proc_literal {
+	if _, captured := capture_in_body(k, symbol_id); captured {
 		errorf(k.c, v.span, "L0716", "`%s` is a capture, which cannot be read in this position", v.name)
 		return
 	}

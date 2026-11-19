@@ -44,6 +44,16 @@ checklist.
   wraps. They are now `L0310` and `L0373`. An unfixed constant still splats, as in
   `value: Vector = 2;`. Upgrade by splatting into the plain vector first:
   `Vector(Simd(i32, 4)(lane))`.
+- A conversion hook called by its declaration name is `L0412` also when it is generic, or when
+  crossed generic blocks give an instance hooks of one name ([Conversion
+  hooks](docs/design.md#conversion-hooks)). `linalg.Vector3(f32).from_vector(v)` compiled, though
+  only the conversion `linalg.Vector3(f32)(v)` may reach the hook, as for a hook that is not
+  generic. Upgrade by writing the conversion:
+
+  ```
+  narrow := linalg.Vector3(f32).from_vector(v);  // before
+  narrow := linalg.Vector3(f32)(v);              // after
+  ```
 
 ### Fixed
 
@@ -103,6 +113,31 @@ checklist.
   that memory.
 - A constant condition that is not `bool`, as in `if (0) {}`, is reported once, as in a
   conditional expression, not also as `L0355`.
+- A call through a group or of a generic procedure places a spread as a direct call does
+  ([Variadic parameters](docs/design.md#variadic-parameters)): the first spread fills the pack, and
+  a fixed parameter left before it takes its default. With `sum :: proc(start := 10, values: ..int)`
+  and `group :: proc{sum};`, `group(..values)` was `L0392` and the generic form `L0437`. A direct
+  call that leaves a required parameter before a spread names the parameter it is missing.
+- A typeless element of a `..^T` pack is a `T`, which the pack lends, when the call goes through a
+  group or a generic procedure, as in a direct call ([Variadic
+  parameters](docs/design.md#variadic-parameters)). `group({3})` and `count(Box, {3})` were
+  `L0376` for a `..^Box` pack.
+- A range in an array literal of a move-only element, `[2]Ticket{0..<2 = Ticket{n}}`, is `L0503`
+  ([Fixed arrays](docs/design.md#fixed-arrays)). It reached the backend as internal error `L0405`,
+  and a constant value was duplicated.
+- A designated element no longer keeps the positional elements of its array literal from
+  transferring a local ([Returned constructions](docs/design.md#returned-constructions)).
+  `return [2]Ticket{a, 1 = Ticket{n}};` asked for `move(a)` with `L0503`.
+- Only an array's length limits a designated index, for `[?]T` as for `[N]T` ([Fixed
+  arrays](docs/design.md#fixed-arrays)). `[?]u8{2000000 = u8(n)}` was `L0361`, and so was an
+  exclusive range ending at the length of an array of `max(int)` elements.
+- A rejected array literal has no value for a constant or a `when` condition to read, as a rejected
+  struct literal has none. `when ([1]int{0 = 1, 0 = 2}[0] == 2)` also selected its branch.
+- In a capture literal's body, a capture's bare name as an array index is read as the capture,
+  which an index must not be (`L0372`), and as `offset_of`'s field or `build_config`'s name it is
+  the name written ([Capture literals](docs/design.md#capture-literals)). They were `L0716`,
+  `L0386`, and `L0388`.
+
 
 ## [0.10.0] - 2026-11-16
 
