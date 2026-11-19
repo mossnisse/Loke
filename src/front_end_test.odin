@@ -757,6 +757,9 @@ package_paths_handle_root_collections_and_trailing_slashes :: proc(t: ^testing.T
 	testing.expect(t, why == .Ok && dir != "", "a collection rooted at a volume root rejected its descendant")
 	imported := Item_Import{path = `"core:fmt//"`}
 	testing.expect(t, import_binding_name(&imported) == "fmt", "repeated trailing separators erased the default alias")
+	// What a branch no check selects binds, too, is the decoded path's.
+	escaped := Item_Import{path = `"./d\u0065p"`}
+	testing.expect(t, import_binding_name(&escaped, context.temp_allocator) == "dep", "an escaped path bound its spelling")
 }
 
 @(test)

@@ -136,4 +136,50 @@ when (size_of((
 	WIDE :: true;
 }
 
+/// Documented, with a field in a member's value.
+Counted :: enum {
+	/// A member.
+	Count = size_of((
+		/// A field, in a member's value.
+		n: int,
+	)),
+}
+
+static_assert(size_of((
+	/// A field, in a file-scope assertion.
+	a: int,
+)) == 8);
+
+/// Documented, with a field in its `where` clause.
+Constrained :: struct($T: type) where size_of((
+	/// A field, in a record's `where` clause.
+	k: int,
+)) == 8 {
+	t: T,
+}
+
+/// Documented, with a field in its `where` clause.
+constrained :: proc(x: $T) where size_of((
+	/// A field, in a procedure's `where` clause.
+	k: int,
+)) == 8 {}
+
+/// Documented, with a field in a requirement's expression.
+Sizeable :: interface($T: type) {
+	/// A requirement.
+	(t: T) size_of((
+		/// A field, in a requirement's expression.
+		m: int,
+	)) -> int;
+}
+
+/// Documented, with a field in an interface's `where` clause.
+Bounded :: interface($T: type) where size_of((
+	/// A field, in an interface's `where` clause.
+	b: int,
+)) == 8 {
+	(t: T) t -> T;
+}
+
+
 /// At the end of the file.

@@ -31,6 +31,9 @@ Query_Symbol :: struct {
 	parent: Symbol_Handle,
 	// The type an `impl` or `extend` member belongs to; zero otherwise.
 	owner: Type_Handle,
+	// The declaration is an item a doc comment can document (design.md "Doc
+	// comments"), so the comments above `extent` are its documentation.
+	documentable: bool,
 	// Where a local, parameter, or loop binding can be named: the innermost
 	// block, statement, or procedure holding its name. No span otherwise.
 	scope: Query_Location,
@@ -167,7 +170,7 @@ query_references :: proc(s: ^Compilation_Session, handle: Symbol_Handle, include
 // it. The caller owns the text. False when there are none.
 query_documentation :: proc(s: ^Compilation_Session, handle: Symbol_Handle, allocator := context.allocator) -> (string, bool) {
 	symbol, found := query_symbol(s, handle)
-	if !found || symbol.extent.span.file == NO_FILE { return "", false }
+	if !found || !symbol.documentable { return "", false }
 	context.allocator = allocator
 	text := doc_comment(&s.compiler, symbol.extent.span)
 	return text, text != ""
@@ -599,11 +602,25 @@ build_query_index :: proc(s: ^Compilation_Session) {
 		nest_query_bindings(q, handles[:])
 		scope_query_locals(q, handles[:], u32(file), regions)
 	}
+	// The same items `check_doc_comments` accepts a doc comment above.
+	for pkg in c.packages {
+		for file in pkg.files {
+			starts := make(map[u32]bool, allocator = context.temp_allocator)
+			for lo in documentable_items(file, context.temp_allocator) {
+				starts[lo] = true
+			}
+			for handle in q.documents[file.file] {
+				symbol := &q.symbols[handle.id]
+				symbol.documentable = symbol.extent.span.file == file.file && symbol.extent.span.lo in starts
+			}
+		}
+	}
 	// Clones share their written binding's declaration, parent, and scope.
 	for &symbol, slot in q.symbols {
 		if slot == 0 || symbol.definition.span.file == NO_FILE { continue }
 		canonical := q.symbols[q.canonical[slot]]
 		symbol.extent, symbol.parent, symbol.scope = canonical.extent, canonical.parent, canonical.scope
+		symbol.documentable = canonical.documentable
 	}
 }
 

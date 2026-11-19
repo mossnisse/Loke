@@ -132,7 +132,7 @@ note_branch_names :: proc(c: ^Compiler, item: Item, pkg: ^Package) {
 			pkg.pending_when_names[intern_identifier(c, name.text)] = true
 		}
 	case ^Item_Import:
-		pkg.pending_when_names[intern_identifier(c, import_binding_name(v))] = true
+		pkg.pending_when_names[intern_identifier(c, import_binding_name(v, context.temp_allocator))] = true
 	case ^Item_Impl:
 		for member in v.members {
 			if d, is_decl := member.(^Decl); is_decl {
@@ -320,7 +320,7 @@ report_stalled_when :: proc(k: ^Checker, item: ^Item_When) -> bool {
 find_import_binding :: proc(item: Item, name: string) -> ^Item_Import {
 	#partial switch v in item {
 	case ^Item_Import:
-		if import_binding_name(v) == name {
+		if import_binding_name(v, context.temp_allocator) == name {
 			return v
 		}
 	case ^Item_Block:

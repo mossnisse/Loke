@@ -1,0 +1,5 @@
+@(public)
+package dep;
+
+/// A value.
+Value :: struct {}

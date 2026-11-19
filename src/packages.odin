@@ -330,7 +330,7 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 
 @(private = "file")
 bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^Item_Import) {
-	path, decoded := decode_string_literal(c, imported.path, false)
+	path, decoded := decode_string_literal(imported.path, false, c.semantic_allocator)
 	if !decoded || path == "" {
 		errorf(c, imported.span, "L0329", "this import path is not a string")
 		return
@@ -374,7 +374,7 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 	append(&package_of(c, id).imports, Package_Import {
 		target = target,
 		span   = imported.span,
-		alias  = import_alias(imported, path),
+		alias  = import_binding_name(imported, c.semantic_allocator),
 	})
 }
 
@@ -419,20 +419,14 @@ bind_parallel_edge :: proc(c: ^Compiler, id: Package_Id) {
 	append(&package_of(c, id).imports, Package_Import{target = target, span = NO_SPAN})
 }
 
-// Available before decoding for stalled-condition checks.
-import_binding_name :: proc(imported: ^Item_Import) -> string {
-	raw := imported.path
-	if len(raw) >= 2 {
-		raw = raw[1:len(raw) - 1] // the literal's quotes
-	}
-	return import_alias(imported, raw)
-}
-
-@(private = "file")
-import_alias :: proc(imported: ^Item_Import, path: string) -> string {
+// The name an import binds: its alias, or the last element of its decoded
+// path. Available before the import is resolved, for stalled-condition checks
+// and the imports of a branch no check selects.
+import_binding_name :: proc(imported: ^Item_Import, allocator := context.allocator) -> string {
 	if imported.alias.text != "" {
 		return imported.alias.text
 	}
+	path, _ := decode_string_literal(imported.path, false, allocator)
 	return path_tail(path)
 }
 

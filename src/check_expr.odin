@@ -349,7 +349,7 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal) {
 		v.const_value = rune_const(bi_from_i64(k.c, i64(value)))
 
 	case .String, .Raw_String:
-		text, ok := decode_string_literal(k.c, v.text, v.kind == .Raw_String)
+		text, ok := decode_string_literal(v.text, v.kind == .Raw_String, k.c.semantic_allocator)
 		if !ok {
 			errorf(k.c, v.span, "L0351", "`%s` is not a valid string literal", v.text)
 			return

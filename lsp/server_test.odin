@@ -708,6 +708,19 @@ hover_shows_declarations_and_comments :: proc(t: ^testing.T) {
 	testing.expect(t, is_null_result(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "Never"))))
 }
 
+// design.md "Doc comments": hover shows a doc comment only where `L0260` does
+// not report it. One above a local documents nothing; one above a field does.
+@(test)
+hover_shows_only_attached_doc_comments :: proc(t: ^testing.T) {
+	text := "package main;\nPoint :: struct {\n\t/// Across.\n\tx: int,\n}\nmain :: proc() {\n\t/// Misplaced.\n\tlocal := 1;\n\t_ = Point{x = local}.x;\n}\n"
+	h: Harness
+	if !start(&h, t, "hover-attached") { finish(&h); return }
+	defer finish(&h)
+	open(&h, "main.loke", text)
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "local :="))), "local: int")
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "x;"))), "x: int\n\nAcross.")
+}
+
 @(test)
 definitions_follow_unsaved_text_across_packages :: proc(t: ^testing.T) {
 	h: Harness

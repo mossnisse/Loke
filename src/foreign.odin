@@ -5,6 +5,10 @@ package lokec
 import "core:path/filepath"
 import "core:strings"
 
+// design.md "`@(default_calling_convention=<string>)`": what a block without
+// the attribute lends its members.
+FOREIGN_DEFAULT_CONVENTION :: "c"
+
 // design.md "`@(default_calling_convention=<string>)`".
 @(private = "file")
 foreign_default_convention :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> string {
@@ -16,7 +20,7 @@ foreign_default_convention :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> s
 			report_unknown_convention(k, convention, attribute.span)
 		}
 	}
-	return "c"
+	return FOREIGN_DEFAULT_CONVENTION
 }
 
 // Runs in `prepare_package`. The block supplies visibility and convention

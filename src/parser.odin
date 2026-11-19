@@ -742,7 +742,7 @@ parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item
 			item.name = name_of(p, name)
 		}
 		if path, has_path := expect(p, .String, "L0250", "the library path, as a string literal"); has_path {
-			decoded, decoded_ok := decode_string_literal(p.c, text_of(p, path), false)
+			decoded, decoded_ok := decode_string_literal(text_of(p, path), false, p.c.semantic_allocator)
 			item.path = strings.clone(decoded, p.allocator)
 			item.path_written = decoded_ok
 		}

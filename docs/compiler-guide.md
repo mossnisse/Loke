@@ -340,13 +340,20 @@ to the declaration the checker resolved it to, so a parameter spelled like a
 private type does not reach the type, and a private alias reaches the type it
 names. In syntax the checker never resolved, an untaken `when` branch or a
 generic template, a name a parameter or `$` name binds still means that
-binding, so the file is the same with and without `-debug`. A member selected
-through its type, as `Boxed.DEFAULT`, and a constant in `@(align=N)` are
-followed too. Tests and variables are never shown.
+binding, so the file is the same with and without `-debug`. There a name means
+a declaration in its own branch, or outside it, never one in a branch the
+same `when` chooses instead, and an `impl` block is on the type its subject
+names there. A member selected through its type, as `Boxed.DEFAULT` or
+`Box(T).Hidden`, and a constant in `@(align=N)` are followed too. `-doc`
+follows only what its taken branches name. Tests and variables are never
+shown.
 
 A public member of a foreign block is shown as a plain declaration, with the
-block's `default_calling_convention` written into its signature and the
-block's `require_results` among its attributes. `-api` checks the packages as
+block's calling convention written into its signature, `"c"` unless its
+`default_calling_convention` says otherwise, and the block's
+`require_results` among its attributes. A raw string holding a carriage
+return is written as an escaped string, which keeps it where the file's line
+ends would not. `-api` checks the packages as
 [`-doc`](#common-options) does, so a `package main` needs no `main`.
 
 The file is valid Loke that [`-fmt`](#common-options) leaves unchanged, but no

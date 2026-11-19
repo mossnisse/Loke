@@ -827,7 +827,7 @@ operator :: proc(l: ^Lexer) -> Token {
 }
 
 // The lexer has already validated the spelling.
-decode_string_literal :: proc(c: ^Compiler, text: string, raw: bool) -> (string, bool) {
+decode_string_literal :: proc(text: string, raw: bool, allocator := context.allocator) -> (string, bool) {
 	if len(text) < 2 {
 		return "", false
 	}
@@ -836,7 +836,7 @@ decode_string_literal :: proc(c: ^Compiler, text: string, raw: bool) -> (string,
 	if raw || strings.index_byte(body, '\\') < 0 {
 		return body, true
 	}
-	out := strings.builder_make(0, len(body), c.semantic_allocator)
+	out := strings.builder_make(0, len(body), allocator)
 	for i := 0; i < len(body); {
 		if body[i] != '\\' {
 			strings.write_byte(&out, body[i])

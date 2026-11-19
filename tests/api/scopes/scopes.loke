@@ -1,0 +1,105 @@
+// The reproductions of the interface generator's review on 2026-11-18: a
+// reference reaches what the source means by it. The test also checks this case
+// with `-debug`, which must not change the file.
+@(public)
+package scopes;
+
+// An escaped path binds the name it decodes to, so the import is written.
+import "./d\u0065p";
+
+/// A value of the imported type.
+make_value :: proc() -> dep.Value { return {}; }
+
+// A `Box` in one branch is not the `Box` of another, whichever the checker
+// reads.
+when (LOKE_DEBUG) {
+
+@(private) Box :: struct {}
+
+} else {
+
+/// Public in this branch.
+Box :: struct {}
+
+impl Box {
+	/// On the public `Box`.
+	show :: proc(self) {}
+}
+
+}
+
+/// Public.
+Pub :: struct {}
+
+// A block through a private alias of a public type is on that type, in a
+// branch the checker reads or in one it skips.
+when (LOKE_DEBUG) {
+
+@(private) Al :: Pub;
+
+impl Al {
+	/// Through the alias.
+	get :: proc(self) -> int { return 1; }
+}
+
+}
+
+/// Two types.
+Twin :: struct($A: type, $B: type) {}
+
+/// One value.
+Holder :: struct($T: type) {
+	v: T,
+}
+
+impl Holder($T) {
+	@(private) Hidden :: type_of(T{});
+}
+
+/// Names a private member of a generic block.
+expose :: proc(x: $T) -> Twin(Holder(T).Hidden, int) { return {}; }
+
+impl Holder(int) {
+	/// Public in this specialization.
+	Inner :: int;
+}
+
+impl Holder(string) {
+	@(private) Inner :: int;
+}
+
+/// Names a private member of a specialization.
+Closed :: Twin(Holder(string).Inner, int);
+
+// A group in a block lists the block's members, so the package's procedure of
+// the same name and its private parameter type are not reached.
+@(private) Secret :: struct {}
+@(private) hidden :: proc(x: Secret) {}
+
+/// Groups its own member.
+Grouped :: struct {}
+
+impl Grouped {
+	@(private) hidden :: proc() {}
+
+	/// The member.
+	group :: proc{hidden};
+}
+
+// A requirement's binding is not the private type it is spelled like.
+@(private) value :: struct {}
+
+/// Has a `get`.
+Valued :: interface($T: type) {
+	(value: T) value.get() -> int;
+}
+
+foreign import user32 "system:user32.lib";
+
+// A block without a convention lends its members `"c"`, which an ordinary
+// declaration would not have.
+foreign user32 {
+	/// The double-click time, in milliseconds.
+	@(link_name="GetDoubleClickTime")
+	double_click_time :: proc() -> u32 ---;
+}

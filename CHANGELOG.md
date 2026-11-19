@@ -269,6 +269,32 @@ checklist.
   diagnostics](docs/compiler-guide.md#copy-cost-diagnostics)). A binding or
   assignment that views, splats, or erases its source copies nothing, and no
   longer reports one.
+- An interface file no longer depends on the target: a `when` branch the build skips reads its
+  `impl` subject, and a private alias of a public type there, in its own branch, so `-api -debug`
+  keeps the members of a public `Box` declared in an `else` whose `when` branch declares a private
+  one, and the default `-api` keeps a block written through such an alias. A reference in one
+  branch no longer shows a private declaration of the same name in another
+  ([Interface files](docs/compiler-guide.md#interface-files)).
+- An interface file writes an import whose path is escaped, as `import "./d\u0065p";`, which it
+  dropped although a declaration qualified a name with it. A `when` condition's report of a name only
+  its own branch imports reads such a path too.
+- An interface file gives a foreign block's member its block's calling convention, `"c"` unless the
+  block says otherwise, where it left a block without the attribute's members with Loke's. A
+  comment spelling `proc` before a member's `proc` no longer receives the convention, and one before
+  the member's own convention no longer makes `-api` fail with `L0405`.
+- An interface file writes a raw string holding a CR as an escaped string, which kept the CR the
+  literal's value holds where the file's LF line ends dropped it
+  ([String and character literals](docs/design.md#string-and-character-literals)).
+- `-api` and `-doc` show a private member of a generic `impl` that a public signature selects, as
+  `Box(T).Hidden`, and a specialization's private member selected as `Box(string).Inner`. A group
+  in an `impl` no longer shows a private package procedure spelled like its member, and an interface
+  requirement's binding is no longer taken for a private declaration of the same name
+  ([Private names in public declarations](docs/design.md#private-names-in-public-declarations)).
+- `-doc` no longer lists a private declaration that only a `when` branch the target skips names.
+- `L0260` no longer warns about a doc comment on a field of a type written in an enum member's value,
+  a file-scope `static_assert`, a `where` clause, or an interface requirement's expression, and
+  hover no longer shows a doc comment `L0260` reports, as one above a local
+  ([Doc comments](docs/design.md#doc-comments)).
 
 
 ## [0.10.0] - 2026-11-16

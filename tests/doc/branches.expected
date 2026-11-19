@@ -1,0 +1,17 @@
+# package branches
+
+## Shown
+
+```loke
+Shown :: struct {}
+```
+
+Private to the package, but a public declaration names it.
+
+## get
+
+```loke
+get :: proc() -> Shown
+```
+
+Something shown, in other builds.

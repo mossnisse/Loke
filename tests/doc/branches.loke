@@ -1,0 +1,20 @@
+// The page describes the target it was made for: a private declaration that
+// only another target's branch names is not on it, and one the taken branch
+// names is.
+@(public)
+package branches;
+
+@(private) Secret :: struct {}
+@(private) Shown :: struct {}
+
+when (LOKE_DEBUG) {
+
+/// A secret, in debug builds.
+get :: proc() -> Secret { return {}; }
+
+} else {
+
+/// Something shown, in other builds.
+get :: proc() -> Shown { return {}; }
+
+}

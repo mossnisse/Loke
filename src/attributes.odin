@@ -503,7 +503,7 @@ attribute_string_text :: proc(c: ^Compiler, attribute: Attribute) -> (string, bo
 	if !ok {
 		return "", false
 	}
-	return decode_string_literal(c, lit.text, lit.kind == .Raw_String)
+	return decode_string_literal(lit.text, lit.kind == .Raw_String, c.semantic_allocator)
 }
 
 report_misplaced_intrinsic :: proc(k: ^Checker, span: Span) {

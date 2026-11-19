@@ -118,9 +118,7 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 	}
 	write_interface_items(&b, &a, a.items[:])
 
-	// Copied source keeps its own line ends; the file has LF only.
-	raw, _ := strings.remove_all(strings.to_string(b), "\r")
-	raw = plain_comments(raw)
+	raw := plain_comments(lf_only(strings.to_string(b)))
 	scratch: Compiler
 	defer destroy_compilation(&scratch)
 	formatted, ok := format_text(&scratch, INTERFACE_FILE, raw)
@@ -129,6 +127,46 @@ interface_text :: proc(c: ^Compiler, id: Package_Id) -> (string, bool) {
 		return "", false
 	}
 	return formatted, true
+}
+
+// Copied source keeps its own line ends; the file has LF only. A CR inside a raw
+// string is part of its value (design.md "String and character literals"), so
+// such a literal is written as an ordinary string with the CR escaped.
+@(private = "file")
+lf_only :: proc(text: string) -> string {
+	tokens := lex_text(text)
+	defer delete(tokens)
+	b := strings.builder_make()
+	at := u32(0)
+	for token in tokens {
+		literal := text[token.lo:token.hi]
+		if token.kind != .Raw_String || strings.index_byte(literal, '\r') < 0 {
+			continue
+		}
+		write_without_cr(&b, text[at:token.lo])
+		strings.write_byte(&b, '"')
+		for ch in transmute([]u8)literal[1:len(literal) - 1] {
+			switch ch {
+			case '\r': strings.write_string(&b, `\r`)
+			case '\n': strings.write_string(&b, `\n`)
+			case '\\': strings.write_string(&b, `\\`)
+			case '"':  strings.write_string(&b, `\"`)
+			case:      strings.write_byte(&b, ch)
+			}
+		}
+		strings.write_byte(&b, '"')
+		at = token.hi
+	}
+	write_without_cr(&b, text[at:])
+	return strings.to_string(b)
+}
+
+@(private = "file")
+write_without_cr :: proc(b: ^strings.Builder, text: string) {
+	rest := text
+	for piece in strings.split_iterator(&rest, "\r") {
+		strings.write_string(b, piece)
+	}
 }
 
 // `text` with each doc comment written `//` or `/*`. Every comment of an
@@ -158,9 +196,8 @@ Api_Item :: struct {
 	// `.Decl`: its name, after its `impl`'s subject for a member. `.Import`:
 	// the name it binds.
 	name:       string,
-	// `.Decl`: the name a reference reaches it by, `Subject.name` for an
-	// `impl` member.
-	key:        string,
+	// `.Decl`: what a reference reaches.
+	decl:       ^Decl,
 	// `.Decl`: the declaration without its `;`, its comments other than doc
 	// comments, or a procedure's body, and with only a struct's public fields.
 	// `.Impl`: `impl Subject`. `.Delegate` and `.Import`: the item as written.
@@ -176,14 +213,14 @@ Api_Item :: struct {
 	// `.Decl`: private to the package, so shown only once a shown item refers
 	// to it.
 	private:    bool,
-	// The declarations of the package the shown syntax refers to, by `key`,
-	// and the imports it qualifies names with.
-	refs:       []string,
+	// The declarations of the package the shown syntax refers to, and the
+	// imports it qualifies names with.
+	refs:       []^Decl,
 	qualifiers: []string,
-	// `.Impl`: its members, and its subject's name when the package declares
-	// that type private.
+	// `.Impl`: its members, and its subject when that is a private type of the
+	// package.
 	members:         [dynamic]Api_Item,
-	private_subject: string,
+	private_subject: ^Decl,
 	// `.When`: each branch, taken or not.
 	branches:   [dynamic]Api_Branch,
 }
@@ -204,7 +241,7 @@ Api_Branch :: struct {
 	head:       string,
 	taken:      bool,
 	items:      [dynamic]Api_Item,
-	refs:       []string,
+	refs:       []^Decl,
 	qualifiers: []string,
 }
 
@@ -221,8 +258,11 @@ Api_Package :: struct {
 	import_names: map[string]bool,
 	// What the shown items refer to: private declarations, which are then
 	// shown too, and imports, which are then written.
-	reached:    map[string]bool,
+	reached:    map[^Decl]bool,
 	qualifiers: map[string]bool,
+	// The Markdown page shows only the taken branch of each `when`, so only
+	// what that refers to is reached; the interface file reads every branch.
+	taken_only: bool,
 	// A comment's removal changed a copied declaration's tokens.
 	damaged:  bool,
 }
@@ -239,20 +279,34 @@ Api_Builder :: struct {
 	c:    ^Compiler,
 	a:    ^Api_Package,
 	file: ^File,
-	// Each declaration of the package, at file scope or in an `impl`, by its
-	// symbol, as its `Api_Item.key`.
-	declared:      map[Symbol_Id]string,
-	private_names: map[string]bool,
+	// The `when` branches around what is being read, outermost first.
+	branches: [dynamic]^Item_Block,
+	// Each declaration of the package, at file scope or in an `impl`, by the
+	// span of its written name, which an instance's copy keeps.
+	declared: map[Span]^Decl,
+	// The same declarations by the name a written reference reaches them by,
+	// `Subject.name` for an `impl` member.
+	named:    map[string][dynamic]Api_Entry,
+}
+
+// A declaration and the `when` branches it is in: the declarations of one name
+// in exclusive branches are different declarations.
+@(private = "file")
+Api_Entry :: struct {
+	decl:     ^Decl,
+	branches: []^Item_Block,
+	public:   bool,
 }
 
 // design.md "Private names in public declarations". An importer cannot name such
 // a declaration but does reach it, so it is shown, marked private, once a shown
 // item refers to it. A reference follows what the checker resolved, and only in
-// syntax it never resolved goes by written name.
+// syntax it never resolved goes by written name, to the declarations of that
+// name in the branches it can be read with.
 @(private = "file")
-api_package :: proc(c: ^Compiler, id: Package_Id) -> Api_Package {
+api_package :: proc(c: ^Compiler, id: Package_Id, taken_only := false) -> Api_Package {
 	pkg := package_of(c, id)
-	a := Api_Package{name = identifier_text(c, pkg.name), key = pkg.key}
+	a := Api_Package{name = identifier_text(c, pkg.name), key = pkg.key, taken_only = taken_only}
 	b := Api_Builder{c = c, a = &a}
 	for file in pkg.files {
 		b.file = file
@@ -280,37 +334,98 @@ collect_declared :: proc(b: ^Api_Builder, items: []Item) {
 	for item in items {
 		#partial switch v in item {
 		case ^Decl:
-			declare(b, v, v.names[0].text)
-			if !decl_is_public(b.c, b.file, v) {
-				b.private_names[v.names[0].text] = true
-			}
+			declare(b, v, v.names[0].text, decl_is_public(b.c, b.file, v))
 		case ^Item_Foreign_Block:
 			for d in v.members {
-				declare(b, d, d.names[0].text)
+				declare(b, d, d.names[0].text, decl_is_public(b.c, b.file, d, v.attributes))
 			}
 		case ^Item_Impl:
 			subject := subject_name(b.c, v.type)
 			for member in v.members {
 				if d, is_decl := member.(^Decl); is_decl {
-					declare(b, d, fmt.aprintf("%s.%s", subject, d.names[0].text))
+					declare(b, d, fmt.aprintf("%s.%s", subject, d.names[0].text), decl_is_public(b.c, b.file, d))
 				}
 			}
 		case ^Item_Import:
 			b.a.import_names[import_binding_name(v)] = true
 		case ^Item_Block:
+			append(&b.branches, v)
 			collect_declared(b, v.items)
+			pop(&b.branches)
 		case ^Item_When:
-			collect_declared(b, v.then.items)
-			collect_declared(b, []Item{v.otherwise})
+			collect_declared(b, []Item{v.then, v.otherwise})
 		}
 	}
 }
 
 @(private = "file")
-declare :: proc(b: ^Api_Builder, d: ^Decl, key: string) {
-	for symbol in d.symbols {
-		b.declared[symbol] = key
+declare :: proc(b: ^Api_Builder, d: ^Decl, name: string, public: bool) {
+	for written in d.names {
+		b.declared[written.span] = d
 	}
+	entries := b.named[name]
+	append(&entries, Api_Entry{d, slice.clone(b.branches[:]), public})
+	b.named[name] = entries
+}
+
+// The declarations a reference written as `name` may reach from the branches
+// being read: those outside every `when`, those in these branches or in
+// branches inside them, and, from outside a `when`, those in any branch of it.
+// A reference in one branch never reaches the declarations of another.
+@(private = "file")
+named_entries :: proc(b: ^Api_Builder, name: string) -> []Api_Entry {
+	reached := make([dynamic]Api_Entry, context.temp_allocator)
+	// Ranging over `b.named[name]` itself would dereference a missing entry.
+	entries := b.named[name]
+	for entry in entries {
+		shared := min(len(entry.branches), len(b.branches))
+		if slice.equal(entry.branches[:shared], b.branches[:shared]) {
+			append(&reached, entry)
+		}
+	}
+	return reached[:]
+}
+
+// design.md "Private names in public declarations": the private type of the
+// package that `impl` `v` is on, or nil when that type is public, as it is
+// through a private alias of a public type (`subject_type_is_public`). A block
+// the checker never reached follows the alias it names as written.
+@(private = "file")
+private_subject :: proc(b: ^Api_Builder, v: ^Item_Impl) -> ^Decl {
+	checked := v.applies != nil || v.subject != INVALID_TYPE
+	if checked && subject_type_is_public(b.c, v) {
+		return nil
+	}
+	for entry in named_entries(b, subject_name(b.c, v.type)) {
+		if !entry.public && (checked || !aliases_public_type(b, entry.decl)) {
+			return entry.decl
+		}
+	}
+	return nil
+}
+
+// Whether `d` names, through the package's aliases, a public type of the
+// package or a type of another package.
+@(private = "file")
+aliases_public_type :: proc(b: ^Api_Builder, d: ^Decl, depth := 0) -> bool {
+	if len(d.values) != 1 || depth > len(b.declared) {
+		return false
+	}
+	named := d.values[0]
+	if call, is_call := named.(^Expr_Call); is_call {
+		named = call.callee
+	}
+	#partial switch v in named {
+	case ^Expr_Selector:
+		return true
+	case ^Expr_Ident:
+		for entry in named_entries(b, v.name) {
+			if entry.public || aliases_public_type(b, entry.decl, depth + 1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Every `when` branch is read, taken or not, so the interface file does not
@@ -323,7 +438,7 @@ api_items :: proc(b: ^Api_Builder, items: []Item, out: ^[dynamic]Api_Item, in_wh
 			api_decl(b, v, nil, nil, out, nil)
 		case ^Item_Foreign_Block:
 			for d in v.members {
-				api_decl(b, d, nil, v.attributes, out, nil)
+				api_decl(b, d, nil, v, out, nil)
 			}
 		case ^Item_Impl:
 			api_impl(b, v, out)
@@ -346,11 +461,7 @@ api_impl :: proc(b: ^Api_Builder, v: ^Item_Impl, out: ^[dynamic]Api_Item) {
 	impl := Api_Item{kind = .Impl}
 	impl.text = shown_text(b, source, v.span.lo, expr_span(v.type).hi)
 	impl.refs, impl.qualifiers = refs_of(b, v.type), text_qualifiers(b.a, impl.text)
-	// design.md "Private names in public declarations": a block written through
-	// a private alias of a public type is on the public type.
-	if name := subject_name(b.c, v.type); name in b.private_names && !subject_type_is_public(b.c, v) {
-		impl.private_subject = name
-	}
+	impl.private_subject = private_subject(b, v)
 	// `impl Box($T)` binds `T` for its members.
 	bound := make([dynamic]string)
 	bind_poly_names(&bound, v.type)
@@ -383,7 +494,7 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 		branch := Api_Branch{head = strings.concatenate({prefix, head}), taken = node.state == .Taken && !selected}
 		selected ||= node.state == .Taken
 		branch.refs, branch.qualifiers = refs_of(b, node.cond), text_qualifiers(b.a, head)
-		api_items(b, node.then.items, &branch.items, in_when = true)
+		branch_items(b, node.then, &branch.items)
 		append(&chosen.branches, branch)
 		#partial switch next in node.otherwise {
 		case ^Item_When:
@@ -391,7 +502,7 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 			continue
 		case ^Item_Block:
 			otherwise := Api_Branch{head = "else", taken = node.state == .Not_Taken && !selected}
-			api_items(b, next.items, &otherwise.items, in_when = true)
+			branch_items(b, next, &otherwise.items)
 			append(&chosen.branches, otherwise)
 		}
 		break
@@ -399,14 +510,22 @@ api_when :: proc(b: ^Api_Builder, v: ^Item_When, out: ^[dynamic]Api_Item) {
 	append(out, chosen)
 }
 
-// `owner` is the `impl` `d` is a member of, `block` the attributes of the foreign
-// block it is a member of, which a member's own override, and `bound` the names
-// its `impl` binds.
+@(private = "file")
+branch_items :: proc(b: ^Api_Builder, branch: ^Item_Block, out: ^[dynamic]Api_Item) {
+	append(&b.branches, branch)
+	api_items(b, branch.items, out, in_when = true)
+	pop(&b.branches)
+}
+
+// `owner` is the `impl` `d` is a member of, `block` the foreign block it is a
+// member of, whose attributes a member's own override, and `bound` the names its
+// `impl` binds.
 @(private = "file")
 api_decl :: proc(
-	b: ^Api_Builder, d: ^Decl, owner: ^Item_Impl, block: []Attribute, out: ^[dynamic]Api_Item,
+	b: ^Api_Builder, d: ^Decl, owner: ^Item_Impl, block: ^Item_Foreign_Block, out: ^[dynamic]Api_Item,
 	bound: []string,
 ) {
+	block_attributes := block != nil ? block.attributes : nil
 	// design.md "Exported names": a variable is never public. design.md "Test
 	// procedures": no importer can call a test, and only `@(test)` makes one.
 	if d.names[0].text == "_" || d.kind == .Var || has_attribute(d.attributes, "test") {
@@ -414,14 +533,13 @@ api_decl :: proc(
 	}
 	c := b.c
 	source := &c.sources[d.span.file]
-	item := Api_Item{kind = .Decl, name = d.names[0].text, key = d.names[0].text}
+	item := Api_Item{kind = .Decl, name = d.names[0].text, decl = d}
 	subject := ""
 	if owner != nil {
 		subject = subject_name(c, owner.type)
 		item.name = fmt.aprintf("%s.%s", source_text(c, owner.type), item.name)
-		item.key = fmt.aprintf("%s.%s", subject, item.key)
 	}
-	item.private = !decl_is_public(c, b.file, d, block)
+	item.private = !decl_is_public(c, b.file, d, block_attributes)
 	item.attributes = shown_attributes(b, source, d.attributes)
 	w := Ref_Walk{b = b, subject = subject}
 	append(&w.bound, ..bound)
@@ -440,20 +558,20 @@ api_decl :: proc(
 		api_refs(&w, literal)
 		// design.md "Foreign system": a member takes the block's calling
 		// convention and result requirement unless it states its own.
-		if has_attribute(block, "require_results") && !has_attribute(d.attributes, "require_results") {
+		if has_attribute(block_attributes, "require_results") && !has_attribute(d.attributes, "require_results") {
 			append(&item.attributes, "require_results")
 		}
 	} else {
-		written := shown_text(b, source, lo, d.span.hi)
-		item.text = strings.trim_right(written, ";")
 		if record := decl_record(d); record != nil && record.kind == .Struct {
 			item.text = public_struct(b, record, lo)
+		} else {
+			item.text = strings.trim_right(shown_text(b, source, lo, d.span.hi), ";")
 		}
 		for value in d.values {
 			api_refs(&w, value)
 		}
 		// A span that ends in `}` stops before a `;` written after it.
-		if strings.has_suffix(written, ";") || strings.has_prefix(strings.trim_left_space(source.text[d.span.hi:]), ";") {
+		if strings.has_suffix(source.text[:d.span.hi], ";") || strings.has_prefix(strings.trim_left_space(source.text[d.span.hi:]), ";") {
 			item.terminator = ";"
 		}
 	}
@@ -478,22 +596,40 @@ shown_attributes :: proc(b: ^Api_Builder, source: ^Source, attributes: []Attribu
 }
 
 // The procedure's signature, without its `---` or its body, and with the calling
-// convention `block` lends it.
+// convention a foreign `block` lends it: in an interface file it is an ordinary
+// declaration, whose convention would otherwise be Loke's.
 @(private = "file")
-proc_interface_text :: proc(b: ^Api_Builder, d: ^Decl, literal: ^Expr_Proc, block: []Attribute) -> string {
+proc_interface_text :: proc(b: ^Api_Builder, d: ^Decl, literal: ^Expr_Proc, block: ^Item_Foreign_Block) -> string {
 	source := &b.c.sources[d.span.file]
+	lo := d.names[0].span.lo
 	hi := literal.body != nil ? literal.body.span.lo : d.span.hi
-	written := strings.trim_right(shown_text(b, source, d.names[0].span.lo, hi), ";")
-	text := strings.trim_space(strings.trim_suffix(written, "---"))
-	// The checker writes the block's convention into the signature, so the text
-	// says whether the member wrote its own.
-	after_colons := strings.index(text, "::") + 2
-	at := after_colons + strings.index(text[after_colons:], "proc") + len("proc")
-	rest := strings.trim_left_space(text[at:])
-	if convention, found := find_attribute(block, "default_calling_convention"); found && convention.value != nil && !strings.has_prefix(rest, "\"") {
-		return fmt.aprintf("%s %s %s", text[:at], source_text(b.c, convention.value), rest)
+	// The checker writes the block's convention into the signature, so the
+	// source says whether the member wrote its own after `proc`.
+	after_proc := literal.span.lo + u32(len("proc"))
+	if block == nil || first_token_is(source.text[after_proc:hi], .String) {
+		return signature_text(b, source, lo, hi)
 	}
-	return text
+	convention := fmt.aprintf("\"%s\"", FOREIGN_DEFAULT_CONVENTION)
+	if attribute, found := find_attribute(block.attributes, "default_calling_convention"); found && attribute.value != nil {
+		convention = source_text(b.c, attribute.value)
+	}
+	return fmt.aprintf("%s %s %s", shown_text(b, source, lo, after_proc), convention, signature_text(b, source, after_proc, hi))
+}
+
+// The written text between `lo` and `hi` without the `---;` that ends a
+// bodiless procedure.
+@(private = "file")
+signature_text :: proc(b: ^Api_Builder, source: ^Source, lo, hi: u32) -> string {
+	written := strings.trim_right(shown_text(b, source, lo, hi), ";")
+	return strings.trim_space(strings.trim_suffix(written, "---"))
+}
+
+// Whether `text` begins, after any comments, with a token of `kind`.
+@(private = "file")
+first_token_is :: proc(text: string, kind: Token_Kind) -> bool {
+	tokens := lex_text(text)
+	defer delete(tokens)
+	return len(tokens) > 0 && tokens[0].kind == kind
 }
 
 // `Name :: struct { ... }`, written at `lo`, with only its public fields, one
@@ -536,7 +672,7 @@ Ref_Walk :: struct {
 	// The parameters and `$` names in scope, which a written name means before
 	// any declaration of the package.
 	bound:   [dynamic]string,
-	refs:    [dynamic]string,
+	refs:    [dynamic]^Decl,
 }
 
 // The declarations of the package that `e` refers to. A procedure's body is
@@ -550,18 +686,16 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		symbol := v.resolution.symbol != INVALID_SYMBOL ? v.resolution.symbol : v.symbol
 		if symbol == INVALID_SYMBOL {
 			ref_by_name(w, v.name)
-		} else if key, declared := w.b.declared[symbol]; declared {
-			append(&w.refs, key)
+		} else {
+			ref_symbol(w, symbol)
 		}
 	case ^Expr_Selector:
-		// A member, as `Boxed.DEFAULT`; an import's name resolves to no
-		// declaration of the package.
+		// A member, as `Boxed.DEFAULT` or `Box(T).Inner`; an import's name
+		// resolves to no declaration of the package.
 		if v.resolution.symbol != INVALID_SYMBOL {
-			if key, declared := w.b.declared[v.resolution.symbol]; declared {
-				append(&w.refs, key)
-			}
-		} else if ident, is_ident := v.operand.(^Expr_Ident); is_ident && ident.resolution.kind == .Unresolved && !slice.contains(w.bound[:], ident.name) {
-			append(&w.refs, fmt.aprintf("%s.%s", ident.name, v.name.text))
+			ref_symbol(w, v.resolution.symbol)
+		} else if subject, found := selected_subject(w, v.operand); found {
+			ref_named(w, fmt.aprintf("%s.%s", subject, v.name.text))
 		}
 	case ^Expr_Proc:
 		bind_signature(&w.bound, v.signature)
@@ -570,8 +704,10 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 			api_refs(w, clause)
 		}
 	case ^Expr_Proc_Group:
+		// `resolve_group_members`: a group in an `impl` lists its subject's
+		// members, and one elsewhere the package's declarations.
 		for name in v.names {
-			ref_by_name(w, name.text)
+			ref_named(w, w.subject == "" ? name.text : fmt.aprintf("%s.%s", w.subject, name.text))
 		}
 	case ^Type_Proc:
 		bind_signature(&w.bound, v)
@@ -608,13 +744,21 @@ api_refs :: proc(w: ^Ref_Walk, e: Expr) {
 		}
 	case ^Type_Interface:
 		generic_refs(w, v.generic_params, v.where_clauses)
+		// A requirement's bindings name values for its own expression and result.
+		requirements := len(w.bound)
 		for requirement in v.requirements {
 			for group in requirement.bindings {
 				api_refs(w, group.type)
 			}
+			for group in requirement.bindings {
+				for name in group.names {
+					append(&w.bound, name.text)
+				}
+			}
 			api_refs(w, requirement.expr)
 			api_refs(w, requirement.result)
 			api_refs(w, requirement.slot_type)
+			resize(&w.bound, requirements)
 		}
 	}
 	expr_children(e, w, proc(data: rawptr, child: Expr) -> bool {
@@ -638,7 +782,7 @@ generic_refs :: proc(w: ^Ref_Walk, parameters: []Generic_Param, clauses: []Expr)
 
 // The declarations of the package outside any `impl` that `e` refers to.
 @(private = "file")
-refs_of :: proc(b: ^Api_Builder, e: Expr) -> []string {
+refs_of :: proc(b: ^Api_Builder, e: Expr) -> []^Decl {
 	w := Ref_Walk{b = b}
 	api_refs(&w, e)
 	return w.refs[:]
@@ -667,23 +811,61 @@ ref_by_name :: proc(w: ^Ref_Walk, name: string) {
 	if slice.contains(w.bound[:], name) {
 		return
 	}
-	append(&w.refs, name)
+	ref_named(w, name)
 	if w.subject != "" {
-		append(&w.refs, fmt.aprintf("%s.%s", w.subject, name))
+		ref_named(w, fmt.aprintf("%s.%s", w.subject, name))
 	}
+}
+
+// `name`, or `Subject.name`, as written where the walk is.
+@(private = "file")
+ref_named :: proc(w: ^Ref_Walk, name: string) {
+	for entry in named_entries(w.b, name) {
+		append(&w.refs, entry.decl)
+	}
+}
+
+// The declaration `symbol` was written as, which an instance's copy shares.
+@(private = "file")
+ref_symbol :: proc(w: ^Ref_Walk, symbol: Symbol_Id) {
+	if s := symbol_of(w.b.c, symbol); s != nil {
+		if d, declared := w.b.declared[s.span]; declared {
+			append(&w.refs, d)
+		}
+	}
+}
+
+// The subject a selection's operand names, `Box` in `Box.member` or in
+// `Box(T).member`, when that is a declaration of the package or a name nothing
+// resolved; a parameter, a `$` name, or an import is none.
+@(private = "file")
+selected_subject :: proc(w: ^Ref_Walk, operand: Expr) -> (string, bool) {
+	named := operand
+	if call, is_call := named.(^Expr_Call); is_call {
+		named = call.callee
+	}
+	ident, is_ident := named.(^Expr_Ident)
+	if !is_ident || slice.contains(w.bound[:], ident.name) {
+		return "", false
+	}
+	if ident.resolution.kind == .Unresolved {
+		return ident.name, true
+	}
+	s := symbol_of(w.b.c, ident.resolution.symbol)
+	return ident.name, s != nil && s.span in w.b.declared
 }
 
 @(private = "file")
 item_shown :: proc(a: ^Api_Package, item: ^Api_Item) -> bool {
 	switch item.kind {
 	case .Decl:
-		return !item.private || item.key in a.reached
+		return !item.private || item.decl in a.reached
 	case .Delegate:
 		return true
 	case .Import:
 		return item.name in a.qualifiers
 	case .Impl:
-		if item.private_subject != "" && !(item.private_subject in a.reached) {
+		if item.private_subject != nil && !(item.private_subject in a.reached) {
 			return false
 		}
 		for &member in item.members {
@@ -722,6 +904,12 @@ collect_refs :: proc(a: ^Api_Package, items: []Api_Item) {
 		mark_refs(a, item.refs, item.qualifiers)
 		collect_refs(a, item.members[:])
 		for &branch in item.branches[:shown_branches(a, &item)] {
+			if a.taken_only {
+				if branch.taken {
+					collect_refs(a, branch.items[:])
+				}
+				continue
+			}
 			mark_refs(a, branch.refs, branch.qualifiers)
 			collect_refs(a, branch.items[:])
 		}
@@ -729,7 +917,7 @@ collect_refs :: proc(a: ^Api_Package, items: []Api_Item) {
 }
 
 @(private = "file")
-mark_refs :: proc(a: ^Api_Package, refs, qualifiers: []string) {
+mark_refs :: proc(a: ^Api_Package, refs: []^Decl, qualifiers: []string) {
 	for ref in refs {
 		a.reached[ref] = true
 	}
@@ -827,7 +1015,7 @@ token_texts :: proc(text: string) -> []string {
 
 @(private = "file")
 document_package :: proc(c: ^Compiler, b: ^strings.Builder, id: Package_Id) {
-	a := api_package(c, id)
+	a := api_package(c, id, taken_only = true)
 	if a.key == "" || strings.contains_rune(a.key, ':') {
 		fmt.sbprintfln(b, "# package %s", a.name)
 	} else {
