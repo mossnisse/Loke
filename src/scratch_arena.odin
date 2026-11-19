@@ -9,6 +9,7 @@
 // valid, until the next reset releases every range but the first.
 package lokec
 
+import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:mem/virtual"
@@ -56,6 +57,28 @@ scratch_allocator :: proc(arena: ^Scratch_Arena) -> mem.Allocator {
 
 scratch_arena_used :: proc(arena: ^Scratch_Arena) -> uint {
 	return arena.earlier_used + arena.used
+}
+
+// Points every map and dynamic array in `value`, and in the records it holds
+// inline, at `allocator`, such as a body's scratch arena, where each then grows
+// when first used.
+@(private)
+use_allocator :: proc(value: ^$T, allocator: mem.Allocator) {
+	set_container_allocators(value, type_info_of(T), allocator)
+}
+
+@(private = "file")
+set_container_allocators :: proc(data: rawptr, info: ^runtime.Type_Info, allocator: mem.Allocator) {
+	#partial switch v in runtime.type_info_base(info).variant {
+	case runtime.Type_Info_Map:
+		(^runtime.Raw_Map)(data).allocator = allocator
+	case runtime.Type_Info_Dynamic_Array:
+		(^runtime.Raw_Dynamic_Array)(data).allocator = allocator
+	case runtime.Type_Info_Struct:
+		for index in 0 ..< int(v.field_count) {
+			set_container_allocators(rawptr(uintptr(data) + v.offsets[index]), v.types[index], allocator)
+		}
+	}
 }
 
 // Releases the chained ranges and zeroes what was used of the first, so every

@@ -1,5 +1,6 @@
 // Views: a switch payload or case binding over a place, and an erased, printed,
-// or read-only view of a value, with what each keeps borrowed.
+// or read-only view of a value, with what each keeps borrowed, and what each
+// definition of a local view takes from a fresh borrow (`Prov_View_Def`).
 package lokec
 
 // The payload under a union's wildcard alternative: unwrapping keeps every borrow
@@ -536,4 +537,106 @@ walk_flow_expr_erased :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	prov_begin_conversion(graph, e, .Erasure)
 	defer prov_end_conversion(graph)
 	return walk_flow_expr(graph, e)
+}
+
+// Records how a definition of a named slot relates its view to a fresh
+// borrow (`Prov_View_Def`), so a constant subscript of a view held there
+// names one element of the range that borrow lends
+// (`prov_local_view_element`): the borrow itself, the reslice
+// `prov_note_reslice` announced, or anything else. One more than the
+// definition's index among the slot's (`Prov_Event.view_def`), or 0, as for
+// an event a fact graph emits into the graph it materializes, whose
+// definitions it does not record.
+@(private)
+prov_note_view :: proc(graph: ^Flow_Graph, event: Prov_Event) -> int {
+	reslice := graph.view_reslice
+	graph.view_reslice = {}
+	if graph.prov_slots[event.slot].symbol == INVALID_SYMBOL || graph.materialized != nil {
+		return 0
+	}
+	fresh := NO_LOAN
+	if event.place_loan == 0 && event.loan == NO_LOAN && len(event.sources) == 1 {
+		fresh = prov_slot_fresh_loan(graph, event.sources[0])
+	}
+	reslices := reslice.slot == event.slot + 1
+	def := Prov_View_Def{loan = NO_LOAN, unknown = true}
+	switch {
+	case reslices && reslice.open:
+		if fresh != NO_LOAN {
+			def = Prov_View_Def{loan = fresh, lo = reslice.lo, open = true}
+		}
+	case reslices && event.place_loan == 0 && event.loan == NO_LOAN:
+		def = reslice
+		def.slot = 0
+	case event.place_loan == 0 && event.loan != NO_LOAN && len(event.sources) == 0:
+		def = Prov_View_Def{loan = event.loan}
+	case fresh != NO_LOAN:
+		def = Prov_View_Def{loan = fresh}
+	}
+	if event.slot not_in graph.view_defs {
+		graph.view_defs[event.slot] = make([dynamic]Prov_View_Def, 0, 1, graph.alloc)
+	}
+	append(&graph.view_defs[event.slot], def)
+	return len(graph.view_defs[event.slot])
+}
+
+// Announces that the next definition of `slot` takes `value`, when that is a
+// constant reslice of a local view, as `s[mut 1:]` or `s[0:2]`, or a fresh
+// borrow of elements from a constant start to an end that is not constant,
+// as `d[mut :]` of a dynamic array, which is `open` (`prov_note_view`).
+@(private)
+prov_note_reslice :: proc(graph: ^Flow_Graph, slot: int, value: Expr) {
+	graph.view_reslice = {}
+	c := graph.k.c
+	slice_expr, is_slice := value.(^Expr_Slice)
+	if !is_slice || len(slice_expr.bound) > 0 {
+		return
+	}
+	if prov_note_open_borrow(graph, slot, slice_expr) {
+		return
+	}
+	ident, named := slice_expr.operand.(^Expr_Ident)
+	if !named {
+		return
+	}
+	sym := symbol_of(c, ident.symbol)
+	if sym == nil || sym.kind == .Parameter || underlying_kind(c, sym.type) != .Slice {
+		return
+	}
+	from, found := prov_slot_for_symbol(graph, ident.symbol)
+	if !found {
+		return
+	}
+	lo, lo_constant := prov_const_bound(graph, slice_expr.lo, 0)
+	hi, hi_constant := prov_const_bound(graph, slice_expr.hi, -1)
+	if !lo_constant || !hi_constant || slice_expr.hi != nil && hi < 0 {
+		return
+	}
+	graph.view_reslice = Prov_View_Def{slot = slot + 1, loan = NO_LOAN, from = from + 1, lo = lo, hi = hi}
+}
+
+// `prov_note_reslice` for a slice of an array or dynamic array in a local
+// place whose range step is a wildcard (`prov_range_step`) though it starts
+// at a constant element, as `d[mut :]` or `a[mut 1:n]`: the borrow it makes
+// lends the elements from there on (`Prov_View_Def.open`).
+@(private = "file")
+prov_note_open_borrow :: proc(graph: ^Flow_Graph, slot: int, slice_expr: ^Expr_Slice) -> bool {
+	kind := underlying_kind(graph.k.c, prov_type(graph, slice_expr.operand))
+	if kind != .Array && kind != .Dynamic_Array || prov_range_step(graph, slice_expr).kind != .Wild {
+		return false
+	}
+	if _, _, local := prov_place_of(graph, slice_expr.operand); !local {
+		return false
+	}
+	lo, constant := prov_const_bound(graph, slice_expr.lo, 0)
+	if !constant || lo < 0 {
+		return false
+	}
+	if slice_expr.hi != nil {
+		if _, hi_constant := prov_const_int(graph, slice_expr.hi); hi_constant {
+			return false
+		}
+	}
+	graph.view_reslice = Prov_View_Def{slot = slot + 1, loan = NO_LOAN, lo = lo, hi = -1, open = true}
+	return true
 }

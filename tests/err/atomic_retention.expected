@@ -22,3 +22,6 @@ this pointer borrows `value`, which is not written `@(escape=stored)`, so it can
 L0647
 @59:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
+L0647
+@73:2
+which does not outlive `cell`, where it may be stored

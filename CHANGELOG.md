@@ -56,6 +56,26 @@ checklist.
   precision notes already said.
 - A `when` condition that waits on two names of a conditional expression reports the one
   written first, the value before `if`.
+- A borrow a call returns or leaves in an argument keeps every `thread_local` global its callee
+  may borrow ([Borrows and lifetimes](docs/design.md#borrows-and-lifetimes)), also through a
+  callback the call passes. Only the first one found was kept, so with `get` returning `a[:]`
+  or `b[:]`, `seen := call_get(get, true); a.append(1);` compiled while `seen` was in use, as
+  did `b.append(1)` after a direct call that stored `a[:]` or `b[:]` through an `out` pointer.
+  Each is now `L0512`.
+- A panic after a move in the same statement runs a pending `defer` or `errdefer` with the
+  local moved ([defer statement](docs/design.md#defer-statement)).
+  `errdefer fmt.println(item.value); eat(move(item), risky());` compiled, though `risky` runs
+  after `item` is moved; it is now `L0500`, as when the move is a statement of its own.
+- A map literal whose entries hold borrows records what its key's `hash` and `==` do at each
+  insertion ([Global write effects](docs/design.md#global-write-effects)).
+  `map[Key]^int{Key{1} = &local}` with a `hash` reading `counter` compiled while a
+  `&mut counter` was in use; it is `L0511`, as `map[Key]int{Key{1} = local}` was.
+- A `stored` argument is checked against an atomic reached through a read-only pointer below
+  four nested records ([Retaining a borrow](docs/design.md#retaining-a-borrow)), as it was
+  above them, so storing a pointer to a local there is `L0647`.
+- Whether a map's constant keys get entries of their own no longer depends on which of two
+  map types reaching each other the compiler measured first: each map on such a cycle keeps
+  one entry for every key ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
 
 ## [0.10.0] - 2026-11-16
 

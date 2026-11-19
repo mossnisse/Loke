@@ -59,6 +59,20 @@ through_pointer :: proc() {
 	stored(&cell, &value);
 }
 
+// Also below the depth to which a carrier's paths are told apart.
+Holder :: struct { cell: ^sync.Atomic(Option(^int)) }
+Wrap1 :: struct { inner: Holder }
+Wrap2 :: struct { inner: Wrap1 }
+Wrap3 :: struct { inner: Wrap2 }
+Far :: struct { inner: Wrap3 }
+stored_far :: proc(holder: Far, @(escape=stored) value: ^int) {
+	holder.inner.inner.inner.inner.cell.store(.some(value));
+}
+through_deep_record :: proc() {
+	value := 42;
+	stored_far(Far{{{{{&cell}}}}}, &value);
+}
+
 // What outlives the atomic may be stored, read back, and stored again, and an
 // atomic that holds no borrow retains nothing.
 fine :: proc() -> int {

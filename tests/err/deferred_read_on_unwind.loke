@@ -45,4 +45,24 @@ assigned_without_panic :: proc() {
 	x = 1;
 }
 
+// design.md "Evaluation order": an argument is moved before the next is
+// evaluated, and before the call, either of which may panic.
+eat :: proc(y: move Y, number: int) { _ = y.id; _ = number; }
+risky_number :: proc() -> int { panic("risky"); }
+remake :: proc(y: move Y) -> Y { return Y{y.id}; }
+
+moved_within_panicking_statement :: proc() -> Status(Err) {
+	y := Y{5};
+	errdefer fmt.println(y.id);
+	eat(move(y), risky_number());
+	return .ok;
+}
+
+moved_and_assigned_again :: proc() -> Status(Err) {
+	y := Y{5};
+	errdefer fmt.println(y.id);
+	y = remake(move(y));
+	return .ok;
+}
+
 main :: proc() {}

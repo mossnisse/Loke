@@ -8,6 +8,9 @@ L0500
 @21:20
 cannot be used here: it has already been moved, dropped, or released
 L0500
+@21:20
+a panic in this statement runs the deferred statement
+L0500
 @28:16
 cannot be dropped here: it is live on only some of the paths
 L0500

@@ -200,8 +200,12 @@ Compiler :: struct {
 	may_hold_address:   map[Type_Id]bool,
 	// Per type, `region_field_shape` with every region empty.
 	region_shapes:      map[Type_Id][]Prov_Region_Content,
-	// Whether a map type's shape gives constant keys entries of their own.
+	// Whether a map type's shape gives constant keys entries of their own; the
+	// maps still being decided, outermost first; and the lowest of those a walk
+	// reached again (`map_shape_is_keyed`).
 	map_keyed:          map[Type_Id]bool,
+	map_keying:         [dynamic]Type_Id,
+	map_keying_cycle:   Maybe(int),
 	// `transfer_facts` by type and whether views are followed, asked only by the
 	// provenance walks, once the witnesses a view may hold are known.
 	transfer_facts_of:  map[Transfer_Key]Transfer_Facts,
@@ -293,10 +297,9 @@ Compiler :: struct {
 	// out of what that same argument held (design.md "Values that contain
 	// borrows").
 	carrier_moves: map[Symbol_Id][]Carrier_Move,
-	// Per parameter, a `thread_local` global whose borrow a body may leave in
-	// the storage that argument names, or INVALID_SYMBOL (design.md "Borrows
-	// crossing between tasks").
-	thread_local_writes: map[Symbol_Id][]Symbol_Id,
+	// Each `thread_local` global whose borrow a body may leave in the storage
+	// an argument names, by parameter (`Thread_Local_Write`).
+	thread_local_writes: map[Symbol_Id][]Thread_Local_Write,
 	// What a body may leave in caller storage from its calls through the
 	// callbacks it received, substituted at each call (`Callback_Write`).
 	callback_thread_local_writes: map[Symbol_Id][]Callback_Write,

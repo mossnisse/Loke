@@ -123,6 +123,38 @@ type_is_panic_free_scalar :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
+// Whether the operation `e` performs once its operands are evaluated may panic,
+// as conservatively as `stmt_cannot_panic` asks: a call, an index, a slice,
+// arithmetic, a container literal, which allocates, or a read of a managed value,
+// which may copy it. A move, a conditional, or a union's construction passes on
+// what its operands made.
+@(private)
+expr_may_panic_itself :: proc(c: ^Compiler, e: Expr) -> bool {
+	base := expr_base(e)
+	if base == nil || base.has_error {
+		return true
+	}
+	if base_is_const(base) {
+		return false
+	}
+	#partial switch v in e {
+	case ^Expr_Move, ^Expr_Cond, ^Expr_Or_Else, ^Expr_Literal, ^Expr_Proc, ^Expr_Range, ^Expr_Propagated_Error:
+		return false
+	case ^Expr_Call:
+		_, construct := v.operation.(Call_Union_Construct)
+		return !construct
+	case ^Expr_Composite:
+		return type_is_container(c, base.type)
+	case ^Expr_Ident, ^Expr_Selector:
+		return type_is_managed(c, base.type)
+	case ^Expr_Postfix:
+		return v.boxed || type_is_managed(c, base.type)
+	case ^Expr_Unary, ^Expr_Binary:
+		return !expr_cannot_panic(c, e)
+	}
+	return true
+}
+
 @(private = "file")
 expr_cannot_panic :: proc(c: ^Compiler, e: Expr) -> bool {
 	base := expr_base(e)

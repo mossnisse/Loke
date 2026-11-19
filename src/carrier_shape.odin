@@ -4,6 +4,8 @@
 // summaries in `result_summary.odin`.
 package lokec
 
+import "core:slice"
+
 // design.md "Storage roots and borrow carriers". `rawptr` and `[^]T` carry no
 // checked provenance. An Allocator borrows its provider's control block.
 // A region provider is a carrier because an arena over a
@@ -74,8 +76,16 @@ map_shape_is_keyed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if cached, found := c.map_keyed[type]; found {
 		return cached
 	}
-	// Provisionally unkeyed, so a map reaching itself keeps one wildcard entry.
-	c.map_keyed[type] = false
+	// A map reaching itself keeps one wildcard entry, as does each map on the
+	// way back to it, so the answers do not depend on which was asked first.
+	if at, open := slice.linear_search(c.map_keying[:], type); open {
+		if floor, cycle := c.map_keying_cycle.?; !cycle || at < floor {
+			c.map_keying_cycle = at
+		}
+		return false
+	}
+	append(&c.map_keying, type)
+	at := len(c.map_keying) - 1
 	out := false
 	if info := underlying_info(c, type); info != nil && info.kind == .Map {
 		// Measured with one path per dynamic array, whose elements are replicated
@@ -84,6 +94,13 @@ map_shape_is_keyed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		carrier_shape_walk(c, info.key, nil, 0, &paths, elements = false)
 		carrier_shape_walk(c, info.element, nil, 0, &paths, elements = false)
 		out = len(paths) > 0 && len(paths) <= MAP_KEY_PATH_LIMIT
+	}
+	pop(&c.map_keying)
+	if floor, cycle := c.map_keying_cycle.?; cycle && at >= floor {
+		out = false
+		if at == floor {
+			c.map_keying_cycle = nil
+		}
 	}
 	c.map_keyed[type] = out
 	return out
@@ -168,12 +185,7 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 		if path.mutable && (owners || type_carries_borrow(c, info.element).any) {
 			return true
 		}
-		// design.md "Retaining a borrow": an atomic operation stores a borrow
-		// through a read-only carrier too.
-		if !owners && synchronized_field_within(c, info.element, borrowing = true) != nil {
-			return true
-		}
-		if type_reaches_destination(c, info.element, visited, owners) {
+		if pointee_reaches_destination(c, info.element, visited, owners) {
 			return true
 		}
 	}
@@ -182,8 +194,8 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 
 // A truncated path names no carrier, so the value it cut is searched instead:
 // a mutable carrier in it is a destination, and a read-only one leads to one
-// when its pointee reaches one, as `ptr: ^Leaf` does with `Leaf{out: ^mut ^int}`
-// below the depth budget.
+// as one on a whole path does (`pointee_reaches_destination`), as `ptr: ^Leaf`
+// does with `Leaf{out: ^mut ^int}` below the depth budget.
 @(private)
 truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited: ^map[Type_Id]bool, owners := false) -> bool {
 	if path.mutable {
@@ -194,11 +206,23 @@ truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited:
 	carrier_leaves(c, path.cut, &leaves, &walking)
 	for leaf in leaves {
 		info := underlying_info(c, leaf)
-		if info != nil && type_reaches_destination(c, info.element, visited, owners) {
+		if info != nil && pointee_reaches_destination(c, info.element, visited, owners) {
 			return true
 		}
 	}
 	return false
+}
+
+// Whether what a carrier points at leads to a destination through it, read-only
+// or not: a synchronized field that can hold a borrow, as design.md "Retaining a
+// borrow" lets an atomic operation store one through a read-only carrier, or a
+// destination reached further down.
+@(private = "file")
+pointee_reaches_destination :: proc(c: ^Compiler, pointee: Type_Id, visited: ^map[Type_Id]bool, owners: bool) -> bool {
+	if !owners && synchronized_field_within(c, pointee, borrowing = true) != nil {
+		return true
+	}
+	return type_reaches_destination(c, pointee, visited, owners)
 }
 
 // The carrier types in a value of `type`, without following any of them; the

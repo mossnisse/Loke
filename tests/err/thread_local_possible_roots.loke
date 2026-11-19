@@ -1,0 +1,41 @@
+package main;
+
+// design.md "Borrows and lifetimes": a borrow a call returns or leaves in an
+// argument may borrow any of the `thread_local` globals its callee may name,
+// directly or through a callback it is passed, and each stays borrowed while
+// the borrow is in use.
+
+a: thread_local [dynamic]int;
+b: thread_local [dynamic]int;
+
+get :: proc(pick_a: bool) -> []int {
+	if (pick_a) { return a[:]; }
+	return b[:];
+}
+call_get :: proc(f: proc(pick_a: bool) -> []int, pick_a: bool) -> []int {
+	return f(pick_a);
+}
+
+set :: proc(out: ^mut []int, pick_a: bool) {
+	if (pick_a) { out^ = a[:]; } else { out^ = b[:]; }
+}
+call_set :: proc(f: proc(out: ^mut []int, pick_a: bool), out: ^mut []int, pick_a: bool) {
+	f(out, pick_a);
+}
+
+main :: proc() {
+	first := call_get(get, true);
+	a.append(1);
+	_ = first.len();
+	second := call_get(get, true);
+	b.append(1);
+	_ = second.len();
+	third: []int = {};
+	set(&mut third, true);
+	b.append(1);
+	_ = third.len();
+	fourth: []int = {};
+	call_set(set, &mut fourth, true);
+	b.append(1);
+	_ = fourth.len();
+}

@@ -230,6 +230,63 @@ main :: proc() { }`)
 	}
 }
 
+// Maps whose values reach each other are decided together, whichever is asked
+// first.
+@(test)
+recursive_map_keys_do_not_depend_on_query_order :: proc(t: ^testing.T) {
+	keyed :: proc(t: ^testing.T, a_first: bool) -> (of_a, of_b: bool) {
+		p: Checked
+		defer destroy_checked(&p)
+		check_source(&p, `package main;
+A :: struct { p: ^int, next: map[int]B }
+B :: struct { next: map[int]A }
+main :: proc() { }`)
+		if !testing.expect(t, p.c.error_count == 0, "fixture should check") { report(&p.c); return }
+		next_of :: proc(p: ^Checked, record: Type_Id) -> Type_Id {
+			fields := type_of(&p.c, record).fields
+			return symbol_of(&p.c, fields[len(fields) - 1]).type
+		}
+		map_of_a := next_of(&p, named_type(t, &p, "B"))
+		map_of_b := next_of(&p, named_type(t, &p, "A"))
+		if a_first {
+			of_a = map_shape_is_keyed(&p.c, map_of_a)
+			of_b = map_shape_is_keyed(&p.c, map_of_b)
+		} else {
+			of_b = map_shape_is_keyed(&p.c, map_of_b)
+			of_a = map_shape_is_keyed(&p.c, map_of_a)
+		}
+		return
+	}
+	a_first_a, a_first_b := keyed(t, true)
+	b_first_a, b_first_b := keyed(t, false)
+	testing.expectf(
+		t, a_first_a == b_first_a && a_first_b == b_first_b,
+		"asking map[int]A first answered (%v, %v), asking map[int]B first (%v, %v)", a_first_a, a_first_b, b_first_a, b_first_b,
+	)
+}
+
+// design.md "Retaining a borrow": an atomic operation stores through a
+// read-only carrier, also one below the depth budget.
+@(test)
+a_synchronized_destination_survives_truncation :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
+Cell :: struct { @(synchronized) value: ^int }
+Near :: struct { cell: ^Cell }
+Wrap1 :: struct { inner: Near }
+Wrap2 :: struct { inner: Wrap1 }
+Wrap3 :: struct { inner: Wrap2 }
+Far :: struct { inner: Wrap3 }
+main :: proc() { }`)
+	if !testing.expect(t, p.c.error_count == 0, "fixture should check") { report(&p.c); return }
+	far := named_type(t, &p, "Far")
+	shape := carrier_shape(&p.c, far)
+	testing.expect(t, len(shape) == 1 && shape[0].truncated, "the fixture should cut its path at the depth budget")
+	testing.expect(t, prov_type_reaches_destination(&p.c, named_type(t, &p, "Near")), "a read-only pointer to a synchronized field is a destination")
+	testing.expect(t, prov_type_reaches_destination(&p.c, far), "a cut path hid a synchronized destination")
+}
+
 @(test)
 minimum_carrier_precision_boundaries :: proc(t: ^testing.T) {
 	p: Checked

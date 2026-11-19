@@ -28,15 +28,12 @@ Callback_Read :: struct {
 	callback, argument: int,
 }
 
-// Adds `value` to `table`'s set for `declaration`; returns whether it grew.
-@(private)
-add_unique :: proc(c: ^Compiler, table: ^map[Symbol_Id][]$T, declaration: Symbol_Id, value: T) -> bool {
-	known := table[declaration]
-	if !set_add(&known, value, c.semantic_allocator) {
-		return false
-	}
-	table[declaration] = known
-	return true
+// design.md "Borrows crossing between tasks": a body may leave a borrow of the
+// `thread_local` global `global` in the caller storage its parameter `param`
+// names. A call leaves each in its argument (`call_thread_local_left`).
+Thread_Local_Write :: struct {
+	param:  int,
+	global: Symbol_Id,
 }
 
 // What a call may leave in its argument `at`, by its position in the call's
@@ -76,8 +73,7 @@ call_thread_local_left :: proc(
 			}
 			position := index - (count - callable_arity(c, type))
 			// Only a type some procedure of which may leave one needs a stand-in.
-			clear(&seen)
-			if type_left_at(c, type, position, consulted, &seen) != INVALID_SYMBOL {
+			if type_may_leave(c, type, position, consulted, &seen) {
 				append(&out, Thread_Local_Left{at = index, global = INVALID_SYMBOL, callback = callback, argument = position})
 			}
 		}
@@ -90,9 +86,9 @@ call_thread_local_left :: proc(
 			continue
 		}
 		shift := count - len(sym.param_symbols)
-		for global, index in c.thread_local_writes[target] {
-			if global != INVALID_SYMBOL && index + shift >= 0 && index + shift < count {
-				append(&out, Thread_Local_Left{at = index + shift, global = global, callback = INVALID_SYMBOL})
+		for write in c.thread_local_writes[target] {
+			if at := write.param + shift; at >= 0 && at < count {
+				append(&out, Thread_Local_Left{at = at, global = write.global, callback = INVALID_SYMBOL})
 			}
 		}
 		for write in c.callback_thread_local_writes[target] {
@@ -102,10 +98,7 @@ call_thread_local_left :: proc(
 			}
 			type := symbol_of(c, sym.param_symbols[write.callback]).type
 			for value in passed_values(c, site, call, passed) {
-				if left, found := value_left(c, value, type, write.argument, body, forward, consulted, &seen); found {
-					left.at = at
-					append(&out, left)
-				}
+				value_left(c, value, type, write.argument, at, body, forward, consulted, &seen, &out)
 			}
 		}
 	}
@@ -113,18 +106,24 @@ call_thread_local_left :: proc(
 }
 
 // The bodies a call may run, whose summaries say what it does: what a procedure
-// value it goes through may be (`callee_values`), or else its callee
-// (`call_thread_local_targets`). A value the effects did not resolve may run any
-// body they found for the call (`indirect_call_targets`), whatever contract its
-// type carries, since a contract bounds only what the result borrows. With
-// `forward`, a callback the calling `body` received is a stand-in instead.
+// value it goes through may be (`callee_values`), or else its callee, or every
+// body a call through a value or a `dyn` slot may run. A value the effects did
+// not resolve may run any body they found for the call (`indirect_call_targets`),
+// whatever contract its type carries, since a contract bounds only what the
+// result borrows. With `forward`, a callback the calling `body` received is a
+// stand-in instead.
 @(private)
 call_summary_targets :: proc(c: ^Compiler, call: ^Expr_Call, body: Symbol_Id, forward: bool) -> (targets, stand_ins: [dynamic]Symbol_Id) {
 	targets = make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
-	stand_ins = make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
+	// Only a call through a value, with `forward`, has any.
+	stand_ins = make([dynamic]Symbol_Id, context.temp_allocator)
 	values, through := callee_values(c, call, body)
 	if !through {
-		append(&targets, ..call_thread_local_targets(c, call))
+		if indirect, found := indirect_call_targets(c, call); found {
+			append(&targets, ..indirect)
+		} else if declaration := call_contract_declaration(c, call); declaration != INVALID_SYMBOL {
+			append(&targets, declaration)
+		}
 		return
 	}
 	unresolved := false
@@ -148,22 +147,6 @@ call_summary_targets :: proc(c: ^Compiler, call: ^Expr_Call, body: Symbol_Id, fo
 		append(&targets, ..indirect)
 	}
 	return
-}
-
-// The declarations a call's summary is read from: its callee, or every body a
-// call through a value or a `dyn` slot may run.
-@(private = "file")
-call_thread_local_targets :: proc(c: ^Compiler, call: ^Expr_Call) -> []Symbol_Id {
-	if targets, indirect := indirect_call_targets(c, call); indirect {
-		return targets
-	}
-	declaration := call_contract_declaration(c, call)
-	if declaration == INVALID_SYMBOL {
-		return nil
-	}
-	single := make([]Symbol_Id, 1, context.temp_allocator)
-	single[0] = declaration
-	return single
 }
 
 // What the value a call goes through may be: what the write effects resolved
@@ -250,9 +233,7 @@ call_callback_reads :: proc(
 		for read in c.callback_result_reads[member] {
 			type := symbol_of(c, sym.param_symbols[read.callback]).type
 			for value in passed_values(c, site, call, read.callback + shift) {
-				if left, found := value_left(c, value, type, read.argument, body, forward, consulted, &seen); found {
-					append(&out, left)
-				}
+				value_left(c, value, type, read.argument, 0, body, forward, consulted, &seen, &out)
 			}
 		}
 	}
@@ -297,52 +278,62 @@ callable_arity :: proc(c: ^Compiler, type: Type_Id) -> int {
 	return len(info.parameters)
 }
 
-// What a callback that may be `value`, of `type`, leaves in its argument
-// `argument`, if anything: a named procedure's own summary; with `forward`, a
-// callback the calling `body` received as a stand-in, where any procedure of the
-// type may leave one at all; otherwise what any procedure of the type may leave.
-// `seen` is this query's own, as what an earlier one visited it may yet leave
-// here (`procedure_left_at`).
+// Appends to `out`, at `at`, what a callback that may be `value`, of `type`,
+// leaves in its argument `argument`: a named procedure's own summary; with
+// `forward`, a callback the calling `body` received as a stand-in, where any
+// procedure of the type may leave one at all; otherwise what any procedure of
+// the type may leave. design.md "Borrows and lifetimes": each `thread_local`
+// global it may leave is a possible root of its own. `seen` is this query's
+// own, as what an earlier one visited it may yet leave here
+// (`procedure_left_at`).
 @(private = "file")
 value_left :: proc(
-	c: ^Compiler, value: Effect_Arg, type: Type_Id, argument: int, body: Symbol_Id, forward: bool,
-	consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool,
-) -> (left: Thread_Local_Left, found: bool) {
+	c: ^Compiler, value: Effect_Arg, type: Type_Id, argument, at: int, body: Symbol_Id, forward: bool,
+	consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool, out: ^[dynamic]Thread_Local_Left,
+) {
 	clear(seen)
-	left.global, left.callback = INVALID_SYMBOL, INVALID_SYMBOL
-	arity := callable_arity(c, type)
+	globals := make([dynamic]Symbol_Id, context.temp_allocator)
 	#partial switch value.kind {
 	case .Nil:
-		return left, false
+		return
 	case .Procedure:
 		if prov_has_direct_body(c, value.symbol) {
-			left.global = procedure_left_at(c, value.symbol, arity, argument, consulted, seen)
-			return left, left.global != INVALID_SYMBOL
+			procedure_left_at(c, value.symbol, callable_arity(c, type), argument, consulted, seen, &globals)
+			append_globals_left(out, at, globals[:])
+			return
 		}
 	case .Parameter:
 		callback := body_parameter(c, body, value.parameter)
-		if forward && callback != INVALID_SYMBOL && callable_arity(c, symbol_of(c, callback).type) == arity {
-			if type_left_at(c, type, argument, consulted, seen) == INVALID_SYMBOL {
-				return left, false
+		if forward && callback != INVALID_SYMBOL && callable_arity(c, symbol_of(c, callback).type) == callable_arity(c, type) {
+			if type_may_leave(c, type, argument, consulted, seen) {
+				append(out, Thread_Local_Left{at = at, global = INVALID_SYMBOL, callback = callback, argument = argument})
 			}
-			left.callback, left.argument = callback, argument
-			return left, true
+			return
 		}
 	}
-	left.global = type_left_at(c, type, argument, consulted, seen)
-	return left, left.global != INVALID_SYMBOL
+	type_left_at(c, type, argument, consulted, seen, &globals)
+	append_globals_left(out, at, globals[:])
 }
 
-// A `thread_local` global that procedure `id`, standing for a callback whose
-// signature has `arity` parameters, may leave in that signature's argument
-// `argument`. A callback it calls in turn may be any procedure of its type.
+@(private = "file")
+append_globals_left :: proc(out: ^[dynamic]Thread_Local_Left, at: int, globals: []Symbol_Id) {
+	for global in globals {
+		append(out, Thread_Local_Left{at = at, global = global, callback = INVALID_SYMBOL})
+	}
+}
+
+// Adds to `globals` each `thread_local` global that procedure `id`, standing
+// for a callback whose signature has `arity` parameters, may leave in that
+// signature's argument `argument`. A callback it calls in turn may be any
+// procedure of its type.
 @(private = "file")
 procedure_left_at :: proc(
 	c: ^Compiler, id: Symbol_Id, arity, argument: int, consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool,
-) -> Symbol_Id {
+	globals: ^[dynamic]Symbol_Id,
+) {
 	sym := symbol_of(c, id)
 	if sym == nil || arity < 0 {
-		return INVALID_SYMBOL
+		return
 	}
 	index := argument
 	if argument != CALLBACK_RESULT {
@@ -351,47 +342,44 @@ procedure_left_at :: proc(
 	// A cycle of callbacks adds nothing its first visit does not.
 	key := [2]int{int(id), index}
 	if seen[key] {
-		return INVALID_SYMBOL
+		return
 	}
 	seen[key] = true
 	append(consulted, id)
 	if index == CALLBACK_RESULT {
-		return returned_thread_local(c, id, consulted, seen)
+		returned_thread_locals(c, id, consulted, seen, globals)
+		return
 	}
-	if written := c.thread_local_writes[id]; index >= 0 && index < len(written) && written[index] != INVALID_SYMBOL {
-		return written[index]
+	for write in c.thread_local_writes[id] {
+		if write.param == index {
+			append_unique(globals, write.global)
+		}
 	}
 	for write in c.callback_thread_local_writes[id] {
-		if write.into != index {
-			continue
-		}
-		type := symbol_of(c, sym.param_symbols[write.callback]).type
-		if global := type_left_at(c, type, write.argument, consulted, seen); global != INVALID_SYMBOL {
-			return global
+		if write.into == index {
+			type_left_at(c, symbol_of(c, sym.param_symbols[write.callback]).type, write.argument, consulted, seen, globals)
 		}
 	}
-	return INVALID_SYMBOL
 }
 
-// A `thread_local` global procedure `id` may return a borrow of: one its result
-// summary names, or what a callback it calls may leave for its result.
+// Adds to `globals` each `thread_local` global procedure `id` may return a
+// borrow of: those its result summary names, and what a callback it calls may
+// leave for its result.
 @(private = "file")
-returned_thread_local :: proc(c: ^Compiler, id: Symbol_Id, consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool) -> Symbol_Id {
+returned_thread_locals :: proc(
+	c: ^Compiler, id: Symbol_Id, consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool, globals: ^[dynamic]Symbol_Id,
+) {
 	if summary, found := result_summary(c, id); found {
 		for global in summary.globals {
 			if global_sym := symbol_of(c, global); global_sym != nil && global_sym.duration == .Thread_Local {
-				return global
+				append_unique(globals, global)
 			}
 		}
 	}
 	sym := symbol_of(c, id)
 	for read in c.callback_result_reads[id] {
-		type := symbol_of(c, sym.param_symbols[read.callback]).type
-		if global := type_left_at(c, type, read.argument, consulted, seen); global != INVALID_SYMBOL {
-			return global
-		}
+		type_left_at(c, symbol_of(c, sym.param_symbols[read.callback]).type, read.argument, consulted, seen, globals)
 	}
-	return INVALID_SYMBOL
 }
 
 // What a call through a value or a `dyn` slot may return of a callback's
@@ -415,35 +403,42 @@ call_callback_returns :: proc(
 	values, through := callee_values(c, call, body)
 	if !through {
 		targets, _ := indirect_call_targets(c, call)
+		globals := make([dynamic]Symbol_Id, context.temp_allocator)
 		for target in targets {
-			clear(&seen)
-			if global := procedure_left_at(c, target, callable_arity(c, type), CALLBACK_RESULT, consulted, &seen); global != INVALID_SYMBOL {
-				append(&out, Thread_Local_Left{global = global, callback = INVALID_SYMBOL})
-			}
+			procedure_left_at(c, target, callable_arity(c, type), CALLBACK_RESULT, consulted, &seen, &globals)
 		}
+		append_globals_left(&out, 0, globals[:])
 		return out[:]
 	}
 	for value in values {
-		if left, found := value_left(c, value, type, CALLBACK_RESULT, body, forward, consulted, &seen); found {
-			append(&out, left)
-		}
+		value_left(c, value, type, CALLBACK_RESULT, 0, body, forward, consulted, &seen, &out)
 	}
 	return out[:]
 }
 
-// What any procedure a value of the callable `type` may hold leaves in its
-// argument `argument`.
+// Adds to `globals` what any procedure a value of the callable `type` may hold
+// leaves in its argument `argument`.
 @(private = "file")
 type_left_at :: proc(
 	c: ^Compiler, type: Type_Id, argument: int, consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool,
-) -> Symbol_Id {
+	globals: ^[dynamic]Symbol_Id,
+) {
 	arity := callable_arity(c, type)
 	for target in callable_type_targets(c, type) {
-		if global := procedure_left_at(c, target, arity, argument, consulted, seen); global != INVALID_SYMBOL {
-			return global
-		}
+		procedure_left_at(c, target, arity, argument, consulted, seen, globals)
 	}
-	return INVALID_SYMBOL
+}
+
+// Whether any procedure a value of the callable `type` may hold leaves a
+// `thread_local` global in its argument `argument`; it starts `seen` afresh.
+@(private = "file")
+type_may_leave :: proc(
+	c: ^Compiler, type: Type_Id, argument: int, consulted: ^[dynamic]Symbol_Id, seen: ^map[[2]int]bool,
+) -> bool {
+	clear(seen)
+	globals := make([dynamic]Symbol_Id, context.temp_allocator)
+	type_left_at(c, type, argument, consulted, seen, &globals)
+	return len(globals) > 0
 }
 
 @(private)

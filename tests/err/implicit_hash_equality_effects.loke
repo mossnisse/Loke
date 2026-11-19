@@ -63,4 +63,14 @@ through_call :: proc() -> int {
 	return borrowed^;
 }
 
+// Entries that hold borrows are inserted as any others are, each once its
+// value is evaluated.
+literal_with_borrows :: proc() -> int {
+	borrowed := &global;
+	local := 5;
+	m := map[Name]^int{Name{3} = &local, Name{4} = &local};
+	_ = m;
+	return borrowed^;
+}
+
 main :: proc() {}

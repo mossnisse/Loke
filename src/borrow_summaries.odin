@@ -62,7 +62,6 @@ collect_body_summaries :: proc(
 	state: ^Prov_Solve, declaration: Symbol_Id, summary: ^Result_Provenance, stores_thread_local, moves_carriers: bool,
 ) -> bool {
 	graph := state.graph
-	written := thread_local_writes_of(state.k.c, declaration) if stores_thread_local else nil
 	moves := make([dynamic]Noted_Move, graph.alloc)
 	changed := false
 	for block in graph.blocks {
@@ -73,7 +72,7 @@ collect_body_summaries :: proc(
 			#partial switch event.kind {
 			case .Retain:
 				if stores_thread_local {
-					changed = note_thread_local_write(state, event, declaration, written) || changed
+					changed = note_thread_local_write(state, event, declaration) || changed
 				}
 			case .Escape:
 				if summary != nil {
@@ -335,34 +334,19 @@ graph_borrows_thread_local :: proc(graph: ^Flow_Graph) -> bool {
 	return false
 }
 
-// design.md "Borrows crossing between tasks": for each parameter, a
-// `thread_local` global whose borrow the body may store in the caller storage
-// it names, and what a callback it received may leave there, read off each
-// store there. A call leaves the same borrow in its argument
+// design.md "Borrows crossing between tasks": each `thread_local` global a
+// stored value borrows (`Thread_Local_Write`), and each callback's stand-in it
+// holds (`Callback_Write`), recorded for each parameter whose caller storage
+// receives it: the stored place's root, or the roots of the carrier it was
+// written through. A call leaves the same borrows in its argument
 // (`prov_call_thread_local_writes`), so a task's call that hands one back to
 // its parent is seen at the spawn.
 @(private = "file")
-thread_local_writes_of :: proc(c: ^Compiler, declaration: Symbol_Id) -> []Symbol_Id {
-	written, found := c.thread_local_writes[declaration]
-	if !found {
-		written = make([]Symbol_Id, len(symbol_of(c, declaration).param_symbols), c.semantic_allocator)
-		for &global in written {
-			global = INVALID_SYMBOL
-		}
-		c.thread_local_writes[declaration] = written
-	}
-	return written
-}
-
-// The first `thread_local` global a stored value borrows, and each callback's
-// stand-in it holds, recorded for each parameter whose caller storage receives
-// it: the stored place's root, or the roots of the carrier it was written
-// through.
-@(private = "file")
-note_thread_local_write :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: Symbol_Id, written: []Symbol_Id) -> bool {
+note_thread_local_write :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: Symbol_Id) -> bool {
 	graph := state.graph
-	global, forwarded := stored_thread_facts(state, event.sources)
-	if global == INVALID_SYMBOL && len(forwarded) == 0 {
+	c := state.k.c
+	globals, forwarded := stored_thread_facts(state, event.sources)
+	if len(globals) == 0 && len(forwarded) == 0 {
 		return false
 	}
 	destinations := make([dynamic]Prov_Root, 0, 2, context.temp_allocator)
@@ -375,28 +359,40 @@ note_thread_local_write :: proc(state: ^Prov_Solve, event: Prov_Event, declarati
 		append(&destinations, graph.roots[int(event.root)])
 	}
 	changed := false
+	count := len(symbol_of(c, declaration).param_symbols)
 	for root in destinations {
-		if root.kind != .Param || root.param_index >= len(written) {
+		if root.kind != .Param || root.param_index >= count {
 			continue
 		}
-		if global != INVALID_SYMBOL && written[root.param_index] == INVALID_SYMBOL {
-			written[root.param_index] = global
-			changed = true
+		for global in globals {
+			write := Thread_Local_Write{param = root.param_index, global = global}
+			changed = add_unique(c, &c.thread_local_writes, declaration, write) || changed
 		}
 		for stand_in in forwarded {
 			write := Callback_Write{callback = stand_in.param_index, argument = stand_in.argument, into = root.param_index}
-			changed = add_unique(state.k.c, &state.k.c.callback_thread_local_writes, declaration, write) || changed
+			changed = add_unique(c, &c.callback_thread_local_writes, declaration, write) || changed
 		}
 	}
 	return changed
 }
 
-// What a store's sources hold that a task's write-back cares about: the first
+// Adds `value` to `table`'s set for `declaration`; returns whether it grew.
+@(private = "file")
+add_unique :: proc(c: ^Compiler, table: ^map[Symbol_Id][]$T, declaration: Symbol_Id, value: T) -> bool {
+	known := table[declaration]
+	if !set_add(&known, value, c.semantic_allocator) {
+		return false
+	}
+	table[declaration] = known
+	return true
+}
+
+// What a store's sources hold that a task's write-back cares about: each
 // `thread_local` global they borrow, and each callback's stand-in.
 @(private = "file")
-stored_thread_facts :: proc(state: ^Prov_Solve, sources: []int) -> (global: Symbol_Id, forwarded: []Prov_Root) {
+stored_thread_facts :: proc(state: ^Prov_Solve, sources: []int) -> (globals: []Symbol_Id, forwarded: []Prov_Root) {
 	graph := state.graph
-	global = INVALID_SYMBOL
+	found := make([dynamic]Symbol_Id, 0, 2, context.temp_allocator)
 	out := make([dynamic]Prov_Root, 0, 2, context.temp_allocator)
 	it := slots_loans(state, sources)
 	for _, index in next_live_loan(&it) {
@@ -404,14 +400,14 @@ stored_thread_facts :: proc(state: ^Prov_Solve, sources: []int) -> (global: Symb
 		switch {
 		case root.forwarded:
 			append(&out, root)
-		case root.kind != .Thread_Local || global != INVALID_SYMBOL:
+		case root.kind != .Thread_Local:
 		case root.symbol != INVALID_SYMBOL:
-			global = root.symbol
+			append_unique(&found, root.symbol)
 		case:
-			global = root.origin
+			append_unique(&found, root.origin)
 		}
 	}
-	return global, out[:]
+	return found[:], out[:]
 }
 
 param_writes_caller :: proc(c: ^Compiler, param: ^Symbol) -> bool {

@@ -19,3 +19,6 @@ L0512
 L0512
 @62:6
 `global` cannot be modified by `count` here: a read-only pointer of it is still in use
+L0512
+@71:7
+`global` cannot be modified by `hash` here: a read-only pointer of it is still in use

@@ -5,7 +5,6 @@
 // events are built in cfg_provenance.odin and the provenance_*.odin files.
 package lokec
 
-import "base:runtime"
 import "core:mem"
 import "core:slice"
 
@@ -200,6 +199,13 @@ Flow_Graph :: struct {
 	// The statement a panic's unwind path leaves from, while
 	// `expansion.unwinding` says one is walked; its blocks are marked.
 	unwind_at:      Span,
+	// Where the unwind path of the statement being walked starts, or
+	// NO_BLOCK (`emit_unwind_branch`). An operation that may panic links to it
+	// again once `kills`, the `Kill` events so far, passes `unwind_kills`, the
+	// count when it was last linked (`link_unwind_after_moves`).
+	unwind_entry:   Block_Id,
+	kills:          int,
+	unwind_kills:   int,
 	// The `move`s and `exchange`s whose value becomes a new local or a result,
 	// which takes the provider's region with it rather than ending it.
 	aliased_moves:    map[rawptr]bool,
@@ -301,31 +307,10 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 			graph.param_symbols = params[:]
 		}
 	}
-	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
+	graph.break_block, graph.continue_block, graph.unwind_entry = NO_BLOCK, NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
 	return graph
-}
-
-// Points every map and dynamic array in `value`, and in the records it holds
-// inline, at `allocator`, where each then grows when first used.
-@(private)
-use_allocator :: proc(value: ^$T, allocator: mem.Allocator) {
-	set_container_allocators(value, type_info_of(T), allocator)
-}
-
-@(private = "file")
-set_container_allocators :: proc(data: rawptr, info: ^runtime.Type_Info, allocator: mem.Allocator) {
-	#partial switch v in runtime.type_info_base(info).variant {
-	case runtime.Type_Info_Map:
-		(^runtime.Raw_Map)(data).allocator = allocator
-	case runtime.Type_Info_Dynamic_Array:
-		(^runtime.Raw_Dynamic_Array)(data).allocator = allocator
-	case runtime.Type_Info_Struct:
-		for index in 0 ..< int(v.field_count) {
-			set_container_allocators(rawptr(uintptr(data) + v.offsets[index]), v.types[index], allocator)
-		}
-	}
 }
 
 @(private)
@@ -415,6 +400,25 @@ flow_emit :: proc(graph: ^Flow_Graph, event: Flow_Event) {
 		append(graph.reads, event.slot)
 	}
 	append(&graph.blocks[graph.current].events, event)
+	if event.kind == .Kill {
+		graph.kills += 1
+	}
+}
+
+// design.md "Evaluation order": a statement moves an operand before it
+// evaluates the next, so an operation after a move that may panic reaches the
+// statement's unwind path with the local moved (`emit_unwind_branch`).
+@(private = "file")
+link_unwind_after_moves :: proc(graph: ^Flow_Graph, e: Expr) {
+	if graph.unwind_entry == NO_BLOCK || graph.current == NO_BLOCK || graph.kills == graph.unwind_kills ||
+	   !expr_may_panic_itself(graph.k.c, e) {
+		return
+	}
+	graph.unwind_kills = graph.kills
+	from := graph.current
+	link(graph, from, graph.unwind_entry)
+	graph.current = new_flow_block(graph)
+	link(graph, from, graph.current)
 }
 
 // Lifecycle mode: walks `e` and returns the tracked locals it reads.
@@ -436,14 +440,14 @@ walk_flow_reads :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 // bare local is copied, not borrowed.
 @(private = "file")
 walk_flow_stored :: proc(graph: ^Flow_Graph, value: Expr) {
-	reads := walk_flow_reads(graph, value)
-	if _, is_ident := value.(^Expr_Ident); is_ident {
+	_, is_ident := value.(^Expr_Ident)
+	base := expr_base(value)
+	if is_ident || base == nil || !type_carries_borrow(graph.k.c, base.type).any {
+		walk_flow_expr(graph, value)
 		return
 	}
-	if base := expr_base(value); base != nil && type_carries_borrow(graph.k.c, base.type).any {
-		for slot in reads {
-			graph.lent[slot] = true
-		}
+	for slot in walk_flow_reads(graph, value) {
+		graph.lent[slot] = true
 	}
 }
 
@@ -709,8 +713,12 @@ leave_flow_scope :: proc(graph: ^Flow_Graph) {
 
 @(private = "file")
 walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
+	// A move in these statements is still one the enclosing statement made.
+	outer, outer_kills := graph.unwind_entry, graph.unwind_kills
+	defer graph.unwind_entry, graph.unwind_kills = outer, outer_kills
 	for stmt in stmts {
-		emit_unwind_branch(graph, stmt)
+		graph.unwind_entry = emit_unwind_branch(graph, stmt)
+		graph.unwind_kills = graph.kills
 		walk_flow_stmt(graph, stmt, lends = true)
 	}
 }
@@ -718,13 +726,14 @@ walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
 // design.md "Panics and unwinding": a panic in a statement runs the cleanups
 // registered so far, newest first, as an exit from the procedure does. Only a
 // registered `defer` can observe them afterwards, so the path is modeled where
-// one is in scope, from the statement's start, which no later state in it can
-// make less live; without one, the owners live there need only their drops. A
-// statement that cannot panic has no such path.
+// one is in scope, from the statement's start, and from each operation in it
+// that may panic after a local was moved (`link_unwind_after_moves`); without
+// one, the owners live there need only their drops. A statement that cannot
+// panic has no such path. Returns where the path starts, or NO_BLOCK.
 @(private = "file")
-emit_unwind_branch :: proc(graph: ^Flow_Graph, stmt: Stmt) {
+emit_unwind_branch :: proc(graph: ^Flow_Graph, stmt: Stmt) -> Block_Id {
 	if graph.current == NO_BLOCK || graph.expansion.unwinding {
-		return
+		return NO_BLOCK
 	}
 	// Checked before classifying the statement, which visits all of it.
 	deferred, owner := false, false
@@ -733,36 +742,40 @@ emit_unwind_branch :: proc(graph: ^Flow_Graph, stmt: Stmt) {
 		owner ||= action.kind == .Local
 	}
 	if !deferred && !owner || stmt_cannot_panic(graph.k.c, stmt, &graph.panic_free) {
-		return
+		return NO_BLOCK
 	}
 	if owner {
 		emit_panic_point(graph)
 	}
 	if !deferred {
-		return
+		return NO_BLOCK
 	}
 	// The block ends here, so the unwind sees the state before the statement.
 	from := graph.current
 	outer := graph.expansion
 	graph.expansion.unwinding = true
 	graph.unwind_at = stmt_span(stmt)
-	graph.current = new_flow_block(graph)
-	link(graph, from, graph.current)
+	entry := new_flow_block(graph)
+	graph.current = entry
+	link(graph, from, entry)
 	emit_cleanups(graph, 0, stmt_base(stmt), unwinding = true)
 	graph.expansion = outer
 	resume := new_flow_block(graph)
 	link(graph, from, resume)
 	graph.current = resume
+	return entry
 }
 
 // The cleanup walk already popped this registration and everything after it,
-// as at runtime, so a diagnosed `return` cannot expand this defer again.
+// as at runtime, so a diagnosed `return` cannot expand this defer again. What
+// the deferred statement moves is no part of the unwinding statement's state.
 @(private = "file")
 emit_deferred :: proc(graph: ^Flow_Graph, action: Flow_Cleanup, exit: rawptr) {
-	outer := graph.expansion
+	outer, entry := graph.expansion, graph.unwind_entry
 	graph.expansion = {action.deferred, exit, outer.unwinding}
+	graph.unwind_entry = NO_BLOCK
 	walk_flow_stmt(graph, action.deferred.stmt)
-	graph.expansion = outer
+	graph.expansion, graph.unwind_entry = outer, entry
 }
 
 // How a `return` meets a pending `errdefer` (design.md "defer statement"): one
@@ -1647,7 +1660,7 @@ add_foreach_ref_cleanups :: proc(graph: ^Flow_Graph, bindings: []Foreach_Binding
 // its value, and the loans the call carries are every arm's (design.md "Union
 // argument expansion").
 @(private = "file")
-walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int) {
+walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> []int {
 	enter_flow_header_scope(graph, s.init)
 	defer leave_flow_scope(graph)
 	// A switch over a temporary consumes it into the case binding; one over a
@@ -1698,6 +1711,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 	}
 	roots := len(graph.temp_roots)
 	arm_roots := make([dynamic]Root_Id, graph.alloc)
+	carried := make([dynamic]int, graph.alloc)
 	shared_view: Prov_Case_View
 	for c, index in s.cases {
 		graph.current = bodies[index]
@@ -1727,7 +1741,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 		walk_flow_stmts(graph, c.stmts)
 		if c.arm != nil {
 			emit_panic_point(graph)
-			carried = prov_join(graph, carried, walk_flow_expr(graph, c.arm))
+			append(&carried, ..walk_flow_expr(graph, c.arm))
 		}
 		leave_flow_scope(graph)
 		if graph.current != NO_BLOCK { append(&arm_roots, ..graph.temp_roots[roots:]) }
@@ -1736,7 +1750,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) -> (carried: []int
 	}
 	append(&graph.temp_roots, ..arm_roots[:])
 	graph.current = merge
-	return
+	return carried[:]
 }
 
 // A consuming switch's binding is an ordinary local of its case.
@@ -1769,6 +1783,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 	if prov {
 		prov_note_proc_value(graph, e)
 	}
+	// After the operands, as the operation itself may panic.
+	defer link_unwind_after_moves(graph, e)
 	// An extended temporary keeps what it carries live until its drop, though
 	// the borrow extending it may name only a field of it.
 	defer if prov {
@@ -1827,6 +1843,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		// design.md "Diverging procedures": once its operands are evaluated, a
 		// diverging call ends the path, so nothing after it is reached.
 		if call_diverges(graph.k.c, v) {
+			link_unwind_after_moves(graph, e)
 			graph.current = NO_BLOCK
 		}
 		return loans
@@ -1946,10 +1963,9 @@ walk_flow_composite :: proc(graph: ^Flow_Graph, v: ^Expr_Composite) -> []int {
 		if prov {
 			prov_hold_owner(graph, element.value)
 			prov_repeated_element_effects(graph, v, prov_type(graph, v), index, loans)
+			// Each entry is inserted once its value is evaluated.
+			if is_map { prov_key_effects(graph, prov_type(graph, v), v.span) }
 		}
-	}
-	if prov && is_map && len(v.elements) > 0 {
-		prov_key_effects(graph, prov_type(graph, v), v.span)
 	}
 	return nil
 }
