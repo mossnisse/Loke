@@ -81,13 +81,14 @@ type_const :: proc(type: Type_Id) -> Const_Value {
 	return Const_Value{kind = .Type, type_value = type}
 }
 
+// `value` rounded to `bits`: the encoding is the rounding, and the numeric view
+// is read back from it.
 float_const :: proc(value: f64, bits: u16) -> Const_Value {
-	rounded := round_float(value, bits)
-	return Const_Value{kind = .Float, float = rounded, float_bits = bits, float_raw = float_pattern(rounded, bits)}
+	return float_bits_const(float_pattern(value, bits), bits)
 }
 
-aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value, allocator: mem.Allocator = {}) -> Const_Value {
-	aggregate := new(Const_Aggregate, value_allocator(c, allocator))
+aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) -> Const_Value {
+	aggregate := new(Const_Aggregate, c.semantic_allocator)
 	aggregate.type = type
 	aggregate.elements = elements
 	return Const_Value{kind = .Aggregate, aggregate = aggregate}
@@ -194,13 +195,16 @@ fold_arithmetic :: proc(
 			return bool_const(result), true
 		}
 	case const_is_integral(a) && const_is_integral(b):
-		if integer_operator(op) {
-			result, ok := fold_integer(c, op, op_span, a.integer, b.integer, type, value_allocator(c, allocator))
-			return Const_Value{kind = a.kind, integer = result}, ok
-		}
+		result, ok := fold_integer(c, op, op_span, a.integer, b.integer, type, value_allocator(c, allocator))
+		return Const_Value{kind = a.kind, integer = result}, ok
 	}
-	errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
+	report_inapplicable_operator(c, op, op_span, type)
 	return Const_Value{}, false
+}
+
+@(private = "file")
+report_inapplicable_operator :: proc(c: ^Compiler, op: Token_Kind, op_span: Span, type: Type_Id) {
+	errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
 }
 
 // A scalar unary operator, or one lane of a vector's. `~` on a boolean is a mask
@@ -292,18 +296,8 @@ comparison_operator :: proc(op: Token_Kind) -> bool {
 	return false
 }
 
-@(private = "file")
-integer_operator :: proc(op: Token_Kind) -> bool {
-	#partial switch op {
-	case .Plus, .Plus_Wrap, .Minus, .Minus_Wrap, .Star, .Star_Wrap, .Slash, .Percent,
-	     .Amp, .Pipe, .Tilde, .Amp_Tilde, .Shl, .Shr:
-		return true
-	}
-	return false
-}
-
-// `op` is an `integer_operator`. Only the operators that can leave `type`'s range
-// check or wrap: the rest stay in range for in-range operands.
+// Only the operators that can leave `type`'s range check or wrap: the rest stay
+// in range for in-range operands.
 @(private = "file")
 fold_integer :: proc(c: ^Compiler, op: Token_Kind, op_span: Span, x, y: Big_Int, type: Type_Id, storage: mem.Allocator) -> (result: Big_Int, ok: bool) {
 	if (op == .Slash || op == .Percent) && bi_is_zero(y) {
@@ -331,6 +325,9 @@ fold_integer :: proc(c: ^Compiler, op: Token_Kind, op_span: Span, x, y: Big_Int,
 		result = bi_and_not(storage, x, y)
 	case .Shl, .Shr:
 		result = fold_shift(c, op, op_span, x, y, type, storage) or_return
+	case:
+		report_inapplicable_operator(c, op, op_span, type)
+		return
 	}
 	#partial switch op {
 	case .Plus, .Minus, .Star, .Slash:
@@ -456,7 +453,9 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		}
 		return (a.boolean == b.boolean) == (op == .Eq_Eq), true
 	case a.kind == .Nil && b.kind == .Nil:
-		return op == .Eq_Eq, true
+		// design.md "Comparison operators": two null addresses are both zero, so
+		// equal, and ordered as equal values are.
+		order = 0
 	case a.kind == .Type && b.kind == .Type:
 		if op != .Eq_Eq && op != .Not_Eq {
 			return false, false
@@ -507,29 +506,17 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 			return true, true
 		}
 	}
-	deferred := false
+	// A pair with no compile-time comparison defers the answer, since taking it
+	// as a difference could fold `==` wrongly; a later difference still settles it.
+	known = true
 	for element, index in a.elements {
-		other := b.elements[index]
-		if !part_equal(c, element, other, allocator, &deferred) {
+		same, ok := fold_comparison(c, .Eq_Eq, element, b.elements[index], allocator)
+		if ok && !same {
 			return false, true
 		}
+		known &&= ok
 	}
-	if deferred {
-		return false, false
-	}
-	return true, true
-}
-
-// Whether a pair of parts may be equal; a pair with no compile-time comparison
-// sets `deferred`, since taking it as a difference could fold `==` wrongly.
-@(private = "file")
-part_equal :: proc(c: ^Compiler, a, b: Const_Value, allocator: mem.Allocator, deferred: ^bool) -> bool {
-	equal, ok := fold_comparison(c, .Eq_Eq, a, b, allocator)
-	if !ok {
-		deferred^ = true
-		return true
-	}
-	return equal
+	return known, known
 }
 
 // design.md "Comparison operators": an anonymous record orders by its first
@@ -570,33 +557,35 @@ Const_Pattern :: enum {
 }
 
 // design.md "`unsafe.transmute`" at compile time: the constant's storage, read
-// back as `target`. The result is built in `allocator`, the evaluator's scratch
-// when it asks.
+// back as `target`. The result and the byte image are built in `allocator`, the
+// evaluator's scratch when it asks, so they count against its limit; a refused
+// allocation is `.Unfoldable`, which the evaluator reports as that limit.
 transmute_const :: proc(c: ^Compiler, value: Const_Value, source, target: Type_Id, allocator: mem.Allocator = {}) -> (Const_Value, Const_Pattern) {
+	scratch := allocator.procedure == nil ? context.allocator : allocator
 	size := int(type_size(c, source))
-	bytes := make([]u8, size)
-	defer delete(bytes)
-	written := make([]bool, size)
-	defer delete(written)
-	if !const_storage(c, value, source, bytes, written) {
+	bytes, refused := make([]u8, size, scratch)
+	defer delete(bytes, scratch)
+	written, unavailable := make([]bool, size, scratch)
+	defer delete(written, scratch)
+	if refused != nil || unavailable != nil || !const_storage(c, value, source, bytes, written) {
 		return {}, .Unfoldable
 	}
 	return const_from_storage(c, value_allocator(c, allocator), bytes, written, target)
 }
 
-// Where the `index`th member of an array, vector, or struct sits in its storage.
-// design.md "Uninitialized capacity": an `Uninit(T)` has no compile-time storage.
-@(private = "file")
+// Where the `index`th member of an array, vector, or struct `type`, whose
+// underlying info is `info`, sits in its storage: for the bit cast here and the
+// LLVM constant writer, which keep their own policies for what the member holds.
 storage_member :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, index: int) -> (member: Type_Id, at, end: int, ok: bool) {
 	if info.kind != .Struct {
 		step := int(type_size(c, info.element))
 		return info.element, index * step, (index + 1) * step, true
 	}
 	field := symbol_of(c, info.fields[index])
-	if field == nil || type_info_is_uninit(c, info) {
+	at = int(type_field_offset(c, type, index))
+	if field == nil || index >= len(info.offsets) {
 		return
 	}
-	at = int(type_field_offset(c, type, index))
 	return field.type, at, at + int(type_size(c, field.type)), true
 }
 
@@ -610,7 +599,7 @@ const_storage :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, bytes: []
 	}
 	pattern: u128
 	#partial switch info.kind {
-	case .Float, .Bool, .Int, .Rune, .Enum:
+	case .Float, .Bool, .Int, .Rune, .Enum, .Allocator_Error:
 		pattern = scalar_const_pattern(value, info, len(bytes) * 8) or_return
 	case .Typeid:
 		// design.md "`type` and `typeid`": a `typeid_of(T)` has no number until
@@ -622,8 +611,10 @@ const_storage :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, bytes: []
 		}
 		pattern = u128(number)
 	case .Array, .Simd, .Struct:
+		// design.md "Uninitialized capacity": an `Uninit(T)` has no compile-time
+		// storage.
 		count := info.kind == .Struct ? len(info.fields) : int(info.count)
-		if value.kind != .Aggregate || value.aggregate == nil || len(value.aggregate.elements) != count {
+		if type_info_is_uninit(c, info) || value.kind != .Aggregate || value.aggregate == nil || len(value.aggregate.elements) != count {
 			return false
 		}
 		for element, index in value.aggregate.elements {
@@ -657,6 +648,10 @@ scalar_const_pattern :: proc(value: Const_Value, info: ^Type_Info, bits: int) ->
 		if const_is_integral(value) {
 			return bi_pattern(value.integer, bits), true
 		}
+		// design.md "Allocation failure": no failure is the zero error.
+		if info.kind == .Allocator_Error && value.kind == .Nil {
+			return 0, true
+		}
 	}
 	return 0, false
 }
@@ -675,7 +670,7 @@ const_from_storage :: proc(c: ^Compiler, storage: mem.Allocator, bytes: []u8, wr
 		return {}, .Unfoldable
 	}
 	#partial switch info.kind {
-	case .Float, .Bool, .Int, .Rune, .Enum, .Typeid:
+	case .Float, .Bool, .Int, .Rune, .Enum, .Typeid, .Allocator_Error:
 		raw: u128
 		for index := len(bytes) - 1; index >= 0; index -= 1 {
 			if !written[index] {
@@ -693,6 +688,13 @@ const_from_storage :: proc(c: ^Compiler, storage: mem.Allocator, bytes: []u8, wr
 			return bool_const(raw != 0), .Folded
 		case .Int:
 			return integer_const(bi_from_pattern(storage, raw, int(info.bits), info.signed)), .Folded
+		case .Allocator_Error:
+			// design.md "Allocation failure": zero is no failure, whose constant
+			// is `.Nil` (`zero_const`); any other pattern is a refused size.
+			if raw == 0 {
+				return nil_const(), .Folded
+			}
+			return integer_const(bi_from_pattern(storage, raw, int(info.bits), false)), .Folded
 		case .Rune:
 			// design.md "Invalid representations": every 32-bit pattern is a `rune`.
 			return rune_const(bi_from_pattern(storage, raw, 32, true)), .Folded
@@ -707,6 +709,9 @@ const_from_storage :: proc(c: ^Compiler, storage: mem.Allocator, bytes: []u8, wr
 			return candidate, .Folded
 		}
 	case .Array, .Simd, .Struct:
+		if type_info_is_uninit(c, info) {
+			return {}, .Unfoldable
+		}
 		count := info.kind == .Struct ? len(info.fields) : int(info.count)
 		elements, refused := make([]Const_Value, count, storage)
 		aggregate, unavailable := new(Const_Aggregate, storage)
@@ -785,22 +790,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			}
 			return Const_Value{kind = .Integer, integer = value.integer}, true
 		case .Float:
-			// design.md "Implicit type conversions": a float never becomes an
-			// integer implicitly, even when it is integral.
-			if !explicit {
-				return value, false
-			}
-			// The interval the runtime conversion checks (design.md "Type
-			// conversion"); NaN and infinities fail it.
-			limit := power_of_two(int(bits) - (signed ? 1 : 0))
-			if !(value.float >= (signed ? -limit : 0) && value.float < limit) {
-				return value, false
-			}
-			truncated, _ := bi_from_f64_trunc(storage, value.float)
-			if !bi_fits(truncated, bits, signed) {
-				return value, false
-			}
-			return Const_Value{kind = .Integer, integer = truncated}, true
+			return truncate_float_const(storage, value, bits, signed, .Integer, explicit)
 		}
 	case .Rune:
 		#partial switch value.kind {
@@ -809,6 +799,9 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 				return value, false
 			}
 			return Const_Value{kind = .Rune, integer = value.integer}, true
+		case .Float:
+			// A rune converts as the signed 32-bit integer the runtime checks.
+			return truncate_float_const(storage, value, 32, true, .Rune, explicit)
 		}
 	case .Float:
 		#partial switch value.kind {
@@ -850,23 +843,53 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 				return value, true
 			}
 		}
-		elements := make([]Const_Value, info.count, storage)
-		for index in 0 ..< int(info.count) {
-			lane := value
-			if value.kind == .Aggregate {
-				lane = value.aggregate.elements[index]
+		// A refused allocation fails the conversion; the evaluator reports its limit.
+		elements, refused := make([]Const_Value, info.count, storage)
+		aggregate, unavailable := new(Const_Aggregate, storage)
+		if refused != nil || unavailable != nil {
+			return value, false
+		}
+		if value.kind == .Aggregate {
+			for lane, index in value.aggregate.elements {
+				converted, fits := convert_const(c, lane, info.element, explicit, allocator)
+				if !fits {
+					return value, false
+				}
+				elements[index] = converted
 			}
-			converted, fits := convert_const(c, lane, info.element, explicit, allocator)
+		} else {
+			splat, fits := convert_const(c, value, info.element, explicit, allocator)
 			if !fits {
 				return value, false
 			}
-			elements[index] = converted
+			slice.fill(elements, splat)
 		}
-		return aggregate_const(c, target, elements, storage), true
+		aggregate^ = Const_Aggregate{type = target, elements = elements}
+		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
 	case .Struct, .Array, .Union, .Dynamic_Array, .Map:
 		return retype_aggregate(c, value, target, explicit, storage)
 	}
 	return value, false
+}
+
+// design.md "Type conversion": a float written into an integer or rune type of
+// `bits` checks the interval the runtime conversion does, so NaN and the
+// infinities fail, and then truncates toward zero. "Implicit type conversions":
+// a float never becomes one implicitly, even when it is integral.
+@(private = "file")
+truncate_float_const :: proc(storage: mem.Allocator, value: Const_Value, bits: int, signed: bool, kind: Const_Kind, explicit: bool) -> (Const_Value, bool) {
+	if !explicit {
+		return value, false
+	}
+	limit := power_of_two(bits - (signed ? 1 : 0))
+	if !(value.float >= (signed ? -limit : 0) && value.float < limit) {
+		return value, false
+	}
+	truncated, _ := bi_from_f64_trunc(storage, value.float)
+	if !bi_fits(truncated, bits, signed) {
+		return value, false
+	}
+	return Const_Value{kind = kind, integer = truncated}, true
 }
 
 // A struct, array, union, or empty container constant keeps its representation when it converts
@@ -888,7 +911,10 @@ retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, expl
 	if !relabelled && (!explicit || type_underlying(c, source) != type_underlying(c, target)) {
 		return value, false
 	}
-	retyped := new_clone(value.aggregate^, storage)
+	retyped, refused := new_clone(value.aggregate^, storage)
+	if refused != nil {
+		return value, false
+	}
 	retyped.type = target
 	return Const_Value{kind = .Aggregate, aggregate = retyped}, true
 }

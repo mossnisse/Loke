@@ -1,0 +1,26 @@
+// design.md "Comparison operators": two null C pointers are both address zero,
+// so every comparison answers as for equal addresses, folded as a constant, in
+// an evaluated procedure, and at run time.
+package main;
+
+import "core:fmt";
+
+P: [^]u8 : nil;
+static_assert(P == P && !(P != P));
+static_assert(!(P < P) && P <= P);
+static_assert(!(P > P) && P >= P);
+
+// Each comparison of two null locals, in the order `==`, `!=`, `<`, `<=`, `>`, `>=`.
+evaluated :: proc() -> [6]bool {
+	a: [^]u8 = nil;
+	b: rawptr = nil;
+	c: rawptr = nil;
+	return {a == a, a != a, b < c, b <= c, b > c, b >= c};
+}
+EVALUATED :: evaluated();
+static_assert(EVALUATED == [6]bool{true, false, false, true, false, true});
+
+main :: proc() {
+	fmt.println(EVALUATED);
+	fmt.println(evaluated());
+}

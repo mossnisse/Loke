@@ -1,9 +1,13 @@
-// A condition that cannot be `bool` is reported once.
+// A condition that cannot be `bool` is reported once, in a conditional
+// expression and in a statement alike.
 package main;
 
 main :: proc() {
 	x := 1 if 5 else 2;
 	y := 1;
 	z := 1 if y else 2;
+	if (0) {}
+	for (; 2;) {}
+	if (y) {}
 	_ = x; _ = z;
 }

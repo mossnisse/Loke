@@ -3,6 +3,7 @@
 package main;
 
 import "core:fmt";
+import "core:mem";
 import "core:unsafe";
 
 Colour :: enum u8 { Red, Green = 200 }
@@ -24,6 +25,14 @@ RUNE_HIGH :: unsafe.transmute(rune, u32(0x8000_0041));
 BOOL_ONE :: unsafe.transmute(bool, u8(1));
 GREEN :: unsafe.transmute(Colour, u8(200));
 GREEN_BITS :: unsafe.transmute(u8, Colour.Green);
+// design.md "Allocation failure": no failure is zero, and a failure that
+// requested nothing is all bits set.
+NO_ERROR: mem.Allocator_Error : {};
+NO_ERROR_BITS :: unsafe.transmute(uint, NO_ERROR);
+ZERO_ERROR :: unsafe.transmute(mem.Allocator_Error, uint(0));
+ALL_ERROR :: unsafe.transmute(mem.Allocator_Error, ~uint(0));
+ALL_ERROR_BITS :: unsafe.transmute(uint, ALL_ERROR);
+static_assert(ZERO_ERROR == NO_ERROR && NO_ERROR_BITS == 0 && ALL_ERROR_BITS == ~uint(0));
 
 // The evaluator's, whose operand is a local.
 evaluated_bytes :: proc() -> [4]u8 {
@@ -44,6 +53,12 @@ evaluated_wide :: proc() -> [2]u64 {
 }
 WIDE :: evaluated_wide();
 
+evaluated_error :: proc(bits: uint) -> uint {
+	error := unsafe.transmute(mem.Allocator_Error, bits);
+	return unsafe.transmute(uint, error);
+}
+static_assert(evaluated_error(0) == 0 && evaluated_error(~uint(0)) == ~uint(0));
+
 evaluated_back :: proc() -> i128 {
 	parts := [2]u64{~u64(0) - 1, ~u64(0)};
 	return unsafe.transmute(i128, parts);
@@ -58,6 +73,8 @@ main :: proc() {
 	fmt.println(U128_HIGH);
 	fmt.println(F32_BITS, F64_VALUE, RUNE_HIGH == unsafe.transmute(rune, u32(0x8000_0041)), BOOL_ONE);
 	fmt.println(GREEN, GREEN_BITS);
+	all_error := ALL_ERROR;
+	fmt.println(ZERO_ERROR == NO_ERROR, unsafe.transmute(uint, all_error) == ~uint(0));
 	fmt.println(BYTES);
 	fmt.println(MIXED.low, MIXED.high);
 	fmt.println(WIDE);

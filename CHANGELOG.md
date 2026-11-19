@@ -37,6 +37,13 @@ checklist.
   accept :: proc "c" (value: Nullable) ---;       // before
   accept :: proc "c" (value: Option(^int)) ---;   // after
   ```
+- A typed scalar no longer splats into a `distinct` vector type ([Implicit type
+  conversions](docs/design.md#implicit-type-conversions)). With `Vector :: distinct Simd(i32, 4)`
+  and `lane: i32`, `value: Vector = lane;` and `Vector(lane)` compiled, though a value that
+  already has a type converts to a distinct type only as written, and only from the type it
+  wraps. They are now `L0310` and `L0373`. An unfixed constant still splats, as in
+  `value: Vector = 2;`. Upgrade by splatting into the plain vector first:
+  `Vector(Simd(i32, 4)(lane))`.
 
 ### Fixed
 
@@ -76,6 +83,26 @@ checklist.
 - Whether a map's constant keys get entries of their own no longer depends on which of two
   map types reaching each other the compiler measured first: each map on such a cycle keeps
   one entry for every key ([Minimum provenance precision](docs/design.md#minimum-provenance-precision)).
+- Two null C pointers or `rawptr`s order as equal addresses at compile time ([Comparison
+  operators](docs/design.md#comparison-operators)): `P <= P` and `P >= P` folded false for a
+  constant `P: [^]u8 : nil`, and any ordering of null locals in an evaluated procedure was
+  `L0341`.
+- `unsafe.transmute` folds to and from `mem.Allocator_Error` at compile time
+  ([`unsafe.transmute`](docs/design.md#unsafetransmute)): a constant or evaluated cast in either
+  direction was `L0688`, though the runtime cast compiled.
+- A distinct type over another distinct type converts as written to and from the type it wraps
+  ([Distinct types](docs/design.md#distinct-types)): with `Outer :: distinct Inner`, both
+  `Outer(inner)` and `Inner(outer)` were `L0373`. Two distinct types that only share a
+  representation still meet only through `hook(convert)`.
+- A float constant converts to `rune` as a runtime float does ([Type
+  conversion](docs/design.md#type-conversion)), checked against the signed 32-bit range and
+  truncated toward zero: `rune(f64(65.5))` was `L0373` as a constant or in an evaluated
+  procedure. An implicit float-to-rune conversion is reported as the one to an integer is.
+- A compile-time vector conversion or bit cast that runs out of the evaluator's scratch memory
+  reports `L0342` instead of crashing the compiler, and a bit cast's byte images count against
+  that memory.
+- A constant condition that is not `bool`, as in `if (0) {}`, is reported once, as in a
+  conditional expression, not also as `L0355`.
 
 ## [0.10.0] - 2026-11-16
 

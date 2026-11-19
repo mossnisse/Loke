@@ -1,0 +1,15 @@
+L0373
+@14:20
+`A` cannot be converted to `B`
+
+L0373
+@18:8
+`A` cannot be converted to `B`
+
+L0310
+@20:21
+cannot initialise `Vector` with `i32`
+
+L0373
+@21:13
+`i32` cannot be converted to `Vector`

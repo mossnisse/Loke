@@ -189,6 +189,39 @@ a_constant_bit_cast_builds_in_the_storage_it_is_given :: proc(t: ^testing.T) {
 	}
 }
 
+// design.md "Compile-time procedure evaluation": storage the evaluator refuses
+// fails a vector conversion or a bit cast, which the evaluator then reports as
+// its limit, wherever in the fold the refusal comes.
+@(test)
+a_refused_allocation_fails_a_constant_fold :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	build_universe(&c)
+	vector := simd_of(&c, TYPE_I32, 4)
+	bytes := array_of(&c, TYPE_U8, 4)
+	type_size(&c, vector)
+	type_size(&c, bytes)
+
+	buffer := make([]byte, 1 << 12)
+	defer delete(buffer)
+	lane := integer_const(bi_from_i64(&c, 7))
+	splatted, transmuted := false, false
+	for capacity := 0; capacity <= len(buffer) && !(splatted && transmuted); capacity += 8 {
+		arena: mem.Arena
+		mem.arena_init(&arena, buffer[:capacity])
+		converted, fits := convert_const(&c, lane, vector, true, mem.arena_allocator(&arena))
+		if fits {
+			splatted = true
+			testing.expect(t, len(converted.aggregate.elements) == 4 && bi_eq_i64(&c, converted.aggregate.elements[3].integer, 7), "the splat's last lane")
+		}
+		mem.arena_init(&arena, buffer[:capacity])
+		_, status := transmute_const(&c, integer_const(bi_from_u64(&c, 0x0102_0304)), TYPE_U32, bytes, mem.arena_allocator(&arena))
+		testing.expect(t, status == .Folded || status == .Unfoldable, "a refused bit cast is unfoldable")
+		transmuted ||= status == .Folded
+	}
+	testing.expect(t, splatted && transmuted, "neither fold succeeded with enough storage")
+}
+
 @(test)
 bigint_to_float_rounds_once :: proc(t: ^testing.T) {
 	c: Compiler

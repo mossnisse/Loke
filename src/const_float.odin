@@ -4,6 +4,7 @@ package lokec
 
 import "base:intrinsics"
 import "core:math"
+import "core:strings"
 
 // design.md "Type conversion": the bounds of a float-to-integer conversion are
 // powers of two, so one interval serves every float width — the value is exact
@@ -16,13 +17,7 @@ power_of_two :: proc(exponent: int) -> f64 {
 // `f32` expression in `f64` and rounding once at the end can disagree with what
 // the same expression computes at runtime.
 round_float :: proc(value: f64, bits: u16) -> f64 {
-	switch bits {
-	case 16:
-		return f16_bits_to_f64(f64_to_f16_bits(value))
-	case 32:
-		return f64(f32(value))
-	}
-	return value
+	return float_from_pattern(float_pattern(value, bits), bits)
 }
 
 // `a*b + c` rounded once to `bits` (32 or 64), the compile-time value of the
@@ -38,8 +33,14 @@ exact_fma :: proc(storage: Value_Storage, a, b, c: f64, bits: u16) -> f64 {
 		// A finite product never overflows on its way to the sum.
 		return c
 	}
-	x, y, z := dyadic_of(storage, a), dyadic_of(storage, b), dyadic_of(storage, c)
+	x, y := dyadic_of(storage, a), dyadic_of(storage, b)
 	product := Dyadic{bi_mul(storage, x.significand, y.significand), x.exponent + y.exponent}
+	if c == 0 {
+		// The nonzero product is the exact sum, so no alignment is needed.
+		defer bi_release(x.significand, y.significand, product.significand)
+		return dyadic_to_float(storage, product.significand, product.exponent, bits)
+	}
+	z := dyadic_of(storage, c)
 	exponent := min(product.exponent, z.exponent)
 	product_part := bi_shl(storage, product.significand, product.exponent - exponent)
 	addend_part := bi_shl(storage, z.significand, z.exponent - exponent)
@@ -231,26 +232,31 @@ dyadic_to_float :: proc(storage: Value_Storage, n: Big_Int, exponent: int, bits:
 	if bi_is_zero(n) {
 		return 0
 	}
-	precision, min_exponent := 53, -1022
+	precision, min_exponent, max_exponent := 53, -1022, 1023
 	switch bits {
-	case 16: precision, min_exponent = 11, -14
-	case 32: precision, min_exponent = 24, -126
+	case 16: precision, min_exponent, max_exponent = 11, -14, 15
+	case 32: precision, min_exponent, max_exponent = 24, -126, 127
 	}
 	negative := bi_sign(n) < 0
+	leading := bi_magnitude_bits(n) - 1 + exponent
+	if leading > max_exponent {
+		// At least 2^(max_exponent + 1), which rounds to infinity with nothing to
+		// compute; a carry into it from the largest exponent is found below.
+		return math.inf_f64(negative ? -1 : 1)
+	}
 	magnitude := negative ? bi_neg(storage, n) : n
 	defer if negative {
 		bi_release(magnitude)
 	}
-	leading := bi_magnitude_bits(magnitude) - 1 + exponent
 	// The exponent of the result's last place: `precision` bits below its
 	// leading one, and never below the smallest subnormal's.
 	unit := max(leading, min_exponent) - (precision - 1)
 	shift := unit - exponent
 	kept: u64
 	if shift <= 0 {
-		widened := bi_shl(storage, magnitude, -shift)
-		defer bi_release(widened)
-		kept, _ = bi_to_u64(storage, widened)
+		// The magnitude has at most `precision` bits, and moves up to its place.
+		kept, _ = bi_to_u64(storage, magnitude)
+		kept <<= uint(-shift)
 	} else {
 		top := bi_shr(storage, magnitude, shift)
 		restored := bi_shl(storage, top, shift)
@@ -335,31 +341,33 @@ decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: 
 		return 0, false
 	}
 	digits, exponent, negative, scanned := scan_decimal(text)
-	if !scanned {
+	if !scanned || digits == "" {
 		return 0, false
 	}
-	significand, parsed := bi_parse_int_literal(c, digits)
-	defer bi_release(significand)
-	if !parsed {
-		return 0, false
-	}
+	// Zeroes at either end change no value: trimmed, a zero has no digits, and
+	// no big integer is built for an exponent the range checks decide.
+	digits = strings.trim_left(digits, "0")
+	significant := strings.trim_right(digits, "0")
+	exponent += len(digits) - len(significant)
+	digits = significant
 	zero := negative ? math.copy_sign(f64(0), -1) : 0
-	if bi_is_zero(significand) {
+	if digits == "" {
 		return zero, true
 	}
 	// The value lies in [10^(top - 1), 10^top). Past 10^40 every 16- and 32-bit
 	// float overflows, and below 10^-50 every one rounds to zero, so no power
 	// of ten is built for an exponent outside that range.
-	first := 0
-	for digits[first] == '0' {
-		first += 1
-	}
-	top := len(digits) - first + exponent
+	top := len(digits) + exponent
 	if top > 40 {
 		return 0, false
 	}
 	if top < -50 {
 		return zero, true
+	}
+	significand, parsed := bi_parse_int_literal(c, digits)
+	defer bi_release(significand)
+	if !parsed {
+		return 0, false
 	}
 	power := bi_pow10(c, abs(exponent))
 	defer bi_release(power)
@@ -386,7 +394,8 @@ decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: 
 	return negative ? -magnitude : magnitude, true
 }
 
-// The IEEE-754 encoding of a value already rounded to `bits`, and its inverse.
+// The IEEE-754 encoding of `value` rounded to nearest at `bits`, ties to even,
+// and the inverse of the encoding.
 float_pattern :: proc(value: f64, bits: u16) -> u64 {
 	switch bits {
 	case 16:

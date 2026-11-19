@@ -785,7 +785,7 @@ fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
 		return
 	}
 	#partial switch underlying_kind(k.c, target) {
-	case .Float, .Bool, .Int, .Rune, .Enum, .Typeid:
+	case .Float, .Bool, .Int, .Rune, .Enum, .Typeid, .Allocator_Error:
 	case:
 		return
 	}

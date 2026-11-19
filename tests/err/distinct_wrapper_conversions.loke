@@ -1,0 +1,25 @@
+package main;
+
+// design.md "Distinct types": a distinct type converts as written only to and
+// from the type it wraps. Two wrappers of one distinct type share a
+// representation and still meet only through a hook, constant or not, and a
+// typed scalar does not splat into a distinct vector, implicitly or as written;
+// only an unfixed constant does.
+
+Inner :: distinct int;
+A :: distinct Inner;
+B :: distinct Inner;
+Vector :: distinct Simd(i32, 4);
+
+FROM_CONSTANT :: B(A(1));
+
+main :: proc() {
+	a: A = 1;
+	_ = B(a);
+	lane: i32 = 2;
+	splatted: Vector = lane;
+	_ = Vector(lane);
+	unfixed: Vector = 2;
+	plain: Simd(i32, 4) = lane;
+	_ = splatted; _ = unfixed; _ = plain;
+}

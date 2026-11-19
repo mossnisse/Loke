@@ -1,7 +1,19 @@
 L0352
-@5:12
+@6:12
 5 is not representable by `bool`
 
 L0355
-@7:12
+@8:12
+a condition must be `bool`, found `int`
+
+L0352
+@9:6
+0 is not representable by `bool`
+
+L0352
+@10:9
+2 is not representable by `bool`
+
+L0355
+@11:6
 a condition must be `bool`, found `int`

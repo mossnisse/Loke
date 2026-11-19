@@ -1084,18 +1084,21 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 	return then_flow
 }
 
-check_condition :: proc(k: ^Checker, cond: Expr) {
+// A statement's or a conditional expression's condition, which must be `bool`.
+// A constant that is not one is reported once, by `materialize`. False only when
+// the condition has no type at all; a missing `for` condition is none to check.
+check_condition :: proc(k: ^Checker, cond: Expr) -> bool {
 	if cond == nil {
-		return
+		return true
 	}
 	type := check_single_expr(k, cond, TYPE_BOOL)
 	if type == INVALID_TYPE {
-		return
+		return false
 	}
-	materialize(k, cond, TYPE_BOOL)
-	if !type_is_boolean(k.c, expr_base(cond).type) {
+	if materialize(k, cond, TYPE_BOOL) && !type_is_boolean(k.c, expr_base(cond).type) {
 		errorf(k.c, expr_span(cond), "L0355", "a condition must be `bool`, found `%s`", type_name(k.c, type))
 	}
+	return true
 }
 
 @(private = "file")

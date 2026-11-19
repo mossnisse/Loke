@@ -562,8 +562,8 @@ checked := math.to(u8, count);  // .none
 masked := u8(count & 0xFF);     // 44: the masked value fits, so nothing is lost
 ```
 
-A floating-point value converts to an integer by first checking that it is at
-least the destination's minimum and less than one past its maximum, then
+A floating-point value converts to an integer or rune type by first checking
+that it is at least the destination's minimum and less than one past its maximum, then
 truncating toward zero. NaN, infinity, and out-of-range values panic; constant
 conversions produce a compilation diagnostic instead. The range check precedes
 truncation, so `u32(-0.5)` panics even though truncation would produce zero.

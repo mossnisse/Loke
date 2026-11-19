@@ -35,8 +35,13 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if signature := dyn_proc_signature(c, to); signature != INVALID_TYPE {
 		return dyn_proc_accepts(c, from, signature)
 	}
-	// design.md "SIMD vectors": a scalar splats; nothing else converts.
+	// design.md "SIMD vectors": a scalar splats into a `Simd(T, N)`; nothing
+	// else converts. A distinct vector takes only an unfixed constant, as
+	// design.md "Distinct types" lets it take one its underlying type would.
 	if type_is_simd(c, to) && !type_is_simd(c, from) {
+		if type_kind(c, to) != .Simd && !type_is_untyped(c, from) {
+			return false
+		}
 		return assignable(c, from, underlying_info(c, to).element)
 	}
 	if carrier_weakens_to(c, from, to) || record_drops_labels_to(c, from, to) || union_widens_to(c, from, to) {
@@ -58,14 +63,18 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	// design.md "Implicit type conversions": the underlying kind decides, here
 	// and for a string above, so a distinct type takes an unfixed constant as
-	// its underlying type does.
+	// its underlying type does. Whether the value fits is `materialize`'s.
 	if type_is_untyped(c, from) {
+		kind := type_kind(c, from)
 		#partial switch underlying_kind(c, to) {
 		case .Float:
-			// design.md "Implicit type conversions": never a rune constant.
-			return type_kind(c, from) != .Untyped_Rune
-		case .Int, .Rune, .Bool:
-			return true
+			// Never a rune constant.
+			return kind == .Untyped_Int || kind == .Untyped_Float
+		case .Int, .Rune:
+			// Never a float constant.
+			return kind == .Untyped_Int || kind == .Untyped_Rune
+		case .Bool:
+			return kind == .Untyped_Bool
 		}
 		return false
 	}
@@ -108,8 +117,11 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	source := type_underlying(c, from)
 	dest := type_underlying(c, to)
-	// Two distinct types convert only through `hook(convert)`.
-	if type_kind(c, from) == .Distinct && type_kind(c, to) == .Distinct {
+	// design.md "Distinct types": a distinct type converts to and from the type
+	// it wraps, itself distinct or not; two others meet only through
+	// `hook(convert)`, even when they share a representation.
+	if type_kind(c, from) == .Distinct && type_kind(c, to) == .Distinct &&
+	   type_of(c, from).element != to && type_of(c, to).element != from {
 		return false
 	}
 	if source == dest {
@@ -174,19 +186,12 @@ unchecked_pointer_conversion :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if source == dest {
 		return false
 	}
-	#partial switch type_kind(c, dest) {
+	dest_kind := type_kind(c, dest)
+	#partial switch type_kind(c, source) {
+	case .Raw_Pointer, .C_Pointer:
+		return dest_kind == .Pointer || dest_kind == .C_Pointer
 	case .Pointer:
-		#partial switch type_kind(c, source) {
-		case .Raw_Pointer, .C_Pointer:
-			return true
-		case .Pointer:
-			return type_of(c, source).element != type_of(c, dest).element
-		}
-	case .C_Pointer:
-		#partial switch type_kind(c, source) {
-		case .Raw_Pointer, .C_Pointer:
-			return true
-		}
+		return dest_kind == .Pointer && type_of(c, source).element != type_of(c, dest).element
 	}
 	return false
 }

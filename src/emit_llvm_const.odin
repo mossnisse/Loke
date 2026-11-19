@@ -290,30 +290,12 @@ write_const_bytes :: proc(
 		pattern := scalar_const_pattern(value, info, len(out) * 8) or_return
 		write_pattern_bytes(out, pattern)
 		return true
-	case .Array, .Simd:
-		stride := int(type_size(e.c, info.element))
-		for index in 0 ..< int(info.count) {
-			start, end := index * stride, (index + 1) * stride
-			if end > len(out) {
-				return false
-			}
-			if !write_const_bytes(e, out[start:end], const_element(value, index), info.element, relocations, at + start) {
-				return false
-			}
-		}
-		return true
-	case .Struct:
-		for field, index in info.fields {
-			symbol := symbol_of(e.c, field)
-			if symbol == nil || index >= len(info.offsets) {
-				return false
-			}
-			start := int(info.offsets[index])
-			end := start + int(type_size(e.c, symbol.type))
-			if end > len(out) {
-				return false
-			}
-			if !write_const_bytes(e, out[start:end], const_element(value, index), symbol.type, relocations, at + start) {
+	case .Array, .Simd, .Struct:
+		count := info.kind == .Struct ? len(info.fields) : int(info.count)
+		for index in 0 ..< count {
+			member, start, end, ok := storage_member(e.c, under, info, index)
+			if !ok || end > len(out) ||
+			   !write_const_bytes(e, out[start:end], const_element(value, index), member, relocations, at + start) {
 				return false
 			}
 		}

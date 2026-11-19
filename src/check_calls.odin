@@ -1021,45 +1021,18 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	check_conversion_hook_call(k, v, target)
 }
 
-// design.md "Implicit type conversions", by kind alone: would an unfixed
-// constant of `from` convert implicitly to `to` if its value fit? `assignable`
-// leaves a value that cannot fit, such as a float meeting an integer, to
-// `materialize`, so the kinds must match here.
-@(private = "file")
-unfixed_kind_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
-	if !assignable(c, from, to) {
-		return false
-	}
-	// design.md "SIMD vectors": a scalar meets the lane type.
-	lane := type_is_simd(c, to) ? underlying_info(c, to).element : to
-	is_bool := underlying_kind(c, lane) == .Bool
-	#partial switch type_kind(c, from) {
-	case .Untyped_Float:
-		return underlying_kind(c, lane) == .Float
-	case .Untyped_Bool:
-		return is_bool
-	case .Untyped_Int, .Untyped_Rune:
-		return !is_bool
-	}
-	return true
-}
-
 // The built-in half of `T(v)`, including pointer and `distinct` conversions.
 // Returns false, silently, when only a conversion hook could apply.
 @(private = "file")
 builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) -> bool {
 	base := expr_base(v.args[0].value)
-	// Two distinct types meet only through a hook, even for a constant operand.
-	if type_kind(k.c, source) == .Distinct && type_kind(k.c, target) == .Distinct && source != target {
-		return false
-	}
 	// design.md "Conditional expression": an unfixed result that is not constant
 	// takes the target as a constant of its kind would, or else its default type,
 	// and then converts as a runtime value. It stays unfixed when no built-in
 	// conversion applies, for a hook to give it a parameter's type.
 	source := source
 	if !base_is_const(base) && type_is_untyped(k.c, source) {
-		fixed := unfixed_kind_converts(k.c, source, target) ? target : default_type(k.c, source)
+		fixed := assignable(k.c, source, target) ? target : default_type(k.c, source)
 		if fixed == INVALID_TYPE || !convertible(k.c, fixed, target) {
 			return false
 		}
@@ -1068,8 +1041,9 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		}
 		source = base.type
 	}
-	// A typed constant meets the same rules as a runtime value; only an untyped
-	// one converts by what its value fits.
+	// A typed constant meets the same rules as a runtime value, so two distinct
+	// types meet only through a hook; only an untyped one converts by what its
+	// value fits.
 	typed := !base_is_const(base) || !type_is_untyped(k.c, source)
 	if typed && !convertible(k.c, source, target) {
 		return false

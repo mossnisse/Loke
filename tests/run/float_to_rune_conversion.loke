@@ -1,0 +1,20 @@
+// design.md "Type conversion": a float converts to a rune as to the signed
+// 32-bit integer the runtime checks, truncating toward zero, whether the float
+// is a constant, an evaluated local, or a runtime value.
+package main;
+
+import "core:fmt";
+
+static_assert(rune(f64(65.9)) == 'A');
+static_assert(rune(f32(-1.5)) == rune(-1));
+static_assert(rune(-2147483648.0) == rune(-2147483648));
+static_assert(rune(2147483647.5) == rune(2147483647));
+
+evaluated :: proc(x: f64) -> rune { return rune(x); }
+static_assert(evaluated(67.25) == 'C');
+
+main :: proc() {
+	x := 68.75;
+	low := -2147483648.0;
+	fmt.println(rune(x), evaluated(x) == 'D', i32(rune(low)));
+}

@@ -993,13 +993,16 @@ eval_folded :: proc(ev: ^Evaluator, folded: Const_Value, ok: bool, type: Type_Id
 // Pointer and procedure identity are the evaluator's own.
 @(private)
 eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (out: bool, success: bool) {
-	if a.target != nil || b.target != nil || a.proc_value != INVALID_SYMBOL || b.proc_value != INVALID_SYMBOL ||
-	   (a.kind == .Nil && b.kind == .Nil) {
+	if a.target != nil || b.target != nil || a.proc_value != INVALID_SYMBOL || b.proc_value != INVALID_SYMBOL {
 		if op != .Eq_Eq && op != .Not_Eq {
 			return false, false
 		}
 		equal := a.target == b.target && a.proc_value == b.proc_value
 		return equal == (op == .Eq_Eq), true
+	}
+	// Two null addresses compare as the constants do, ordering included.
+	if a.kind == .Nil && b.kind == .Nil {
+		return fold_comparison(ev.k.c, op, a.constant, b.constant, ev.alloc)
 	}
 	// design.md "Comparison operators": a part with its own `==` runs it, a
 	// scalar `distinct` one as much as a record.

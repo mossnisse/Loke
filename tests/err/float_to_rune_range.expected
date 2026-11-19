@@ -1,0 +1,15 @@
+L0373
+@7:15
+`untyped float` cannot be converted to `rune`
+
+L0373
+@8:15
+`f64` cannot be converted to `rune`
+
+L0373
+@9:22
+`untyped float` cannot be converted to `rune`
+
+L0353
+@12:19
+a float does not convert implicitly to `rune`; an explicit `rune(...)` truncates it

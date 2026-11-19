@@ -1,0 +1,31 @@
+// design.md "Distinct types": a distinct type converts as written to and from
+// the type it wraps, also when that type is itself distinct: as a constant, in
+// an evaluated procedure, and at run time.
+package main;
+
+import "core:fmt";
+
+Inner :: distinct int;
+Outer :: distinct Inner;
+Pair :: struct { a, b: int }
+Wrapped :: distinct Pair;
+Twice :: distinct Wrapped;
+
+OUTER :: Outer(Inner(4));
+static_assert(Inner(OUTER) == Inner(4));
+TWICE :: Twice(Wrapped(Pair{1, 2}));
+static_assert(Pair(Wrapped(TWICE)).b == 2);
+
+round_trip :: proc(n: int) -> int {
+	outer := Outer(Inner(n));
+	return int(Inner(outer));
+}
+static_assert(round_trip(7) == 7);
+
+main :: proc() {
+	inner: Inner = 2;
+	outer := Outer(inner);
+	fmt.println(int(Inner(outer)), int(Inner(OUTER)), round_trip(9));
+	twice := Twice(Wrapped(Pair{3, 4}));
+	fmt.println(Pair(Wrapped(twice)).a);
+}

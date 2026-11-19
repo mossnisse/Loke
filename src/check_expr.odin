@@ -67,7 +67,7 @@ check_expr :: proc(
 	case ^Expr_Error:
 
 	case ^Expr_Literal:
-		check_literal(k, v, expected)
+		check_literal(k, v)
 
 	case ^Expr_Ident:
 		check_ident(k, v, position == .Callee)
@@ -315,7 +315,7 @@ note_mutable_slicing :: proc(k: ^Checker, e: Expr, found, target: Type_Id) {
 // ---------------------------------------------------------------- literals --
 
 @(private = "file")
-check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
+check_literal :: proc(k: ^Checker, v: ^Expr_Literal) {
 	switch v.kind {
 	case .Int:
 		value, ok := bi_parse_int_literal(k.c, v.text)
@@ -769,11 +769,16 @@ select_call_method :: proc(k: ^Checker, v: ^Expr_Selector, operand: Type_Id) -> 
 	}
 	if type_is_untyped(k.c, operand) {
 		materialized := unfixed_receiver_type(k.c, operand)
-		if materialized == operand || materialized == INVALID_TYPE ||
-		   first_method(k, materialized, v.name.id) == INVALID_SYMBOL {
+		if materialized == operand || materialized == INVALID_TYPE {
 			return false
 		}
-		return materialize(k, v.operand, materialized) && select_method(k, v, materialized, true)
+		// The receiver is materialized only for a method its type has.
+		method := first_method(k, materialized, v.name.id)
+		if method == INVALID_SYMBOL || !materialize(k, v.operand, materialized) {
+			return false
+		}
+		resolve_method(k, v, method, true)
+		return true
 	}
 	return false
 }
@@ -786,10 +791,10 @@ select_field :: proc(
 	operand_base: ^Expr_Base,
 	through_pointer, pointer_mutable: bool,
 	field: Symbol_Id,
-) -> bool {
+) {
 	// An inaccessible field is reported, not skipped for a same-named method.
 	if !require_visible_field(k, v.span, operand, field, "L0471", "used") {
-		return false
+		return
 	}
 	sym := symbol_of(k.c, field)
 	v.resolution = Resolution{kind = .Field, symbol = field}
@@ -815,7 +820,6 @@ select_field :: proc(
 			}
 		}
 	}
-	return true
 }
 
 // A place anything may write: an `inout` result, or a C pointer's element.
@@ -981,18 +985,22 @@ select_associated_member :: proc(
 @(private = "file")
 select_method :: proc(k: ^Checker, v: ^Expr_Selector, receiver: Type_Id, callee_position: bool) -> bool {
 	method := first_method(k, receiver, v.name.id)
-	if method == INVALID_SYMBOL {
-		return false
+	if method != INVALID_SYMBOL {
+		resolve_method(k, v, method, callee_position)
 	}
+	return method != INVALID_SYMBOL
+}
+
+@(private = "file")
+resolve_method :: proc(k: ^Checker, v: ^Expr_Selector, method: Symbol_Id, callee_position: bool) {
 	v.resolution = Resolution{kind = .Method, symbol = method}
 	v.value_category = .Value
 	if !callee_position {
 		// There are no bound method values: the receiver is supplied by the call.
 		errorf(k.c, v.span, "L0408", "`%s` is a method and must be called", v.name.text)
-		return true
+		return
 	}
 	v.type = TYPE_VOID // `check_call` reads the resolution, never this
-	return true
 }
 
 // Explains a "no such member" report when a `where` bound removed the member.
@@ -1786,19 +1794,17 @@ merge_untyped_types :: proc(a, b: Type_Id) -> (Type_Id, bool) {
 
 @(private = "file")
 check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
-	cond := check_single_expr(k, v.cond, TYPE_BOOL)
-	if cond != INVALID_TYPE && materialize(k, v.cond, TYPE_BOOL) && !type_is_boolean(k.c, expr_base(v.cond).type) {
-		errorf(k.c, expr_span(v.cond), "L0355", "a condition must be `bool`, found `%s`", type_name(k.c, cond))
-	}
+	cond_typed := check_condition(k, v.cond)
 	// design.md "Returned constructions": a returned conditional returns the arm
 	// it selects.
 	if v.returned {
 		mark_returned(v.then)
 		mark_returned(v.otherwise)
 	}
+	// Both arms are checked, for their own diagnostics, whatever the condition.
 	then_type := check_single_expr(k, v.then, expected)
 	else_type := check_single_expr(k, v.otherwise, expected)
-	if cond == INVALID_TYPE || then_type == INVALID_TYPE || else_type == INVALID_TYPE {
+	if !cond_typed || then_type == INVALID_TYPE || else_type == INVALID_TYPE {
 		return
 	}
 	// An expected procedure type constrains both arms.
@@ -1919,8 +1925,9 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	}
 	// design.md "SIMD vectors": a scalar of the lane type splats, at run time or
 	// folded here, as a typed constant such as `T(0)` in a generic body does; an
-	// unfixed constant folds below.
-	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && (!base_is_const(base) || !type_is_untyped(k.c, base.type)) {
+	// unfixed constant folds below. A typed scalar meets only a plain vector
+	// (`assignable`).
+	if type_kind(k.c, target) == .Simd && !type_is_simd(k.c, base.type) && (!base_is_const(base) || !type_is_untyped(k.c, base.type)) {
 		element := underlying_info(k.c, target).element
 		// The scalar must be a valid lane before it becomes the vector.
 		if base.type != element && !materialize_value_expr(k, e, element, "splat") {
@@ -2047,7 +2054,7 @@ report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 			type_name(k.c, target),
 		)
 	case .Float:
-		if type_is_integer(k.c, target) {
+		if type_is_integer(k.c, target) || type_is_rune(k.c, target) {
 			errorf(
 				k.c, base.span, "L0353", "a float does not convert implicitly to `%s`; an explicit `%s(...)` truncates it",
 				type_name(k.c, target), type_name(k.c, target),

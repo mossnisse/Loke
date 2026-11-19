@@ -1,0 +1,14 @@
+package main;
+
+// design.md "Type conversion": a float constant outside the signed 32-bit range
+// a rune holds has no rune, as one outside an integer type's range has no
+// integer, and a float never becomes a rune implicitly.
+
+ABOVE :: rune(2147483648.0);
+BELOW :: rune(f64(-2147483649.0));
+NOT_A_NUMBER :: rune(0.0 / 0.0);
+
+main :: proc() {
+	implicit: rune = 65.0;
+	_ = implicit;
+}
