@@ -9,7 +9,6 @@
 package lokec
 
 import "core:fmt"
-import "core:strings"
 
 // Header field positions, shared by both containers.
 CONTAINER_STORAGE :: 0
@@ -205,12 +204,15 @@ CONTAINER_OP_EFFECTS := [Container_Op]bit_set[Container_Op_Effect] {
 	.Map_Values         = {.Returns_View},
 }
 
-// design.md "Container insertion": a `try_` form copies its element in, so a
-// failure leaves the caller's argument untouched, and a move-only element has
-// no such form.
-container_member_is_try :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
-	text := identifier_text(c, symbol.name)
-	return len(text) > len("try_") && strings.has_prefix(text, "try_")
+// Whether a member is a `try_` spelling, read from its signature: it answers
+// the allocation's status, or `try_find_or_insert` a `Result` holding the slot,
+// where the panicking spelling answers nothing or the slot itself. design.md
+// "Container insertion": a `try_` form takes a copyable element by copy, so a
+// failure leaves the caller's argument untouched, and drops a move-only one it
+// was handed.
+container_member_is_fallible :: proc(c: ^Compiler, symbol: ^Symbol) -> bool {
+	return symbol.result != INVALID_TYPE &&
+		(symbol.result == c.alloc_result_type || symbol.container_op == .Map_Find_Or_Insert && type_is_union(c, symbol.result))
 }
 
 // design.md "Dynamic arrays": the operations are real members, so calls reuse
@@ -238,8 +240,8 @@ ensure_dynamic_members :: proc(k: ^Checker, type: Type_Id, element: Type_Id) {
 	// Insertion clones.
 	contribute_lifecycle_members(k, element)
 
-	members := make([dynamic]Symbol_Id, 0, 17)
-	defer delete(members)
+	// Staging only: `add_members` copies them into the owner's members.
+	members := make([dynamic]Symbol_Id, 0, 17, context.temp_allocator)
 	none := INVALID_TYPE
 
 	pack := slice_of(k.c, element, mutable = false)
@@ -312,8 +314,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, key, value: Type_Id) {
 	contribute_lifecycle_members(k, key)
 	contribute_lifecycle_members(k, value)
 
-	members := make([dynamic]Symbol_Id, 0, 15)
-	defer delete(members)
+	members := make([dynamic]Symbol_Id, 0, 15, context.temp_allocator)
 	none := INVALID_TYPE
 	// design.md "Maps": a lookup takes the borrowed key form; insertion stores
 	// the owned key.
@@ -464,6 +465,9 @@ require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) {
 	case .Rejected:
 		return // already reported, once, at this element
 	}
+	// A distinct element inherits its underlying type's `<` (design.md "Distinct
+	// types").
+	settle_delegates(k, element)
 	policy, reason := resolve_element_order_policy(k.c, element)
 	if reason == "" {
 		k.c.order_policies[element] = policy
@@ -494,7 +498,7 @@ check_container_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
 	if chosen == nil || chosen.container_op == .None {
 		return
 	}
-	check_container_element(k, v.span, chosen)
+	check_container_element(k, v.span, chosen, v.bound[1] if chosen.container_op == .Resize && len(v.bound) > 1 else nil)
 	element := container_element(k.c, chosen.params[0])
 	// design.md "Container insertion": taken like an initialization, so a
 	// borrowed place is copied and a move-only one needs `move(...)`.
@@ -511,17 +515,21 @@ check_container_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
 	}
 }
 
-// What a container operation requires of its element type alone, so it holds
-// for a call and for the operation taken as a procedure value.
-check_container_element :: proc(k: ^Checker, span: Span, chosen: ^Symbol) {
+// What a container operation requires of its element type, so it holds for a
+// call and for the operation taken as a procedure value. A call gives `resize`'s
+// bound `count`.
+check_container_element :: proc(k: ^Checker, span: Span, chosen: ^Symbol, count: Expr = nil) {
 	if chosen.container_op == .None {
 		return
 	}
 	element := container_element(k.c, chosen.params[0])
 	#partial switch chosen.container_op {
 	case .Resize:
-		// design.md "Zero values": growth fills new slots with the element's zero.
-		require_type_has_zero(k, element, span, "growing a container")
+		// design.md "Zero values": growth fills new slots with the element's zero,
+		// and a constant `0`, as for `make`, only truncates.
+		if count == nil || !is_constant_zero(count) {
+			require_type_has_zero(k, element, span, "growing a container")
+		}
 	case .Map_Lookup_Value:
 		if type_clone_disabled(k.c, element) {
 			errorf(
@@ -554,7 +562,8 @@ symbol_via_allocator :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> Expr {
 //   make([dynamic]T, len: int = 0, cap: int = len, allocator = default)
 //   make(map[K]V, reservation: int = 0, allocator = default)
 //
-// both returning `(container, Allocator_Error)`. `Allocator` is a distinct type,
+// `make` returns the owning container and panics if allocation fails; `try_make`
+// returns `Result(container, Allocator_Error)`. `Allocator` is a distinct type,
 // so the trailing allocator is recognised by its type rather than its position,
 // and it alone has a name to write: `allocator=`.
 check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, fallible: bool) {

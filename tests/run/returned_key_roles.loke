@@ -1,0 +1,101 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Returned constructions": a returned value that names a local twice
+// copies it, and a map literal's bare key names one, whether the literal's type
+// is written as a map, through an alias, or comes from where the literal
+// stands. A record literal's field name names nothing, so the local beside it
+// still transfers. The hooks print which copies ran.
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		fmt.println("  copy", self.id);
+		return .ok(Tracked{self.id});
+	}
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("  drop", self.id); }
+}
+
+Names :: map[string]string;
+Holder :: struct { item: Tracked, n: int }
+Outer :: struct { inner: Holder }
+
+aliased :: proc() -> Names {
+	key := "alive".copy();
+	defer { _ = key; }
+	return Names{key = key};
+}
+contextual :: proc() -> Names {
+	key := "alive".copy();
+	defer { _ = key; }
+	return {key = key};
+}
+in_variant :: proc() -> Option(Names) {
+	key := "alive".copy();
+	defer { _ = key; }
+	return .some({key = key});
+}
+// `item` is a field name in both literals, so the local is named once.
+labelled :: proc() -> Outer {
+	item := Tracked{1};
+	return {inner = {item = item, n = 2}};
+}
+
+// design.md "Success returns": `return source;` takes `source` as the written
+// `.some(source)` does. Widened to `Wide`, it is not the local itself, so it is
+// copied, and the deferred read still sees it.
+Narrow :: (data: [dynamic]int | empty:);
+Wide :: (data: [dynamic]int | empty: | other:);
+widened :: proc() -> Option(Wide) {
+	source: Narrow = .data([dynamic]int{1, 2});
+	defer { fmt.println("deferred", narrow_len(source)); }
+	return source;
+}
+
+// A copy of a borrowed `Narrow` is legal, though `Wide` adds a move-only
+// alternative.
+@(move_only) Token :: struct { id: int }
+Narrow_Item :: (item: Tracked | empty:);
+Wide_Item :: (item: Tracked | empty: | token: Token);
+borrowed_widened :: proc(source: Narrow_Item) -> Option(Wide_Item) {
+	return source;
+}
+
+narrow_len :: proc(n: Narrow) -> int {
+	switch (n) {
+	case .data(d): return d.len();
+	case .empty:   return 0;
+	}
+}
+wide_len :: proc(w: Wide) -> int {
+	switch (w) {
+	case .data(d): return d.len();
+	case .empty, .other: return 0;
+	}
+}
+item_id :: proc(w: Wide_Item) -> int {
+	switch (w) {
+	case .item(t): return t.id;
+	case .empty, .token: return 0;
+	}
+}
+
+main :: proc() {
+	fmt.println(aliased().len(), contextual().len(), (in_variant() or_else {}).len());
+	fmt.println("labelled");
+	{ r := labelled(); fmt.println(r.inner.item.id, r.inner.n); }
+	fmt.println("widened");
+	{
+		r := widened() or_else .empty;
+		fmt.println(wide_len(r));
+	}
+	fmt.println("borrowed widened");
+	{
+		t: Narrow_Item = .item(Tracked{3});
+		r := borrowed_widened(t) or_else .empty;
+		fmt.println(item_id(r));
+	}
+	fmt.println("end");
+}

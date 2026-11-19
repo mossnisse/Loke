@@ -450,7 +450,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		result       = llvm_result_type(e, symbol.result, symbol.result_inout),
 		moves        = moves,
 		masked       = masked,
-		fallible     = symbol.result != INVALID_TYPE && type_is_union(e.c, symbol.result),
+		fallible     = container_member_is_fallible(e.c, symbol),
 	}
 
 	open_synth_function(e, symbol, name, masked ? ", ptr %owned" : "")

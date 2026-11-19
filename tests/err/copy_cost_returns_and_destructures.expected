@@ -1,0 +1,15 @@
+warning[L0507]: this return copies 600 bytes from `p`
+@12:39
+warning[L0507]: this binding copies 600 bytes from `pair.big`
+@16:12
+warning[L0507]: this assignment copies 600 bytes from `pair.big`
+@17:11
+warning[L0507]: this binding clones `lists.xs`, which may allocate
+@19:11
+write `lists.xs.clone()` if the copy is intended
+warning[L0507]: this assignment clones `lists.xs`, which may allocate
+@20:10
+!write `lists.clone()`
+L0315
+@22:2
+unknown name `not_declared`

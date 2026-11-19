@@ -232,6 +232,43 @@ checklist.
 - A generic record that contains itself by value, reached first by an interface requirement
   that then failed, is no longer cached as a good instance: a later `^Bad(int)` reports
   `L0364`, where it emitted a self-containing LLVM type.
+- A distinct type inherits the ordering of every layer it wraps ([Distinct
+  types](docs/design.md#distinct-types)). With `Reverse :: distinct int` declaring
+  its own `<` and `Twice :: distinct Reverse`, sorting a `[dynamic]Twice` and
+  `Twice(1) < Twice(2)` used `int`'s order, and a distinct type over a struct
+  with its own `<` could not be sorted (`L0651`) or compared (`L0355`). Both now
+  order by the nearest declared `<`, `<=`, `>`, or `>=`, at run time and in
+  compile-time evaluation.
+- A distinct type over a distinct type compares and hashes by the nearest `==`
+  and `hash` in its chain ([Maps](docs/design.md#maps)). `Wrapped :: distinct
+  Key`, over a `Key :: distinct int` with its own pair, compared and keyed maps
+  as `int` did.
+- `values.resize(0)` and `values.try_resize(0)` no longer require the element
+  type to have a zero value, as `make` with a constant `0` length does not
+  ([Zero values](docs/design.md#zero-values)); truncating fills nothing. A
+  count that may grow the array, and the operation taken as a procedure value,
+  still do.
+- `.len()` on a fixed array or vector evaluates its receiver when the
+  receiver has effects, also inside an expression that folds and during
+  compile-time evaluation. `make_array(inout count).len() + 1` left `count`
+  unchanged.
+- A returned map literal whose type is an alias or comes from where it stands
+  counts its bare key as a use of the local it names ([Returned
+  constructions](docs/design.md#returned-constructions)). `return Names{key =
+  key};` with a deferred read of `key` reported `L0500`, where the spelled-out
+  `map[string]string{key = key}` compiled.
+- `return source;` in a procedure returning `Option(Wide)` takes a narrower
+  `source` widened to `Wide` as the written `.some(source)` does ([Success
+  returns](docs/design.md#success-returns)): it copies it, instead of
+  transferring it (`L0500` with a later read) or rejecting a borrowed one whose
+  wider union holds a move-only alternative (`L0502`).
+- The copy-cost warning reports returning a large aggregate from a place, as
+  `return p.big;`, and each large or managed field a destructuring copies out
+  of a place, naming the field as `t.tags` rather than the whole of `t`, and the
+  site as a binding or an assignment ([Copy-cost
+  diagnostics](docs/compiler-guide.md#copy-cost-diagnostics)). A binding or
+  assignment that views, splats, or erases its source copies nothing, and no
+  longer reports one.
 
 
 ## [0.10.0] - 2026-11-16

@@ -30,6 +30,16 @@ make_array :: proc(calls: inout int) -> [3]int {
 	return {1, 2, 3};
 }
 
+// The receiver runs once whether the call stands alone or inside an expression
+// that would fold, at run time and in compile-time evaluation alike.
+receiver_calls :: proc() -> int {
+	calls := 0;
+	_ = make_array(inout calls).len();
+	_ = make_array(inout calls).len() + 1;
+	return calls;
+}
+RECEIVER_CALLS :: receiver_calls();
+
 main :: proc() {
 	box := Box{7};
 	other := Box{3};
@@ -45,6 +55,7 @@ main :: proc() {
 	xs := [3]int{1, 2, 3};
 	calls := 0;
 	fmt.println(xs.len(), make_array(inout calls).len(), calls);
+	fmt.println(receiver_calls(), RECEIVER_CALLS);
 	fmt.println(1 if interfaces.Sequence([3]int) else 0);
 
 	view := xs[:];

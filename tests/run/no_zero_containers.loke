@@ -73,6 +73,14 @@ main :: proc() {
 	fmt.println(xs.cap() >= 16, xs.len());
 	xs.remove(0);
 	fmt.println(xs.len(), xs[0]);
+	// Truncating to a constant `0` fills nothing, in each spelling.
+	xs.resize(0);
+	fmt.println(xs.len());
+	xs.append(.a(3));
+	fmt.println(succeeded(xs.try_resize(0)), xs.len());
+	xs.append(.a(4));
+	([dynamic]Choice).resize(inout xs, 0);
+	fmt.println(xs.len());
 	xs.clear();
 	fmt.println(xs.len());
 

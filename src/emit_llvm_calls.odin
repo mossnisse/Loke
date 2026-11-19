@@ -675,7 +675,7 @@ consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol, call_node: ^Expr_Cal
 	// argument with the caller. A built pack still goes to the lending body,
 	// which copies each element itself and so reports a failed copy; the caller
 	// keeps and drops the pack.
-	if container_member_is_try(e.c, symbol) {
+	if container_member_is_fallible(e.c, symbol) {
 		if symbol.container_op != .Append || !lifecycle.managed || call_node == nil ||
 		   !call_node.is_variadic || call_node.variadic_forwards {
 			return -1, false
@@ -799,7 +799,7 @@ emit_call_operands :: proc(
 			provider, fallible := "", false
 			if consumed == pack && symbol.container_op == .Append && operands[0] != "" {
 				provider = load(e, "ptr", gep_field(e, CONTAINER_TYPE, operands[0], CONTAINER_ALLOC))
-				fallible = container_member_is_try(e.c, symbol)
+				fallible = container_member_is_fallible(e.c, symbol)
 			}
 			packed := emit_variadic_pack(
 				e, call_node, callee_type.parameters[index], lend = lends, provider = provider, fallible = fallible,
@@ -829,7 +829,7 @@ emit_call_operands :: proc(
 				hold_addressed_temporary(e, argument, callee_type.parameters[index], operands[index])
 			}
 		} else if index == consumed && expression_is_borrowed_place(argument) && index < len(callee_type.parameters) {
-			out.inserted = emit_insertion_copy(e, argument, callee_type.parameters[index], operands[0], container_member_is_try(e.c, symbol))
+			out.inserted = emit_insertion_copy(e, argument, callee_type.parameters[index], operands[0], container_member_is_fallible(e.c, symbol))
 			operands[index] = out.inserted.value
 		} else {
 			operands[index] = emit_expr(e, argument)

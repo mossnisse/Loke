@@ -48,6 +48,34 @@ type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	return current
 }
 
+// `type` and then each type its `distinct` layers wrap, nearest first, ending
+// with the one that is not `distinct`: where a comparison or hash is looked up,
+// as the nearest declaration applies (design.md "Distinct types"). Bounded as
+// `type_underlying` is.
+//
+//     walk := distinct_walk(c, type)
+//     for layer in distinct_walk_next(&walk) { ... }
+Distinct_Walk :: struct {
+	c:     ^Compiler,
+	next:  Type_Id,
+	steps: int,
+}
+
+distinct_walk :: proc(c: ^Compiler, type: Type_Id) -> Distinct_Walk {
+	return {c = c, next = type}
+}
+
+distinct_walk_next :: proc(w: ^Distinct_Walk) -> (Type_Id, bool) {
+	if w.next == INVALID_TYPE || w.steps > len(w.c.types) {
+		return INVALID_TYPE, false
+	}
+	current := w.next
+	info := type_of(w.c, current)
+	w.next = info != nil && info.kind == .Distinct ? info.element : INVALID_TYPE
+	w.steps += 1
+	return current, true
+}
+
 // A distinct type answers structural questions through what it wraps, so these
 // two are the pairing almost every query wants.
 underlying_info :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {

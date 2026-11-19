@@ -42,6 +42,11 @@ main :: proc() {
 	ys.resize(4);
 	([dynamic]Choice).resize(inout ys, 4);
 	grow := ([dynamic]Choice).resize;
+	_ = ys.try_resize(2);
+	// A constant `0` truncates, filling nothing, in every spelling.
+	ys.resize(0);
+	_ = ys.try_resize(0);
+	([dynamic]Choice).resize(inout ys, 0);
 
 	// A local with no initialiser starts dead, so it needs no zero; `---` asks
 	// for the storage alone and goes unchecked as well. Neither is used below.

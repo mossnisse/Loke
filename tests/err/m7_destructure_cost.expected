@@ -2,5 +2,5 @@ L0503
 @33:18
 field `token` is `Only`, which is move-only, so this destructure cannot copy it; write `move(...)` to transfer ownership instead
 
-warning[L0507]: this binding clones `t`, which may allocate
+warning[L0507]: this binding clones `t.tags`, which may allocate
 @47:17

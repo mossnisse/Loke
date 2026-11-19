@@ -13,9 +13,10 @@ symbol_is_owned_here :: proc(sym: ^Symbol) -> bool {
 		 (sym.kind == .Parameter && sym.mode == .Move))
 }
 
-// Borrowed managed results clone; owned values transfer.
+// A returned borrowed place is copied, and a managed one cloned; owned values
+// transfer.
 classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id) {
-	if value.is_inout || !type_is_managed(k.c, result) || !expression_is_borrowed_place(value.expr) {
+	if value.is_inout || !expression_is_borrowed_place(value.expr) {
 		return
 	}
 	if ident, is_ident := value.expr.(^Expr_Ident); is_ident && symbol_is_owned_here(symbol_of(k.c, ident.symbol)) {
@@ -24,26 +25,38 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 	// design.md "Widening by label"
 	copied := copied_type(value.expr, result)
 	if !type_is_managed(k.c, copied) {
+		// A scalar's size is never the point, as for an argument.
+		if type_is_aggregate(k.c, copied) {
+			classify_copy_cost(k, value.expr, result, .Return)
+		}
 		return
 	}
-	if type_clone_disabled(k.c, copied) {
-		errorf(
-			k.c,
-			expr_span(value.expr),
-			"L0502",
-			"`%s` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
-			type_name(k.c, copied),
-		)
+	if report_borrowed_move_only_return(k, value.expr, copied) {
 		return
 	}
 	value.clone_on_return = true
 	contribute_lifecycle_members(k, copied)
-	record_copy(k, .Return, expr_span(value.expr), value.expr, copied)
+	classify_copy_cost(k, value.expr, result, .Return)
 }
 
-// design.md "Success returns": a wrapped `return x;` takes `x` as the plain
-// statement does, so an owned local transfers into the success variant, as
-// `move(x)` would, instead of being copied as a written `.ok(x)` copies it.
+// design.md "Parameter semantics and ABI lowering": a borrowed move-only value
+// cannot be returned, as it cannot be copied. Reports whether `copied`, what
+// returning `e` copies, is one.
+report_borrowed_move_only_return :: proc(k: ^Checker, e: Expr, copied: Type_Id) -> bool {
+	if !type_clone_disabled(k.c, copied) {
+		return false
+	}
+	errorf(
+		k.c, expr_span(e), "L0502",
+		"`%s` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
+		type_name(k.c, copied),
+	)
+	return true
+}
+
+// design.md "Returned constructions": an owned managed local the return takes
+// transfers, as `move(x)` would, instead of being copied.
+@(private = "file")
 transfer_returned_local :: proc(k: ^Checker, e: Expr) -> Expr {
 	ident, is_ident := e.(^Expr_Ident)
 	if !is_ident || !type_is_managed(k.c, ident.type) || !symbol_is_owned_here(symbol_of(k.c, ident.symbol)) {
@@ -58,13 +71,15 @@ transfer_returned_local :: proc(k: ^Checker, e: Expr) -> Expr {
 	return moved
 }
 
-// design.md "Returned constructions": `e` is the value a `return` returns. Its
-// constructions pass the mark on to their operands as they check them, and each
-// name it writes once is noted, since only such an operand transfers.
-mark_returned_value :: proc(e: Expr) {
+// design.md "Returned constructions": `e` is the value a `return` returns, to be
+// checked against `expected`. Its constructions pass the mark on to their
+// operands as they check them, and each name it writes once is noted, since
+// only such an operand transfers.
+mark_returned_value :: proc(k: ^Checker, e: Expr, expected: Type_Id) {
 	mark_returned(e)
 	names := make([dynamic]^Expr_Ident, context.temp_allocator)
-	collect_local_names(e, &names)
+	walk := Returned_Names{k, &names}
+	collect_returned_names(&walk, e, expected)
 	counts := make(map[string]int, context.temp_allocator)
 	for name in names {
 		counts[name.name] += 1
@@ -72,6 +87,107 @@ mark_returned_value :: proc(e: Expr) {
 	for name in names {
 		name.sole_in_return = counts[name.name] == 1
 	}
+}
+
+@(private = "file")
+Returned_Names :: struct {
+	k:     ^Checker,
+	names: ^[dynamic]^Expr_Ident,
+}
+
+// `collect_local_names` ahead of checking. Whether a literal's bare key is a
+// field name or names a local depends on the literal's type, which checking has
+// not recorded yet, so it is found here as checking will find it: the written
+// type, or `expected` where the literal stands. Where neither is known, the
+// written rule (`key_names_field`) decides.
+@(private = "file")
+collect_returned_names :: proc(w: ^Returned_Names, e: Expr, expected: Type_Id) {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		append(w.names, v)
+		return
+	case ^Expr_Cond:
+		collect_returned_names(w, v.cond, INVALID_TYPE)
+		collect_returned_names(w, v.then, expected)
+		collect_returned_names(w, v.otherwise, expected)
+		return
+	case ^Expr_Call:
+		// `.name(payload)`, whose payload is checked against the variant's.
+		if selector, is_selector := v.callee.(^Expr_Selector); is_selector && selector.operand == nil &&
+		   len(v.args) == 1 && type_is_union(w.k.c, expected) {
+			if index := union_index_of(w.k.c, expected, selector.name.text); index >= 0 {
+				collect_returned_names(w, v.args[0].value, union_variant_payload(w.k.c, expected, index))
+				return
+			}
+		}
+	case ^Expr_Composite:
+		if v.capture == nil {
+			collect_returned_literal_names(w, v, expected)
+			return
+		}
+		for entry in v.capture.entries {
+			collect_returned_names(w, entry.value, INVALID_TYPE)
+		}
+	}
+	expr_children(e, w, proc(data: rawptr, child: Expr) -> bool {
+		collect_returned_names((^Returned_Names)(data), child, INVALID_TYPE)
+		return false
+	})
+}
+
+@(private = "file")
+collect_returned_literal_names :: proc(w: ^Returned_Names, v: ^Expr_Composite, expected: Type_Id) {
+	c := w.k.c
+	collect_returned_names(w, v.type_expr, INVALID_TYPE)
+	collect_returned_names(w, v.via, INVALID_TYPE)
+	type := expected
+	if v.type_expr != nil {
+		probe := begin_probe(c)
+		type = resolve_type_syntax(w.k, v.type_expr)
+		end_probe(c, probe)
+	}
+	info := underlying_info(c, type)
+	for element, index in v.elements {
+		names_key := !key_names_field(v, element.key)
+		key_type, value_type := INVALID_TYPE, INVALID_TYPE
+		if info != nil {
+			#partial switch info.kind {
+			case .Struct:
+				names_key = false
+				value_type = literal_field_type(c, info, element.key, index)
+			case .Map:
+				names_key = true
+				key_type, value_type = info.key, info.element
+			case .Array, .Slice, .Dynamic_Array, .Simd:
+				names_key = true
+				value_type = info.element
+			}
+		}
+		if names_key {
+			collect_returned_names(w, element.key, key_type)
+		}
+		collect_returned_names(w, element.value, value_type)
+	}
+}
+
+// The type of the struct field a literal's element fills: the one its key
+// names, or else the one at its position. INVALID_TYPE when there is none.
+@(private = "file")
+literal_field_type :: proc(c: ^Compiler, info: ^Type_Info, key: Expr, index: int) -> Type_Id {
+	if key == nil {
+		positional := named_fields(c, info)
+		return index < len(positional) ? symbol_of(c, positional[index]).type : INVALID_TYPE
+	}
+	label, is_label := key.(^Expr_Ident)
+	if !is_label {
+		return INVALID_TYPE
+	}
+	for field in info.fields {
+		if sym := symbol_of(c, field); sym != nil && identifier_text(c, sym.name) == label.name {
+			return sym.type
+		}
+	}
+	return INVALID_TYPE
 }
 
 mark_returned :: proc(e: Expr) {
@@ -99,9 +215,16 @@ collect_local_names :: proc(e: Expr, names: ^[dynamic]^Expr_Ident) {
 // transfers as `move(x)` would, when the returned value names it nowhere else. A
 // converted operand is not the local itself, and is copied as written.
 transfer_returned_operand :: proc(k: ^Checker, parent: ^Expr_Base, e: Expr, type: Type_Id) -> Expr {
+	return parent.returned ? transfer_sole_returned_name(k, e, type) : e
+}
+
+// `e`, the returned value or an operand of a returned construction checked
+// against `type`, as it is taken: transferred when it is a name the return
+// writes once, at its own type. design.md "Success returns": the success a
+// wrapped `return x;` stands for takes `x` as the written `.ok(x)` would.
+transfer_sole_returned_name :: proc(k: ^Checker, e: Expr, type: Type_Id) -> Expr {
 	ident, is_ident := e.(^Expr_Ident)
-	if !parent.returned || !is_ident || !ident.sole_in_return ||
-	   ident.type != type || conversion_source(&ident.base) != INVALID_TYPE {
+	if !is_ident || !ident.sole_in_return || ident.type != type || conversion_source(&ident.base) != INVALID_TYPE {
 		return e
 	}
 	return transfer_returned_local(k, e)
@@ -169,10 +292,11 @@ classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_S
 	if !expression_is_borrowed_place(value) {
 		return
 	}
-	// A conversion builds a different value rather than copying its operand;
-	// a widened union is copied before it is remapped.
+	// A view, splat, or erasure builds a different value rather than copying its
+	// operand; a widened union is copied before it is remapped.
 	base := expr_base(value)
-	if base.type != type || base.erased_from != INVALID_TYPE {
+	if base.type != type || base.view_from != INVALID_TYPE || base.splat_from != INVALID_TYPE ||
+	   base.erased_from != INVALID_TYPE {
 		return
 	}
 	record_copy(k, site, expr_span(value), value, copied_type(value, type), held)
@@ -214,7 +338,7 @@ classify_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, 
 
 classify_declaration_copies :: proc(k: ^Checker, d: ^Decl) {
 	if d.destructure.active {
-		classify_destructure(k, &d.destructure, d.values[0])
+		classify_destructure(k, &d.destructure, d.values[0], .Binding)
 		return
 	}
 	if d.kind == .Const || d.top_level || len(d.values) != len(d.symbols) {
@@ -226,9 +350,7 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl) {
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		if expression_is_borrowed_place(value) {
-			record_copy(k, .Binding, expr_span(value), value, copied_type(value, sym.type), Held_Copy_Report{decl = d, index = index})
-		}
+		classify_copy_cost(k, value, sym.type, .Binding, Held_Copy_Report{decl = d, index = index})
 		if classify_copy(k, value, sym.type, .Binding) {
 			mark_clone(k, &clones, len(d.values), index)
 		}
@@ -240,14 +362,8 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	if s.op != .Assign {
 		return // a compound assignment reads and writes one place, and copies nothing
 	}
-	if s.destination_live == nil && len(s.lhs) > 0 {
-		s.destination_live = make([]Liveness, len(s.lhs), k.c.semantic_allocator)
-		for index in 0 ..< len(s.lhs) {
-			s.destination_live[index] = .Live
-		}
-	}
 	if s.destructure.active {
-		classify_destructure(k, &s.destructure, s.rhs[0])
+		classify_destructure(k, &s.destructure, s.rhs[0], .Assignment)
 		return
 	}
 	if len(s.rhs) != len(s.lhs) {
@@ -265,9 +381,7 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		if is_discard(s.lhs[index]) {
 			continue
 		}
-		if expression_is_borrowed_place(value) {
-			record_copy(k, .Assignment, expr_span(value), value, copied_type(value, base.type), Held_Copy_Report{assign = s, index = index})
-		}
+		classify_copy_cost(k, value, base.type, .Assignment, Held_Copy_Report{assign = s, index = index})
 		if classify_copy(k, value, base.type, .Assignment) {
 			mark_clone(k, &clones, len(s.rhs), index)
 		}
@@ -275,10 +389,11 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	s.rhs_clones = clones
 }
 
-// A place destructure clones each retained managed field. The operand itself is
-// not copied: its effects are its cloned fields' (`prov_destructure_copy_effects`).
+// A place destructure copies each retained field, and clones each managed one.
+// The operand itself is not copied: its effects are its cloned fields'
+// (`prov_destructure_copy_effects`).
 @(private = "file")
-classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr) {
+classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr, site: Copy_Site) {
 	if !plan.from_place {
 		return // a temporary or a `move` transfers its fields; nothing is cloned
 	}
@@ -288,10 +403,17 @@ classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr) {
 			continue
 		}
 		field := symbol_of(k.c, field_id)
-		if field == nil || !type_is_managed(k.c, field.type) {
+		if field == nil {
 			continue
 		}
-		warn_copy_cost(k, .Binding, expr_span(operand), operand, field.type)
+		managed := type_is_managed(k.c, field.type)
+		// A scalar's size is never the point, as for an argument.
+		if managed || type_is_aggregate(k.c, field.type) {
+			warn_copy_cost(k, site, expr_span(operand), operand, field.type, Held_Copy_Report{field = field.name})
+		}
+		if !managed {
+			continue
+		}
 		if type_clone_disabled(k.c, field.type) {
 			errorf(
 				k.c, expr_span(operand), "L0503",
@@ -371,6 +493,8 @@ Held_Copy_Report :: struct {
 	in_loop: bool,
 	// Costed by its bytes (`report_inline_copy`), not as a clone that may allocate.
 	inline:  bool,
+	// The field of `source` a destructure copies, or INVALID_IDENTIFIER for all of it.
+	field:   Identifier_Id,
 	// The adapter's view is the source of a `copied()` (`record_adapter_copy`).
 	under_copied: bool,
 }
@@ -404,58 +528,76 @@ warn_copy_cost :: proc(
 	if !allocates && (underlying_kind(k.c, type) == .String || type_is_shared_handle(k.c, type) || type_size(k.c, type) < k.c.copy_cost_threshold) {
 		return
 	}
+	held := held
+	held.site, held.span, held.source, held.type, held.in_loop, held.inline = site, span, source, type, in_loop, !allocates
 	waits := held.adapter != nil || allocates && (held.decl != nil || held.assign != nil || held.operand_of != nil)
 	if !waits {
-		report_copy(k, Held_Copy_Report{site = site, span = span, source = source, type = type, in_loop = in_loop, inline = !allocates})
+		report_copy(k, held)
 		return
 	}
 	if k.c.held_copy_reports == nil {
 		k.c.held_copy_reports = make([dynamic]Held_Copy_Report, 0, 4, k.c.semantic_allocator)
 	}
-	held := held
-	held.site, held.span, held.source, held.type, held.in_loop, held.inline = site, span, source, type, in_loop, !allocates
 	append(&k.c.held_copy_reports, held)
 }
 
 @(private = "file")
 report_copy :: proc(k: ^Checker, held: Held_Copy_Report) {
-	adapter_hint := held.under_copied ? ADAPTER_UNDER_COPIED_HINT : ADAPTER_COPY_HINT
 	if held.inline {
-		report_inline_copy(k, held.site, held.span, held.source, held.type, held.in_loop, adapter_hint)
+		report_inline_copy(k, held)
 	} else {
-		report_allocating_copy(k, held.site, held.span, held.source, held.in_loop, adapter_hint)
+		report_allocating_copy(k, held)
 	}
 }
 
+// The local `held.source` is rooted at, if any, and whether the source is that
+// local itself. `copied` spells what is copied: the local, a destructured field
+// of it as `local.field`, or else the local holding it.
 @(private = "file")
-report_inline_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool, adapter_hint: string) {
-	name := ""
-	// A binding that only views its source has no ownership to hand over, so the
-	// `move` advice below would name something `move` is not allowed to take.
-	transferable := false
-	if root := symbol_of(k.c, place_root_symbol(source)); root != nil {
-		name = identifier_text(k.c, root.name)
-		_, is_ident := source.(^Expr_Ident)
-		transferable = is_ident && symbol_is_owned_here(root)
-	}
-	source_text := name == "" ? fmt.tprintf("a `%s`", type_name_alloc(k.c, type, context.temp_allocator)) : fmt.tprintf("`%s`", name)
-	warnf(
-		k.c, span, "L0507",
-		"this %s copies %d bytes from %s",
-		COPY_SITE_TEXT[site], type_size(k.c, type), source_text,
-	)
-	if in_loop {
-		add_notef(k.c, NO_SPAN, "this runs on every iteration of the enclosing loop")
-	}
-	if site == .Adapter {
-		add_notef(k.c, NO_SPAN, "%s", adapter_hint)
+copied_source :: proc(k: ^Checker, held: Held_Copy_Report) -> (root: ^Symbol, whole: bool, copied: string) {
+	if root = symbol_of(k.c, place_root_symbol(held.source)); root == nil {
 		return
 	}
-	// Never advise inout: it grants mutation and changes which aliases are legal (design.md).
-	if name != "" && transferable && site != .Return {
+	_, whole = held.source.(^Expr_Ident)
+	copied = identifier_text(k.c, root.name)
+	if whole && held.field != INVALID_IDENTIFIER {
+		copied = fmt.tprintf("%s.%s", copied, identifier_text(k.c, held.field))
+	}
+	return
+}
+
+@(private = "file")
+report_inline_copy :: proc(k: ^Checker, held: Held_Copy_Report) {
+	root, whole, copied := copied_source(k, held)
+	text := fmt.tprintf("`%s`", copied)
+	if root == nil {
+		text = fmt.tprintf("a `%s`", type_name_alloc(k.c, held.type, context.temp_allocator))
+	}
+	warnf(
+		k.c, held.span, "L0507",
+		"this %s copies %d bytes from %s",
+		COPY_SITE_TEXT[held.site], type_size(k.c, held.type), text,
+	)
+	if held.in_loop {
+		add_notef(k.c, NO_SPAN, "this runs on every iteration of the enclosing loop")
+	}
+	if held.site == .Adapter {
+		add_notef(k.c, NO_SPAN, "%s", adapter_hint(held))
+		return
+	}
+	// Never advise inout: it grants mutation and changes which aliases are legal
+	// (design.md). A binding that only views its source has no ownership to hand
+	// over, so `move` advice would name something `move` is not allowed to take.
+	if whole && symbol_is_owned_here(root) && held.site != .Return {
+		name := identifier_text(k.c, root.name)
 		add_notef(k.c, NO_SPAN, "write `move(%s)` if `%s` is no longer needed", name, name)
 	}
 	add_notef(k.c, NO_SPAN, "take a pointer or `Shared(T)` if the two names should share one value")
+}
+
+@(private = "file")
+adapter_hint :: proc(held: Held_Copy_Report) -> string {
+	return held.under_copied ? ADAPTER_UNDER_COPIED_HINT : ADAPTER_COPY_HINT
 }
 
 @(private = "file")
@@ -467,23 +609,21 @@ ADAPTER_COPY_HINT :: "a `foreach` written over the adapter call makes no copy"
 ADAPTER_UNDER_COPIED_HINT :: "write `copied()` before this adapter: it borrows the source, and this adapter over it copies nothing"
 
 @(private = "file")
-report_allocating_copy :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, in_loop: bool, adapter_hint: string) {
+report_allocating_copy :: proc(k: ^Checker, held: Held_Copy_Report) {
+	root, whole, copied := copied_source(k, held)
 	object := "a value that may allocate"
 	hint := "write `.clone()` on it if the copy is intended"
-	if root := symbol_of(k.c, place_root_symbol(source)); root != nil {
-		name := identifier_text(k.c, root.name)
-		if _, is_ident := source.(^Expr_Ident); is_ident {
-			object = fmt.tprintf("`%s`, which may allocate", name)
-			hint = fmt.tprintf("write `%s.clone()` if the copy is intended", name)
-		} else {
-			object = fmt.tprintf("part of `%s`, which may allocate", name)
-		}
+	if whole {
+		object = fmt.tprintf("`%s`, which may allocate", copied)
+		hint = fmt.tprintf("write `%s.clone()` if the copy is intended", copied)
+	} else if root != nil {
+		object = fmt.tprintf("part of `%s`, which may allocate", copied)
 	}
-	if site == .Adapter {
-		hint = adapter_hint
+	if held.site == .Adapter {
+		hint = adapter_hint(held)
 	}
-	warnf(k.c, span, "L0507", "this %s clones %s", COPY_SITE_TEXT[site], object)
-	if in_loop {
+	warnf(k.c, held.span, "L0507", "this %s clones %s", COPY_SITE_TEXT[held.site], object)
+	if held.in_loop {
 		add_notef(k.c, NO_SPAN, "this runs on every iteration of the enclosing loop")
 	}
 	add_notef(k.c, NO_SPAN, "%s", hint)
@@ -541,6 +681,9 @@ record_adapter_copy :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
 // checked, so each body flushes only what it held. A static `foreach` checks a
 // copy of its body per expansion, so one site may be held more than once.
 flush_held_copy_reports :: proc(k: ^Checker, mark: int) {
+	if len(k.c.held_copy_reports) <= mark {
+		return
+	}
 	reported := make(map[Span]bool, context.temp_allocator)
 	for held in k.c.held_copy_reports[mark:] {
 		if reported[held.span] || !held_copy_is_made(held) {

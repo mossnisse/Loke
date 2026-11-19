@@ -1,0 +1,57 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Distinct types": comparisons are inherited, so a distinct type over
+// one that declares its own `<` orders by that `<`, however many layers wrap
+// it, and one declared for the distinct type takes precedence. A sort, a
+// written comparison, and compile-time evaluation all agree.
+
+Reverse :: distinct int;
+impl Reverse {
+	less :: operator(<) proc(a, b: Reverse) -> bool { return int(b) < int(a); }
+}
+Twice :: distinct Reverse;
+Thrice :: distinct Twice;
+
+// Declaring its own `<` keeps it from inheriting any ordering.
+Forward :: distinct Reverse;
+impl Forward {
+	less :: operator(<) proc(a, b: Forward) -> bool { return int(a) < int(b); }
+}
+
+// A written `delegate` still forwards as it did.
+Delegated :: distinct Reverse;
+impl Delegated { delegate(<); }
+
+Card :: struct { rank: int }
+impl Card {
+	less :: operator(<) proc(a, b: Card) -> bool { return a.rank > b.rank; }
+}
+Wrapped_Card :: distinct Card;
+
+sorted :: proc() -> [3]Thrice {
+	values := [dynamic]Thrice{1, 3, 2};
+	values.sort();
+	return [3]Thrice{values[0], values[1], values[2]};
+}
+SORTED :: sorted();
+LESS :: Thrice(1) < Thrice(2);
+
+main :: proc() {
+	twice := [dynamic]Twice{1, 3, 2};
+	twice.sort();
+	forward := [dynamic]Forward{1, 3, 2};
+	forward.sort();
+	delegated := [dynamic]Delegated{1, 3, 2};
+	delegated.reverse_sort();
+	fmt.println(twice, forward, delegated);
+
+	cards := [dynamic]Wrapped_Card{Wrapped_Card(Card{1}), Wrapped_Card(Card{3}), Wrapped_Card(Card{2})};
+	cards.sort();
+	fmt.println(cards[0].rank, cards[1].rank, cards[2].rank);
+
+	fmt.println(Twice(1) < Twice(2), Thrice(1) < Thrice(2), Forward(1) < Forward(2));
+	fmt.println(Wrapped_Card(Card{1}) < Wrapped_Card(Card{2}));
+	fmt.println(SORTED, SORTED == sorted(), LESS);
+}

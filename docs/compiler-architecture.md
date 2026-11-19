@@ -410,9 +410,10 @@ cache encodings.
 clone/move behavior and records copy costs. A [returned
 construction](design.md#returned-constructions) is settled there too:
 `mark_returned_value` marks the value a `return` returns and the names it
-writes once, each construction passes the mark to its operands as it checks
-them, and `transfer_returned_operand` wraps an eligible one in the implicit
-move a wrapped success return uses, before the copy site is classified.
+writes once, reading a literal's bare key by the literal's type as checking
+will, each construction passes the mark to its operands as it checks them, and
+`transfer_sole_returned_name` wraps an eligible operand, or the value a wrapped
+success return takes, in an implicit move before the copy site is classified.
 Before liveness analysis,
 `settle_last_uses` rewrites eligible last-use clones as ordinary moves, outside
 probes. Its candidates are the bound value of a binding or an assignment and,

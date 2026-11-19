@@ -708,28 +708,108 @@ defer_delegates :: proc(k: ^Checker, item: ^Item_Impl) {
 	}
 }
 
-// design.md "Delegating operators": runs what `delegate` still owes `type`. A
+// design.md "Delegating operators": runs what `delegate` still owes `type`, and
+// then gives a distinct type the comparisons it inherits (`inherit_comparisons`). A
 // package's declarations are order-independent, so this waits for the operators
 // it forwards (`resolve_package_operators`), and looking up an operator of the
 // underlying type runs that type's own first, which settles a chain of distinct
 // types from its end. A body-local block belongs to the check of its body, so a
 // probe leaves one to the block; a probe that reaches a file-scope one settles it.
 settle_delegates :: proc(k: ^Checker, type: Type_Id) {
+	// From the end of a chain, so each layer is settled before the one wrapping
+	// it inherits from it.
+	layers := make([dynamic]Type_Id, 0, 4, context.temp_allocator)
+	walk := distinct_walk(k.c, type)
+	for layer in distinct_walk_next(&walk) {
+		append(&layers, layer)
+	}
+	#reverse for layer in layers {
+		if !settle_written_delegates(k, layer) {
+			return
+		}
+		inherit_comparisons(k, layer)
+	}
+}
+
+// design.md "Distinct types": comparisons are inherited, and one declared for
+// the distinct type takes precedence. A distinct type that declares neither
+// equality operator gets each one its underlying type declares over two of its
+// values, as `delegate` would forward it, and likewise for the four orderings,
+// so a chain compares by its nearest declarations. A built-in comparison needs
+// nothing: `type_is_comparable` and `type_is_ordered` reach it. A forwarded
+// `==` is not the type's own, so a key's pair is still looked up down the
+// chain (`own_equality`).
+@(private = "file")
+inherit_comparisons :: proc(k: ^Checker, type: Type_Id) {
+	info := type_of(k.c, type)
+	if info == nil || info.kind != .Distinct || info.element == INVALID_TYPE {
+		return
+	}
+	settle_pending_operators(k)
+	inherit_comparison_group(k, type, COMPARISON_OPERATORS[:2])
+	inherit_comparison_group(k, type, COMPARISON_OPERATORS[2:])
+}
+
+@(private = "file")
+inherit_comparison_group :: proc(k: ^Checker, type: Type_Id, group: []string) {
+	for text in group {
+		if own, _ := inherent_self_operator(k.c, type, text); own != INVALID_SYMBOL {
+			return
+		}
+	}
+	// Read before interning a signature can move `info`.
+	info := type_of(k.c, type)
+	base := info.element
+	span := NO_SPAN
+	if declaration := symbol_of(k.c, info.symbol); declaration != nil {
+		span = declaration.span
+	}
+	for text in group {
+		target, declared := inherent_self_operator(k.c, base, text)
+		if _, builtin := operator_delegate_end(k.c, target); target == INVALID_SYMBOL || builtin {
+			continue
+		}
+		source := symbol_of(k.c, target)
+		shape := type_of(k.c, source.proc_type)
+		params := make([]Type_Id, 2, k.c.semantic_allocator)
+		params[0], params[1] = type, type
+		id := new_delegated_operator(
+			k, text, span, type, base,
+			params, shape.param_modes, source.result, shape.result_inout, target,
+		)
+		// As visible as what it forwards to.
+		sym, owner := symbol_of(k.c, id), symbol_of(k.c, declared)
+		sym.pkg, sym.lookup_pkg, sym.public = owner.pkg, owner.lookup_pkg, owner.public
+		add_members(k.c, type, []Symbol_Id{id})
+	}
+}
+
+// Whether `type` owes no written `delegate` any more. While its blocks are being
+// run, an empty entry stands for them, so a lookup they make meanwhile
+// inherits nothing they are about to declare.
+@(private = "file")
+settle_written_delegates :: proc(k: ^Checker, type: Type_Id) -> bool {
 	pending, found := k.c.pending_delegates[type]
 	if !found {
-		return
+		return true
+	}
+	if len(pending) == 0 {
+		return false
 	}
 	if !committing(k.c) {
 		for entry in pending {
 			if in_local_scope(entry.location.scope) {
-				return
+				return false
 			}
 		}
 	}
-	delete_key(&k.c.pending_delegates, type)
+	k.c.pending_delegates[type] = {}
 	saved := k.location
 	settling := begin_settling_file_scope(k.c)
 	defer {
+		if len(k.c.pending_delegates[type]) == 0 {
+			delete_key(&k.c.pending_delegates, type)
+		}
 		end_settling(k.c, settling)
 		k.location = saved
 	}
@@ -742,6 +822,7 @@ settle_delegates :: proc(k: ^Checker, type: Type_Id) {
 			}
 		}
 	}
+	return true
 }
 
 // What an operator runs in the end: the first symbol of its delegate chain that
@@ -980,36 +1061,49 @@ install_builtin_arity :: proc(d: Delegation, arity: int, result: Type_Id) {
 	install_delegated_operator(d, params, modes, nil, result, false, INVALID_SYMBOL)
 }
 
-// The generated overload is a compiler-owned symbol, not source: no body. The
-// backend either applies the built-in operation to the unwrapped operands or
-// calls the underlying type's own overload.
 @(private = "file")
 install_delegated_operator :: proc(
 	d: Delegation, params: []Type_Id, modes: []Param_Mode, defaults: []Expr, result: Type_Id, inout: bool, target: Symbol_Id,
 ) {
 	k := d.k
-	id := new_symbol(k.c, Symbol {
-		name       = intern_identifier(k.c, fmt.tprintf("delegate%s", d.symbol)),
-		span       = d.item.span,
+	id := new_delegated_operator(k, d.symbol, d.item.span, d.subject, d.underlying, params, modes, result, inout, target)
+	sym := symbol_of(k.c, id)
+	sym.param_defaults = defaults
+	sym.public = delegation_is_public(k)
+	install_impl_members(k, d.kind, d.subject, {id}, d.in_pkg)
+}
+
+// The generated overload is a compiler-owned symbol, not source: no body. The
+// backend either applies the built-in operation to the unwrapped operands or
+// calls the underlying type's own overload, `target`.
+@(private = "file")
+new_delegated_operator :: proc(
+	k: ^Checker, symbol: string, span: Span, subject, underlying: Type_Id,
+	params: []Type_Id, modes: []Param_Mode, result: Type_Id, inout: bool, target: Symbol_Id,
+) -> Symbol_Id {
+	return new_symbol(k.c, Symbol {
+		name       = intern_identifier(k.c, fmt.tprintf("delegate%s", symbol)),
+		span       = span,
 		kind       = .Proc,
-		operator   = d.symbol,
-		owner_type = d.subject,
+		operator   = symbol,
+		owner_type = subject,
 		pkg        = k.pkg,
 		lookup_pkg = k.pkg,
-		public     = delegation_is_public(k),
 		params     = params,
-		param_defaults = defaults,
 		result     = result,
 		result_inout = inout,
 		proc_type  = intern_proc_type(k.c, params, modes, result, inout, ""),
 		delegated  = true,
-		delegate_underlying = d.underlying,
+		delegate_underlying = underlying,
 		delegate_target = target,
 	})
-	install_impl_members(k, d.kind, d.subject, {id}, d.in_pkg)
 }
 
 // ------------------------------------------- comparability and ordering --
+
+// The comparison operators: the two equalities, then the four orderings.
+@(private = "file", rodata)
+COMPARISON_OPERATORS := [6]string{"==", "!=", "<", "<=", ">", ">="}
 
 // design.md "Comparison operators". Aggregates are comparable when every leaf
 // is; that recursion is what the backend then generates.
@@ -1086,9 +1180,10 @@ type_is_comparable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> 
 	return false
 }
 
-// design.md "Comparison operators": the `==` a type declares for itself, or a
-// distinct type's underlying type does. A value of the type compares by it
-// wherever it is nested, as a map key does.
+// design.md "Comparison operators": the `==` a type declares for itself, or,
+// for a distinct type, the nearest one its underlying types declare (design.md
+// "Distinct types"). A value of the type compares by it wherever it is nested,
+// as a map key does.
 type_own_equality :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 	callable, _ := own_equality(c, type)
 	return callable
@@ -1097,10 +1192,13 @@ type_own_equality :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 // `declared` is the declaration the procedure belongs to, the group when it is in
 // one: what `@(public)` is written on, so what visibility asks.
 own_equality :: proc(c: ^Compiler, type: Type_Id) -> (callable, declared: Symbol_Id) {
-	if callable, declared = inherent_equality(c, type); callable != INVALID_SYMBOL {
-		return
+	walk := distinct_walk(c, type)
+	for layer in distinct_walk_next(&walk) {
+		if callable, declared = inherent_equality(c, layer); callable != INVALID_SYMBOL {
+			return
+		}
 	}
-	return inherent_equality(c, type_underlying(c, type))
+	return INVALID_SYMBOL, INVALID_SYMBOL
 }
 
 // Every type within `type`, itself included, that compares by its own `==`;
@@ -1247,14 +1345,17 @@ field_is_ordered :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk) -> bool 
 // Whether the type declares a comparison operator of its own over two of its
 // values. A group declares one when a member does, and a `delegate` does when
 // it forwards, however indirectly, to a user operator rather than the built-in
-// one (design.md "Delegating operators"). A `distinct` type that delegates
-// nothing compares by its underlying built-in operators.
+// one (design.md "Delegating operators"). A `distinct` type inherits its
+// underlying types' comparisons, so one declared by any of them counts.
 @(private = "file")
 type_declares_comparison :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	for text in ([6]string{"==", "!=", "<", "<=", ">", ">="}) {
-		callable, _ := inherent_self_operator(c, id, text)
-		if _, builtin := operator_delegate_end(c, callable); callable != INVALID_SYMBOL && !builtin {
-			return true
+	walk := distinct_walk(c, id)
+	for layer in distinct_walk_next(&walk) {
+		for text in COMPARISON_OPERATORS {
+			callable, _ := inherent_self_operator(c, layer, text)
+			if _, builtin := operator_delegate_end(c, callable); callable != INVALID_SYMBOL && !builtin {
+				return true
+			}
 		}
 	}
 	return false

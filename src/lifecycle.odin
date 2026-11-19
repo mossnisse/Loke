@@ -175,9 +175,17 @@ record_destination_state :: proc(
 	graph: ^Flow_Graph, event: Flow_Event, state: Liveness, assigned: ^map[Assigned_Destination]bool,
 ) {
 	destination_state := state
-	if event.assign != nil && event.target < len(event.assign.destination_live) {
-		key := Assigned_Destination{event.assign, event.target}
-		recorded := &event.assign.destination_live[event.target]
+	// Only a plain assignment drops what it replaces, and a destination never
+	// recorded is read as live, so the states are allocated by the first one.
+	if s := event.assign; s != nil && s.op == .Assign && event.target < len(s.lhs) {
+		if s.destination_live == nil {
+			s.destination_live = make([]Liveness, len(s.lhs), graph.k.c.semantic_allocator)
+			for &live in s.destination_live {
+				live = .Live
+			}
+		}
+		key := Assigned_Destination{s, event.target}
+		recorded := &s.destination_live[event.target]
 		if key in assigned {
 			destination_state = join(recorded^, destination_state)
 		}

@@ -1,0 +1,23 @@
+package main; import "core:fmt";
+
+// compiler-guide.md "Copy-cost diagnostics": returning a place copies it, and
+// destructuring a place copies each field it keeps, so both are costed as any
+// copy is, at the default threshold. A destructure names the field it copies
+// and is the binding or assignment it is written as.
+
+Big :: struct { bytes: [600]u8 }
+Pair :: struct { big: Big, extra: int }
+Lists :: struct { xs: [dynamic]int, extra: int }
+
+get :: proc(p: ^Pair) -> Big { return p.big; }
+
+main :: proc() {
+	pair := Pair{};
+	big, _ := pair;
+	big, _ = pair;
+	lists := Lists{};
+	xs, _ := lists;
+	xs, _ = lists;
+	fmt.println(get(&pair).bytes[0], big.bytes[0], xs.len(), lists.extra, pair.extra);
+	not_declared = 1;
+}

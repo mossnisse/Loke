@@ -1,0 +1,13 @@
+1 1 1
+labelled
+1 2
+  drop 1
+widened
+deferred 2
+2
+borrowed widened
+  copy 3
+3
+  drop 3
+  drop 3
+end

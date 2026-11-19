@@ -412,7 +412,6 @@ return_target :: proc(e: Expr) -> Return_Target {
 check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
 	result := k.result_type
 	e := value.expr
-	mark_returned_value(e)
 	target := return_target(e)
 	shape, fallible := fallible_of(k.c, result)
 	payload := fallible ? shape.success_type : TYPE_VOID
@@ -420,6 +419,7 @@ check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
 	// In a generic body the two payloads may be one type in some instance, so a
 	// value meant as the error would become the success there.
 	wraps := payload != TYPE_VOID && !(k.result_generic && failure != TYPE_VOID)
+	mark_returned_value(k, e, result if !wraps || target == .Result else payload)
 	if !wraps || target == .Result {
 		errors := k.c.error_count
 		if check_value_expr(k, e, result, "return") {
@@ -461,13 +461,9 @@ check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> bool {
 	if !materialize_value_expr(k, e, payload, "return") {
 		return false
 	}
-	e = transfer_returned_local(k, e)
-	if base := expr_base(e); base.value_category == .Place && type_clone_disabled(k.c, payload) {
-		errorf(
-			k.c, expr_span(e), "L0502",
-			"`%s` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
-			type_name(k.c, payload),
-		)
+	e = transfer_sole_returned_name(k, e, payload)
+	// design.md "Widening by label": what is copied is the value before widening.
+	if expression_is_borrowed_place(e) && report_borrowed_move_only_return(k, e, copied_type(e, payload)) {
 		return false
 	}
 	value.expr = wrap_returned_success(k, e, shape)

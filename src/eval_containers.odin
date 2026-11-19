@@ -417,7 +417,7 @@ eval_append_spread :: proc(ev: ^Evaluator, added: ^[dynamic]Eval_Value, spread: 
 // nothing, or `.ok` carrying `Unit` for the `try_` spelling.
 @(private = "file")
 eval_alloc_ok :: proc(ev: ^Evaluator, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
-	if !container_member_is_try(ev.k.c, symbol) {
+	if !container_member_is_fallible(ev.k.c, symbol) {
 		return eval_void(), true
 	}
 	unit := zero_value(ev, ev.k.c.unit_type) or_return
@@ -427,7 +427,7 @@ eval_alloc_ok :: proc(ev: ^Evaluator, symbol: ^Symbol) -> (out: Eval_Value, succ
 // `find_or_insert`'s `^mut V`, wrapped in `.ok` for the `try_` spelling.
 @(private = "file")
 eval_map_slot :: proc(ev: ^Evaluator, symbol: ^Symbol, slot: ^Eval_Value) -> (Eval_Value, bool) {
-	if container_member_is_try(ev.k.c, symbol) {
+	if container_member_is_fallible(ev.k.c, symbol) {
 		payload := union_variant_payload(ev.k.c, symbol.result, union_index_of(ev.k.c, symbol.result, "ok"))
 		return eval_named_union(ev, symbol.result, "ok", Eval_Value{kind = .Nil, type = payload, target = slot})
 	}

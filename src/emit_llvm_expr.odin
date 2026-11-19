@@ -87,24 +87,6 @@ aligned_copy_if_needed :: proc(e: ^Emitter, type: Type_Id, address: string) -> s
 	return aligned
 }
 
-// A fixed array's or vector's `len()` folds to a constant, but its receiver is
-// still evaluated once (and a bare name has nothing to run).
-@(private = "file")
-emit_const_len_receiver :: proc(e: ^Emitter, expr: Expr) {
-	call, is_call := expr.(^Expr_Call)
-	if !is_call || len(call.bound) == 0 || call.bound[0] == nil {
-		return
-	}
-	if chosen := symbol_of(e.c, call.resolution.chosen_overload); chosen == nil || chosen.synth != .Standard_Len {
-		return
-	}
-	receiver := call.bound[0]
-	if _, is_name := receiver.(^Expr_Ident); is_name {
-		return
-	}
-	emit_discarded_temporary(e, receiver, emit_expr(e, receiver))
-}
-
 // The implicit conversion the checker recorded on `expr`'s node, when one applies
 // at `as_type`.
 @(private = "file")
@@ -173,7 +155,6 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	}
 	base := expr_base(expr)
 	if base_is_const(base) && !projects_managed_literal(e, expr) {
-		emit_const_len_receiver(e, expr)
 		return const_operand(e, base.const_value, as_type)
 	}
 

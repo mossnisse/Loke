@@ -79,17 +79,19 @@ type_is_hashable_walk :: proc(c: ^Compiler, id: Type_Id, seen: ^Type_Walk) -> bo
 }
 
 // The `==` and `hash` a type keys by, with the type that declares them: its own,
-// or, when it declares neither half, its underlying type's (design.md "Maps").
-// Either is INVALID_SYMBOL when that type does not declare it.
+// or, when it declares neither half, its underlying type's, so the nearest
+// layer of a distinct chain that declares either (design.md "Maps", "Distinct
+// types"). Either is INVALID_SYMBOL when that type does not declare it.
 @(private = "file")
 key_pair :: proc(c: ^Compiler, type: Type_Id) -> (hash, equal: Symbol_Id, holder: Type_Id) {
-	holder = type
-	hash = inherent_hash_member(c, holder)
-	equal, _ = inherent_equality(c, holder)
-	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
-		holder = type_underlying(c, type)
+	walk := distinct_walk(c, type)
+	for layer in distinct_walk_next(&walk) {
+		holder = layer
 		hash = inherent_hash_member(c, holder)
 		equal, _ = inherent_equality(c, holder)
+		if hash != INVALID_SYMBOL || equal != INVALID_SYMBOL {
+			return
+		}
 	}
 	return
 }
@@ -231,6 +233,20 @@ unhashable_key_reason :: proc(c: ^Compiler, key: Type_Id) -> string {
 key_hash_signature_ok :: proc(sym: ^Symbol, key: Type_Id) -> bool {
 	return sym.has_receiver && (sym.receiver == .Borrow || sym.receiver == .Value) && sym.result == TYPE_UINT &&
 		len(sym.params) == 2 && sym.params[0] == key && sym.params[1] == TYPE_UINT
+}
+
+// design.md "Maps": a part with its own `==` is hashed by its own `hash`,
+// called with the protocol's shape, so that signature is resolved before
+// `type_is_hashable` reads it. A key's policy and a generated `hash` member
+// (`ensure_hash_member`) both ask this first, so they find the same parts.
+settle_part_hashes :: proc(k: ^Checker, type: Type_Id) {
+	parts := make([dynamic]Type_Id, context.temp_allocator)
+	own_equalities_within(k.c, type, &parts)
+	for part in parts {
+		if own, _ := part_hash_member(k.c, part); own != INVALID_SYMBOL {
+			resolve_symbol_signature_in_place(k, own)
+		}
+	}
 }
 
 // design.md "Maps": a key needs a coherent inherent `==` and `hash`. Checked

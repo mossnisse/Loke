@@ -34,6 +34,17 @@ impl Mode {
 }
 Wrapped_Mode :: distinct Mode;
 
+// A distinct scalar with its own pair, wrapped twice: each wrapper keys and
+// compares by the nearest pair, not by the `int` beneath them all.
+Seeded :: distinct int;
+impl Seeded {
+	same :: operator(==) proc(a, b: Seeded) -> bool { return true; }
+	hash :: proc(self, seed: uint) -> uint { return seed; }
+}
+Wrapped_Seeded :: distinct Seeded;
+Twice_Seeded :: distinct Wrapped_Seeded;
+SEEDED :: Twice_Seeded(1).hash(uint(7));
+
 FOLDED :: Wrapped{11}.hash(uint(7));
 
 count_wrapped :: proc() -> int {
@@ -71,6 +82,12 @@ main :: proc() {
 	modes[Wrapped_Mode.A] = 9;
 	modes[Wrapped_Mode.C] = 10;
 	fmt.println(modes.len());
+
+	seeded: map[Twice_Seeded]int = {};
+	seeded[Twice_Seeded(1)] = 11;
+	seeded[Twice_Seeded(2)] = 12;
+	fmt.println(seeded.len(), seeded[Twice_Seeded(3)], Wrapped_Seeded(1) == Wrapped_Seeded(2));
+	fmt.println(Wrapped_Seeded(1).hash(uint(7)), Twice_Seeded(1).hash(uint(7)), SEEDED);
 
 	fmt.println(Wrapped{11}.hash(uint(7)) == Tens{11}.hash(uint(7)), FOLDED == Wrapped{19}.hash(uint(7)), COUNTED);
 	fmt.println(interfaces.Hashable(Wrapped), interfaces.Hashable(Wrapped_Large), interfaces.Hashable([2]Wrapped));

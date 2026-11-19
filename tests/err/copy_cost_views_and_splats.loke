@@ -1,0 +1,19 @@
+package main;
+
+// compiler-guide.md "Copy-cost diagnostics": converting an operand builds another
+// value and copies nothing, so a binding or assignment that views a dynamic
+// array as a slice, or splats a scalar across a vector, reports no copy even at
+// `-copy-cost=1`.
+
+convert :: proc(n: i32, items: [dynamic]int) -> int {
+	v: Simd(i32, 4) = n;
+	view: []int = items;
+	v = n;
+	view = items;
+	return view.len() + int(v[0]);
+}
+
+main :: proc() {
+	_ = convert(1, {});
+	not_declared = 1;
+}
