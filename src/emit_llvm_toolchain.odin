@@ -29,7 +29,8 @@ emit_package :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	context.allocator = virtual.arena_allocator(&c.emission_arena)
 	module, generated := emit_llvm_module(c)
 	if !generated {
-		return 2
+		// compiler-guide.md "Inspecting a compilation": a source diagnostic is 1.
+		return c.backend_failed ? 2 : 1
 	}
 	ll_path := replace_ext(opts.output, ".ll")
 	if !write_artifact(c, ll_path, module) {

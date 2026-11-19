@@ -396,7 +396,11 @@ Compiler :: struct {
 	// Everything LLVM emission and the toolchain allocate: the backend builds its
 	// module from many short-lived strings and frees none of them individually.
 	emission_arena:       virtual.Arena,
-	identifier_names:     [dynamic]string,
+	// Whether the last emission failed on the compiler's side (L0405), rather
+	// than on a source diagnostic only emission can tell, such as a foreign
+	// binding at odds with a built-in's intrinsic.
+	backend_failed:       bool,
+	identifier_names:    [dynamic]string,
 	identifier_by_name:   map[string]Identifier_Id,
 	// One allocation per entry, so the pointer `type_of` or `symbol_of` returns
 	// stays valid while checking interns more types and symbols.

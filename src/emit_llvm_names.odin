@@ -68,7 +68,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 				for d in v.members {
 					for sid in d.symbols {
 						if sym := symbol_of(e.c, sid); sym != nil && sym.is_foreign {
-							e.names[sid] = foreign_llvm_name(sym)
+							e.names[sid] = llvm_external_name(sym.link_name)
 							append(&e.foreign_symbols, sid)
 						}
 					}

@@ -28,25 +28,33 @@ is_large_value :: proc(e: ^Emitter, type: Type_Id) -> bool {
 	return type != INVALID_TYPE && type_size(e.c, type) > LARGE_VALUE_BYTES
 }
 
-// Storage for one value of `type` within the current full expression. A large
-// one is shared with other full expressions, since each would otherwise keep its
-// whole size in the frame for the entire function.
+// Storage for one value of `type` within the current full expression, aligned
+// to at least `align` when that is given. A large one is shared with other full
+// expressions, since each would otherwise keep its whole size in the frame for
+// the entire function.
 @(private)
-temporary_slot :: proc(e: ^Emitter, type: Type_Id) -> string {
-	llvm := llvm_type(e, type)
-	if !is_large_value(e, type) {
-		return alloca(e, llvm)
+temporary_slot :: proc(e: ^Emitter, type: Type_Id, align: u64 = 0) -> string {
+	return temporary_storage(e, llvm_type(e, type), type_size(e.c, type), align)
+}
+
+// As `temporary_slot`, for storage of the LLVM type `llvm`, `size` bytes, that
+// has no Loke type of its own.
+@(private)
+temporary_storage :: proc(e: ^Emitter, llvm: string, size: u64, align: u64 = 0) -> string {
+	spelled := align == 0 ? llvm : fmt.aprintf("%s, align %d", llvm, align)
+	if size <= LARGE_VALUE_BYTES {
+		return alloca(e, spelled)
 	}
-	slot := Large_Slot{type = llvm}
+	slot := Large_Slot{type = spelled}
 	for free, index in e.large_free {
-		if free.type == llvm {
+		if free.type == spelled {
 			slot = free
 			unordered_remove(&e.large_free, index)
 			break
 		}
 	}
 	if slot.name == "" {
-		slot.name = alloca(e, llvm)
+		slot.name = alloca(e, spelled)
 	}
 	append(&e.large_taken, slot)
 	return slot.name

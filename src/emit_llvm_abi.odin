@@ -15,14 +15,10 @@ llvm_external_name :: proc(name: string) -> string {
 	return plain ? fmt.aprintf("@%s", name) : fmt.aprintf("@\"%s\"", llvm_escape(name))
 }
 
-@(private)
-foreign_llvm_name :: proc(sym: ^Symbol) -> string {
-	return llvm_external_name(sym.link_name)
-}
-
-// Emit each foreign symbol once, unless this module already declares the name
-// or defines it: the binding then refers to that one. Each is recorded in
-// `e.declared`, so an intrinsic declared later on first use is not declared again.
+// Emit each foreign symbol once, under the name the naming pass gave it, unless
+// this module already declares the name or defines it: the binding then refers
+// to that one. Each is registered, so an intrinsic declared later on first use
+// is not declared again, and must agree with the binding (`register_declaration`).
 @(private)
 emit_foreign_declarations :: proc(e: ^Emitter) {
 	defined := make(map[string]bool, context.temp_allocator)
@@ -43,16 +39,22 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 	}
 	for id in e.foreign_symbols {
 		sym := symbol_of(e.c, id)
-		if name := foreign_llvm_name(sym); !defined[name] && name not_in e.declared {
-			e.declared[name] = true
-			emit_foreign_declare(e, sym)
+		name := e.names[id]
+		if defined[name] {
+			continue
+		}
+		// A return attribute is the declaration's, not the type's.
+		signature := sym.kind == .Proc \
+			? strings.trim_prefix(foreign_function_type(e, type_of(e.c, sym.proc_type)), "zeroext ") \
+			: fmt.aprintf("global %s", llvm_type(e, sym.type))
+		if register_declaration(e, name, signature, id) {
+			emit_foreign_declare(e, sym, name)
 		}
 	}
 }
 
 @(private = "file")
-emit_foreign_declare :: proc(e: ^Emitter, sym: ^Symbol) {
-	name := foreign_llvm_name(sym)
+emit_foreign_declare :: proc(e: ^Emitter, sym: ^Symbol, name: string) {
 	if sym.kind != .Proc {
 		fmt.sbprintfln(&e.b, "%s = external global %s", name, llvm_type(e, sym.type))
 		return
@@ -61,7 +63,7 @@ emit_foreign_declare :: proc(e: ^Emitter, sym: ^Symbol) {
 	ret, indirect := foreign_result_llvm(e, sym.result, proc_info)
 	params := make([dynamic]string, 0, len(sym.params) + 2)
 	if indirect {
-		append(&params, fmt.aprintf("ptr sret(%s) align %d", llvm_type(e, sym.result), type_align(e.c, sym.result)))
+		append(&params, sret_parameter(e, sym.result))
 	}
 	for parameter, index in sym.params {
 		append(&params, foreign_param_llvm(e, proc_info, parameter, index, attributes = true))
@@ -281,6 +283,13 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 	fmt.sbprintln(&e.b, cold_attributes(symbol) != "" ? " cold {" : " {")
 }
 
+// The hidden result pointer with its attributes, as a declaration, a definition
+// (with its name after it), or a call (with the operand) spells it.
+@(private = "file")
+sret_parameter :: proc(e: ^Emitter, result: Type_Id) -> string {
+	return fmt.aprintf("ptr sret(%s) align %d", llvm_type(e, result), type_align(e.c, result))
+}
+
 // The return type and the parameters, each with its attributes and name, as
 // a `define` writes them and a call that forwards them writes them again, and
 // the name of the hidden `sret` pointer among them, or "".
@@ -292,9 +301,7 @@ foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol) -> (ret: string, params:
 	ret, indirect = foreign_result_llvm(e, symbol.result, proc_info)
 	if indirect {
 		sret = "%arg.sret"
-		append(&out, fmt.aprintf(
-			"ptr sret(%s) align %d %s", llvm_type(e, symbol.result), type_align(e.c, symbol.result), sret,
-		))
+		append(&out, fmt.aprintf("%s %s", sret_parameter(e, symbol.result), sret))
 	}
 	for parameter, index in symbol.params {
 		append(&out, fmt.aprintf("%s %%arg%d", foreign_param_llvm(e, proc_info, parameter, index, attributes = true), index))
@@ -514,11 +521,19 @@ reg_int_reinterpret :: proc(e: ^Emitter, type: Type_Id, value: string, to_int: b
 	return out
 }
 
-// A value spilled to a slot, as the `ptr <slot>` operand that crosses for it.
+// A value copied to storage for the call, as the `ptr <slot>` operand that
+// crosses for it. Windows x64 aligns the caller's copy of an aggregate passed by
+// reference to 16 bytes; a `@(by_ptr)` copy is aligned as its pointee
+// (`align` 0).
 @(private = "file")
-foreign_spill_operand :: proc(e: ^Emitter, type: Type_Id, operand: string) -> string {
-	return fmt.aprintf("ptr %s", spill(e, type, operand))
+foreign_spill_operand :: proc(e: ^Emitter, type: Type_Id, operand: string, align: u64 = 0) -> string {
+	slot := temporary_slot(e, type, align)
+	store(e, type, operand, slot)
+	return fmt.aprintf("ptr %s", slot)
 }
+
+@(private = "file")
+WIN64_INDIRECT_ALIGN :: 16
 
 // A by-value argument under the ordinary classification, as a `<type> <value>`
 // operand.
@@ -530,7 +545,7 @@ foreign_value_operand :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 	case .Reg_Int:
 		return fmt.aprintf("i%d %s", abi_reg_bits(e.c, type), reg_int_reinterpret(e, type, operand, to_int = true))
 	case .Indirect:
-		return foreign_spill_operand(e, type, operand)
+		return foreign_spill_operand(e, type, operand, max(WIN64_INDIRECT_ALIGN, type_align(e.c, type)))
 	case .Direct:
 		return fmt.aprintf("%s %s", llvm_type(e, type), operand)
 	}
@@ -562,26 +577,30 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 			fmt.sbprintfln(&e.b, "  %s = %s i%d %s to i32", out, op, bits, operand)
 			return fmt.aprintf("i32 %s", out)
 		}
-	case .Struct, .Array, .Union:
+	case .Struct, .Union:
+		// The checker rejects a fixed array here, as at any C boundary.
 		return foreign_value_operand(e, under, operand)
 	}
 	return fmt.aprintf("%s %s", llvm_type(e, type), operand)
 }
 
-// The explicit LLVM function type a variadic call names: `<ret> (<fixed...>, ...)`,
-// matching the `declare`'s parameter types without their call-site attributes.
+// A foreign procedure's LLVM function type, `<ret> (<parameters>)`, with `...`
+// for C variadics: the `declare`'s parameter types without their attributes,
+// which a variadic call names explicitly.
 @(private = "file")
-foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) -> string {
-	ret, _ := foreign_result_llvm(e, callee_type.result, callee_type)
+foreign_function_type :: proc(e: ^Emitter, callee_type: ^Type_Info) -> string {
+	ret, indirect := foreign_result_llvm(e, callee_type.result, callee_type)
 	parts := make([dynamic]string, 0, len(callee_type.parameters) + 2)
-	if has_sret {
+	if indirect {
 		append(&parts, "ptr")
 	}
 	for parameter, index in callee_type.parameters {
 		append(&parts, foreign_param_llvm(e, callee_type, parameter, index, attributes = false))
 	}
-	append(&parts, "...")
-	return fmt.aprintf("%s (%s)", ret, strings.join(parts[:], ", "))
+	if callee_type.c_vararg {
+		append(&parts, "...")
+	}
+	return function_type(ret, strings.join(parts[:], ", "))
 }
 
 // The operands of a foreign call, ahead of them the `sret` pointer it writes its
@@ -590,9 +609,7 @@ foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) 
 foreign_arguments :: proc(e: ^Emitter, callee_type: ^Type_Info, operands: []string, bound: []Expr, sret: string) -> []string {
 	args := make([dynamic]string, 0, len(operands) + 1)
 	if sret != "" {
-		append(&args, fmt.aprintf(
-			"ptr sret(%s) align %d %s", llvm_type(e, callee_type.result), type_align(e.c, callee_type.result), sret,
-		))
+		append(&args, fmt.aprintf("%s %s", sret_parameter(e, callee_type.result), sret))
 	}
 	for operand, index in operands {
 		// design.md "`@(c_vararg)`": arguments past the fixed parameters are concrete
@@ -642,16 +659,14 @@ emit_foreign_call :: proc(
 	symbol: ^Symbol, bound: []Expr,
 ) -> string {
 	ret, indirect := foreign_result_llvm(e, callee_type.result, callee_type)
-	sret := ""
-	if indirect {
-		sret = temp(e)
-		alloca_named(e, sret, llvm_type(e, callee_type.result))
-	}
+	// Storage for the full expression, as an ordinary call's: a later statement
+	// reuses a large one.
+	sret := indirect ? temporary_slot(e, callee_type.result) : ""
 	args := strings.join(foreign_arguments(e, callee_type, operands, bound, sret), ", ")
 
 	// A variadic call names the explicit function type in place of the plain
 	// return type; a fixed call names only the return type.
-	head := callee_type.c_vararg ? foreign_call_type(e, callee_type, indirect) : ret
+	head := callee_type.c_vararg ? foreign_function_type(e, callee_type) : ret
 	call := ""
 	if ret == "void" {
 		fmt.sbprintfln(&e.b, "  call %s %s(%s)", head, callee, args)

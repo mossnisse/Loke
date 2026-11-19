@@ -21,6 +21,15 @@ emit_default_allocator :: proc(e: ^Emitter) -> string {
 	return emit_value(e, "call ptr @loke_rt_v1_selected_allocator()")
 }
 
+// design.md "Allocators": the zero `Allocator` selects the default provider. An
+// owner that records its allocator records the provider selected now, so one
+// published later is not handed what this one allocated.
+@(private)
+emit_concrete_allocator :: proc(e: ^Emitter, allocator: string) -> string {
+	selected := emit_default_allocator(e)
+	return emit_value(e, "select i1 %s, ptr %s, ptr %s", is_null(e, allocator), selected, allocator)
+}
+
 // A block from the runtime, and whether it was refused.
 @(private)
 emit_rt_alloc :: proc(e: ^Emitter, allocator: string, size, align: u64) -> (block, failed: string) {
@@ -63,18 +72,21 @@ declare_runtime :: proc(e: ^Emitter, table: []Runtime_Declaration) {
 	}
 }
 
-// Writes one declaration and records its name in `e.declared`, so a foreign
-// symbol bound to the same name refers to it (`emit_foreign_declarations`) and
-// `declare_intrinsic` does not declare it again. Only the preamble and the
-// layout probe call it, both ahead of the foreign declarations.
+// Writes one declaration and registers it, so a foreign symbol bound to the
+// same name refers to it (`emit_foreign_declarations`) and `declare_intrinsic`
+// does not declare it again. Only the preamble and the layout probe call it,
+// both ahead of the foreign declarations.
 @(private)
 declare_runtime_entry :: proc(e: ^Emitter, declaration: Runtime_Declaration) {
-	fmt.sbprintf(&e.b, "declare %s @%s(%s)", declaration.result, declaration.name, declaration.params)
+	name := strings.concatenate({"@", declaration.name})
+	if !register_declaration(e, name, function_type(declaration.result, declaration.params)) {
+		return
+	}
+	fmt.sbprintf(&e.b, "declare %s %s(%s)", declaration.result, name, declaration.params)
 	if declaration.attributes != "" {
 		fmt.sbprintf(&e.b, " %s", declaration.attributes)
 	}
 	fmt.sbprintln(&e.b)
-	e.declared[strings.concatenate({"@", declaration.name})] = true
 }
 
 @(private = "file", rodata)

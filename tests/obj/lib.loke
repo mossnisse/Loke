@@ -21,3 +21,13 @@ Status :: enum i32 { Ready = 37 }
 
 @(export)
 widget_echo_enum :: proc "c" (value: Status) -> Status { return value; }
+
+// design.md "Foreign-ABI-safe types": a byte-aligned record too large for a
+// register crosses as the address of a copy, which Windows x64 aligns to 16
+// bytes. The host's probe reports where the copy it was handed sits.
+Wide :: struct { bytes: [17]u8 }
+
+@(export)
+widget_pass_wide :: proc "c" (probe: proc "c" (wide: Wide) -> i32) -> i32 {
+	return probe(Wide{});
+}

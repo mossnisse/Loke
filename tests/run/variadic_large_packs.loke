@@ -1,0 +1,37 @@
+// design.md "Variadic parameters": a call's pack lives until its full
+// expression ends, so each statement's large pack reused one buffer; each kept
+// its own, and 24 of 64 KiB overflowed the stack. Packs live together in one
+// expression stay apart.
+package main;
+
+import "core:fmt";
+
+R :: struct { pad: [65536]u8 }
+
+of :: proc(seed: u8) -> R {
+	r: R = {};
+	r.pad[0] = seed;
+	return r;
+}
+
+accept :: proc(rest: ..R) {}
+
+total :: proc(rest: ..R) -> int {
+	sum := 0;
+	foreach (r in rest) { sum += int(r.pad[0]); }
+	return sum;
+}
+
+last :: proc(rest: ..R) -> R {
+	return rest[rest.len() - 1];
+}
+
+main :: proc() {
+	accept(R{}); accept(R{}); accept(R{}); accept(R{});
+	accept(R{}); accept(R{}); accept(R{}); accept(R{});
+	accept(R{}); accept(R{}); accept(R{}); accept(R{});
+	accept(R{}); accept(R{}); accept(R{}); accept(R{});
+	accept(R{}); accept(R{}); accept(R{}); accept(R{});
+	accept(R{}); accept(R{}); accept(R{}); accept(R{});
+	fmt.println(total(of(1), last(of(2), of(4)), of(8)));
+}

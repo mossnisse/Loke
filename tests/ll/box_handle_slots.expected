@@ -1,0 +1,11 @@
+select i1 %t*, ptr %t*, ptr null
+define private void @loke.boxdrop.*(ptr %p)
+load ptr, ptr %p, align 1
+store ptr null, ptr %p, align 1
+define private i1 @loke.boxclone.*(ptr %out, ptr %src, ptr %a)
+call ptr @loke_rt_v1_selected_allocator()
+select i1 %t*, ptr %t*, ptr %a
+load ptr, ptr %src, align 1
+store ptr %t*, ptr %out, align 1
+not loke_rt_v1_alloc(ptr null
+not loke_rt_v1_alloc(ptr %a

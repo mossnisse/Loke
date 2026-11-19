@@ -1,0 +1,3 @@
+L0600
+@12:2
+the foreign symbol `llvm.ctpop.i64` has a different type from the compiler's own declaration, `i64 (i64)`

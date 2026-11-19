@@ -3,6 +3,7 @@
 package lokec
 
 emission_contract_error :: proc(c: ^Compiler, message: string) -> bool {
+	c.backend_failed = true
 	errorf(c, NO_SPAN, "L0405", "internal backend contract violation: %s", message)
 	return false
 }
@@ -121,19 +122,27 @@ validate_operation_policies :: proc(c: ^Compiler) -> bool {
 			return emission_contract_error(c, "a resolved ordering operation has no checked procedure")
 		}
 	}
-	// Erased formatting uses the same witness as an explicit interface view.
-	for _, witness in c.formatters {
-		if witness == nil || len(witness.slots) != 1 || !emission_procedure_available(c, witness.slots[0].target) {
-			return emission_contract_error(c, "a discovered formatter has no checked procedure")
-		}
-	}
 	return true
 }
 
 @(private = "file")
 validate_lifecycle :: proc(c: ^Compiler) -> bool {
-	synthesized := make(map[Symbol_Id]bool, context.temp_allocator)
-	for id in c.synth_procs { synthesized[id] = true }
+	// Every contributed clone must be the one its type records.
+	copies := make(map[Symbol_Id]bool, context.temp_allocator)
+	for id in c.synth_procs {
+		symbol := symbol_of(c, id)
+		if symbol == nil || (symbol.synth != .Clone && symbol.synth != .Try_Clone) { continue }
+		copies[id] = true
+		operations, _ := resolved_lifecycle_operations(c, symbol.owner_type)
+		// A `distinct` name's own pair copies through its underlying `try_clone`.
+		is_distinct := type_underlying(c, symbol.owner_type) != symbol.owner_type
+		target := is_distinct || symbol.synth == .Try_Clone ? operations.try_clone : operations.clone
+		if is_distinct ? target == INVALID_SYMBOL : target != id {
+			return emission_contract_error(c, "a contributed lifecycle procedure has no recorded operation")
+		}
+	}
+	// And every recorded one must be contributed: `synth_enrolled` outlives
+	// removal from the list.
 	for index in 1 ..< len(c.types) {
 		// Records are keyed by underlying type, so each is validated once.
 		type := Type_Id(index)
@@ -152,29 +161,19 @@ validate_lifecycle :: proc(c: ^Compiler) -> bool {
 		for target, slot in ([]Symbol_Id{operations.clone, operations.try_clone}) {
 			if target == INVALID_SYMBOL { continue }
 			expected: Synth_Kind = slot == 0 ? .Clone : .Try_Clone
-			if !emission_procedure_available(c, target) || !synthesized[target] ||
+			if !emission_procedure_available(c, target) || !copies[target] ||
 			   symbol_of(c, target).synth != expected || type_underlying(c, symbol_of(c, target).owner_type) != type {
 				return emission_contract_error(c, "a lifecycle copy operation has no registered procedure")
 			}
 		}
 	}
-	// And every contributed clone must be the one its type records.
-	for id in c.synth_procs {
-		symbol := symbol_of(c, id)
-		if symbol == nil || (symbol.synth != .Clone && symbol.synth != .Try_Clone) { continue }
-		operations, _ := resolved_lifecycle_operations(c, symbol.owner_type)
-		// A `distinct` name's own pair copies through its underlying `try_clone`.
-		is_distinct := type_underlying(c, symbol.owner_type) != symbol.owner_type
-		target := is_distinct || symbol.synth == .Try_Clone ? operations.try_clone : operations.clone
-		if is_distinct ? target == INVALID_SYMBOL : target != id {
-			return emission_contract_error(c, "a contributed lifecycle procedure has no recorded operation")
-		}
-	}
 	return true
 }
 
+// Only an ordered witness is named and emitted as a table.
 @(private = "file")
 validate_witnesses :: proc(c: ^Compiler) -> bool {
+	ordered := make(map[^Witness]bool, len(c.witness_order), context.temp_allocator)
 	for witness in c.witness_order {
 		if witness == nil || witness.concrete == INVALID_TYPE || type_of(c, witness.concrete) == nil {
 			return emission_contract_error(c, "a witness has no concrete type")
@@ -184,6 +183,13 @@ validate_witnesses :: proc(c: ^Compiler) -> bool {
 				return emission_contract_error(c, "a witness slot has no checked procedure")
 			}
 		}
+		ordered[witness] = true
+	}
+	// Erased formatting calls through the same table as an explicit interface view.
+	for _, witness in c.formatters {
+		if !ordered[witness] || len(witness.slots) != 1 {
+			return emission_contract_error(c, "a discovered formatter has no emitted witness")
+		}
 	}
 	return true
 }
@@ -192,7 +198,7 @@ validate_witnesses :: proc(c: ^Compiler) -> bool {
 @(private = "file")
 validate_spawns :: proc(c: ^Compiler) -> bool {
 	for task in c.spawn_tasks {
-		frame := underlying_info(c, task.frame)
+		frame := task != nil ? underlying_info(c, task.frame) : nil
 		if frame == nil || frame.kind != .Struct || len(frame.fields) != spawn_frame_field_count(task) {
 			return emission_contract_error(c, "a spawn has no registered frame")
 		}
@@ -233,8 +239,9 @@ emission_procedure_available :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
 	return symbol.proc_literal != nil
 }
 
-// How much the checked program holds: a new symbol (every field and member is
-// one), type, or registry entry changes it.
+// A growth guard over the counted stores: a new symbol (every field and member
+// is one), type, or entry in a counted registry changes it. A change in place,
+// or an entry in a registry it leaves out, such as `typeid_values`, does not.
 Semantic_Extent :: struct {
 	using registries: Emission_Registries,
 	symbols, types, procedure_instances, formatters, lifecycle, map_keys, orders: int,

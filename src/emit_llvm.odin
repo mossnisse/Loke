@@ -64,8 +64,8 @@ Emitter :: struct {
 	// Every function or global this module declares, by LLVM name with its `@`:
 	// runtime entries (`declare_runtime_entry`), foreign bindings
 	// (`emit_foreign_declarations`), and intrinsics on first use
-	// (`declare_intrinsic`). Each is declared once.
-	declared: map[string]bool,
+	// (`declare_intrinsic`). Each is declared once (`register_declaration`).
+	declared: map[string]Declaration,
 	globals:  [dynamic]string,
 	// compiler-architecture.md "CPU dispatch": every procedure body by symbol, the
 	// copies for a higher level by name, those still to write, and each level's
@@ -83,6 +83,7 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 // The whole checked program as one LLVM module, in memory.
 emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	context.allocator = virtual.arena_allocator(&c.emission_arena)
+	c.backend_failed = false
 	if !validate_emission_dependencies(c) { return "", false }
 	// Emission reads the checked program; only the layout cache may change.
 	before := semantic_extent(c)
@@ -394,7 +395,6 @@ cold_attributes :: proc(symbol: ^Symbol) -> string {
 loke_param_list :: proc(e: ^Emitter, symbol: ^Symbol, inout: bool) -> string {
 	params := make([dynamic]string)
 	if returns_sret(e, symbol.result, inout) {
-		e.abi_sret = "%sret"
 		append(&params, "ptr %sret")
 	}
 	for parameter, index in symbol.params {
@@ -470,6 +470,9 @@ emit_proc_definition :: proc(
 
 @(private = "file")
 emit_loke_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
+	if returns_sret(e, symbol.result, e.result_inout) {
+		e.abi_sret = "%sret"
+	}
 	fmt.sbprintfln(
 		&e.b, "define %s%s %s(%s)%s%s {{",
 		llvm_linkage(llvm_name), llvm_result_type(e, symbol.result, e.result_inout), llvm_name,
@@ -545,10 +548,53 @@ temp :: proc(e: ^Emitter) -> string {
 // declares the name, as a foreign binding to it does.
 @(private)
 declare_intrinsic :: proc(e: ^Emitter, key, result, parameters: string) {
-	if name := strings.concatenate({"@", key}); name not_in e.declared {
-		e.declared[name] = true
+	name := strings.concatenate({"@", key})
+	if register_declaration(e, name, function_type(result, parameters)) {
 		append(&e.globals, fmt.aprintf("declare %s %s(%s)\n", result, name, parameters))
 	}
+}
+
+// What every use of a declared name agrees on: the LLVM function type
+// (`function_type`), or `global <type>`, and the foreign binding that declared
+// it, if one did.
+@(private)
+Declaration :: struct {
+	signature: string,
+	binding:   Symbol_Id,
+}
+
+@(private)
+function_type :: proc(result, parameters: string) -> string {
+	return fmt.aprintf("%s (%s)", result, parameters)
+}
+
+// Records `name`'s declaration, and reports whether it is the first, which the
+// caller then writes. A later one refers to the first, so a foreign binding to
+// a name the compiler declares itself, a runtime entry or an intrinsic a
+// built-in calls, must lower to the same type (compiler-guide.md "C runtime").
+@(private)
+register_declaration :: proc(e: ^Emitter, name, signature: string, binding := INVALID_SYMBOL) -> bool {
+	first, found := e.declared[name]
+	if !found {
+		e.declared[name] = {signature, binding}
+		return true
+	}
+	if first.signature == signature {
+		return false
+	}
+	// Reported once: the compiler's own uses follow.
+	compiler := first.binding == INVALID_SYMBOL ? first.signature : signature
+	bound := symbol_of(e.c, first.binding != INVALID_SYMBOL ? first.binding : binding)
+	e.declared[name] = {compiler, INVALID_SYMBOL}
+	if bound == nil {
+		backend_fail(e, "the compiler declares one name with two types")
+		return false
+	}
+	errorf(
+		e.c, bound.span, "L0600", "the foreign symbol `%s` has a different type from the compiler's own declaration, `%s`",
+		bound.link_name, compiler,
+	)
+	return false
 }
 
 @(private)

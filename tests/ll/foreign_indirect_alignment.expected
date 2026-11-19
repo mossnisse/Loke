@@ -1,0 +1,7 @@
+declare i32 @take(ptr)
+alloca %struct.Wide*, align 16
+alloca %struct.Spread*, align 16
+call i32 @take(ptr %t*)
+call i32 (...) @report(ptr %t*)
+call i32 @inspect(ptr %t*)
+not alloca %struct.Pair*, align

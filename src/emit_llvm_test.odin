@@ -408,9 +408,11 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		{"typeid_range", "no unique frozen typeid"},
 		{"map", "map key operation was not resolved"},
 		{"order", "ordering operation has no checked procedure"},
-		{"formatter", "formatter has no checked procedure"},
+		{"formatter", "formatter has no emitted witness"},
+		{"formatter_slots", "formatter has no emitted witness"},
 		{"instance", "generic body is missing from its package"},
 		{"witness", "witness has no concrete type"},
+		{"spawn", "spawn has no registered frame"},
 		{"constant", "materialized constant has no registered definition"},
 		{"lifecycle_unready", "must be finalized before emission"},
 		{"lifecycle_missing", "no finalized lifecycle operations"},
@@ -441,12 +443,23 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		case "order":
 			c.order_policies[TYPE_INT] = Order_Policy{kind = .Inherent, less = Symbol_Id(len(c.symbols) + 1)}
 		case "formatter":
-			c.formatters[TYPE_INT] = new(Witness, c.semantic_allocator)
+			// Complete, but only an ordered witness is named and emitted as a table.
+			witness := new(Witness, c.semantic_allocator)
+			witness.concrete = TYPE_INT
+			witness.slots = make([]Witness_Slot, 1, c.semantic_allocator)
+			witness.slots[0].target = new_symbol(&c, Symbol{kind = .Proc, is_foreign = true, proc_type = TYPE_INT})
+			c.formatters[TYPE_INT] = witness
+		case "formatter_slots":
+			witness := new(Witness, c.semantic_allocator)
+			witness.concrete = TYPE_INT
+			append(&c.witness_order, witness)
+			c.formatters[TYPE_INT] = witness
 		case "instance":
 			instance := new(Instance, c.semantic_allocator)
 			instance.body_checked = true
 			c.procedure_instances[Symbol_Id(1)] = instance
 		case "witness": append(&c.witness_order, new(Witness, c.semantic_allocator))
+		case "spawn": append(&c.spawn_tasks, nil)
 		case "constant": append(&c.materialized_order, new(Materialized, c.semantic_allocator))
 		case "lifecycle_unready": c.lifecycle_operations_ready = false
 		case "lifecycle_missing": delete_key(&c.lifecycle_operations, TYPE_INT)
@@ -649,7 +662,7 @@ main :: proc() {
 lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 	cases := [][2]string{
 		{"missing_operation", "no recorded operation"},
-		{"wrong_operation", "copy operation has no registered procedure"},
+		{"wrong_operation", "no recorded operation"},
 		{"missing_body", "copy operation has no registered procedure"},
 		{"late_contribution", "requested after finalization"},
 	}

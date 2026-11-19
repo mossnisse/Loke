@@ -173,6 +173,27 @@ checklist.
   ([Diverging procedures](docs/design.md#diverging-procedures)), so a body ending in `a = fail();`,
   `b: int = fail();`, or `f(fail());` no longer reports `L0365`. The right of `&&` and `||`, an
   `or_else` fallback, and a conditional's arms may not run, so they do not count.
+- A foreign binding to an LLVM intrinsic that a built-in also calls, with a type that lowers to
+  another signature, is `L0600` at the binding ([C runtime](docs/compiler-guide.md#c-runtime)).
+  `@(link_name="llvm.ctpop.i64") population :: proc "c" (x: i32) -> i32 ---;` beside
+  `math.count_ones` on an `i64` replaced the built-in's declaration, and clang rejected the module.
+  A binding of the same type still shares the declaration. Like every source diagnostic, it
+  exits with status 1.
+- A record too large for a register passed by value to a foreign procedure, or as a C variadic
+  argument, crosses as the address of a copy aligned to 16 bytes, as Windows x64 requires. The
+  copy was aligned to the record, so a C callee could find `[17]u8` at an address 8 past a
+  16-byte boundary.
+- A large result of a foreign-convention call, and a call's pack of large variadic arguments,
+  takes stack storage that later statements reuse, as an ordinary call's large result does.
+  Each call kept its own, so 24 statements each calling `make_r :: proc "c" () -> R` or
+  `accept :: proc(rest: ..R)` with a 64 KiB `R` overflowed the stack.
+- A `Box` in a `@(packed)` record is dropped and cloned at its field's byte alignment
+  ([`@(packed)`](docs/design.md#packed)); its drop and clone read and wrote the handle as if it
+  were pointer-aligned.
+- A box made or cloned with the zero `Allocator`, `box(value, {})` or `b.clone({})`, records the
+  provider that `{}` selected ([Allocators](docs/design.md#allocators)). It recorded null, which
+  the runtime resolved again when the box was released, so a box made by the allocator factory
+  and kept after its provider was published was returned to that provider.
 
 
 ## [0.10.0] - 2026-11-16

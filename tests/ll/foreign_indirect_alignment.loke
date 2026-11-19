@@ -1,0 +1,23 @@
+package main;
+
+// design.md "Foreign-ABI-safe types": a record too large for a register crosses
+// a C boundary as the address of a copy, which Windows x64 aligns to 16 bytes
+// whatever the record's own alignment, here 1; a C variadic argument too. A
+// `@(by_ptr)` copy is aligned as its pointee. The copies were aligned to the
+// record, and a C callee read them at an address 8 past a 16-byte boundary.
+
+Wide :: struct { bytes: [17]u8 }
+Spread :: struct { bytes: [19]u8 }
+Pair :: struct { a: u8, b: u8 }
+
+foreign helper {
+	take :: proc "c" (wide: Wide) -> i32 ---;
+	report :: proc "c" (@(c_vararg) args: ..) -> i32 ---;
+	inspect :: proc "c" (@(by_ptr) pair: Pair) -> i32 ---;
+}
+
+main :: proc() {
+	_ = take(Wide{});
+	_ = report(Spread{});
+	_ = inspect(Pair{1, 2});
+}

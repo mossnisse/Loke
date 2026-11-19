@@ -12,7 +12,7 @@ llvm_ordering :: proc(order: Memory_Order) -> string {
 	case .Acquire_Release:         return "acq_rel"
 	case .Sequentially_Consistent: return "seq_cst"
 	}
-	return "seq_cst"
+	unreachable() // The checker validated the order.
 }
 
 @(private = "file")
@@ -25,7 +25,21 @@ atomic_rmw_opcode :: proc(kind: Builtin_Kind) -> string {
 	case .Atomic_Or:       return "or"
 	case .Atomic_Xor:      return "xor"
 	}
-	return ""
+	unreachable() // The checker validated the operation.
+}
+
+// The integer or pointer an atomic operation works on: a `bool` is a byte, since
+// LLVM's atomics are at least eight bits wide, and a one-word `Option` its
+// union's storage head.
+@(private = "file")
+atomic_storage_llvm :: proc(e: ^Emitter, type: Type_Id) -> string {
+	#partial switch underlying_kind(e.c, type) {
+	case .Bool:
+		return "i8"
+	case .Union:
+		return union_head_type(union_members(union_layout(e.c, type)).head)
+	}
+	return llvm_type(e, type)
 }
 
 emit_atomic_declarations :: proc(e: ^Emitter) {
@@ -96,11 +110,7 @@ emit_native_atomic :: proc(
 	bits: int,
 	as_type: Type_Id,
 ) -> string {
-	storage := fmt.aprintf("i%d", bits)
-	#partial switch underlying_kind(e.c, checked.type) {
-	case .Pointer, .C_Pointer, .Raw_Pointer:
-		storage = "ptr"
-	}
+	storage := atomic_storage_llvm(e, checked.type)
 	order := llvm_ordering(checked.order)
 	align := bits / 8
 
@@ -126,9 +136,9 @@ emit_native_atomic :: proc(
 			address, storage, expected, storage, desired, order, llvm_ordering(checked.failure_order), align,
 		)
 		pair_type := fmt.aprintf("{{ %s, i1 }}", storage)
-		observed := extract(e, pair_type, pair, 0)
+		observed := atomic_from_storage(e, checked.type, storage, extract(e, pair_type, pair, 0))
 		swapped := extract(e, pair_type, pair, 1)
-		return emit_atomic_exchange_result(e, checked.type, storage, observed, swapped, as_type)
+		return emit_atomic_exchange_result(e, observed, swapped, as_type)
 	}
 
 	opcode := atomic_rmw_opcode(kind)
@@ -176,8 +186,7 @@ emit_fallback_atomic :: proc(
 			address, expected, desired, int(checked.order), int(checked.failure_order),
 		)
 		swapped := icmp_zero(e, "i32", status, equal = false)
-		observed := load(e, storage, expected)
-		return emit_atomic_exchange_result(e, checked.type, storage, observed, swapped, as_type)
+		return emit_atomic_exchange_result(e, load(e, storage, expected), swapped, as_type)
 	}
 
 	helper := kind == .Atomic_Exchange ? "exchange" : atomic_rmw_opcode(kind)
@@ -192,15 +201,6 @@ emit_fallback_atomic :: proc(
 
 // `.none` means swapped; `.some(observed)` means failed.
 @(private = "file")
-emit_atomic_exchange_result :: proc(
-	e: ^Emitter,
-	type: Type_Id,
-	storage: string,
-	observed: string,
-	swapped: string,
-	as_type: Type_Id,
-) -> string {
-	failed := not_i1(e, swapped)
-	value := atomic_from_storage(e, type, storage, observed)
-	return emit_option_value(e, as_type, failed, value)
+emit_atomic_exchange_result :: proc(e: ^Emitter, observed, swapped: string, as_type: Type_Id) -> string {
+	return emit_option_value(e, as_type, not_i1(e, swapped), observed)
 }

@@ -1,0 +1,17 @@
+// compiler-guide.md "C runtime": a foreign binding to an LLVM intrinsic that a
+// built-in also calls refers to the one declaration, so its type must lower to
+// the built-in's. Here it declared `llvm.ctpop.i64` as `i32 (i32)`, which
+// suppressed the built-in's `i64 (i64)` declaration, and clang rejected the
+// module. A compatible binding is tests/run/foreign_intrinsic_binding.loke.
+package main;
+
+import "core:math";
+
+foreign llvm {
+	@(link_name="llvm.ctpop.i64")
+	population :: proc "c" (x: i32) -> i32 ---;
+}
+
+ones :: proc(n: i64) -> int { return math.count_ones(n); }
+
+main :: proc() { _ = ones(3); }

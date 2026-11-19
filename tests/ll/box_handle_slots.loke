@@ -1,0 +1,21 @@
+package main;
+
+// design.md "@(packed)": a box handle in a packed record sits at offset 1, and
+// the record's drop and clone hand that field's address to the box's thunks,
+// which read and write it at byte alignment rather than a pointer's.
+//
+// design.md "Allocators": the zero `Allocator` selects the default provider, so
+// a box made or cloned with `{}` records the provider selected then. It
+// recorded null, which the runtime resolved again at the release, after a
+// provider published later.
+
+@(packed) Holder :: struct { tag: u8, payload: Box(int) }
+
+main :: proc() {
+	h := Holder{1, box(5)};
+	k := h.clone();
+	_ = k.payload^;
+	b := box(1, {});
+	c := b.clone({});
+	_ = c^;
+}

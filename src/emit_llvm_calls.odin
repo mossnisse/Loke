@@ -450,7 +450,10 @@ emit_pack_operands :: proc(
 		total       = fmt.aprintf("%d", static_count),
 	}
 	if static_count > 0 {
-		out.staging = alloca(e, fmt.aprintf("[%d x %s]", static_count, element_llvm))
+		// The call ends with its full expression, so a later one reuses a large pack's.
+		out.staging = temporary_storage(
+			e, fmt.aprintf("[%d x %s]", static_count, element_llvm), u64(static_count) * type_size(e.c, element),
+		)
 	}
 	if managed && static_count > 0 {
 		flags, count := alloca(e, fmt.aprintf("[%d x i1]", static_count)), alloca(e, "i64")

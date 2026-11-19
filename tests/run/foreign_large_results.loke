@@ -1,0 +1,30 @@
+// design.md "Temporaries and procedure boundaries": a large result of a
+// foreign-convention call lives until its full expression ends, so each
+// statement's result reused one slot; each kept its own, and 24 of 64 KiB
+// overflowed the stack. Results live together in one expression stay apart.
+package main;
+
+import "core:fmt";
+
+R :: struct { pad: [65536]u8 }
+
+make_r :: proc "c" (seed: u8) -> R {
+	r: R = {};
+	r.pad[0] = seed;
+	r.pad[65535] = seed;
+	return r;
+}
+
+sum :: proc(a: R, b: R) -> int {
+	return int(a.pad[0]) + int(b.pad[65535]);
+}
+
+main :: proc() {
+	_ = make_r(1); _ = make_r(2); _ = make_r(3); _ = make_r(4);
+	_ = make_r(1); _ = make_r(2); _ = make_r(3); _ = make_r(4);
+	_ = make_r(1); _ = make_r(2); _ = make_r(3); _ = make_r(4);
+	_ = make_r(1); _ = make_r(2); _ = make_r(3); _ = make_r(4);
+	_ = make_r(1); _ = make_r(2); _ = make_r(3); _ = make_r(4);
+	_ = make_r(1); _ = make_r(2); _ = make_r(3); _ = make_r(4);
+	fmt.println(sum(make_r(10), make_r(20)));
+}

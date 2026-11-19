@@ -13,6 +13,11 @@ box_payload_offset :: proc(c: ^Compiler, element: Type_Id) -> u64 {
 	return align_to(u64(c.target.pointer_bits) / 8, type_align(c, element))
 }
 
+// The handle slot a drop or clone thunk is handed may be a packed field
+// (design.md "@(packed)"), so the thunk reads and writes it at byte alignment.
+@(private = "file")
+HANDLE_SLOT_ALIGN :: 1
+
 @(private = "file")
 box_block_size :: proc(c: ^Compiler, element: Type_Id) -> u64 {
 	return align_to(box_payload_offset(c, element) + type_size(c, element), box_block_align(c, element))
@@ -49,6 +54,9 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		guard = hold_temporary_value(e, payload, value)
 	}
 	allocator := emit_allocator_operand(e, v, 1)
+	if header && len(v.bound) > 1 {
+		allocator = emit_concrete_allocator(e, allocator)
+	}
 
 	block_slot := alloca(e, "ptr")
 	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", block_slot)
@@ -79,10 +87,12 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	branch_if(e, no_memory, release_label, publish_label)
 
 	place_label(e, release_label)
-	// The drop may allocate, which would replace the refusal just noted.
-	refused := emit_take_refusal(e)
-	drop_temporary_value(e, guard)
-	emit_restore_refusal(e, allocator, refused)
+	if guard.place != "" {
+		// The drop may allocate, which would replace the refusal just noted.
+		refused := emit_take_refusal(e)
+		drop_temporary_value(e, guard)
+		emit_restore_refusal(e, allocator, refused)
+	}
 	branch(e, done_label)
 
 	place_label(e, publish_label)
@@ -101,7 +111,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	return emit_alloc_outcome(e, v, as_type, is_null(e, published), published, allocator)
 }
 
-@(private)
+@(private = "file")
 box_payload_at :: proc(e: ^Emitter, payload: Type_Id, block: string) -> string {
 	return emit_value(e, "getelementptr inbounds i8, ptr %s, i64 %d", block, box_payload_offset(e.c, payload))
 }
@@ -137,13 +147,13 @@ box_drop_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 		"void", "ptr %p",
 		proc(e: ^Emitter, box_type: Type_Id) {
 			payload := box_element(e.c, box_type)
-			block := load(e, "ptr", "%p")
+			block := emit_value(e, "load ptr, ptr %%p, align %d", HANDLE_SLOT_ALIGN)
 			empty := is_null(e, block)
 			release_label, done_label := new_label(e, "boxdrop.release"), new_label(e, "boxdrop.done")
 			branch_if(e, empty, done_label, release_label)
 			place_label(e, release_label)
 			// Inert first: a payload drop hook that panics leaves nothing to drop twice.
-			fmt.sbprintfln(&e.b, "  store ptr null, ptr %%p")
+			fmt.sbprintfln(&e.b, "  store ptr null, ptr %%p, align %d", HANDLE_SLOT_ALIGN)
 			// design.md "What the unwind runs, and what it does not": the payload's
 			// drop registers its parts not yet dropped, and the allocation stays
 			// registered until the payload is gone.
@@ -175,13 +185,16 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 		"i1", "ptr %out, ptr %src, ptr %a",
 		proc(e: ^Emitter, box_type: Type_Id) {
 			payload := box_element(e.c, box_type)
-			origin := box_payload_at(e, payload, load(e, "ptr", "%src"))
+			// design.md "Allocators": `{}` is the provider selected now, which the
+			// header records; a provider published later did not allocate it.
+			allocator := emit_concrete_allocator(e, "%a")
+			origin := box_payload_at(e, payload, emit_value(e, "load ptr, ptr %%src, align %d", HANDLE_SLOT_ALIGN))
 			managed := emit_lifecycle(e, payload).managed
-			// Plain data is its own clone.
-			source := origin
+			// Plain data is its own clone, read before the allocation is made.
+			source, value := "", ""
 			if managed {
 				source = alloca(e, llvm_type(e, payload))
-				ok := emit_try_clone_into(e, payload, source, origin, "%a")
+				ok := emit_try_clone_into(e, payload, source, origin, allocator)
 				cloned_label, refused_label := new_label(e, "boxclone.cloned"), new_label(e, "boxclone.refused")
 				branch_if(e, ok, cloned_label, refused_label)
 				place_label(e, refused_label)
@@ -189,9 +202,12 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 				fmt.sbprintln(&e.b, "  ret i1 false")
 				e.terminated = true
 				place_label(e, cloned_label)
+				// Storage only this thunk writes, so a large clone is not copied again.
+				value = load_temporary(e, payload, source)
+			} else {
+				value = load_place(e, payload, origin)
 			}
-			value := load_place(e, payload, source)
-			block, no_memory := emit_rt_alloc(e, "%a", box_block_size(e.c, payload), box_block_align(e.c, payload))
+			block, no_memory := emit_rt_alloc(e, allocator, box_block_size(e.c, payload), box_block_align(e.c, payload))
 			undo_label, publish_label := new_label(e, "boxclone.undo"), new_label(e, "boxclone.publish")
 			branch_if(e, no_memory, undo_label, publish_label)
 			place_label(e, undo_label)
@@ -199,15 +215,15 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 				// The drop may allocate, which would replace the refusal just noted.
 				refused := emit_take_refusal(e)
 				emit_drop_place(e, payload, source)
-				emit_restore_refusal(e, "%a", refused)
+				emit_restore_refusal(e, allocator, refused)
 			}
 			emit_unwind_pop(e)
 			fmt.sbprintln(&e.b, "  ret i1 false")
 			e.terminated = true
 			place_label(e, publish_label)
-			fmt.sbprintfln(&e.b, "  store ptr %%a, ptr %s", block)
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, block)
 			store(e, payload, value, box_payload_at(e, payload, block))
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %%out", block)
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %%out, align %d", block, HANDLE_SLOT_ALIGN)
 			emit_unwind_pop(e)
 			fmt.sbprintln(&e.b, "  ret i1 true")
 		},
