@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Identifiers": a redeclared name is L0304 and nothing else. A
+// rejected type declaration has no type to fill, and its value is not checked
+// as an expression: an interface reported the compiler defect L0350 and a
+// struct L0717.
+A :: [1]u8;
+A :: interface($T: type) { (t: T) t -> T; }
+B :: int;
+B :: struct { x: int }
+C :: int;
+C :: enum { One }
+D :: int;
+D :: distinct int;
+
+main :: proc() {}

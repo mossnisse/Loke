@@ -1564,10 +1564,17 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		check_proc(k, d, literal)
 		return
 	}
-	// An operator group's members are checked as their own declarations.
 	if len(d.values) == 1 {
-		if _, is_operator := d.values[0].(^Expr_Operator); is_operator {
+		#partial switch _ in d.values[0] {
+		// An operator group's members are checked as their own declarations.
+		case ^Expr_Operator:
 			return
+		// A type declaration whose name was rejected, as a redeclaration, has no
+		// type to fill; its value is not an expression to check instead.
+		case ^Type_Record, ^Type_Enum, ^Type_Distinct, ^Type_Interface:
+			if only == INVALID_SYMBOL && len(d.names) == 1 && d.names[0].text != "_" {
+				return
+			}
 		}
 	}
 	if symbol := symbol_of(k.c, only); symbol != nil {
