@@ -222,6 +222,37 @@ a_refused_allocation_fails_a_constant_fold :: proc(t: ^testing.T) {
 	testing.expect(t, splatted && transmuted, "neither fold succeeded with enough storage")
 }
 
+// A union constant widened by label in the evaluator's bounded storage fails the
+// fold when that storage refuses the copy, as a splat does, rather than writing
+// through a nil copy.
+@(test)
+a_refused_allocation_fails_a_union_widening :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
+Narrow :: (a: int | b:);
+Wide :: (b: | a: int | c:);
+N: Narrow : .a(3);
+main :: proc() {}`)
+	testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count)
+	value := symbol_of(&p.c, symbol_named(t, &p, "N", .Const)).const_value
+	wide := symbol_of(&p.c, symbol_named(t, &p, "Wide", .Const)).const_value.type_value
+
+	buffer := make([]byte, 1 << 12)
+	defer delete(buffer)
+	widened := false
+	for capacity := 0; capacity <= len(buffer) && !widened; capacity += 8 {
+		arena: mem.Arena
+		mem.arena_init(&arena, buffer[:capacity])
+		converted, fits := convert_const(&p.c, value, wide, false, mem.arena_allocator(&arena))
+		if fits {
+			widened = true
+			testing.expect(t, converted.aggregate.type == wide && converted.aggregate.variant == 1, "the widened tag")
+		}
+	}
+	testing.expect(t, widened, "the widening never fit")
+}
+
 @(test)
 bigint_to_float_rounds_once :: proc(t: ^testing.T) {
 	c: Compiler

@@ -406,15 +406,18 @@ widened_variant :: proc(c: ^Compiler, from, to: Type_Id, index: int) -> int {
 }
 
 // A union constant of `from` as the `to` it widens into: the same payload under
-// the remapped tag.
-widen_const :: proc(c: ^Compiler, value: Const_Value, from, to: Type_Id, allocator: mem.Allocator = {}) -> Const_Value {
+// the remapped tag. False when the evaluator's allocator refuses the copy.
+widen_const :: proc(c: ^Compiler, value: Const_Value, from, to: Type_Id, allocator: mem.Allocator = {}) -> (Const_Value, bool) {
 	if value.kind != .Aggregate || value.aggregate == nil {
-		return value
+		return value, true
 	}
-	widened := new_clone(value.aggregate^, value_allocator(c, allocator))
+	widened, refused := new_clone(value.aggregate^, value_allocator(c, allocator))
+	if refused != nil {
+		return value, false
+	}
 	widened.type = to
 	widened.variant = widened_variant(c, from, to, value.aggregate.variant)
-	return Const_Value{kind = .Aggregate, aggregate = widened}
+	return Const_Value{kind = .Aggregate, aggregate = widened}, true
 }
 
 // Says which alternative keeps `from` from widening to `to`, when both are

@@ -906,7 +906,7 @@ retype_aggregate :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, expl
 	}
 	relabelled := record_drops_labels_to(c, source, target)
 	if union_widens_to(c, source, target) {
-		return widen_const(c, value, source, target, storage), true
+		return widen_const(c, value, source, target, storage)
 	}
 	if !relabelled && (!explicit || type_underlying(c, source) != type_underlying(c, target)) {
 		return value, false

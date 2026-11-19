@@ -1962,7 +1962,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// A constant is remapped here.
 	if union_widens_to(k.c, base.type, target) {
 		if base.const_value.kind == .Aggregate {
-			base.const_value = widen_const(k.c, base.const_value, base.type, target)
+			base.const_value, _ = widen_const(k.c, base.const_value, base.type, target)
 		} else if base.widened_from == INVALID_TYPE {
 			base.widened_from = base.type
 		}

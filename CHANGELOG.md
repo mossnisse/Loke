@@ -139,7 +139,7 @@ checklist.
   conversion](docs/design.md#type-conversion)), checked against the signed 32-bit range and
   truncated toward zero: `rune(f64(65.5))` was `L0373` as a constant or in an evaluated
   procedure. An implicit float-to-rune conversion is reported as the one to an integer is.
-- A compile-time vector conversion or bit cast that runs out of the evaluator's scratch memory
+- A compile-time vector conversion, union widening, or bit cast that runs out of the evaluator's scratch memory
   reports `L0342` instead of crashing the compiler, and a bit cast's byte images count against
   that memory.
 - A constant condition that is not `bool`, as in `if (0) {}`, is reported once, as in a
@@ -295,7 +295,6 @@ checklist.
   a file-scope `static_assert`, a `where` clause, or an interface requirement's expression, and
   hover no longer shows a doc comment `L0260` reports, as one above a local
   ([Doc comments](docs/design.md#doc-comments)).
-
 
 ## [0.10.0] - 2026-11-16
 
