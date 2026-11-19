@@ -343,6 +343,10 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 		// The user `+` it falls back to, its destination evaluated once, then a
 		// replacing write.
 		result, ok = eval_operator_call(ev, s.operator, nil, s.op_span, []Eval_Value{slot^, operand})
+		// design.md "Widening by label": a narrower result takes the destination's tags.
+		if from := symbol_of(ev.k.c, s.operator).result; ok && union_widens_to(ev.k.c, from, slot.type) {
+			result = widen_eval_value(ev.k.c, result, from, slot.type)
+		}
 	case type_is_simd(ev.k.c, slot.type):
 		// Lane-wise, since `constant` carries no lanes.
 		result, ok = eval_simd_binary_values(ev, compound_operator(s.op), s.op_span, slot.type, slot^, operand)

@@ -15,14 +15,11 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 		return
 	}
 
-	// design.md "Owned values": `b[i]` indexes the payload.
-	if boxed := underlying_info(k.c, operand); boxed != nil && boxed.kind == .Box {
-		v.operand = implicit_box_deref(k, v.operand, boxed.element)
-		operand = boxed.element
+	if payload, boxed := index_box_payload(k.c, operand); boxed {
+		v.operand = implicit_box_deref(k, v.operand, payload)
+		operand = payload
 	}
 
-	// Nominal (design.md "Distinct types"): a distinct type reaches
-	// check_user_index, not the built-in table.
 	base_type := operand
 	operand_base := expr_base(v.operand)
 	through_pointer := false
@@ -35,67 +32,12 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 		pointer_mutable = info.mutable
 	}
 	info := type_of(k.c, base_type)
-	single := len(v.indices) == 1
-	// A carrier is reached through its header, so the hop is written as p^.
-	if through_pointer && info != nil &&
-	   (info.kind == .Slice || info.kind == .Dynamic_Array || info.kind == .Map || info.kind == .C_Pointer) {
-		v.operand = implicit_pointer_deref(k, v.operand, pointee, pointer_mutable)
-		operand_base = expr_base(v.operand)
-		through_pointer = false
-	}
-	// A UTF-8 code point may span several bytes (design.md "string type").
-	if info != nil && (info.kind == .String || info.kind == .String_View) {
-		errorf(
-			k.c, v.span, "L0563",
-			"`%s` cannot be indexed by an integer, because a UTF-8 code point may span several bytes",
-			type_name(k.c, operand),
-		)
-		add_notef(k.c, v.span, "use `text.bytes()[index]`, a subrange `text[low:high]`, or rune iteration")
-		return
-	}
-	if info != nil && single {
-		#partial switch info.kind {
-		case .C_Pointer:
-			// Unchecked, and writable exactly as `p^` is (design.md "C pointers").
-			if !check_integer_index(k, v.indices[0]) { return }
-			if !require_unsafe_import(k, v.span, "indexing a C pointer") {
-				return
-			}
-			v.type = info.element
-			mark_writable_place(&v.base)
-			return
-		case .Slice:
-			// The element lives in the slice's root, so `[]mut T` decides the write,
-			// not whether the slice variable itself is assignable.
-			if !check_integer_index(k, v.indices[0]) { return }
-			v.type = info.element
-			v.value_category = .Place
-			v.addressable = true
-			v.assignable = info.mutable
-			v.immutable = info.mutable ? .None : .Through_Slice
-			return
-		case .Dynamic_Array:
-			// The element lives in the container's allocation, so it has the
-			// container's capability (design.md "Dynamic arrays").
-			if !check_integer_index(k, v.indices[0]) { return }
-			owned_element_place(&v.base, info.element, operand_base)
-			return
-		case .Map:
-			check_map_index(k, v, info, place, inserts, operand_base)
-			return
-		case .Simd:
-			// A lane index must be a constant (design.md "SIMD vectors").
-			check_simd_index(k, v, info, base_type, operand_base, through_pointer, pointer_mutable)
-			return
-		}
-	}
-	// Built-in indexing first; a user `operator([])` supplies what it does not.
-	indexable := info != nil && (info.kind == .Array || info.kind == .Slice)
-	if !indexable || !single {
+	if !builtin_indexes(info, len(v.indices)) {
+		// A user `operator([])` supplies what built-in indexing does not.
 		if check_user_index(k, v, operand, position) {
 			return
 		}
-		if indexable {
+		if info != nil && (info.kind == .Array || info.kind == .Slice) {
 			// Permanently reserved for a user `operator([])` (design.md "Indexing
 			// and slicing").
 			errorf(
@@ -108,17 +50,71 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, position: Expr_Position) {
 		}
 		return
 	}
-
-	check_array_index(k, v, info, base_type, operand_base, through_pointer, pointer_mutable)
+	// A carrier is reached through its header, so the hop is written as p^.
+	if through_pointer && (info.kind == .Slice || info.kind == .Dynamic_Array || info.kind == .Map || info.kind == .C_Pointer) {
+		v.operand = implicit_pointer_deref(k, v.operand, pointee, pointer_mutable)
+		operand_base = expr_base(v.operand)
+		through_pointer = false
+	}
+	#partial switch info.kind {
+	case .String, .String_View:
+		// A UTF-8 code point may span several bytes (design.md "string type").
+		errorf(
+			k.c, v.span, "L0563",
+			"`%s` cannot be indexed by an integer, because a UTF-8 code point may span several bytes",
+			type_name(k.c, operand),
+		)
+		add_notef(k.c, v.span, "use `text.bytes()[index]`, a subrange `text[low:high]`, or rune iteration")
+	case .C_Pointer:
+		// Unchecked, and writable exactly as `p^` is (design.md "C pointers").
+		if !check_integer_index(k, v.indices[0]) { return }
+		if !require_unsafe_import(k, v.span, "indexing a C pointer") {
+			return
+		}
+		v.type = info.element
+		mark_writable_place(&v.base)
+	case .Slice:
+		// The element lives in the slice's root, so `[]mut T` decides the write,
+		// not whether the slice variable itself is assignable.
+		if !check_integer_index(k, v.indices[0]) { return }
+		v.type = info.element
+		v.value_category = .Place
+		v.addressable = true
+		v.assignable = info.mutable
+		v.immutable = info.mutable ? .None : .Through_Slice
+	case .Dynamic_Array:
+		// The element lives in the container's allocation, so it has the
+		// container's capability (design.md "Dynamic arrays").
+		if !check_integer_index(k, v.indices[0]) { return }
+		owned_element_place(&v.base, info.element, operand_base)
+	case .Map:
+		check_map_index(k, v, info, place, inserts, operand_base)
+	case .Simd:
+		// A lane index must be a constant (design.md "SIMD vectors").
+		check_simd_index(k, v, info, base_type, operand_base, through_pointer, pointer_mutable)
+	case .Array:
+		check_array_index(k, v, info, base_type, operand_base, through_pointer, pointer_mutable)
+	}
 }
 
-// Whether `check_index` answers `operand[...]` itself. Built-in indexing takes
-// one index and cannot be shadowed; a distinct type is nominal, so it never does.
-index_is_builtin :: proc(c: ^Compiler, operand: Type_Id, indices: int) -> bool {
+// design.md "Owned values": `b[i]` indexes the payload. Nominal (design.md
+// "Distinct types"): a distinct type over a box is no box, so it reaches its
+// own `operator([])`.
+@(private = "file")
+index_box_payload :: proc(c: ^Compiler, operand: Type_Id) -> (Type_Id, bool) {
 	info := type_of(c, operand)
-	if info != nil && (info.kind == .Box || info.kind == .Pointer) {
-		info = type_of(c, info.element)
+	if info == nil || info.kind != .Box {
+		return INVALID_TYPE, false
 	}
+	return info.element, true
+}
+
+// Whether built-in indexing answers `info[...]` with `indices` indices, after
+// the box and pointer hops: a string to report it, or a built-in sequence, map,
+// or vector with one index. It cannot be shadowed, and a distinct type is
+// nominal, so it never answers one.
+@(private = "file")
+builtin_indexes :: proc(info: ^Type_Info, indices: int) -> bool {
 	if info == nil {
 		return false
 	}
@@ -129,6 +125,19 @@ index_is_builtin :: proc(c: ^Compiler, operand: Type_Id, indices: int) -> bool {
 		return indices == 1
 	}
 	return false
+}
+
+// Whether `check_index` answers `operand[...]` itself.
+index_is_builtin :: proc(c: ^Compiler, operand: Type_Id, indices: int) -> bool {
+	subject := operand
+	if payload, boxed := index_box_payload(c, subject); boxed {
+		subject = payload
+	}
+	info := type_of(c, subject)
+	if info != nil && info.kind == .Pointer {
+		info = type_of(c, info.element)
+	}
+	return builtin_indexes(info, indices)
 }
 
 // `a[i]` for a fixed array.
@@ -221,7 +230,8 @@ check_in :: proc(k: ^Checker, v: ^Expr_Binary) {
 		check_range_membership(k, v, container)
 		return
 	}
-	if !type_is_map(k.c, container) {
+	// Nominal (design.md "Distinct types"): a distinct map reaches its own `in`.
+	if type_kind(k.c, container) != .Map {
 		element := check_single_expr(k, v.lhs)
 		if element == INVALID_TYPE {
 			return
@@ -477,9 +487,7 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 		errorf(k.c, v.span, "L0477", "`%s` has no storage to slice; bind it to a variable first", type_name(k.c, operand))
 		ok = false
 	}
-	// A slice's elements are ordinary, aligned places (design.md "@(packed)").
-	if field, packed := packed_field_reached(k, v.operand); packed && info.kind == .Array {
-		errorf(k.c, v.span, "L0614", "cannot slice `%s`: it is reached through a packed struct", field)
+	if info.kind == .Array && reject_packed_place(k, v.operand, v.span, "slice") {
 		ok = false
 	}
 	v.immutable = .Temporary
@@ -577,13 +585,13 @@ index_arguments :: proc(
 }
 
 // The expected type for an index, so `counts[.North]` resolves: the parameter
-// type every candidate agrees on, or INVALID_TYPE.
+// type every candidate the indices can bind agrees on, or INVALID_TYPE.
 @(private = "file")
 agreed_index_param :: proc(k: ^Checker, candidates: []Symbol_Id, position: int, arity: int) -> Type_Id {
 	agreed := INVALID_TYPE
 	for id in candidates {
 		sym := symbol_of(k.c, id)
-		if sym == nil || len(sym.params) != arity + 1 {
+		if sym == nil || !indices_bind(sym, arity) {
 			continue
 		}
 		if agreed == INVALID_TYPE {
@@ -595,7 +603,34 @@ agreed_index_param :: proc(k: ^Checker, candidates: []Symbol_Id, position: int, 
 	return agreed
 }
 
+// Whether `arity` indices after the receiver bind `sym`'s parameters as
+// positional arguments do (`build_candidate`): one each, with a default for
+// every parameter left over.
+@(private = "file")
+indices_bind :: proc(sym: ^Symbol, arity: int) -> bool {
+	if arity + 1 > len(sym.params) {
+		return false
+	}
+	for slot in arity + 1 ..< len(sym.params) {
+		if slot >= len(sym.param_defaults) || sym.param_defaults[slot] == nil {
+			return false
+		}
+	}
+	return true
+}
+
 // ---------------------------------------------------------- packed fields --
+
+// design.md "@(packed)": a pointer, a view, or an `inout` argument is an
+// ordinary, aligned place, so one reaching `place` through a packed struct is
+// reported, as what `verb` does to it.
+reject_packed_place :: proc(k: ^Checker, place: Expr, span: Span, verb: string) -> bool {
+	field, packed := packed_field_reached(k, place)
+	if packed {
+		errorf(k.c, span, "L0614", "cannot %s `%s`: it is reached through a packed struct", verb, field)
+	}
+	return packed
+}
 
 // design.md "@(packed)": the name of a field that may be misaligned because
 // it, or a field holding it in the same storage, sits in a packed struct.

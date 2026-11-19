@@ -1,0 +1,9 @@
+L0417
+@19:4
+which a compound assignment cannot borrow as `string_view`
+L0417
+@21:4
+which a compound assignment cannot borrow as `[]int`
+L0417
+@23:4
+which a compound assignment cannot borrow as `dyn proc() -> int`

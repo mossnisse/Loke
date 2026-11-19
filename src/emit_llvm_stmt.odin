@@ -538,7 +538,7 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		}
 		address := emit_address(e, target)
 		value := emit_operator_call(e, s.operator, operands[:], left_place = address)
-		emit_replacing_store(e, s, 0, type, value, address)
+		emit_replacing_store(e, s, 0, type, compound_result_as(e, value, symbol_of(e.c, s.operator).result, type), address)
 		return
 	}
 	// design.md "Evaluation order": the destination is read after the right operand.
@@ -553,6 +553,21 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		result = emit_binary_op(e, op, type, expr_base(s.rhs[0]).type, current, rhs)
 	}
 	store(e, type, result, address)
+}
+
+// The binary operator's result, of type `from`, converted to the destination's
+// type as the assignment it falls back to converts it: a narrower union takes
+// the destination's tags (design.md "Widening by label"), and a scalar fills
+// every lane (design.md "SIMD vectors"). The checker admits no other conversion.
+@(private = "file")
+compound_result_as :: proc(e: ^Emitter, value: string, from, to: Type_Id) -> string {
+	if union_widens_to(e.c, from, to) {
+		return emit_union_widen(e, value, from, to)
+	}
+	if type_is_simd(e.c, to) && !type_is_simd(e.c, from) {
+		return emit_simd_splat(e, value, to)
+	}
+	return value
 }
 
 // The destination of `m[key] = elem`, which creates its element.

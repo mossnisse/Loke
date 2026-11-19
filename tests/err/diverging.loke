@@ -17,3 +17,9 @@ main :: proc() {
 	value := os.exit(1);
 	_ = value;
 }
+
+// The right of `||` may not run, so the statement can finish.
+lazy :: proc(x: bool) -> int {
+	stopped := x || os.exit(1);
+	_ = stopped;
+}

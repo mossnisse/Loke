@@ -1,0 +1,44 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Operator declarations": a compound assignment falls back to the
+// binary operator plus assignment, so the operator's result converts to the
+// destination as an assigned value does: a narrower union takes the
+// destination's tags (design.md "Widening by label"), and a scalar fills every
+// lane (design.md "SIMD vectors"), at run time and in a constant.
+Narrow :: (word: int | blank:);
+Wide :: (blank: | number: int | word: int);
+
+add :: operator(+) proc(w: Wide, x: int) -> Narrow { return .word(x); }
+
+V :: Simd(f32, 4);
+Scale :: struct { f: f32 }
+
+mul :: operator(*) proc(v: V, s: Scale) -> f32 { return s.f; }
+
+widened :: proc() -> Wide {
+	w: Wide = .blank;
+	w += 6;
+	return w;
+}
+
+FOLDED :: widened();
+
+describe :: proc(w: Wide) {
+	switch (w) {
+	case .word(n): fmt.println("word", n);
+	case .number(n): fmt.println("number", n);
+	case: fmt.println("blank");
+	}
+}
+
+main :: proc() {
+	w: Wide = .blank;
+	w += 5;
+	describe(w);
+	describe(FOLDED);
+	v: V = {1, 2, 3, 4};
+	v *= Scale{2};
+	fmt.println(v);
+}

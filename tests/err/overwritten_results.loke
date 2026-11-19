@@ -30,7 +30,7 @@ before_a_defer :: proc() {
 }
 
 // Quiet: read on one path, read by the next iteration, returned, and a value
-// built here rather than produced by a call.
+// built here rather than produced by a call, also when it is never named again.
 one_path :: proc(flag: bool) {
 	r := fail();
 	if (flag) { fmt.println(r); }
@@ -54,6 +54,9 @@ built :: proc() {
 	r := fail();
 	_ = r;
 	r = .err(0);
+}
+built_unread :: proc() {
+	r: Result(int, int) = .err(0);
 }
 
 main :: proc() {

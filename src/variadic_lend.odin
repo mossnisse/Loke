@@ -75,8 +75,11 @@ pass_lent_element :: proc(k: ^Checker, e: Expr, element, pointee: Type_Id, prech
 		return e, false
 	}
 	// A named constant is lent in its read-only storage; another is a temporary.
+	// A place is lent where it is, which must be aligned (design.md "@(packed)").
 	if base_is_const(base) {
 		request_materialization(k, e)
+	} else if reject_packed_place(k, e, base.span, "lend") {
+		return e, false
 	}
 	base.view_from = base.type
 	base.type = element

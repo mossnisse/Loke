@@ -1,0 +1,13 @@
+package main;
+
+// design.md "Distinct types": other operations are not inherited, so a
+// distinct map has no built-in `in` and a distinct box no built-in `[]`.
+Counts :: distinct map[int]int;
+Boxed :: distinct Box([1]int);
+
+main :: proc() {
+	c := Counts{};
+	b := Boxed(box([1]int{5}));
+	_ = 3 in c;
+	_ = b[0];
+}

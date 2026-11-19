@@ -1915,9 +1915,14 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// A `string` borrows as a `string_view` with no validation: it is already
 	// valid UTF-8.
 	if type_views_as(k.c, base.type, target) {
-		// A named constant array is viewed in its read-only storage.
-		if base_is_const(base) && underlying_kind(k.c, base.type) == .Array {
-			request_materialization(k, e)
+		if underlying_kind(k.c, base.type) == .Array {
+			// A named constant array is viewed in its read-only storage, and a
+			// slice's elements are aligned, as `a[:]` checks them.
+			if base_is_const(base) {
+				request_materialization(k, e)
+			} else if reject_packed_place(k, e, base.span, "slice") {
+				return false
+			}
 		}
 		base.view_from = base.type
 		base.type = target

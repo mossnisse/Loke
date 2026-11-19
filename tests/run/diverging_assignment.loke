@@ -1,0 +1,40 @@
+package main;
+import "core:fmt";
+import "core:os";
+
+// design.md "Diverging procedures": a statement that always evaluates a call
+// that never returns does not finish, wherever in the statement the call is,
+// so a body ending in one needs no `return`.
+
+stop :: proc() -> ! { os.exit(0); }
+
+never: static bool = false;
+
+twice :: proc(n: int) -> int { return n * 2; }
+
+assigned :: proc() -> int {
+	a := 1;
+	fmt.println("assigned", a);
+	a = stop();
+}
+
+declared :: proc() -> int {
+	b: int = stop();
+}
+
+nested :: proc() -> int {
+	c := twice(stop());
+}
+
+indexed :: proc() -> int {
+	d := [2]int{};
+	d[stop()] = 1;
+}
+
+main :: proc() {
+	if (never) {
+		fmt.println(declared() + nested() + indexed());
+	}
+	fmt.println(assigned());
+	fmt.println("not reached");
+}

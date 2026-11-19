@@ -1,0 +1,75 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": an assignment through `operator([]=)` evaluates
+// its value before the destination's indices, and prepares every destination,
+// reading its keys, before any write. A compound assignment reads its key
+// before the right operand. design.md "Assignment statements": each value
+// takes its destination's type as context.
+Grid :: struct { cells: [3]int }
+
+impl Grid {
+	get :: operator([]) proc(self: Grid, key: int) -> int { return self.cells[key]; }
+	set :: operator([]=) proc(self: inout Grid, key: int, value: int) {
+		fmt.println("set", key, value);
+		self.cells[key] = value;
+	}
+}
+
+Names :: struct { total: int }
+
+impl Names {
+	get :: operator([]) proc(self: Names, key: string) -> int { return self.total; }
+	set :: operator([]=) proc(self: inout Names, key: string, value: int) {
+		fmt.println("named set", key, value);
+		self.total = value;
+	}
+}
+
+Rec :: struct { v: int }
+
+index :: proc() -> int {
+	fmt.println("index");
+	return 1;
+}
+
+value :: proc() -> int {
+	fmt.println("value");
+	return 5;
+}
+
+rename :: proc(key: inout string) -> int {
+	key = "renamed";
+	return 1;
+}
+
+main :: proc() {
+	g := Grid{};
+	g[index()] = value();
+
+	n := Names{};
+	key := "old";
+	key, n[key] = "new", 8;
+	fmt.println(key);
+
+	other := "before";
+	n[other] += rename(inout other);
+	fmt.println(other);
+
+	r := Rec{};
+	g[0], r = 7, {1};
+	fmt.println(r.v);
+
+	// A destination reached through a pointer is prepared before an earlier
+	// write moves the pointer.
+	a := 1;
+	b := 2;
+	p := &mut a;
+	p, p^, g[2] = &mut b, 8, 9;
+	fmt.println(a, b);
+	h := Grid{};
+	q := &mut g;
+	q, q^[1] = &mut h, 4;
+	fmt.println(g.cells[1], h.cells[1]);
+}

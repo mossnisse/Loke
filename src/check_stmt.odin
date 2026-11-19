@@ -86,12 +86,16 @@ report_unread_required_bindings :: proc(k: ^Checker, d: ^Decl) {
 		if sym == nil || sym.named || sym.kind != .Var {
 			continue
 		}
+		// Only a call's result is asked about, as `note_required_write` asks it.
+		initializer, _ := declared_initializer(d, index)
+		call := producing_call(initializer)
+		if call == nil || call.type == INVALID_TYPE {
+			continue
+		}
 		required := type_requires_results(k.c, sym.type)
 		source := ""
 		if !required && index < len(d.values) {
-			if call, is_call := d.values[index].(^Expr_Call); is_call && call.type != INVALID_TYPE {
-				source, required = required_result_of_call(k, call)
-			}
+			source, required = required_result_of_call(k, call)
 		}
 		if !required {
 			continue
@@ -221,28 +225,22 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 			return FLOWS
 		}
 		check_local_declaration(k, s)
-		return FLOWS
+		return s.kind == .Var ? flow_past(k.c, s.values) : FLOWS
 
 	case ^Stmt_Expr:
-		flow := FLOWS
 		for expr in s.exprs {
 			if expr != nil && !expression_statement_has_effect(expr) {
 				errorf(k.c, expr_span(expr), "L0313", "this expression statement has no effect")
 			}
 			check_expr(k, expr)
 			report_discarded_required_results(k, expr)
-			// A diverging call never returns, in either phase, so nothing after it
-			// in this block is reachable.
-			if call_diverges(k.c, expr) {
-				flow.can_fall_through = false
-			}
 		}
-		return flow
+		return flow_past(k.c, s.exprs)
 
 	case ^Stmt_Assign:
 		check_assign(k, s)
 		classify_assignment_copies(k, s)
-		return FLOWS
+		return assign_flow(k.c, s)
 
 	case ^Stmt_If:
 		return check_if(k, s)
@@ -367,6 +365,68 @@ call_diverges :: proc(c: ^Compiler, e: Expr) -> bool {
 	return symbol.kind == .Proc && symbol.diverges
 }
 
+// design.md "Diverging procedures": whether evaluating `e` certainly reaches a
+// call that never returns. Only what is always evaluated counts: the left of
+// `&&` and `||`, the value of `or_else`, and a conditional's condition, but none
+// of what they may skip, and nothing of a folded constant.
+expr_diverges :: proc(c: ^Compiler, e: Expr) -> bool {
+	base := expr_base(e)
+	if base == nil || base_is_const(base) {
+		return false
+	}
+	if call_diverges(c, e) {
+		return true
+	}
+	#partial switch v in e {
+	case ^Expr_Binary:
+		if v.op == .And_And || v.op == .Or_Or {
+			return expr_diverges(c, v.lhs)
+		}
+	case ^Expr_Or_Else:
+		return expr_diverges(c, v.value)
+	case ^Expr_Cond:
+		return expr_diverges(c, v.cond)
+	case ^Expr_Postfix:
+		// An `or_return` failure value is evaluated only on failure.
+		return expr_diverges(c, v.operand)
+	}
+	return expr_children(e, c, proc(data: rawptr, child: Expr) -> bool {
+		return expr_diverges((^Compiler)(data), child)
+	})
+}
+
+// A statement that evaluates `exprs`, all of them, and then finishes unless one
+// diverges.
+@(private = "file")
+flow_past :: proc(c: ^Compiler, exprs: ..[]Expr) -> Flow_Info {
+	for group in exprs {
+		for e in group {
+			if expr_diverges(c, e) {
+				return Flow_Info{}
+			}
+		}
+	}
+	return FLOWS
+}
+
+// An assignment, or the block its lowering checked in its place.
+@(private = "file")
+assign_flow :: proc(c: ^Compiler, s: ^Stmt_Assign) -> Flow_Info {
+	if s.lowered == nil {
+		return flow_past(c, s.lhs, s.rhs)
+	}
+	flow := FLOWS
+	for stmt in s.lowered.stmts {
+		#partial switch v in stmt {
+		case ^Decl:
+			flow_then(&flow, flow_past(c, v.values))
+		case ^Stmt_Assign:
+			flow_then(&flow, assign_flow(c, v))
+		}
+	}
+	return flow
+}
+
 is_builtin_call :: proc(c: ^Compiler, e: Expr, kind: Builtin_Kind) -> bool {
 	call, is_call := e.(^Expr_Call)
 	if !is_call {
@@ -412,7 +472,7 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		}
 		return
 	}
-	if len(s.lhs) > 1 && lower_parallel_setter_assign(k, s) {
+	if lower_setter_assign(k, s) {
 		return
 	}
 	for target, index in s.lhs {
@@ -500,9 +560,18 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 	if setters == nil {
 		return false
 	}
-	operand := check_single_expr(k, target.operand, position = .Place)
-	if operand == INVALID_TYPE {
-		return true
+	s.place_setter, s.setter_bound = resolve_place_setter(k, s.op_span, target, value, setters)
+	return true
+}
+
+// The `operator([]=)` that `target = value` calls, with its arguments bound, or
+// INVALID_SYMBOL once reported.
+@(private = "file")
+resolve_place_setter :: proc(
+	k: ^Checker, op_span: Span, target: ^Expr_Index, value: Expr, setters: []Symbol_Id,
+) -> (Symbol_Id, []Expr) {
+	if check_single_expr(k, target.operand, position = .Place) == INVALID_TYPE {
+		return INVALID_SYMBOL, nil
 	}
 	// The value is the last of what follows the receiver.
 	written := make([]Expr, len(target.indices) + 1, context.temp_allocator)
@@ -510,15 +579,27 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 	written[len(target.indices)] = value
 	args, ok := index_arguments(k, target.operand, written, setters)
 	if !ok {
-		return true
+		return INVALID_SYMBOL, nil
 	}
-	chosen, bound := resolve_operator(k, s.op_span, "[]=", setters, args)
-	if chosen == INVALID_SYMBOL {
-		return true
+	return resolve_operator(k, op_span, "[]=", setters, args)
+}
+
+// The type `target = value` holds its value at: the selected setter's value
+// parameter, or the destination's own type. Asked of copies under a probe;
+// INVALID_TYPE when the assignment does not check, which its own check reports.
+@(private = "file")
+assigned_value_type :: proc(k: ^Checker, op_span: Span, target, value: Expr) -> Type_Id {
+	probe := begin_probe(k.c)
+	defer end_probe(k.c, probe)
+	destination := clone_expr(k.c, target)
+	indexed, is_index := destination.(^Expr_Index)
+	setters := is_index ? place_setters(k, indexed) : nil
+	if setters == nil {
+		return check_assign_target(k, destination, INVALID_TYPE)
 	}
-	s.place_setter = chosen
-	s.setter_bound = bound
-	return true
+	chosen, _ := resolve_place_setter(k, op_span, indexed, clone_expr(k.c, value), setters)
+	sym := symbol_of(k.c, chosen)
+	return sym != nil && len(sym.params) > 0 ? sym.params[len(sym.params) - 1] : INVALID_TYPE
 }
 
 // design.md "Indexing and slicing": with no location to hand out, `box[i] += v`
@@ -529,8 +610,9 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 //
 // so the receiver and indices are evaluated once, then the right operand
 // (design.md "Evaluation order"). A temporary is left out where evaluating the
-// expression twice is the same: a variable or field path receiver, and a
-// literal, implicit selector, constant, or name other than a scalar variable's.
+// expression twice is the same: a variable or field path receiver, a literal,
+// implicit selector, or constant, and a name other than a scalar variable's
+// that the right operand does not name.
 @(private = "file")
 lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index) -> bool {
 	op := compound_operator(s.op)
@@ -539,10 +621,15 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 	}
 	span := s.span
 	stmts := make([dynamic]Stmt, 0, len(target.indices) + 3, k.c.semantic_allocator)
-	receiver, index_names := bind_index_place(k, &stmts, target, "compound$", span)
-	value := clone_expr(k.c, s.rhs[0])
 	// A constant right operand keeps its unfixed type for the operator to settle.
-	if !lowered_constant(k, s.rhs[0]) && needs_temporary(k, s.rhs[0]) {
+	constant := lowered_constant(k, s.rhs[0])
+	changing := Changed_Names{}
+	if !constant && !lowered_pure(s.rhs[0]) {
+		changing.within = s.rhs[0]
+	}
+	receiver, index_names := bind_index_place(k, &stmts, target, "compound$", span, changing)
+	value := clone_expr(k.c, s.rhs[0])
+	if !constant && needs_temporary(k, s.rhs[0]) {
 		append(&stmts, synth_decl(k.c, .Var, "compound$value", value, span))
 		value = synth_ident(k.c, "compound$value", span)
 	}
@@ -555,15 +642,28 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 	combined.lhs = read
 	combined.rhs = value
 	append(&stmts, synth_assign(k.c, {lowered_index(k, target, index_names, receiver, span)}, {combined}, s.op_span, span))
-	check_lowered_block(k, s, stmts[:])
+	check_lowered_block(k, s, stmts[:], new_scope(k.c, k.scope, .Local))
 	return true
 }
 
-// `s` as the block that stands for it.
+// `s` as the block that stands for it, checked in `scope`, which holds the
+// names of the types the lowering wrote.
 @(private = "file")
-check_lowered_block :: proc(k: ^Checker, s: ^Stmt_Assign, stmts: []Stmt) {
+check_lowered_block :: proc(k: ^Checker, s: ^Stmt_Assign, stmts: []Stmt, scope: ^Scope) {
 	s.lowered = synth_block(k.c, stmts, s.span)
-	check_scoped_block(k, s.lowered)
+	outer := k.scope
+	k.scope = scope
+	defer k.scope = outer
+	check_stmts(k, stmts)
+}
+
+// The variables a lowered statement may write between binding a destination's
+// indices and using them: the roots of `written`, the statement's destinations,
+// and any variable `within` names.
+@(private = "file")
+Changed_Names :: struct {
+	written: []Expr,
+	within:  Expr,
 }
 
 // Binds an indexed destination's receiver, by address, and its indices to
@@ -572,15 +672,15 @@ check_lowered_block :: proc(k: ^Checker, s: ^Stmt_Assign, stmts: []Stmt) {
 // name "".
 @(private = "file")
 bind_index_place :: proc(
-	k: ^Checker, stmts: ^[dynamic]Stmt, target: ^Expr_Index, prefix: string, span: Span,
+	k: ^Checker, stmts: ^[dynamic]Stmt, target: ^Expr_Index, prefix: string, span: Span, changing: Changed_Names,
 ) -> (receiver: string, index_names: []string) {
-	if !is_effect_free_place(target.operand) {
+	if !is_effect_free_place(target.operand) || reached_through_changing(target.operand, changing) {
 		receiver = concat(k.c, prefix, "receiver")
 		append(stmts, synth_decl(k.c, .Var, receiver, lowered_address(k, target.operand, span), span))
 	}
 	index_names = make([]string, len(target.indices), k.c.semantic_allocator)
 	for index, position in target.indices {
-		if needs_temporary(k, index) {
+		if needs_temporary(k, index, changing) {
 			index_names[position] = lowered_position_name(k, concat(k.c, prefix, "index"), position, "")
 			append(stmts, synth_decl(k.c, .Var, index_names[position], clone_expr(k.c, index), span))
 		}
@@ -588,12 +688,12 @@ bind_index_place :: proc(
 	return
 }
 
-// design.md "Evaluation order": what could read differently later is bound. That
-// includes a name of a scalar variable, read before the right operand or an
-// earlier write can change it. Copying one costs nothing; any other variable is
+// design.md "Evaluation order": what could read differently later is bound: what
+// has an effect, a name of a scalar variable, since copying one costs nothing,
+// and a name of any other variable `changing` may write. Any other variable is
 // read where it is used.
 @(private = "file")
-needs_temporary :: proc(k: ^Checker, e: Expr) -> bool {
+needs_temporary :: proc(k: ^Checker, e: Expr, changing := Changed_Names{}) -> bool {
 	if !lowered_pure(e) {
 		return true
 	}
@@ -602,41 +702,107 @@ needs_temporary :: proc(k: ^Checker, e: Expr) -> bool {
 		return false
 	}
 	sym := ident_symbol(k, ident)
-	return sym != nil && (sym.kind == .Var || sym.kind == .Parameter) && type_is_panic_free_scalar(k.c, sym.type)
+	if sym == nil || (sym.kind != .Var && sym.kind != .Parameter) {
+		return false
+	}
+	return type_is_panic_free_scalar(k.c, sym.type) || name_changes(ident, changing)
 }
 
-// design.md "Evaluation order": a multiple assignment with an `operator([]=)`
+// Whether `changing` may write the variable `name` names.
+@(private = "file")
+name_changes :: proc(name: ^Expr_Ident, changing: Changed_Names) -> bool {
+	for target in changing.written {
+		if root, is_root := written_root(target).(^Expr_Ident); is_root && root.name == name.name {
+			return true
+		}
+	}
+	return changing.within != nil && type_syntax_any_name(changing.within, name, proc(data: rawptr, node: Expr) -> bool {
+		named, is_name := node.(^Expr_Ident)
+		return is_name && named.name == (^Expr_Ident)(data).name
+	})
+}
+
+// Whether `place` is reached through a pointer held in a variable `changing`
+// may write, so its address is taken before that write.
+@(private = "file")
+reached_through_changing :: proc(place: Expr, changing: Changed_Names) -> bool {
+	#partial switch v in place {
+	case ^Expr_Selector:
+		return reached_through_changing(v.operand, changing)
+	case ^Expr_Index:
+		return reached_through_changing(v.operand, changing)
+	case ^Expr_Postfix:
+		if v.op != .Caret {
+			return false
+		}
+		if root, is_root := written_root(v.operand).(^Expr_Ident); is_root && name_changes(root, changing) {
+			return true
+		}
+		return reached_through_changing(v.operand, changing)
+	}
+	return false
+}
+
+// The variable a written destination stores into, or nil: its field and element
+// paths lead to it, and a dereference leads elsewhere.
+@(private = "file")
+written_root :: proc(e: Expr) -> Expr {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return e
+	case ^Expr_Selector:
+		return written_root(v.operand)
+	case ^Expr_Index:
+		return written_root(v.operand)
+	}
+	return nil
+}
+
+// design.md "Evaluation order": an assignment with an `operator([]=)`
 // destination is checked as the block
 //
-//     { v0 := a; v1 := b; r0 := &mut grid; i0 := i; r0^[i0] = v0; x = v1; }
+//     { v0: T0 = a; v1: T1 = b; r0 := &mut grid; i0 := i; r0^[i0] = v0; x = v1; }
 //
-// so every value is evaluated, then every destination's receiver and indices,
-// then each write, the setter call among them, from left to right. A
-// destination that is neither indexed nor an effect-free place is bound by
-// address, and a constant value is written where it is used.
+// so every value is evaluated, at the type its destination gives it, then every
+// destination's receiver and indices, then each write, the setter call among
+// them, from left to right. A destination that is neither indexed nor an
+// effect-free place, or is reached through a pointer another destination
+// rewrites, is bound by address, and a literal value is written where it is
+// used. A lone setter destination is checked as written, as its call,
+// unless both its value and its indices have effects to order.
 @(private = "file")
-lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
+lower_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	if !any_place_setter(k, s.lhs) {
 		return false
 	}
+	if len(s.lhs) == 1 && !setter_order_matters(k, s.lhs[0].(^Expr_Index), s.rhs[0]) {
+		return false
+	}
 	span := s.span
+	scope := new_scope(k.c, k.scope, .Local)
 	stmts := make([dynamic]Stmt, 0, 3 * len(s.lhs), k.c.semantic_allocator)
 	values := make([]Expr, len(s.rhs), context.temp_allocator)
 	for value, position in s.rhs {
-		if is_discard(s.lhs[position]) {
-			append(&stmts, synth_assign(k.c, {clone_expr(k.c, s.lhs[position])}, {clone_expr(k.c, value)}, s.op_span, span))
+		target := s.lhs[position]
+		if is_discard(target) {
+			append(&stmts, synth_assign(k.c, {clone_expr(k.c, target)}, {clone_expr(k.c, value)}, s.op_span, span))
 			continue
 		}
-		// A constant has no effect to order and keeps its unfixed type for
-		// its destination to settle (design.md "Implicit type conversions").
-		if lowered_constant(k, value) {
+		if lowered_literal(value) {
 			values[position] = clone_expr(k.c, value)
 			continue
 		}
+		// The destination gives the value its context, as it does written in
+		// place (design.md "Assignment statements").
 		name := lowered_position_name(k, "assign$value", position, "")
-		append(&stmts, synth_decl(k.c, .Var, name, clone_expr(k.c, value), span))
+		declared: Expr
+		if type := assigned_value_type(k, s.op_span, target, value); type != INVALID_TYPE {
+			declared = synth_type_name(k.c, scope, name, concat(k.c, name, "$type"), type, span)
+		}
+		append(&stmts, synth_decl(k.c, .Var, name, clone_expr(k.c, value), span, declared))
 		values[position] = synth_ident(k.c, name, span)
 	}
+	changing := Changed_Names{written = s.lhs}
 	destinations := make([]Expr, len(s.lhs), context.temp_allocator)
 	for target, position in s.lhs {
 		if is_discard(target) {
@@ -644,9 +810,9 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 		}
 		prefix := lowered_position_name(k, "assign$", position, "$")
 		if indexed, is_index := target.(^Expr_Index); is_index {
-			receiver, index_names := bind_index_place(k, &stmts, indexed, prefix, span)
+			receiver, index_names := bind_index_place(k, &stmts, indexed, prefix, span, changing)
 			destinations[position] = lowered_index(k, indexed, index_names, receiver, span)
-		} else if is_effect_free_place(target) {
+		} else if is_effect_free_place(target) && !reached_through_changing(target, changing) {
 			destinations[position] = clone_expr(k.c, target)
 		} else {
 			name := concat(k.c, prefix, "place")
@@ -659,8 +825,27 @@ lower_parallel_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 			append(&stmts, synth_assign(k.c, {destination}, {values[position]}, s.op_span, span))
 		}
 	}
-	check_lowered_block(k, s, stmts[:])
+	check_lowered_block(k, s, stmts[:], scope)
 	return true
+}
+
+// Whether `target = value` must hold its value before preparing the
+// destination: the value has an effect, or reads a scalar variable, and so does
+// the receiver or an index.
+@(private = "file")
+setter_order_matters :: proc(k: ^Checker, target: ^Expr_Index, value: Expr) -> bool {
+	if !needs_temporary(k, value) {
+		return false
+	}
+	if !is_effect_free_place(target.operand) {
+		return true
+	}
+	for index in target.indices {
+		if !lowered_pure(index) {
+			return true
+		}
+	}
+	return false
 }
 
 // design.md "Destructuring": a record filling destinations, one of them an
@@ -708,7 +893,7 @@ lower_destructuring_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool 
 	}
 	stmts := make([]Stmt, 2, k.c.semantic_allocator)
 	stmts[0], stmts[1] = take, synth_assign(k.c, destinations[:], values[:], s.op_span, span)
-	check_lowered_block(k, s, stmts)
+	check_lowered_block(k, s, stmts, new_scope(k.c, k.scope, .Local))
 	return true
 }
 
@@ -762,6 +947,14 @@ lowered_position_name :: proc(k: ^Checker, prefix: string, position: int, suffix
 @(private = "file")
 lowered_address :: proc(k: ^Checker, place: Expr, span: Span) -> Expr {
 	return synth_address(k.c, clone_expr(k.c, place), true, span)
+}
+
+// A literal or an implicit selector: it reads the same wherever it is written,
+// and its destination settles its type.
+@(private = "file")
+lowered_literal :: proc(e: Expr) -> bool {
+	_, is_literal := e.(^Expr_Literal)
+	return is_literal || is_implicit_selector(e)
 }
 
 @(private = "file")
@@ -947,6 +1140,19 @@ check_user_compound :: proc(
 			result.result == INVALID_TYPE ? "no value" : type_name(k.c, result.result),
 			type_name(k.c, type),
 		)
+		return true
+	}
+	// The result is converted as a value (`compound_result_as`); a view or a
+	// `dyn proc` would borrow the operator's temporary, which the written
+	// assignment keeps alive and this one has no node to keep.
+	erases := dyn_proc_signature(k.c, type) != INVALID_TYPE && !type_is_dyn(k.c, result.result)
+	if erases || type_views_as(k.c, result.result, type) {
+		errorf(
+			k.c, s.op_span, "L0417",
+			"`%s` produces `%s`, which a compound assignment cannot borrow as `%s`",
+			binary, type_name(k.c, result.result), type_name(k.c, type),
+		)
+		add_notef(k.c, NO_SPAN, "write the assignment out, as `x = x %s y`", binary)
 		return true
 	}
 	s.lhs[0], s.rhs[0] = bound[0], bound[1]

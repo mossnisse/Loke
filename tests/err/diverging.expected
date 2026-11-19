@@ -8,3 +8,6 @@ L0309
 @17:11
 this expression produces no value
 stands in for a value only where a type is expected
+L0365
+@22:9
+can end without returning a value

@@ -1,0 +1,40 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Distinct types": a distinct type inherits no operation, so a
+// distinct box or map answers `[]` and `in` with its own overloads, never the
+// built-in ones of the type it wraps.
+Boxed :: distinct Box([1]int);
+
+impl Boxed {
+	get :: operator([]) proc(self: Boxed, i: int) -> int { return 99; }
+}
+
+Counts :: distinct map[int]int;
+
+impl Counts {
+	holds :: operator(in) proc(key: int, self: Counts) -> bool { return key > 0; }
+}
+
+// design.md "Implicit selector expression": an index takes its parameter's
+// type as context when every overload agrees on it, counting one whose
+// trailing parameters have defaults.
+Direction :: enum { North, South }
+
+Table :: struct { base: int }
+
+impl Table {
+	get :: operator([]) proc(t: Table, d: Direction, step: int = 7) -> int {
+		return t.base + int(d) * 100 + step;
+	}
+}
+
+main :: proc() {
+	b := Boxed(box([1]int{5}));
+	fmt.println(b[0]);
+	c := Counts{};
+	fmt.println(3 in c, 0 in c);
+	t := Table{1000};
+	fmt.println(t[.North], t[.South], t[.South, 3]);
+}

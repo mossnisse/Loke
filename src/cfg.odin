@@ -1212,12 +1212,9 @@ walk_flow_decl_lifecycle :: proc(graph: ^Flow_Graph, d: ^Decl) {
 @(private = "file")
 note_required_write :: proc(graph: ^Flow_Graph, id: Symbol_Id, value: Expr) {
 	sym := symbol_of(graph.k.c, id)
-	call, is_call := value.(^Expr_Call)
-	if sym == nil || !sym.named || graph.current == NO_BLOCK || !is_call || prov_type(graph, call) == INVALID_TYPE {
+	call := producing_call(value)
+	if sym == nil || !sym.named || graph.current == NO_BLOCK || call == nil || prov_type(graph, call) == INVALID_TYPE {
 		return
-	}
-	if _, built := call.operation.(Call_Union_Construct); built {
-		return // `.err(code)` builds a value; no call produced it
 	}
 	if source, required := required_result_of_call(graph.k, call); required {
 		event := len(graph.blocks[graph.current].events) - 1

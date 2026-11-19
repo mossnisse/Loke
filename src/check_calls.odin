@@ -320,6 +320,19 @@ report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 	}
 }
 
+// design.md "@(require_results)": the call whose result `value` is, or nil. A
+// value built in place, such as `.err(code)`, was produced by no call.
+producing_call :: proc(value: Expr) -> ^Expr_Call {
+	call, is_call := value.(^Expr_Call)
+	if !is_call {
+		return nil
+	}
+	if _, built := call.operation.(Call_Union_Construct); built {
+		return nil
+	}
+	return call
+}
+
 // Whether a call's result must be handled, and the declaration or group that
 // says so; an empty name means the result type requires it.
 required_result_of_call :: proc(k: ^Checker, call: ^Expr_Call) -> (name: string, required: bool) {
@@ -565,8 +578,7 @@ report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
 // reported.
 @(private = "file")
 check_inout_place :: proc(k: ^Checker, value: Expr, span: Span, subject: string) -> bool {
-	if field, packed := packed_field_reached(k, value); packed {
-		errorf(k.c, span, "L0614", "cannot take the address of `%s`: it is reached through a packed struct", field)
+	if reject_packed_place(k, value, span, "take the address of") {
 		return false
 	}
 	base := expr_base(value)
@@ -579,8 +591,7 @@ check_inout_place :: proc(k: ^Checker, value: Expr, span: Span, subject: string)
 
 check_bound_argument_mode :: proc(k: ^Checker, value: Expr, target: Type_Id, mode: Param_Mode, subject: string) -> bool {
 	if mode == .Borrow {
-		if field, packed := packed_field_reached(k, value); packed {
-			errorf(k.c, expr_span(value), "L0614", "cannot borrow `%s`: it is reached through a packed struct", field)
+		if reject_packed_place(k, value, expr_span(value), "borrow") {
 			return false
 		}
 		request_materialization(k, value)

@@ -54,6 +54,20 @@ checklist.
   narrow := linalg.Vector3(f32).from_vector(v);  // before
   narrow := linalg.Vector3(f32)(v);              // after
   ```
+- A fixed array reached through a `@(packed)` struct no longer converts implicitly to a slice,
+  and a packed field is not lent to a `..^T` pack ([`@(packed)`](docs/design.md#packed)). With
+  `@(packed) H :: struct { tag: u8, data: [1]int }`, `h.data[:]` was already `L0614`, but
+  `s: []int = h.data;`, passing `h.data` to a `[]int` parameter, and passing a packed field to a
+  `..^int` pack compiled and handed over a misaligned address that was then read at the
+  element's alignment, as the methods of a `[1]sync.Atomic(u64)` field's slice were. Each is now
+  `L0614`. Upgrade by copying the array or field into a local and viewing that.
+- A distinct type over a map or a `Box` has neither built-in `in` nor built-in `[]`
+  ([Distinct types](docs/design.md#distinct-types)). `key in m` for `M :: distinct map[int]int`
+  ran the map's membership test, even when `M` declared its own `operator(in)`, and indexing a
+  distinct `Box([1]int)` reached the payload ahead of its own `operator([])`. Each now calls the
+  type's overload, and without one is `L0587` or `L0362`, as other operations a distinct type
+  does not bring over are. Upgrade by declaring the operator, or by converting to the underlying
+  type where the operation is used.
 
 ### Fixed
 
@@ -137,6 +151,28 @@ checklist.
   which an index must not be (`L0372`), and as `offset_of`'s field or `build_config`'s name it is
   the name written ([Capture literals](docs/design.md#capture-literals)). They were `L0716`,
   `L0386`, and `L0388`.
+- A compound assignment that falls back to a binary operator converts the operator's result to
+  the destination as the assignment does ([Operator declarations](docs/design.md#operator-declarations)):
+  a narrower union takes the destination's tags ([Widening by label](docs/design.md#widening-by-label)),
+  and a scalar fills every lane of a SIMD destination. Both emitted IR that clang rejected. A result
+  the destination would only view, a `string` stored in a `string_view` or a `[N]T` in a `[]T`, or a
+  procedure stored in a `dyn proc`, is `L0417` rather than invalid IR; the written `x = x + y` keeps
+  its temporary.
+- Assignment through `operator([]=)` follows [Evaluation order](docs/design.md#evaluation-order).
+  `g[index()] = value();` called `index()` first; a multiple assignment such as
+  `key, names[key] = "new", 8;` passed the key the earlier write had replaced, and
+  `names[key] += rename(inout key);` the one the right operand had; and `p, p^, g[0] = &mut b, 8, 9;`
+  wrote through the new pointer. Each value of such an assignment also takes its destination's type,
+  so `g[0], r = 7, {1};` no longer reports `L0376`.
+- An index takes its parameter's type as context when an `operator([])` with defaulted trailing
+  parameters is a candidate ([Implicit selector expression](docs/design.md#implicit-selector-expression)):
+  `t[.North]` was `L0385` for `operator([]) proc(t: Table, d: Direction, j: int = 7) -> int`.
+- A union value built in place, such as `x: Status = .bad(1);`, is no longer reported unread as a
+  required result (`L0698`): only a call produces one ([`@(require_results)`](docs/design.md#require_results)).
+- A statement that always evaluates a diverging call ends its path wherever the call is in it
+  ([Diverging procedures](docs/design.md#diverging-procedures)), so a body ending in `a = fail();`,
+  `b: int = fail();`, or `f(fail());` no longer reports `L0365`. The right of `&&` and `||`, an
+  `or_else` fallback, and a conditional's arms may not run, so they do not count.
 
 
 ## [0.10.0] - 2026-11-16

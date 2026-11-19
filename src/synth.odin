@@ -119,14 +119,21 @@ synth_assign :: proc(c: ^Compiler, lhs, rhs: []Expr, op_span, span: Span) -> ^St
 	return assign
 }
 
+// A name for `type` that only `scope` binds, written where a type is: `text` is
+// how it reads, and `name`, which no source can spell, how it resolves.
+synth_type_name :: proc(c: ^Compiler, scope: ^Scope, text, name: string, type: Type_Id, span: Span) -> Expr {
+	alias := intern_identifier(c, name)
+	scope.names[alias] = new_associated_type(c, text, type, INVALID_TYPE)
+	return synth_ident_as(c, text, alias, span)
+}
+
 // A record field whose type is bound to a name only the current scope has.
 synth_record_field :: proc(k: ^Checker, alias_prefix: string, index: int, name: Name, type: Type_Id, span: Span) -> Field {
 	c := k.c
-	alias := intern_identifier(c, fmt.tprintf("%s$%d", alias_prefix, index))
-	k.scope.names[alias] = new_associated_type(c, alias_prefix, type, INVALID_TYPE)
 	names := make([]Name, 1, c.semantic_allocator)
 	names[0] = name
-	return Field{span = span, names = names, type = synth_ident_as(c, alias_prefix, alias, span)}
+	type_name := synth_type_name(c, k.scope, alias_prefix, fmt.tprintf("%s$%d", alias_prefix, index), type, span)
+	return Field{span = span, names = names, type = type_name}
 }
 
 // A struct declared in the current scope, or INVALID_TYPE once reported.

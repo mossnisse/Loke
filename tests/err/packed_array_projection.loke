@@ -1,15 +1,36 @@
 package main;
 
+import "core:sync";
+
 // design.md "@(packed)" and "Address operator": an element of an array inside
 // a packed struct may be misaligned, so neither `&` nor slicing exposes it.
-@(packed) Packed :: struct { tag: u8, data: [1]int, nested: [1][1]int }
+// An implicit `[N]T` -> `[]T` view is a slice too, and a `..^T` pack lends
+// the place itself. A dynamic array's elements are separate storage.
+@(packed) Packed :: struct { tag: u8, data: [1]int, nested: [1][1]int, list: [dynamic]int }
+
+@(packed, align = 8) Holder :: struct { tag: u8, data: [1]sync.Atomic(u64) }
+
+first :: proc(values: []int) -> int { return values[0]; }
+
+lent :: proc(values: ..^int) -> int { return values[0]^; }
 
 main :: proc() {
-	p := Packed{1, {42}, {{7}}};
+	p := Packed{1, {42}, {{7}}, {}};
 	element := &p.data[0];
 	deeper := &p.nested[0][0];
 	view := p.data[:];
+	implicit: []int = p.data;
+	passed := first(p.data);
+	pointed := lent(p.data[0]);
+	separate: []int = p.list;
+	h: Holder = {};
+	atomics: []sync.Atomic(u64) = h.data;
 	_ = element;
 	_ = deeper;
 	_ = view;
+	_ = implicit;
+	_ = passed;
+	_ = pointed;
+	_ = separate;
+	_ = atomics;
 }
