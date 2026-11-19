@@ -225,7 +225,7 @@ reject_builtin_argument_shape :: proc(k: ^Checker, arg: Argument) {
 
 builtin_arguments_ok :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 	for arg in v.args {
-		if arg.name.text != "" || arg.mode != .Value {
+		if !argument_is_plain(arg) {
 			reject_builtin_argument_shape(k, arg)
 			return false
 		}
@@ -233,9 +233,14 @@ builtin_arguments_ok :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
 	return true
 }
 
-// One value, written by position with no marker.
+// A value written by position with no marker.
+@(private = "file")
+argument_is_plain :: proc(arg: Argument) -> bool {
+	return arg.name.text == "" && arg.mode == .Value
+}
+
 has_one_plain_argument :: proc(v: ^Expr_Call) -> bool {
-	return len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value
+	return len(v.args) == 1 && argument_is_plain(v.args[0])
 }
 
 // Whether the call passes exactly `wanted` positional values, reporting the
@@ -587,6 +592,10 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 			return
 		}
 		field := field_named(k.c, operand, intern_identifier(k.c, name.name))
+		// An enum's members share its `fields` list but have no storage.
+		if member := symbol_of(k.c, field); member != nil && member.kind != .Field {
+			field = INVALID_SYMBOL
+		}
 		if field == INVALID_SYMBOL {
 			errorf(k.c, name.span, "L0363", "`%s` has no field `%s`", type_name(k.c, operand), name.name)
 			return
@@ -747,12 +756,23 @@ check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) 
 	   !transmute_side_ok(k, target, expr_span(v.args[0].value), "destination") {
 		return
 	}
-	if type_size(k.c, source) != type_size(k.c, target) {
+	// design.md "Procedure type": a procedure value is a code pointer, and a
+	// pointer destination is `rawptr` or a C pointer.
+	if underlying_kind(k.c, target) == .Proc {
+		errorf(
+			k.c, expr_span(v.args[0].value), "L0688",
+			"`unsafe.transmute` cannot make the code pointer `%s`; a pointer destination is `rawptr` or a C pointer",
+			type_name(k.c, target),
+		)
+		return
+	}
+	source_size, target_size := type_size(k.c, source), type_size(k.c, target)
+	if source_size != target_size {
 		errorf(
 			k.c, v.span, "L0688",
 			"`unsafe.transmute` needs equal sizes: `%s` is %d byte%s and `%s` is %d byte%s",
-			type_name(k.c, source), type_size(k.c, source), type_size(k.c, source) == 1 ? "" : "s",
-			type_name(k.c, target), type_size(k.c, target), type_size(k.c, target) == 1 ? "" : "s",
+			type_name(k.c, source), source_size, source_size == 1 ? "" : "s",
+			type_name(k.c, target), target_size, target_size == 1 ? "" : "s",
 		)
 		return
 	}
@@ -1021,6 +1041,8 @@ check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Bui
 	}
 	span, procedure := v.span, proc_literal_name(k.c, k.proc_literal)
 	switch {
+	case len(v.args) == 0 && kind == .Caller_Location && k.caller != nil:
+		span, procedure = k.caller.span, k.caller.procedure
 	case len(v.args) == 0:
 	case kind == .Caller_Location:
 		errorf(k.c, v.span, "L0573", "`caller_location` takes no arguments, found %d", len(v.args))
@@ -1074,48 +1096,92 @@ proc_literal_name :: proc(c: ^Compiler, literal: ^Expr_Proc) -> string {
 // it, if any.
 @(private = "file")
 entity_declaration :: proc(k: ^Checker, e: Expr) -> (span: Span, procedure: string, ok: bool) {
-	if ident, is_ident := e.(^Expr_Ident); is_ident {
-		symbol_id, scope := lookup_symbol_with_scope(k.scope, identifier_of(k.c, ident))
-		if sym := symbol_of(k.c, symbol_id); sym != nil {
-			// design.md "Test procedures": naming a test is an error here too.
-			if reject_test_procedure_use(k, sym, ident.name, ident.span) {
-				return
-			}
-			#partial switch sym.kind {
-			case .Proc, .Proc_Group:
-				return sym.span, identifier_text(k.c, sym.name), true
-			case .Var, .Parameter:
-				return sym.span, proc_literal_name(k.c, (^Expr_Proc)(scope.owner_proc)), true
-			}
+	symbol_id, scope := INVALID_SYMBOL, (^Scope)(nil)
+	#partial switch v in e {
+	case ^Expr_Ident:
+		symbol_id, scope = lookup_symbol_with_scope(k.scope, identifier_of(k.c, v))
+	case ^Expr_Selector:
+		// An imported package's public declaration, `dependency.greet`.
+		symbol_id = named_callee_symbol(k, v)
+	}
+	if sym := symbol_of(k.c, symbol_id); sym != nil {
+		// design.md "Test procedures": naming a test is an error here too.
+		if reject_test_procedure_use(k, sym, source_text(k.c, e), expr_span(e)) {
+			return
+		}
+		#partial switch sym.kind {
+		case .Proc, .Proc_Group:
+			return sym.span, identifier_text(k.c, sym.name), true
+		case .Var, .Parameter:
+			// A package's variable is in no procedure.
+			owner := scope == nil ? nil : (^Expr_Proc)(scope.owner_proc)
+			return sym.span, proc_literal_name(k.c, owner), true
 		}
 	}
 	errorf(k.c, expr_span(e), "L0573", "`source_location` takes the name of a variable or a procedure")
 	return
 }
 
-// An omitted argument whose default is `caller_location()`, folded for *this*
-// call. Any other default passes through untouched.
-substitute_caller_location :: proc(k: ^Checker, default: Expr, at: Span) -> Expr {
-	call, is_call := default.(^Expr_Call)
-	if !is_call || call.type == INVALID_TYPE {
+// The default of `callee`'s parameter `index` for a call at `at` that omits it.
+// One holding `caller_location()` is folded for *this* call (design.md
+// "`caller_location()`"); any other passes through untouched.
+substitute_caller_location :: proc(k: ^Checker, callee: ^Symbol, index: int, at: Span) -> Expr {
+	default := callee.param_defaults[index]
+	caller := Caller_Site{at, proc_literal_name(k.c, k.proc_literal)}
+	if call, is_call := default.(^Expr_Call); is_call && call.type != INVALID_TYPE && is_caller_location(k.c, call) {
+		substituted := new(Expr_Call, k.c.semantic_allocator)
+		substituted^ = call^
+		substituted.span = at
+		substituted.const_value = source_location_const(k, call.type, at, caller.procedure)
+		return substituted
+	}
+	// Nested, as in `caller_location().line`, it has folded into what holds it,
+	// so the default is checked again for this call. Only a constant one: any
+	// other is evaluated beside the callee's parameters, which only the default
+	// as declared is.
+	if callee.decl == nil || !base_is_const(expr_base(default)) || !holds_caller_location(k.c, default) {
 		return default
 	}
-	sym := symbol_of(k.c, call.resolution.symbol)
-	if sym == nil || sym.kind != .Builtin || sym.builtin != .Caller_Location {
+	literal := decl_proc_literal(callee.decl)
+	if literal == nil {
 		return default
 	}
-	substituted := new(Expr_Call, k.c.semantic_allocator)
-	substituted^ = call^
-	substituted.span = at
-	substituted.const_value = source_location_const(k, call.type, at, proc_literal_name(k.c, k.proc_literal))
-	return substituted
+	saved := k.location
+	defer k.location = saved
+	enter_symbol_location(k, callee)
+	enter_procedure_body(k, literal, callee)
+	install_symbols(k.scope, k.c, callee.param_symbols[:index])
+	k.body.caller = &caller
+	clone := clone_expr(k.c, default)
+	probe := begin_probe(k.c)
+	check_value_expr(k, clone, callee.params[index], "pass")
+	clean := len(k.c.diagnostics) == probe.diagnostics
+	end_probe(k.c, probe)
+	return clean && base_is_const(expr_base(clone)) ? clone : default
+}
+
+@(private = "file")
+is_caller_location :: proc(c: ^Compiler, call: ^Expr_Call) -> bool {
+	sym := symbol_of(c, call.resolution.symbol)
+	return sym != nil && sym.kind == .Builtin && sym.builtin == .Caller_Location
+}
+
+@(private = "file")
+holds_caller_location :: proc(c: ^Compiler, e: Expr) -> bool {
+	if call, is_call := e.(^Expr_Call); is_call && is_caller_location(c, call) {
+		return true
+	}
+	return expr_children(e, c, proc(data: rawptr, child: Expr) -> bool {
+		return child != nil && holds_caller_location((^Compiler)(data), child)
+	})
 }
 
 // ------------------------------------------------------ runtime metadata --
 
 // design.md "`type` and `typeid`": `type_info_of(id)` maps a runtime `typeid` to
-// a read-only `^runtime.Type_Info` from a shared static table, nil for any id
-// without an entry, since a `typeid` can be forged.
+// a read-only `^runtime.Type_Info` from a shared static table. A `typeid` can
+// be forged, so the zero id and any id without an entry answer the table's
+// entry zero, whose kind is `Invalid`.
 @(private = "file")
 check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	if !builtin_arity_ok(k, v, ident, "L0322", 1) {

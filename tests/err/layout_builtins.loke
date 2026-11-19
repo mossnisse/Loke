@@ -12,4 +12,8 @@ main :: proc() {
 	// stays silent, so a broken array length is one complaint rather than one per
 	// reading.
 	fmt.println(size_of([absent]i32));
+	// An enum's member is a value, not a field with an offset.
+	fmt.println(offset_of(Colour, Green));
 }
+
+Colour :: enum { Red, Green }

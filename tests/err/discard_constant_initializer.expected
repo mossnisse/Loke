@@ -1,0 +1,6 @@
+L0341
+@6:6
+`seed` is a mutable variable and cannot be read at compile time
+L0341
+@11:7
+`local` is a mutable variable and cannot be read at compile time

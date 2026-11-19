@@ -13,4 +13,6 @@ main :: proc() {
 	fmt.println(1 if VERBOSE else 0);
 	fmt.println(MODE.len());
 	fmt.println((MODE + "/" + MODE).len());
+	// A contextual keyword is a name here, so it can be configured.
+	fmt.println(build_config(where, 0));
 }

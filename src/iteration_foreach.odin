@@ -451,10 +451,10 @@ check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	outer_header, outer_broken := k.loop_header, k.loop_broken
 	k.loop_header, k.loop_broken = false, false
 	k.loop_depth += 1
-	body := check_scoped_block(k, s.body)
+	check_scoped_block(k, s.body)
 	k.loop_depth -= 1
 	k.loop_header, k.loop_broken = outer_header, outer_broken
-	return Flow_Info{can_fall_through = true, returns = body.returns}
+	return FLOWS
 }
 
 @(private = "file")

@@ -536,7 +536,8 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 
 // A place copied into a trivial aggregate `value: T` parameter is a copy site; a
 // managed one is borrowed for the call (design.md). Operations that read no
-// arguments, or report their own copies, are skipped.
+// arguments, or report their own copies, are skipped, as is every built-in: it
+// declares no parameters, and checks its operands itself.
 @(private = "file")
 report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
 	#partial switch operation in v.operation {
@@ -547,10 +548,7 @@ report_argument_copies :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 	sym := symbol_of(k.c, v.resolution.symbol)
 	if sym != nil && sym.kind == .Builtin {
-		#partial switch sym.builtin {
-		case .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Is_Union, .Type_Of, .Source_Location, .Exchange, .Unsafe_Take, .Unsafe_Write, .Unsafe_Storage, .Drop:
-			return
-		}
+		return
 	}
 	info := underlying_info(k.c, call_proc_type(k.c, v))
 	if info == nil {
@@ -747,7 +745,7 @@ fill_defaults :: proc(
 			}
 			return false
 		}
-		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
+		bound[index] = substitute_caller_location(k, declared, index, v.span)
 		append(order, index)
 	}
 	return true
@@ -947,7 +945,7 @@ bind_candidate_slots :: proc(k: ^Checker, cand: Candidate, sym: ^Symbol, span: S
 	}
 	for slot in 0 ..< len(bound) {
 		if !cand.filled[slot] {
-			bound[slot] = substitute_caller_location(k, sym.param_defaults[slot], span)
+			bound[slot] = substitute_caller_location(k, sym, slot, span)
 		}
 	}
 	return bound, ok

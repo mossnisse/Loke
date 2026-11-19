@@ -1,0 +1,3 @@
+L0364
+@13:6
+`Bad(int)` contains itself by value: Bad(int) -> Bad(int)

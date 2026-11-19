@@ -1,0 +1,13 @@
+// design.md "`source_location() or source_location(<entity>)`": an imported
+// package's procedure is named through its package, and the location is its
+// declaration's.
+package main;
+import "core:fmt";
+import "./dependency";
+
+main :: proc() {
+	greeting := source_location(dependency.greet);
+	fmt.println(greeting.line, greeting.procedure);
+	group := source_location(dependency.Shout);
+	fmt.println(group.line, group.procedure);
+}

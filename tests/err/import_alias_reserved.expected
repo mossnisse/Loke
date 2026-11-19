@@ -1,0 +1,6 @@
+L0700
+@5:1
+`true` spells a literal, so it cannot be declared
+L0700
+@6:1
+`nil` spells a literal, so it cannot be declared

@@ -1,0 +1,5 @@
+package main;
+
+// A keyword cannot name a `-define` value: `build_config(if, 0)` cannot be
+// written to read it. A contextual keyword can (`tests/run/m3_config.loke`).
+main :: proc() {}

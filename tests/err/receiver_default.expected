@@ -1,0 +1,6 @@
+L0408
+@9:26
+a `self: ^` receiver borrows the caller's value, so it takes no default
+L0322
+@18:6
+missing an argument for `self`

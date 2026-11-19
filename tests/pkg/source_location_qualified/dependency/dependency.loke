@@ -1,0 +1,7 @@
+package dependency;
+
+@(public)
+greet :: proc() {}
+
+@(public)
+Shout :: proc{greet};

@@ -1236,19 +1236,6 @@ bind_generic_name :: proc(k: ^Checker, scope: ^Scope, binding: Generic_Binding) 
 	scope.names[binding.name] = new_symbol(k.c, sym)
 }
 
-// The constant a `[$N]E` length is bound to inside an instance.
-poly_array_length :: proc(k: ^Checker, poly: ^Type_Poly) -> (u64, bool) {
-	sym := symbol_of(k.c, lookup_symbol(k.scope, name_identifier(k.c, poly.name)))
-	if sym == nil || sym.kind != .Const || sym.const_value.kind != .Integer {
-		return 0, false
-	}
-	length, fits := bi_to_i64(k.c, sym.const_value.integer)
-	if !fits || length < 0 {
-		return 0, false
-	}
-	return u64(length), true
-}
-
 // -------------------------------------------------------- pattern matching --
 
 // design.md "Dynamic arrays" and "Fixed arrays": a `[dynamic]T` or `[N]T`
@@ -2401,6 +2388,9 @@ instantiate_record_body :: proc(
 	k.body.bounds, k.body.bounds_set = nil, false
 	apply_type_metadata(k, clone, type)
 	clone.sig_state = .Checked
+	// A record containing itself by value is one of those errors.
+	path := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
+	check_finite_size(k, type, template.decl.span, &path)
 	if report && len(k.c.diagnostics) > before {
 		note_instantiation_stack(k, before)
 	}
@@ -2412,14 +2402,11 @@ instantiate_record_body :: proc(
 		// Emptied like an instance whose bound failed, since the backend defines
 		// every record in the type store.
 		if info := type_of(k.c, type); info != nil {
-			info.fields = nil
+			info.fields, info.variants = nil, nil
 		}
 		instance.signature_ok = false
 		return false
 	}
-
-	path := make([dynamic]Type_Id, 0, 8, context.temp_allocator)
-	check_finite_size(k, type, template.decl.span, &path)
 
 	append(&template.instances, instance)
 	pend_template_private_read(k, template, instance.scope)

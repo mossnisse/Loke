@@ -27,3 +27,15 @@ switch_break :: proc(n: int) {
 	case:
 	}
 }
+
+// Reported where written, even where nothing reaches it; a loop inside the
+// deferred code is a target its `break` may leave.
+unreachable_exit :: proc() {
+	for (i := 0; i < 2; i += 1) {
+		defer {
+			for (;;) { break; }
+			panic("stop");
+			continue;
+		}
+	}
+}

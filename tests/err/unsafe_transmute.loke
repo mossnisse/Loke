@@ -28,6 +28,10 @@ references :: proc(slice: []int) {
 	address := unsafe.transmute(^int, uint(0));
 	number := unsafe.transmute(uint, pointer);
 	parts := unsafe.transmute(u64, slice);
+	// design.md "Procedure type": a procedure value is a code pointer, which a
+	// pointer destination is not; reading one's bits is a source.
+	code := unsafe.transmute(proc(), uintptr(1));
+	bits := unsafe.transmute(uintptr, main);
 }
 
 invalid_constants :: proc() {

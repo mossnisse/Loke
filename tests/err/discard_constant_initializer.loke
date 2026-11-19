@@ -1,0 +1,12 @@
+// design.md "Constant declarations": a constant's value is known at compile
+// time, even one the discard `_` binds no name to.
+package main;
+
+seed: int = 7;
+_ :: seed;
+_ :: 3 + 4;
+
+main :: proc() {
+	local := 1;
+	_ :: local;
+}

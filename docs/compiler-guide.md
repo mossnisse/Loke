@@ -224,7 +224,9 @@ level: `-print-toolchain -cpu=<level>` prints the `-march` and
 
 `-define` supplies values read by `build_config(NAME, default)` in source; it is
 not a textual macro. Values are parsed as `true`/`false`, integers, or otherwise
-strings. A name may be defined only once per invocation. Quote the whole option
+strings. A name may be defined only once per invocation, and is an identifier
+that is not a reserved [keyword](grammar.md#keywords), since `build_config`
+could not name one; a contextual keyword such as `where` is a name. Quote the whole option
 when its value contains spaces, for example `'-define:APP_NAME=My App'`.
 
 The compile-time example uses `build_config(SIEVE_LIMIT, 50)`:

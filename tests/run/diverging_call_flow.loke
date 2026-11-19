@@ -20,6 +20,22 @@ guarded :: proc(bad: bool) -> int {
     return result;
 }
 
+// A `break` nothing reaches, after a `panic`, does not end the loop, so the
+// procedure still cannot reach its end.
+spin :: proc() -> ! {
+    for (;;) {
+        panic("stop");
+        break;
+    }
+}
+
+spin_or_else :: proc(value: Option(int)) -> ! {
+    for (;;) {
+        panic("stop");
+        _ = value or_else break;
+    }
+}
+
 main :: proc() {
     check(false);
     fmt.println(guarded(false));

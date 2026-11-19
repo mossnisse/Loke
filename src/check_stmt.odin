@@ -65,7 +65,12 @@ check_stmt_sequence :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 	k.body.following = &following
 	for stmt, index in stmts {
 		following.stmts = stmts[index + 1:]
+		reachable, broken := flow.can_fall_through, k.loop_broken
 		flow_then(&flow, check_stmt(k, stmt))
+		// An `or_else break` nothing reaches ends no loop either.
+		if !reachable {
+			k.loop_broken = broken
+		}
 	}
 	return flow
 }
@@ -147,6 +152,11 @@ hoist_body_local_proc :: proc(k: ^Checker, d: ^Decl) {
 // The package phases, in the same order, for a declaration in a body: one
 // written there, or a capture literal's record.
 check_local_declaration :: proc(k: ^Checker, d: ^Decl) {
+	// design.md "Receiver forms": a procedure declared in a method's body is no
+	// member of its block, so `self` there is an ordinary parameter.
+	outer_impl := k.impl_type
+	k.impl_type = INVALID_TYPE
+	defer k.impl_type = outer_impl
 	// design.md "Capture literals": a capture runs where the literal is
 	// evaluated, so a capture literal is a runtime value, never a constant.
 	if d.kind == .Const {
@@ -1327,10 +1337,7 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 	// `for (;;)` without a `break` never falls out of the loop; an `or_else`
 	// exit in its body is one (design.md "or_else expression").
 	infinite := s.cond == nil
-	return Flow_Info {
-		can_fall_through = !infinite || body.breaks || broken,
-		returns          = body.returns,
-	}
+	return Flow_Info{can_fall_through = !infinite || body.breaks || broken}
 }
 
 // design.md "defer statement": deferred code runs on the way out of its own
@@ -1363,25 +1370,25 @@ check_defer :: proc(k: ^Checker, s: ^Stmt_Defer) -> Flow_Info {
 	k.defer_slots += 1
 	k.in_defer = true
 	k.defer_loop_depth = k.loop_depth
-	flow := check_stmt(k, s.stmt)
+	check_stmt(k, s.stmt)
 	k.in_defer = false
-
-	if flow.returns {
-		errorf(k.c, s.span, "L0369", "a deferred statement cannot `return`")
-	}
-	if flow.breaks || flow.continues {
-		errorf(k.c, s.span, "L0369", "a deferred statement cannot leave the construct it is registered in")
-	}
 	return FLOWS
+}
+
+// design.md "defer statement": a `break` or `continue` in deferred code may
+// only leave a loop that is itself inside the deferred code. Reported even
+// where nothing reaches it.
+branch_leaves_defer :: proc(k: ^Checker) -> bool {
+	return k.in_defer && k.loop_depth <= k.defer_loop_depth
 }
 
 @(private = "file")
 check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
+	terminated := Flow_Info{}
 	if k.in_defer {
-		// Reported by `check_defer` from the flow summary; nothing to add here.
-		return Flow_Info{returns = true}
+		errorf(k.c, s.span, "L0369", "a deferred statement cannot `return`")
+		return terminated
 	}
-	terminated := Flow_Info{returns = true}
 
 	if result := k.proc_literal.signature.result; result != nil && result.diverges {
 		errorf(k.c, s.span, "L0710", "this procedure is declared `-> !`, so it cannot `return`")
@@ -1489,5 +1496,9 @@ check_branch :: proc(k: ^Checker, s: ^Stmt_Branch) -> Flow_Info {
 		}
 		return FLOWS
 	}
-	return s.kind == .Break ? Flow_Info{breaks = true} : Flow_Info{continues = true}
+	if branch_leaves_defer(k) {
+		errorf(k.c, s.span, "L0369", "a deferred statement cannot leave the construct it is registered in")
+		return FLOWS
+	}
+	return Flow_Info{breaks = s.kind == .Break}
 }

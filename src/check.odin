@@ -4,7 +4,6 @@
 // (compiler-architecture.md "One annotated AST").
 package lokec
 
-import "core:slice"
 import "core:strings"
 
 Checker :: struct {
@@ -106,6 +105,14 @@ Body_Context :: struct {
 	// The statements still to come in the current scope, for
 	// `hoist_local_lifecycle_hooks`.
 	following:         ^Following_Stmts,
+	// The call a default is checked again for, whose site `caller_location()`
+	// names (`substitute_caller_location`).
+	caller:            ^Caller_Site,
+}
+
+Caller_Site :: struct {
+	span:      Span,
+	procedure: string,
 }
 
 // What follows a statement: the rest of its sequence and, in a selected `when`
@@ -115,29 +122,29 @@ Following_Stmts :: struct {
 	outer: ^Following_Stmts,
 }
 
-// What a statement can do to control flow.
+// What a statement can do to control flow. A `return` or `continue` in a
+// `defer` is rejected where it is written (`check_return`, `check_branch`), so
+// only a `break`, which ends its loop, is summarized.
 Flow_Info :: struct {
 	can_fall_through: bool,
-	returns:          bool,
 	breaks:           bool,
-	continues:        bool,
 }
 
 FLOWS :: Flow_Info{can_fall_through = true}
 
-// `next` runs after what `flow` summarizes.
+// `next` runs after what `flow` summarizes. Nothing reaches it when `flow`
+// cannot fall through, so a `break` after a `panic` ends no loop (design.md
+// "Diverging procedures").
 flow_then :: proc(flow: ^Flow_Info, next: Flow_Info) {
-	flow.returns ||= next.returns
-	flow.breaks ||= next.breaks
-	flow.continues ||= next.continues
-	flow.can_fall_through = flow.can_fall_through && next.can_fall_through
+	if flow.can_fall_through {
+		flow.breaks ||= next.breaks
+	}
+	flow.can_fall_through &&= next.can_fall_through
 }
 
 // `other` may run instead of what `flow` summarizes.
 flow_either :: proc(flow: ^Flow_Info, other: Flow_Info) {
-	flow.returns ||= other.returns
 	flow.breaks ||= other.breaks
-	flow.continues ||= other.continues
 	flow.can_fall_through ||= other.can_fall_through
 }
 
@@ -198,7 +205,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	pending := make(map[Package_Id]bool, 8, context.temp_allocator)
 	resolved := make([dynamic]Pending_Block, 0, 8, context.temp_allocator)
 	for file in pkg.files {
-		k.file, k.file_node = file.file, file
+		enter_package_file(k, pkg, file)
 		for item in file.active_items {
 			impl, ok := item.(^Item_Impl)
 			if !ok || impl.declared {
@@ -252,6 +259,10 @@ bind_import_aliases :: proc(k: ^Checker, pkg: ^Package) {
 			continue
 		}
 		name := intern_identifier(k.c, edge.alias)
+		// design.md "Predeclared names": an alias is a declaration a lookup reaches.
+		if reject_reserved_name(k, name, edge.span) {
+			continue
+		}
 		if existing, bound := pkg.scope.names[name]; bound {
 			symbol := symbol_of(k.c, existing)
 			if symbol != nil && symbol.kind == .Package_Alias && symbol.pkg == edge.target {
@@ -353,7 +364,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 // Each active item of a package, located in its file and the package's scope.
 for_each_package_item :: proc(k: ^Checker, pkg: ^Package, visit: proc(k: ^Checker, item: Item)) {
 	for file in pkg.files {
-		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		enter_package_file(k, pkg, file)
 		for item in file.active_items {
 			visit(k, item)
 		}
@@ -364,13 +375,18 @@ for_each_package_item :: proc(k: ^Checker, pkg: ^Package, visit: proc(k: ^Checke
 @(private = "file")
 for_each_package_decl :: proc(k: ^Checker, pkg: ^Package, visit: proc(k: ^Checker, d: ^Decl)) {
 	for file in pkg.files {
-		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		enter_package_file(k, pkg, file)
 		for item in file.active_items {
 			if d, ok := item.(^Decl); ok {
 				visit(k, d)
 			}
 		}
 	}
+}
+
+@(private = "file")
+enter_package_file :: proc(k: ^Checker, pkg: ^Package, file: ^File) {
+	k.file, k.file_node, k.scope = file.file, file, pkg.scope
 }
 
 // The parts of declarations that waited for every record's fields.
@@ -599,6 +615,9 @@ in_generic_signature :: proc(k: ^Checker) -> bool {
 
 // ---------------------------------------------------------- signatures --
 
+// Positions the checker where `sym` is declared. Its `impl` subject is the
+// block's, `subject` when the caller knows the instance, and none for a
+// declaration outside a block, whichever block the caller was checking.
 enter_symbol_location :: proc(k: ^Checker, sym: ^Symbol, subject := INVALID_TYPE) {
 	if sym == nil {
 		return
@@ -613,9 +632,7 @@ enter_symbol_location :: proc(k: ^Checker, sym: ^Symbol, subject := INVALID_TYPE
 		k.pkg = sym.pkg
 		k.lookup_pkg = sym.lookup_pkg == INVALID_PACKAGE ? sym.pkg : sym.lookup_pkg
 	}
-	if subject != INVALID_TYPE {
-		k.impl_type = subject
-	}
+	k.impl_type = subject != INVALID_TYPE ? subject : sym.owner_type
 }
 
 resolve_symbol_signature_in_place :: proc(k: ^Checker, symbol_id: Symbol_Id, subject := INVALID_TYPE) {
@@ -661,7 +678,6 @@ const_type_value :: proc(k: ^Checker, id: Symbol_Id, subject := INVALID_TYPE) ->
 	}
 	if symbol.decl != nil && symbol.decl.check_state == .Unchecked {
 		check_symbol_decl_in_place(k, id, subject)
-		symbol = symbol_of(k.c, id)
 	}
 	return const_names_type(k.c, symbol.const_value, symbol.type) ? symbol.const_value.type_value : INVALID_TYPE
 }
@@ -762,13 +778,15 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 // Members resolve after declaration collection, including later declarations.
 resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Proc_Group) {
 	members := make([dynamic]Symbol_Id, 0, len(value.names), k.c.semantic_allocator)
+	added := make(map[Symbol_Id]struct{}, len(value.names), context.temp_allocator)
+	group := symbol_of(k.c, group_id)
+	owner_type := group == nil ? INVALID_TYPE : group.owner_type
 	for name in value.names {
 		id := name_identifier(k.c, name)
 		member := INVALID_SYMBOL
-		owner := symbol_of(k.c, group_id)
-		if owner != nil && owner.owner_type != INVALID_TYPE {
-			member = find_member(k, owner.owner_type, id)
-			if member == INVALID_SYMBOL && excluded_member(k, owner.owner_type, id) != nil {
+		if owner_type != INVALID_TYPE {
+			member = find_member(k, owner_type, id)
+			if member == INVALID_SYMBOL && excluded_member(k, owner_type, id) != nil {
 				continue
 			}
 		} else {
@@ -778,10 +796,8 @@ resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Pro
 			errorf(k.c, name.span, "L0395", "unknown name `%s` in this procedure group", name.text)
 			continue
 		}
-		if sym := symbol_of(k.c, member); sym != nil && sym.decl != nil && sym.decl.sig_state == .Unchecked {
-			resolve_declaration_signature(k, sym.decl)
-		}
-		sym := symbol_of(k.c, member)
+		// In the member's own scope and block, not the group's.
+		sym := member_with_signature(k, member)
 		if sym == nil || sym.kind != .Proc {
 			errorf(k.c, name.span, "L0393", "`%s` is not a procedure, so it cannot be a group member", name.text)
 			continue
@@ -794,13 +810,14 @@ resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Pro
 		if reject_test_procedure_use(k, sym, name.text, name.span) {
 			continue
 		}
-		if slice.contains(members[:], member) {
+		if member in added {
 			errorf(k.c, name.span, "L0394", "`%s` is already a member of this group", name.text)
 			continue
 		}
+		added[member] = {}
 		append(&members, member)
 	}
-	if group := symbol_of(k.c, group_id); group != nil {
+	if group != nil {
 		group.members = members[:]
 	}
 }
@@ -887,7 +904,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 // lifecycle contribution closes (`src/hooks.odin`).
 resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 	specs := make([dynamic]Anon_Member, 0, len(value.fields), context.temp_allocator)
-	names := make([dynamic]Identifier_Id, 0, len(value.fields), context.temp_allocator)
+	names := make(map[Identifier_Id]struct{}, len(value.fields), context.temp_allocator)
 	bad := false
 	for &field, index in value.fields {
 		field_type := resolve_type_reporting(k, field.type)
@@ -905,12 +922,12 @@ resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 		}
 		for name in field.names {
 			name_id := name_identifier(k.c, name)
-			if name.text != "_" && slice.contains(names[:], name_id) {
-				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
-				continue
-			}
 			if name.text != "_" {
-				append(&names, name_id)
+				if name_id in names {
+					errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
+					continue
+				}
+				names[name_id] = {}
 			}
 			append(&specs, Anon_Member{name = name_id, type = field_type})
 		}
@@ -1173,7 +1190,7 @@ Signature_Builder :: struct {
 	crosses:       [dynamic]bool,
 	by_ptr:        [dynamic]bool,
 	param_symbols: [dynamic]Symbol_Id,
-	param_names:   [dynamic]Identifier_Id,
+	param_names:   map[Identifier_Id]struct{},
 	defaults:      [dynamic]Expr,
 	has_receiver:  bool,
 	receiver_mode: Param_Mode,
@@ -1216,7 +1233,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		escapes       = make([dynamic]Escape_Level, 0, 4, context.temp_allocator),
 		crosses       = make([dynamic]bool, 0, 4, context.temp_allocator),
 		by_ptr        = make([dynamic]bool, 0, 4, context.temp_allocator),
-		param_names   = make([dynamic]Identifier_Id, 0, 4, context.temp_allocator),
+		param_names   = make(map[Identifier_Id]struct{}, 4, context.temp_allocator),
 		receiver_mode = .Value,
 		is_foreign    = symbol.is_foreign,
 	}
@@ -1251,8 +1268,6 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		param_cross_thread = builder.crosses[:],
 		proc_contract = !builder.is_foreign && literal.body != nil && result_needs_contract(k.c, result_type, result_inout) ? symbol_id : INVALID_SYMBOL,
 	)
-	// Creating bindings may have grown the symbol store.
-	symbol = symbol_of(k.c, symbol_id)
 	symbol.params = builder.params[:]
 	symbol.result = result_type
 	symbol.result_inout = result_inout
@@ -1302,10 +1317,10 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 		// Written names, so a removed `$` parameter still takes its name.
 		name_id := name_identifier(k.c, name)
 		if name.text != "_" {
-			if slice.contains(builder.param_names[:], name_id) {
+			if name_id in builder.param_names {
 				errorf(k.c, name.span, "L0304", "`%s` is already a parameter of this procedure", name.text)
 			} else {
-				append(&builder.param_names, name_id)
+				builder.param_names[name_id] = {}
 			}
 		}
 		// An instance's `$` parameter is a bound constant, not a runtime one, so
@@ -1344,7 +1359,17 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 		append(&builder.by_ptr, is_by_ptr)
 		append(&builder.param_symbols, binding)
 		// A group's default belongs to its typed names, not a split receiver.
-		append(&builder.defaults, checked.split_receiver ? nil : parameter.default)
+		default := checked.split_receiver ? nil : parameter.default
+		// design.md "Default values": nor to a receiver taken by address, which
+		// borrows the caller's value as an `inout` one does.
+		if default != nil && checked.mode == .Borrow {
+			errorf(
+				k.c, expr_span(default), "L0408",
+				"a `self: ^` receiver borrows the caller's value, so it takes no default; only a value or `$` parameter has one",
+			)
+			default = nil
+		}
+		append(&builder.defaults, default)
 		if checked.split_receiver && inferred {
 			parameter.symbols = bindings[:]
 			parameter_type = infer_param_default_type(k, literal, position)
@@ -1742,16 +1767,19 @@ check_decl_value :: proc(k: ^Checker, d: ^Decl, value: Expr, declared: Type_Id, 
 	}
 
 	bind_literal_allocator(k.c, value, symbol_id)
+	// design.md "Constant declarations": evaluated even when it binds no name,
+	// as `_ :: value` does.
+	folded, evaluated := Const_Value{}, false
+	if d.kind == .Const {
+		folded, evaluated = require_const(k, value, "a constant initialiser", "L0311")
+	}
 	if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 		symbol.type = final
-		if d.kind == .Const {
-			folded, evaluated := require_const(k, value, "a constant initialiser", "L0311")
-			if evaluated {
-				symbol.const_value = folded
-				// A type-valued constant is an alias, and names a type.
-				if const_names_type(k.c, symbol.const_value, final) {
-					symbol.type = TYPE_TYPE
-				}
+		if evaluated {
+			symbol.const_value = folded
+			// A type-valued constant is an alias, and names a type.
+			if const_names_type(k.c, folded, final) {
+				symbol.type = TYPE_TYPE
 			}
 		}
 	}
@@ -2012,7 +2040,6 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 // A procedure body's context inside the current scope: a scope the literal owns
 // and a fresh `k.body`, with the result `symbol` declares when it is known. The
 // caller saves and restores `k.scope` and `k.body`.
-@(private = "file")
 enter_procedure_body :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol = nil) {
 	k.scope = new_scope(k.c, k.scope, .Procedure)
 	k.scope.owner_proc = literal

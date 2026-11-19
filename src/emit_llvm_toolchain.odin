@@ -231,6 +231,16 @@ append_codegen_flags :: proc(command: ^[dynamic]string, target: Target_Info, opt
 	append_target_flags(command, target.cpu)
 }
 
+// `-Ofast` is deliberately absent: it changes floating-point semantics.
+@(private = "file", rodata)
+OPT_CLANG_FLAGS := [Opt_Mode]string {
+	.None       = "-O0",
+	.Minimal    = "-O1",
+	.Size       = "-Os",
+	.Speed      = "-O2",
+	.Aggressive = "-O3",
+}
+
 // So the module, the runtime, and a C host compiling the runtime cannot disagree
 // on the instruction set. `-ffp-contract=off` is not a default: for C, clang's
 // is `on`, which fuses `a*b + c` within an expression, and for IR input the

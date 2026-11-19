@@ -1,0 +1,21 @@
+// design.md "Default values": only a value or `$` parameter has a default, and
+// a `self: ^R` receiver borrows the caller's value.
+package main;
+
+R :: struct { n: int }
+value: R = {7};
+
+impl R {
+	read :: proc(self: ^R = &value) -> int { return self.n; }
+	// A value receiver split from the names after it: the default is theirs.
+	add :: proc(self, k: int = 1) -> int { return self.n + k; }
+}
+
+// An ordinary pointer parameter, which is a value.
+peek :: proc(p: ^R = &value) -> int { return p.n; }
+
+main :: proc() {
+	_ = R.read();
+	_ = value.add();
+	_ = peek();
+}

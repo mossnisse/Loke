@@ -68,6 +68,23 @@ checklist.
   type's overload, and without one is `L0587` or `L0362`, as other operations a distinct type
   does not bring over are. Upgrade by declaring the operator, or by converting to the underlying
   type where the operation is used.
+- Six forms the compiler accepted are rejected, as the specification already said. Upgrade by
+  rewriting each as its message says:
+  - `_ :: seed;` with `seed` a variable is `L0341`: a constant declaration's initializer is
+    evaluated at compile time even when `_` binds it to no name
+    ([Constant declarations](docs/design.md#constant-declarations)).
+  - `import true "core:fmt";` is `L0700`: an import name is a declaration a lookup reaches, so
+    it cannot be `true`, `false`, or `nil` ([Predeclared names](docs/design.md#predeclared-names)).
+  - `read :: proc(self: ^R = &value)` in an `impl R` is `L0408`: a receiver taken by address
+    borrows the caller's value and has no default ([Default values](docs/design.md#default-values)).
+    An ordinary `p: ^R = &value` parameter keeps its default.
+  - `unsafe.transmute(proc(), bits)` is `L0688`: a procedure value is a code pointer, and a
+    pointer destination is `rawptr` or a C pointer ([`unsafe.transmute`](docs/design.md#unsafetransmute)).
+  - `offset_of(E, Member)` with `E` an enum is `L0363`: an enum member is no field and has no
+    offset; it read as `0`.
+  - `-define:if=1` is `L0388`: `build_config(if, 0)` cannot be written, so a reserved keyword
+    names no configuration value ([Build configuration](docs/compiler-guide.md#build-configuration)).
+    A contextual keyword such as `where` still does.
 
 ### Fixed
 
@@ -194,6 +211,27 @@ checklist.
   provider that `{}` selected ([Allocators](docs/design.md#allocators)). It recorded null, which
   the runtime resolved again when the box was released, so a box made by the allocator factory
   and kept after its provider was published was returned to that provider.
+- Inside an `impl` block, a later package procedure or group checked on demand, and a procedure
+  declared in a method's body, took `self` as the block's receiver, so `F :: proc(self, x: int)`
+  had a first parameter of the block's type there ([Receiver forms](docs/design.md#receiver-forms)).
+- A `break` after a `panic` or another call that diverges no longer counts as leaving its loop,
+  so `-> !` procedures with `for (;;) { panic("stop"); break; }` no longer report `L0710`. A
+  `return`, `break`, or `continue` that leaves a `defer` is reported at the statement itself
+  (`L0369`), where it was reported at the `defer`.
+- `caller_location()` inside a larger default, as in `line := caller_location().line`, names
+  each call that omits the argument, as a bare `caller_location()` default does; it named the
+  declaration ([`caller_location()`](docs/design.md#caller_location)). A default that is not a
+  constant, such as one that also reads an earlier parameter, still names the declaration.
+- `source_location(dependency.greet)` names an imported package's public procedure; it was
+  `L0573`.
+- An associated procedure that computes a type, a procedure group, and `type_of` can be written
+  directly as a type, as in `wide: Record.Selected(true);` or `n: type_of(3);`; each was `L0306`
+  ([`type` and `typeid`](docs/design.md#type-and-typeid)).
+- A generic record bound to a negative `$N` count, `Bad(-1)` for `[$N]int` or `Simd(f32, $N)`,
+  reports the negative count (`L0384`, `L0683`) rather than an unbound `$N` (`L0437`).
+- A generic record that contains itself by value, reached first by an interface requirement
+  that then failed, is no longer cached as a good instance: a later `^Bad(int)` reports
+  `L0364`, where it emitted a self-containing LLVM type.
 
 
 ## [0.10.0] - 2026-11-16

@@ -580,7 +580,7 @@ check_or_else_exit :: proc(k: ^Checker, v: ^Expr_Or_Else) -> bool {
 		errorf(k.c, exit_span, "L0718", "`or_else %s` is only valid inside a procedure", keyword)
 		return false
 	}
-	if k.in_defer && (is_return || k.loop_depth <= k.defer_loop_depth) {
+	if (is_return && k.in_defer) || branch_leaves_defer(k) {
 		errorf(k.c, exit_span, "L0369", "a deferred statement cannot leave the construct it is registered in")
 		return false
 	}

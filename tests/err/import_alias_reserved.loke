@@ -1,0 +1,8 @@
+// design.md "Predeclared names": an import name is a declaration a lookup
+// reaches, so it cannot be `true`, `false`, or `nil`.
+package main;
+
+import true "core:fmt";
+import nil "core:strings";
+
+main :: proc() {}

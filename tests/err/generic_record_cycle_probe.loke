@@ -1,0 +1,14 @@
+// A requirement that instantiates a record containing itself by value fails,
+// and the instance it made is not left cached as a good one: a later use
+// reports the cycle instead of handing it to the backend.
+package main;
+
+Bad :: struct($T: type) { a: Bad(T) }
+Can_Use :: interface($T: type) {
+	size_of(Bad(T)) > 0;
+}
+
+main :: proc() {
+	static_assert(!Can_Use(int));
+	x: ^Bad(int);
+}

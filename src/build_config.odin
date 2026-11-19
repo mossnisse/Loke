@@ -82,15 +82,6 @@ windows_x64_target :: proc(cpu: Cpu_Level) -> Target_Info {
 	}
 }
 
-// `-Ofast` is deliberately absent: it changes floating-point semantics.
-OPT_CLANG_FLAGS := [Opt_Mode]string {
-	.None       = "-O0",
-	.Minimal    = "-O1",
-	.Size       = "-Os",
-	.Speed      = "-O2",
-	.Aggressive = "-O3",
-}
-
 LOKE_VERSION_STRING :: "0.10.0"
 
 // The revision this binary was built from, which `build-stamp.ps1` passes as
@@ -116,13 +107,11 @@ Log_Level :: enum u8 {
 	Off,
 }
 
+// A constant holding the member `synth_enum` numbered `index`.
 @(private = "file")
 enum_const :: proc(c: ^Compiler, type: Type_Id, index: int) -> Symbol {
-	return Symbol {
-		kind        = .Const,
-		type        = type,
-		const_value = Const_Value{kind = .Integer, integer = bi_from_i64(c, i64(index))},
-	}
+	member := symbol_of(c, type_of(c, type).fields[index])
+	return Symbol{kind = .Const, type = type, const_value = member.const_value}
 }
 
 // Windows x64 is the only target, so architecture, OS, endianness, and vendor
@@ -164,15 +153,19 @@ seed_defines :: proc(c: ^Compiler, defines: []string) {
 			errorf(c, NO_SPAN, "L0388", "`%s` is not a valid configuration name", name)
 			continue
 		}
+		// `build_config(if, 0)` cannot be written, so the value could never be
+		// read; a contextual keyword such as `where` is still a name there.
+		if reserved_word_kind(name) != .Ident {
+			errorf(c, NO_SPAN, "L0388", "`%s` is a keyword, so it cannot name a configuration value", name)
+			continue
+		}
 		if _, duplicate := c.defines[name]; duplicate {
 			errorf(c, NO_SPAN, "L0388", "`%s` is defined more than once", name)
 			continue
 		}
 		switch text {
-		case "true":
-			c.defines[name] = bool_const(true)
-		case "false":
-			c.defines[name] = bool_const(false)
+		case "true", "false":
+			c.defines[name] = bool_const(text == "true")
 		case:
 			if value, ok := bi_parse_int_literal(c, text); ok {
 				c.defines[name] = integer_const(value)

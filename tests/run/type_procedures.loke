@@ -36,6 +36,20 @@ widened :: proc(value: $T) -> int {
 	return size_of(W);
 }
 
+// Written directly as a type, as through a constant: an associated procedure,
+// a generic one, a group's member, and `type_of`.
+Record :: struct { n: int }
+impl Record {
+	Selected :: proc(wide: bool) -> type {
+		if (wide) { return i64; }
+		return i32;
+	}
+	Same :: proc($T: type) -> type { return T; }
+}
+Pick_Count :: proc($n: uint) -> type { return Index_Type(n); }
+Pick_Flag :: proc($b: bool) -> type { return bool; }
+Pick :: proc{Pick_Count, Pick_Flag};
+
 main :: proc() {
 	small: Index_Type(10) = 255;
 	fmt.println(size_of(Index), size_of(Index_Type(100000)), small);
@@ -43,4 +57,9 @@ main :: proc() {
 	value: Local = 9000000000;
 	fmt.println(value, size_of(By_Bytes(2)), size_of(Slot));
 	fmt.println(widened(i8(1)), widened(i32(1)));
+	wide: Record.Selected(true) = 9000000000;
+	same: Record.Same(i16) = 300;
+	picked: Pick(3);
+	inferred: type_of(3) = 7;
+	fmt.println(wide, same, size_of(picked), inferred, size_of(type_of(same)));
 }

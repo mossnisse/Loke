@@ -15,8 +15,7 @@ resolve_hook_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operator) {
 	resolve_proc_signature(k, literal, symbol_id)
 	apply_proc_metadata(k, d, symbol_id)
 	if k.impl_type == INVALID_TYPE {
-		// Re-read: resolving may have grown the symbol table.
-		errorf(k.c, symbol_of(k.c, symbol_id).span, "L0488", "`hook(%s)` is a type role and must be declared as an inherent `impl` member", hook_name(value.hook))
+		errorf(k.c, sym.span, "L0488", "`hook(%s)` is a type role and must be declared as an inherent `impl` member", hook_name(value.hook))
 	}
 }
 

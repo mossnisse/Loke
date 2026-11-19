@@ -449,14 +449,19 @@ keyword_table := [?]struct {
 ident_or_keyword :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
 	skip_ident_tail(l)
-	word := l.src[lo:l.pos]
+	return Token{kind = reserved_word_kind(l.src[lo:l.pos]), lo = lo, hi = l.pos}
+}
+
+// The keyword reserved in every position that `word` spells, or `.Ident` for
+// any other word, a contextual keyword included.
+reserved_word_kind :: proc(word: string) -> Token_Kind {
 	for keyword in keyword_table {
 		if !reserved_keyword(keyword.kind) { break }
 		if keyword.text == word {
-			return Token{kind = keyword.kind, lo = lo, hi = l.pos}
+			return keyword.kind
 		}
 	}
-	return Token{kind = .Ident, lo = lo, hi = l.pos}
+	return .Ident
 }
 
 @(private = "file")

@@ -481,15 +481,22 @@ resolve_composite_type :: proc(k: ^Checker, syntax: Expr, shell := false, hops :
 // inside an instance. An unbound `$N` reports nothing here; `report_unresolved_type`
 // names it.
 constant_count :: proc(k: ^Checker, written: Expr, what, code: string) -> (u64, bool) {
+	folded: Const_Value
 	if poly, is_poly := written.(^Type_Poly); is_poly {
-		return poly_array_length(k, poly)
-	}
-	if check_single_expr(k, written, TYPE_INT) == INVALID_TYPE {
-		return 0, false
-	}
-	folded, evaluated := require_const(k, written, what, code)
-	if !evaluated {
-		return 0, false
+		bound := symbol_of(k.c, lookup_symbol(k.scope, name_identifier(k.c, poly.name)))
+		if bound == nil || bound.kind != .Const {
+			return 0, false
+		}
+		folded = bound.const_value
+	} else {
+		if check_single_expr(k, written, TYPE_INT) == INVALID_TYPE {
+			return 0, false
+		}
+		evaluated: bool
+		folded, evaluated = require_const(k, written, what, code)
+		if !evaluated {
+			return 0, false
+		}
 	}
 	if folded.kind != .Integer {
 		errorf(k.c, expr_span(written), code, "%s must be a constant integer", what)
@@ -618,19 +625,10 @@ resolve_call_type :: proc(k: ^Checker, value: ^Expr_Call) -> Type_Id {
 	if type, predeclared := resolve_predeclared_application(k, value); predeclared {
 		return type
 	}
-	// `Index_Type(1000)`: a call to a procedure that computes a type (design.md
-	// "`type` and `typeid`"), folded where it is checked. Any other procedure's
-	// call names none, and its receiver or argument position checks it once.
-	callee_id := named_callee_symbol(k, value.callee)
-	callee := symbol_of(k.c, callee_id)
-	if callee != nil && callee.kind == .Proc && !symbol_is_generic(k, callee_id) {
-		resolve_symbol_signature_in_place(k, callee_id)
-		callee = symbol_of(k.c, callee_id)
-		if (callee.decl == nil || callee.decl.sig_state == .Checked) && !compile_time_only_procedure(k.c, callee) {
-			return INVALID_TYPE
-		}
-	}
-	if (callee != nil && callee.kind == .Proc) || generic_template_of_callee(k, value.callee, {.Procedure}) != nil {
+	// `Index_Type(1000)`: a call that computes a type (design.md "`type` and
+	// `typeid`"), checked as the expression it also is and folded there. Any
+	// other call names none, and its receiver or argument position checks it once.
+	if callee, subject := type_call_callee(k, value.callee); callee_may_compute_type(k, callee, subject) {
 		if value.denoted_type == INVALID_TYPE {
 			check_expr(k, value)
 		}
@@ -649,6 +647,54 @@ resolve_call_type :: proc(k: ^Checker, value: ^Expr_Call) -> Type_Id {
 		return value.denoted_type
 	}
 	return instantiate_record_application(k, value, template, report = true)
+}
+
+// What a call in type position calls: a name, plain or package-qualified, or
+// an associated procedure, `Record.Make(...)`, with the type it is a member of.
+@(private = "file")
+type_call_callee :: proc(k: ^Checker, callee: Expr) -> (id: Symbol_Id, subject: Type_Id) {
+	if id = named_callee_symbol(k, callee); id != INVALID_SYMBOL {
+		return
+	}
+	selector, is_selector := callee.(^Expr_Selector)
+	if !is_selector {
+		return
+	}
+	// Silent when the operand is a value: a method call computes no type.
+	if subject = resolve_type_syntax(k, selector.operand); subject != INVALID_TYPE {
+		id = find_member(k, subject, name_identifier(k.c, selector.name))
+	}
+	return
+}
+
+// Whether a call of `id` may compute a type, so type position checks it: a
+// procedure returning `type`, one whose signature is still resolving, a generic
+// one, `type_of`, or a group with such a member. A call of any other
+// procedure is left unchecked, so a silent type lookup reports nothing.
+@(private = "file")
+callee_may_compute_type :: proc(k: ^Checker, id: Symbol_Id, subject: Type_Id) -> bool {
+	if template := generic_template_for(k, id); template != nil {
+		return template.kind == .Procedure
+	}
+	sym := symbol_of(k.c, id)
+	if sym == nil {
+		return false
+	}
+	#partial switch sym.kind {
+	case .Proc:
+		sym = member_with_signature(k, id, subject)
+		return (sym.decl != nil && sym.decl.sig_state != .Checked) || compile_time_only_procedure(k.c, sym)
+	case .Proc_Group:
+		sym = member_with_signature(k, id, subject)
+		for member in sym.members {
+			if callee_may_compute_type(k, member, subject) {
+				return true
+			}
+		}
+	case .Builtin:
+		return sym.builtin == .Type_Of
+	}
+	return false
 }
 
 // `Type.Member` where the member is an associated type. Silent when the operand
@@ -814,7 +860,8 @@ report_unresolved_call :: proc(k: ^Checker, call: ^Expr_Call) {
 	if generic_template_of_callee(k, call.callee, TYPE_GENERICS) != nil {
 		return
 	}
-	if callee := symbol_of(k.c, named_callee_symbol(k, call.callee)); callee != nil && callee.kind == .Proc {
+	callee_id, _ := type_call_callee(k, call.callee)
+	if callee := symbol_of(k.c, callee_id); callee != nil && callee.kind == .Proc {
 		returned := call.type != INVALID_TYPE ? call.type : callee.result
 		if returned == INVALID_TYPE {
 			errorf(k.c, call.span, "L0306", "this call does not compute a type: it returns nothing")

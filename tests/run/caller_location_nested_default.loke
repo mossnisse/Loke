@@ -1,0 +1,27 @@
+package main;
+import "core:fmt";
+
+// design.md "`caller_location()`": a default is evaluated at each call that
+// omits it, so `caller_location()` inside a larger default names the call,
+// directly and through a group, as a bare one does.
+
+line_of :: proc(line := caller_location().line) -> int { return line; }
+where_of :: proc(n: int, at := caller_location().procedure) -> string_view { return at; }
+both :: proc(base: int, line := caller_location().line + 100) -> int { return base + line; }
+Which :: proc{line_of, where_of};
+
+// Outside a default it names only its own site.
+own :: proc() -> int { return caller_location().line; }
+
+caller :: proc() {
+	fmt.println(line_of());
+	fmt.println(line_of(7));
+	fmt.println(where_of(1));
+	fmt.println(both(1000));
+	fmt.println(Which());
+	fmt.println(own());
+}
+
+main :: proc() {
+	caller();
+}

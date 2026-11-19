@@ -13,3 +13,6 @@ L0386
 L0315
 @14:23
 unknown name `absent`
+L0363
+@16:32
+`Colour` has no field `Green`

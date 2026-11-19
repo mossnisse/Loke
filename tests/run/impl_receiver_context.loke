@@ -1,0 +1,26 @@
+package main;
+import "core:fmt";
+
+// design.md "Receiver forms": only an `impl` member's `self` is a receiver. A
+// later package procedure or group checked on demand from inside a block, and
+// a procedure declared in a method's body, each take `self` as an ordinary
+// parameter, so `self, x: int` is two `int`s.
+
+R :: struct { n: int }
+
+impl R {
+	m :: proc(a: F(0, 0)) -> int { return a + 1; }
+	g :: proc(a: G(0, 0)) -> int { return a + 2; }
+	local :: proc() -> int {
+		f :: proc(self, n: int) -> int { return self + n; }
+		return f(4, 5);
+	}
+}
+
+F :: proc(self, x: int) -> type { return int; }
+G :: proc{H};
+H :: proc(self, x: int) -> type { return int; }
+
+main :: proc() {
+	fmt.println(R.m(3), R.g(4), R.local());
+}

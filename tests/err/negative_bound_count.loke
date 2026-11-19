@@ -1,0 +1,12 @@
+// design.md "Fixed arrays", "SIMD vectors": a count bound through `$N` takes
+// the same checks as a written one, so a negative one is reported as such,
+// not as an unbound `$N`.
+package main;
+
+Bad :: struct($N: int) { a: [$N]int }
+Lanes :: struct($N: int) { v: Simd(f32, $N) }
+
+main :: proc() {
+	a: Bad(-1);
+	b: Lanes(-4);
+}
