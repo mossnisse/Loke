@@ -143,10 +143,11 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	if e.failed || c.error_count != 0 {
 		return "", false
 	}
+	module = prune_unreachable(strings.to_string(e.b))
 	if c.debug_info {
-		return attach_debug_info(&e, strings.to_string(e.b)), true
+		module = attach_debug_info(&e, module)
 	}
-	return strings.to_string(e.b), true
+	return module, true
 }
 
 // Where `break` and `continue` go, and what they owe on the way. Both unwind

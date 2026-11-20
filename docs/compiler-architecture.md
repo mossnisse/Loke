@@ -1305,6 +1305,7 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_type_info.odin` | Reflection metadata: the `type_info_of` table and its member tables. |
 | `emit_llvm_format.odin` | Printing: format thunks and bodies, the `core:fmt` sink and entry points, and the reports of formatted panics and failed entries. |
 | `emit_llvm_debug.odin` | Debug locations, scopes, locals, CodeView metadata, and Natvis rules. |
+| `emit_llvm_prune.odin` | Reachability: the finished module without the functions and globals nothing reaches. |
 | `emit_llvm_dispatch.odin` | `@(cpu_dispatch)`: a procedure's copies for a higher CPU level with their callees', the dispatcher between them, and the cached processor check. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, and foreign inputs. |
 | `emit_llvm_runtime_cache.odin` | The prebuilt runtime objects, and whether a link takes them or the sources. |
@@ -1316,6 +1317,22 @@ be file-private. Paths below are relative to `src/`.
 process operations. It creates no types, symbols, or registry entries; only the
 shared layout cache may change. `semantic_extent` checks this boundary. Backend
 names and temporaries belong to `Emitter`, not semantic symbols.
+
+The emitter writes every procedure of every package, generic instances
+included, and a program calls few of them. `prune_unreachable` then drops, from
+the finished text, each function and global that nothing reaches from a
+definition a linker can see: the entry point, an export, a hook the runtime
+calls, a file-scope variable. It follows the names in the text, so no emitter
+code records what it refers to, and it runs before `attach_debug_info`, so a
+dropped definition's markers go with it. Two rules keep it right:
+
+- A definition only this module refers to is `internal` or `private`
+  (`llvm_linkage`); anything else is a root.
+- A function ends at a `}` that opens a line, and a global is one line.
+
+Unreached code is still checked and still lowered, so a contract break in its
+lowering still fails the build, but LLVM never verifies it. A test of how
+something is lowered must reach it from `main`, an export, or a test procedure.
 
 Non-test backend files (`emit_llvm*.odin`, `emission_contract.odin`) must not
 name `Checker`. Front-end files other than `main.odin` and `session.odin` must

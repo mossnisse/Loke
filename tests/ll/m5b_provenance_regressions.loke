@@ -60,4 +60,4 @@ deep_drop :: proc() {
 	made^ += 1;
 }
 
-main :: proc() { }
+main :: proc() { deep_drop(); }

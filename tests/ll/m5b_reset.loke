@@ -6,7 +6,8 @@ package main; import "core:fmt";
 // system-heap provider has no region and fails that call at run time.
 // `release` is deliberately not called with `default_allocator()` here: a
 // program cannot hide a reset of that pre-existing region in `main` merely to
-// exercise an unsupported provider.
+// exercise an unsupported provider. `main` names it instead, since only what
+// the entry point reaches is emitted.
 
 release :: proc(@(allocator_reset) allocator: Allocator) {
 	free_all(allocator);
@@ -27,4 +28,5 @@ kept :: proc() -> int {
 
 main :: proc() {
 	fmt.println(kept());
+	reset := release;
 }

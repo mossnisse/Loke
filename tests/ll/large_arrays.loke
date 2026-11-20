@@ -13,4 +13,6 @@ huge :: proc() {
 main :: proc() {
 	buffer[3] = 1;
 	grid[1][2][3] = 4;
+	// Reached, so that it is emitted, and never run.
+	if (buffer[0] == 1) { huge(); }
 }

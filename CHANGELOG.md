@@ -86,6 +86,19 @@ checklist.
     names no configuration value ([Build configuration](docs/compiler-guide.md#build-configuration)).
     A contextual keyword such as `where` still does.
 
+### Changed
+
+- A build compiles only what the program reaches. The compiler wrote every procedure of every
+  package a program imports into its LLVM module, and clang compiled them all for the linker to
+  drop; it now leaves out each one that nothing reaches from the entry point, an export, or a
+  test. A default build of `examples/lexer.loke` takes 710 ms, from 1176, and its executable
+  807 KB, from 1682; `bench/workspace`, several packages that call little of what they import,
+  takes 330 ms, from 1166. A build at `-opt=speed` is 1-31% faster, and its executable the same
+  size, since LLVM already dropped that code once it had read it. Unreached code is checked as
+  before, so no diagnostic changes. `-emit-ll` writes the smaller module, and under `-g` a
+  procedure nothing calls has no debug records, so a debugger cannot break in it or call it
+  ([Common options](docs/compiler-guide.md#common-options)).
+
 ### Fixed
 
 - A file-scope `when` waits for the names a capture literal's entries read in a procedure its

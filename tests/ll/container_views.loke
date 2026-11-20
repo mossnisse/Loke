@@ -13,4 +13,8 @@ main :: proc() {
 	foreach (p in offsets) { fmt.println(p.offset); }
 	runes: string_view = text.runes();
 	foreach (r in runes) { fmt.println(r); }
+	// A loop over text reads its runes in place; these are the members it stands
+	// for, which a program that calls neither does not carry.
+	rest := runes.iter();
+	fmt.println(rest.next());
 }

@@ -4,6 +4,7 @@ package main;
 Value :: struct { name: string, items: [dynamic]int }
 main :: proc() {
     source := [1000]Value{};
-    copied := source;
+    copied := source.clone();
     _ = copied[0].name;
+    _ = source[0].name;
 }

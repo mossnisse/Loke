@@ -5,7 +5,6 @@ define internal %struct.Vec
 @loke.p.Vec.add
 getelementptr inbounds %union.Outcome.
 extractvalue %union.Outcome.
-select i1
 switch i8 
 typecase.body
 orreturn.fail

@@ -96,6 +96,9 @@ Debug_Info :: struct {
 	natvis:    strings.Builder,
 	// The `witness$<n>` variables the witness tables' definitions carry.
 	globals:   [dynamic]int,
+	// The witness tables the module defines, by their place in `witness_order`:
+	// one that nothing refers to is dropped with its marker (`prune_unreachable`).
+	witnesses: [dynamic]int,
 	dyns:      [dynamic]Type_Id,
 	// The type names taken.
 	names:     map[string]bool,
@@ -676,6 +679,7 @@ debug_map :: proc(d: ^Debug_Info, id: int, type: Type_Id) {
 @(private = "file")
 debug_witness :: proc(d: ^Debug_Info, index: int) -> int {
 	witness := d.c.witness_order[index]
+	append(&d.witnesses, index)
 	debug_natvis_type(d, fmt.aprintf("witness$%d$type", index), witness.concrete)
 	variable := debug_node(
 		d, `distinct !DIGlobalVariable(name: "witness$%d", scope: !%d, type: !%d, isLocal: true, isDefinition: true)`,
@@ -692,15 +696,15 @@ debug_global :: proc(d: ^Debug_Info, variable: int) -> int {
 	return expression
 }
 
-// A `dyn` view shows the value its witness table's type says `data` points at.
-// A table without slots may share its address with another, so it tells none.
+// A `dyn` view shows the value its witness table's type says `data` points at,
+// for each table that has a variable to compare with (`debug_mark_witness`).
 @(private = "file")
 debug_dyn_natvis :: proc(d: ^Debug_Info) {
 	for type in d.dyns {
 		info := type_of(d.c, type)
 		shown, expanded: strings.Builder
-		for witness, index in d.c.witness_order {
-			if witness.interface_symbol != info.dyn_interface || len(witness.slots) == 0 {
+		for index in d.witnesses {
+			if d.c.witness_order[index].interface_symbol != info.dyn_interface {
 				continue
 			}
 			fmt.sbprintfln(&shown, `    <DisplayString Condition="witness == &amp;witness$%d">{{*(witness$%d$type*)data}}</DisplayString>`, index, index)

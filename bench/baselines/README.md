@@ -316,3 +316,58 @@ discovery, 51 in the worklist (from about 470), and 481 for diagnostics. The
 analysis and replay arenas no longer take a lock per allocation, which a
 sampling profile put at about a tenth of each build. Replay and
 materialization fell with the builds; the sampled arena peak is unchanged.
+
+## Reachable emission
+
+[reachable-emission.json](reachable-emission.json) records the working tree
+after commit `4bfd43a5c62330874a00ba943a9178971b2269dd`, in which the emitter
+drops the functions and globals nothing reaches before clang sees the module
+(`prune_unreachable`), against
+[reachable-emission-before.json](reachable-emission-before.json), that commit
+itself, captured just before on the same machine (Odin
+`dev-2026-10-nightly:84bc3fc`, clang 22.1.8) on 2026-11-20 with unchanged
+workload source hashes. Both compilers were built with `-o:speed`; the language
+server, which emits nothing, was not measured. No test suite or other compiler
+workload ran during capture. SHA-256 values of `lokec.exe`:
+
+- before: `17d9d87299b7a564cdae5bc0ce1770794d44fd03904fc8cb4ee892d1024ef307`.
+- after: `0a895203c08e7040bdde5f4ceecbb4d44549a222a06e290272a578d1a26b8630`.
+
+```powershell
+.\perf.ps1 -Lokec <before>/lokec.exe -Lsp <none> -Out bench/baselines/reachable-emission-before.json
+.\perf.ps1 -Lokec <after>/lokec.exe -Lsp <none> -Baseline bench/baselines/reachable-emission-before.json -Out bench/baselines/reachable-emission.json
+```
+
+| Workload | Before / after front end (ms) | Before / after build at `-opt=speed` (ms) |
+| --- | ---: | ---: |
+| `examples/lexer.loke` | 151 / 146 | 3320 / 3122 |
+| `examples/corpus_runner.loke` | 198 / 195 | 4777 / 4246 |
+| `bench/geometry.loke` | 319 / 319 | 2086 / 1706 |
+| `bench/linalg.loke` | 243 / 245 | 1482 / 1154 |
+| `bench/workspace` | 146 / 144 | 920 / 639 |
+
+An optimized build is 1-31% faster over the 33 records, most where a program
+imports much and calls little; LLVM already dropped unreached internal
+functions early, so what is saved is parsing them. The front end is unchanged:
+the pass costs less than the smaller file saves in writing. Compiler peak
+working set rose by at most 2%, for the pruned copy of the module. Executable
+sizes at `-opt=speed` and benchmark outputs are unchanged.
+
+`perf.ps1` does not build at `-opt=none`, the default level, where the change
+matters most. The table below is the fastest of five runs of each compiler,
+timed around the whole process, on the same machine and day:
+
+| Workload | Module (KB) | Build at `-opt=none` (ms) | Build with `-g` (ms) | Executable (KB) |
+| --- | ---: | ---: | ---: | ---: |
+| `examples/hello.loke` | 72 / 15 | 183 / 162 | 252 / 238 | 276 / 261 |
+| `examples/lexer.loke` | 1901 / 551 | 1176 / 710 | 1437 / 842 | 1682 / 807 |
+| `examples/corpus_runner.loke` | 2666 / 1232 | 1536 / 1037 | 1836 / 1222 | 2159 / 1266 |
+| `bench/collections.loke` | 391 / 66 | 261 / 192 | 350 / 264 | 360 / 272 |
+| `bench/geometry.loke` | 5421 / 1486 | 1690 / 770 | 2140 / 942 | 2354 / 753 |
+| `bench/linalg.loke` | 4458 / 967 | 1353 / 522 | 1728 / 648 | 1918 / 451 |
+| `bench/provenance.loke` | 102 / 36 | 189 / 172 | 265 / 244 | 285 / 268 |
+| `bench/workspace` | 1891 / 256 | 1166 / 330 | 1409 / 419 | 1630 / 305 |
+
+Each cell is before / after. A default build is 9-72% faster and its
+executable 5-81% smaller: an unoptimized object keeps every function it was
+given, in one section the linker cannot split.

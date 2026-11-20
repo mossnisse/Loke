@@ -20,6 +20,8 @@ machine, not a threshold.
   whose programs still printed their expected output.
 - Inside the front end, provenance analysis is 37–49% of the time and IR
   emission 23–32%.
+- [Step 1](#1-emit-only-what-is-reachable) of the plan is done: a default build
+  is 9–72% faster and one at `-opt=speed` 1–31%.
 
 ## Conditions
 
@@ -370,6 +372,39 @@ Things to settle:
 Expected: `clang -c` at `-opt=none` falls 40–90% and objects shrink by half or
 more. An optimizing build gains less, since LLVM already drops dead internal
 functions early.
+
+**Done** on 2026-11-20, as `prune_unreachable` in
+[emit_llvm_prune.odin](../src/emit_llvm_prune.odin);
+[LLVM and toolchain](compiler-architecture.md#llvm-and-toolchain) has the two
+rules it relies on. Whole builds, before and after, in ms:
+
+| Program | `-opt=none` | `-g` | `-opt=speed` |
+| --- | ---: | ---: | ---: |
+| `examples/lexer.loke` | 1176 / 710 | 1437 / 842 | 3320 / 3122 |
+| `examples/corpus_runner.loke` | 1536 / 1037 | 1836 / 1222 | 4777 / 4246 |
+| `bench/geometry.loke` | 1690 / 770 | 2140 / 942 | 2086 / 1706 |
+| `bench/linalg.loke` | 1353 / 522 | 1728 / 648 | 1482 / 1154 |
+| `bench/workspace` | 1166 / 330 | 1409 / 419 | 920 / 639 |
+
+The front end's time is unchanged, and an executable built at `-opt=none` is
+5–81% smaller. The records are `reachable-emission-before.json` and
+`reachable-emission.json` under `bench/baselines`, whose `README.md` has the
+conditions. How the open points settled:
+
+- A dropped definition's debug markers are in its text and go with it, and the
+  natvis rules name only the witness tables that are left.
+- Exports, test procedures, and the hooks the runtime calls are roots by
+  linkage; the object, package, and test corpora pass unchanged.
+- Seven `tests/ll` cases looked for a procedure nothing called. Five now reach
+  it from `main`. The other two expected a shape that only unrelated `core`
+  code had supplied, `select i1` and a `core:fmt` witness table, and now name
+  what their own program emits.
+- `-check-layout` builds a module of its own and is unaffected; `-emit-ll`
+  writes the module a build compiles.
+- LLVM no longer verifies the lowering of unreached code, which every build
+  used to do for every bundled procedure. [Step 4](#4-emit-on-demand) removes
+  that lowering altogether, so the coverage has to come from tests that call
+  what they test.
 
 ### 2. Spell union payload padding in words
 

@@ -1335,3 +1335,40 @@ main :: proc() { _ = pick(true, 2); }
 	}
 	testing.expect(t, phis > 0, "no phi joins the arms")
 }
+
+// A procedure nothing calls is checked and not emitted (`prune_unreachable`); one
+// reached only through a witness table is, and an export is reached by its host.
+@(test)
+unreachable_definitions_are_not_emitted :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+Drawable :: interface($Self: type) { slot size: proc(self) -> int; }
+Circle :: struct { radius: int }
+Square :: struct { side: int }
+impl Circle { size :: proc(self) -> int { return self.radius; } }
+impl Square { size :: proc(self) -> int { return self.side; } }
+through_view :: proc(target: dyn Drawable) -> int { return target.size(); }
+unused :: proc() -> int { s := Square{2}; return through_view((dyn Drawable)(&s)); }
+@(export, link_name = "hosted")
+hosted :: proc "c" () -> i32 { return helper(); }
+helper :: proc() -> i32 { return 7; }
+main :: proc() { c := Circle{3}; assert(through_view((dyn Drawable)(&c)) == 3); }
+`)
+	defer destroy_checked(&p)
+	c := &p.c
+	check_exports(c, defines_entry = true)
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	c.debug_info = true
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	for kept in ([]string{"@loke.p.through_view(", "@loke.p.Circle.size(", "@loke.w.Drawable.Circle = ", "@hosted(", "@loke.p.helper("}) {
+		testing.expectf(t, strings.contains(module, kept), "`%s` was dropped", kept)
+	}
+	for dropped in ([]string{"@loke.p.unused", "@loke.p.Square.size", "@loke.w.Drawable.Square"}) {
+		testing.expectf(t, !strings.contains(module, dropped), "`%s` was emitted", dropped)
+	}
+	// A dropped table has no variable for a natvis rule to compare with.
+	testing.expect(t, strings.count(module, `!DIGlobalVariable(name: "witness$`) == 1, "the module does not describe one witness table")
+	testing.expectf(t, strings.count(c.natvis, `Condition="witness == &amp;witness$`) == 2, "natvis names a dropped witness table:\n%s", c.natvis)
+}
