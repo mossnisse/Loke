@@ -9,7 +9,10 @@ import "core:slice"
 import "core:strings"
 
 // design.md "Zero values": a union constant is the payload's little-endian byte
-// image, split across the head and byte-array tail, plus the tag.
+// image, split across the head and byte-array tail, plus the tag. Only the
+// active payload is written out; the storage past it is zero, and a member all
+// of whose bytes are zero is `zeroinitializer`, however wide an inactive
+// variant makes it.
 @(private = "file")
 union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	shape := union_layout(e.c, type)
@@ -18,29 +21,40 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 	}
 	index := value.aggregate.variant
 	payload_type := union_variant_payload(e.c, type, index)
-	payload_bytes := make([]u8, int(shape.payload_size), context.temp_allocator)
+	payload: []u8
 	if payload_type != TYPE_VOID && type_size(e.c, payload_type) != 0 {
-		payload_size := int(type_size(e.c, payload_type))
-		if payload_size > len(payload_bytes) ||
-		   !write_const_bytes(e, payload_bytes[:payload_size], value.aggregate.elements[0], payload_type) {
+		payload = make([]u8, int(type_size(e.c, payload_type)), context.temp_allocator)
+		if len(payload) > int(shape.payload_size) || !write_const_bytes(e, payload, value.aggregate.elements[0], payload_type) {
 			backend_fail(e, fmt.aprintf("a union payload constant cannot be represented as bytes: %s in %s", type_name(e.c, payload_type), type_name(e.c, type)))
 		}
 	}
-	if index == 0 && slice.all_of(payload_bytes, 0) {
+	if index == 0 && slice.all_of(payload, 0) {
 		return "zeroinitializer"
 	}
 
-	// The members of `union_storage_definition`, each with its value.
+	// The members of `union_storage_definition`, each with its value: the
+	// payload's bytes in `bytes[:size]`, zero past its end.
+	storage_bytes :: proc(payload: []u8, start, size: u64) -> []u8 {
+		bytes := make([]u8, int(size), context.temp_allocator)
+		if start < u64(len(payload)) {
+			copy(bytes, payload[start:])
+		}
+		return bytes
+	}
 	members := union_members(shape)
 	parts := make([dynamic]string, 0, 4, context.temp_allocator)
 	if members.head > 0 {
 		head := strings.builder_make()
-		write_union_head_constant(e, &head, payload_bytes[:members.head])
+		write_union_head_constant(&head, storage_bytes(payload, 0, members.head))
 		append(&parts, strings.to_string(head))
 	}
 	if members.padding > 0 {
 		padding := strings.builder_make()
-		write_byte_array_constant(&padding, payload_bytes[members.head:shape.payload_size])
+		if u64(len(payload)) > members.head {
+			write_byte_array_constant(&padding, storage_bytes(payload, members.head, members.padding))
+		} else {
+			fmt.sbprintf(&padding, "[%d x i8] zeroinitializer", members.padding)
+		}
 		append(&parts, strings.to_string(padding))
 	}
 	if members.aligner {
@@ -57,7 +71,7 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 
 // The head member of `union_head_type`, typed, holding `head`'s bytes.
 @(private = "file")
-write_union_head_constant :: proc(e: ^Emitter, b: ^strings.Builder, head: []u8) {
+write_union_head_constant :: proc(b: ^strings.Builder, head: []u8) {
 	strings.write_string(b, union_head_type(u64(len(head))))
 	if len(head) > UNION_INT_HEAD_BYTES {
 		strings.write_string(b, " <")
@@ -67,11 +81,11 @@ write_union_head_constant :: proc(e: ^Emitter, b: ^strings.Builder, head: []u8) 
 		strings.write_string(b, ">")
 		return
 	}
-	bits := bi_zero(e.c)
+	bits: u128
 	for byte, index in head {
-		bits = bi_add(e.c, bits, bi_shl(e.c, bi_from_u64(e.c, u64(byte)), index * 8))
+		bits |= u128(byte) << uint(index * 8)
 	}
-	fmt.sbprintf(b, " %s", bi_text(e.c, bits))
+	fmt.sbprintf(b, " %d", bits)
 }
 
 // A type's zero value as an LLVM constant, when it has one. design.md "Zero
@@ -100,12 +114,17 @@ is_zero_constant :: proc(value: string) -> bool {
 @(private = "file")
 write_byte_array_constant :: proc(b: ^strings.Builder, bytes: []u8) {
 	fmt.sbprintf(b, "[%d x i8] ", len(bytes))
-	write_byte_string(b, bytes)
+	write_byte_array_value(b, bytes)
 }
 
-// `bytes` as an LLVM string constant, the value of an `[N x i8]`.
+// `bytes` as the value of an `[N x i8]`: an LLVM string constant, or
+// `zeroinitializer` when all of them are zero.
 @(private = "file")
-write_byte_string :: proc(b: ^strings.Builder, bytes: []u8) {
+write_byte_array_value :: proc(b: ^strings.Builder, bytes: []u8) {
+	if slice.all_of(bytes, 0) {
+		strings.write_string(b, "zeroinitializer")
+		return
+	}
 	strings.write_string(b, "c\"")
 	for byte in bytes {
 		fmt.sbprintf(b, "\\%02X", byte)
@@ -135,11 +154,17 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		return llvm_float(const_float_pattern(value, info.bits), info.bits)
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator:
 		return "null"
-	case .CString_View:
-		// A string literal's zero-terminated bytes have static lifetime.
-		return value.kind == .String ? text_literal_global(e, value.text) : "null"
-	case .String, .String_View:
-		return text_constant(e, value, info.kind == .String)
+	case .CString_View, .String, .String_View, .Slice:
+		target, count, flags, _ := carrier_constant(e, value, info)
+		switch {
+		case target == "":
+			return info.kind == .CString_View ? "null" : "zeroinitializer"
+		case info.kind == .CString_View:
+			return target
+		case info.kind == .String:
+			return fmt.aprintf("{{ ptr %s, i64 %d, i64 %d }}", target, count, flags)
+		}
+		return fmt.aprintf("{{ ptr %s, i64 %d }}", target, count)
 	case .Allocator_Error:
 		// Nil is success, and success is zero.
 		return value.kind == .Nil ? "0" : bi_text(e.c, value.integer)
@@ -157,11 +182,8 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		if !vector && lane == "i8" {
 			bytes := make([]u8, int(info.count), context.temp_allocator)
 			if write_const_bytes(e, bytes, value, under) {
-				if slice.all_of(bytes, 0) {
-					return "zeroinitializer"
-				}
 				b := strings.builder_make()
-				write_byte_string(&b, bytes)
+				write_byte_array_value(&b, bytes)
 				return strings.to_string(b)
 			}
 		}
@@ -187,9 +209,6 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		return strings.to_string(b)
 	case .Dyn, .Dynamic_Array, .Map:
 		return "zeroinitializer"
-	case .Slice:
-		// A slice constant points at storage only the module can hold.
-		return value.aggregate != nil ? slice_literal_constant(e, value, info) : "zeroinitializer"
 	case .Struct:
 		if value.aggregate == nil || len(value.aggregate.elements) == 0 {
 			return "zeroinitializer"
@@ -318,55 +337,34 @@ write_const_bytes :: proc(
 			return true
 		}
 		tag := int(shape.payload_size)
-		write_u64_bytes(out[tag:tag + int(shape.tag_bytes)], u64(index))
+		write_pattern_bytes(out[tag:tag + int(shape.tag_bytes)], u128(index))
 		return true
 	case .Typeid:
-		write_u64_bytes(out, emitted_typeid(e, value))
+		write_pattern_bytes(out, u128(emitted_typeid(e, value)))
 		return true
 	case .Dynamic_Array, .Map, .Dyn:
 		// A constant of these is only the empty one, which is all-zero.
 		return true
 	case .String, .String_View, .CString_View, .Slice:
-		target, count, flags := "", 0, 0
-		switch {
-		case info.kind == .Slice:
-			if value.aggregate == nil || len(value.aggregate.elements) == 0 {
-				return true
-			}
-		case value.kind != .String:
-			return false
-		case value.text == "" && info.kind != .CString_View:
+		target, count, flags := carrier_constant(e, value, info) or_return
+		if target == "" {
 			return true
 		}
-		// Literal text and a slice literal's backing array are module storage, so
-		// an image holds a relocation to them.
+		// An image holds a relocation to the module storage.
 		if relocations == nil {
 			return false
-		}
-		if info.kind == .Slice {
-			target, count = slice_literal_storage(e, value, info), len(value.aggregate.elements)
-		} else {
-			target, count = text_literal_global(e, value.text), len(value.text)
-			flags = info.kind == .String ? STRING_STATIC : 0
 		}
 		append(relocations, Const_Relocation{at, target})
 		// The pointer comes first, then the length and a string's owner flags.
 		if info.kind != .CString_View {
-			write_u64_bytes(out[8:16], u64(count))
+			write_pattern_bytes(out[8:16], u128(count))
 		}
 		if info.kind == .String {
-			write_u64_bytes(out[16:24], u64(flags))
+			write_pattern_bytes(out[16:24], u128(flags))
 		}
 		return true
 	}
 	return false
-}
-
-@(private = "file")
-write_u64_bytes :: proc(out: []u8, value: u64) {
-	for _, index in out {
-		out[index] = u8(value >> u64(index * 8))
-	}
 }
 
 // design.md "Unions": a union payload, and a field of a combined packed/aligned
@@ -425,33 +423,62 @@ const_image :: proc(e: ^Emitter, values: []Const_Value, type: Type_Id) -> (strin
 			backend_fail(e, fmt.aprintf("a constant cannot be represented as an image: %s", type_name(e.c, type)))
 		}
 	}
-	types, parts := strings.builder_make(), strings.builder_make()
-	members := 0
-	next := proc(types, parts: ^strings.Builder, members: ^int) {
-		strings.write_string(types, members^ == 0 ? "<{ " : ", ")
-		strings.write_string(parts, members^ == 0 ? "<{ " : ", ")
-		members^ += 1
-	}
+	image: Image_Writer
 	cursor := 0
 	for relocation in relocations {
-		if relocation.offset > cursor {
-			next(&types, &parts, &members)
-			fmt.sbprintf(&types, "[%d x i8]", relocation.offset - cursor)
-			write_byte_array_constant(&parts, bytes[cursor:relocation.offset])
-		}
-		next(&types, &parts, &members)
-		strings.write_string(&types, "ptr")
-		fmt.sbprintf(&parts, "ptr %s", relocation.target)
+		image_bytes(&image, bytes[cursor:relocation.offset])
+		image_member(&image, "ptr")
+		strings.write_string(&image.parts, relocation.target)
 		cursor = relocation.offset + 8
 	}
-	if cursor < len(bytes) {
-		next(&types, &parts, &members)
-		fmt.sbprintf(&types, "[%d x i8]", len(bytes) - cursor)
-		write_byte_array_constant(&parts, bytes[cursor:])
+	image_bytes(&image, bytes[cursor:])
+	strings.write_string(&image.types, " }>")
+	strings.write_string(&image.parts, " }>")
+	return strings.to_string(image.types), strings.to_string(image.parts)
+}
+
+// An image's type and value, written member by member.
+@(private = "file")
+Image_Writer :: struct {
+	types, parts: strings.Builder,
+}
+
+// Starts a member of LLVM type `type`, whose value the caller writes next.
+@(private = "file")
+image_member :: proc(image: ^Image_Writer, type: string) {
+	separator := strings.builder_len(image.types) == 0 ? "<{ " : ", "
+	fmt.sbprint(&image.types, separator, type, sep = "")
+	fmt.sbprint(&image.parts, separator, type, " ", sep = "")
+}
+
+// A run of this many zero bytes is a member of its own, spelled
+// `zeroinitializer`, since padding and inactive union variants make long ones.
+@(private = "file")
+IMAGE_ZERO_RUN :: 16
+
+// `bytes` as image members: runs of bytes, each ending before a run of at least
+// `IMAGE_ZERO_RUN` zeros, and those zeros.
+@(private = "file")
+image_bytes :: proc(image: ^Image_Writer, bytes: []u8) {
+	for start := 0; start < len(bytes); {
+		end, zeros := start, 0
+		for end < len(bytes) && zeros < IMAGE_ZERO_RUN {
+			zeros = bytes[end] == 0 ? zeros + 1 : 0
+			end += 1
+		}
+		if zeros == IMAGE_ZERO_RUN {
+			end -= zeros
+		}
+		if end == start {
+			// At a long run of zeros: the member is all of it.
+			for end < len(bytes) && bytes[end] == 0 {
+				end += 1
+			}
+		}
+		image_member(image, fmt.tprintf("[%d x i8]", end - start))
+		write_byte_array_value(&image.parts, bytes[start:end])
+		start = end
 	}
-	strings.write_string(&types, " }>")
-	strings.write_string(&parts, " }>")
-	return strings.to_string(types), strings.to_string(parts)
 }
 
 // A global's value type and initializer, the alignment an image needs, and
@@ -541,20 +568,31 @@ f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
 	return transmute(u64)f64(transmute(f32)pattern)
 }
 
-// The global backing array of a file-scope slice literal. A `[]mut T` literal's
-// is never shared, since a write through one must not show up in another; a
-// read-only one's is shared with every literal of the same elements.
-@(private)
-slice_literal_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
-	count := len(value.aggregate.elements)
-	if count == 0 {
-		return "zeroinitializer"
+// A text or slice literal's pointer, length, and owner flags. `target` is ""
+// for one that is all zero, which an empty `cstring_view` is not: it is the
+// address of a lone terminator. Not `ok` for a text value that is no literal.
+@(private = "file")
+carrier_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> (target: string, count, flags: int, ok: bool) {
+	switch {
+	case info.kind == .Slice:
+		if value.aggregate == nil || len(value.aggregate.elements) == 0 {
+			return "", 0, 0, true
+		}
+		return slice_literal_storage(e, value, info), len(value.aggregate.elements), 0, true
+	case value.kind != .String:
+		return "", 0, 0, false
+	case value.text == "" && info.kind != .CString_View:
+		return "", 0, 0, true
 	}
-	return slice_constant(slice_literal_storage(e, value, info), count)
+	// A string literal's bytes have static lifetime, so a `string` owns nothing.
+	return text_literal_global(e, value.text), len(value.text), info.kind == .String ? STRING_STATIC : 0, true
 }
 
-// The global backing array of a slice literal with at least one element.
-@(private)
+// The global backing array of a slice literal with at least one element. A
+// `[]mut T` literal's is never shared, since a write through one must not show
+// up in another; a read-only one's is shared with every literal of the same
+// elements.
+@(private = "file")
 slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
 	count := len(value.aggregate.elements)
 	imaged := false
@@ -583,30 +621,8 @@ slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info)
 	return private_global(e, "@.slice.", fmt.aprintf("private global %s%s", contents, align))
 }
 
-@(private)
-slice_constant :: proc(name: string, count: int) -> string {
-	return fmt.aprintf("{{ ptr %s, i64 %d }}", name, count)
-}
-
-// A literal `string` or `string_view`: static owner flags, no allocation.
-@(private)
-text_constant :: proc(e: ^Emitter, value: Const_Value, owning: bool) -> string {
-	if value.kind != .String || value.text == "" {
-		return "zeroinitializer"
-	}
-	b := strings.builder_make()
-	strings.write_string(&b, "{ ptr ")
-	strings.write_string(&b, text_literal_global(e, value.text))
-	fmt.sbprintf(&b, ", i64 %d", len(value.text))
-	if owning {
-		fmt.sbprintf(&b, ", i64 %d", STRING_STATIC)
-	}
-	strings.write_string(&b, " }")
-	return strings.to_string(b)
-}
-
 // `text` as a literal `string_view`.
 @(private)
 text_view_constant :: proc(e: ^Emitter, text: string) -> string {
-	return text_constant(e, string_const(text), false)
+	return llvm_const(e, string_const(text), TYPE_STRING_VIEW)
 }

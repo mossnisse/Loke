@@ -1,0 +1,5 @@
+@loke.g.tiny = global %union.Wide.* { i8 7, [65535 x i8] zeroinitializer, i8 1 }
+@loke.g.word = global %union.Aligned.* { i64 72623859790382856, [4088 x i8] zeroinitializer, i8 1, [7 x i8] zeroinitializer }
+@loke.g.mixed = global <{ ptr, [9 x i8], [71 x i8], ptr, [9 x i8], [407 x i8], [8 x i8] }>
+[71 x i8] zeroinitializer, ptr @.str.*, [9 x i8] c"\01\00\00\00\00\00\00\00\01", [407 x i8] zeroinitializer
+not \00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00

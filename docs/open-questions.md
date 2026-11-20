@@ -292,12 +292,13 @@ points remain:
   file-scope `thread_local` initializer. The file-scope literal rule currently
   gives the array static lifetime.
   [LLVM constant review](source-reviews/emit_llvm_const.md#equal-file-scope-slice-literals-have-observable-shared-backing)
-- **Constant emission.** Use LLVM's compact spelling for all-zero union
-  padding and relocation ranges. Replace arbitrary-precision union-head
-  assembly with a fixed-width integer and reuse the little-endian byte
-  writer. Share the carrier decisions between the typed and byte-image
-  renderers if that reduces the existing duplication.
-  [LLVM constant review](source-reviews/emit_llvm_const.md#findings)
+- **Constant emission.** A union constant whose active payload reaches past
+  the storage's head, such as `.small({1, 2, 3})` beside a `[65536]u8`
+  variant, still spells the whole padding member byte by byte: its LLVM type
+  is one `[N x i8]`, which has no compact spelling for a value only partly
+  zero. Only a global of another value type, as a relocation image is, could
+  shorten it. Decide whether the size of such initializers matters enough for
+  that. [LLVM constant review](source-reviews/emit_llvm_const.md#a-small-union-variant-writes-the-largest-variants-padding-p2)
 - **Container emission.** Share the direct hash and equality call lowering
   while keeping the map key policy fixed by the checker. Measure miss-heavy
   `find_or_insert` before changing the runtime ABI to reuse a probe across a

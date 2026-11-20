@@ -1,0 +1,22 @@
+package main;
+
+// design.md "Zero values": a union constant writes its active payload, and the
+// storage an inactive variant widens it by is zero. A storage member that is
+// all zero is `zeroinitializer`, not one escaped byte per zero, so `.tiny(7)`
+// no longer spells 65535 of them. An image, which holds a pointer, makes a long
+// run of zeros a member of its own.
+
+Wide :: union { empty, tiny: u8, inactive: [65536]u8 }
+Aligned :: union { empty, word: u64, inactive: [4096]u8 }
+Pointed :: struct { first: string, gap: [64]u8, second: string, tail: [40]u8 }
+Mixed :: union { empty, pointed: Pointed, inactive: [512]u8 }
+
+tiny: Wide = .tiny(7);
+word: Aligned = .word(0x0102030405060708);
+mixed: Mixed = .pointed({first = "a", second = "b"});
+
+main :: proc() {
+	_ = tiny.as(.tiny);
+	_ = word.as(.word);
+	_ = mixed.as(.pointed);
+}

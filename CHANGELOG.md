@@ -319,6 +319,9 @@ checklist.
   ([Inspecting a union](docs/design.md#inspecting-a-union)). With a 64 KiB payload, 24
   `_ = value^.as(.blob);` statements in one procedure took a whole option slot each and
   overflowed the stack.
+- A union constant writes its active payload, and storage that is all zero is one
+  `zeroinitializer`. A global `.tiny(7)` of a union with a `[65536]u8` variant took 196,674
+  characters of LLVM IR, and a constant holding a pointer spelled every zero of its padding.
 
 ## [0.10.0] - 2026-11-16
 
