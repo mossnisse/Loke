@@ -298,12 +298,10 @@ points remain:
   writer. Share the carrier decisions between the typed and byte-image
   renderers if that reduces the existing duplication.
   [LLVM constant review](source-reviews/emit_llvm_const.md#findings)
-- **Container emission.** Remove the duplicate pre-reservation bind and
-  forwarding label helper. Reuse the staging slot for fallible map insertion
-  and allocate replacement storage only for managed values. Share the direct
-  hash and equality call lowering while keeping the map key policy fixed by
-  the checker. Measure miss-heavy `find_or_insert` before changing the runtime
-  ABI to reuse a probe across a user copy hook.
+- **Container emission.** Share the direct hash and equality call lowering
+  while keeping the map key policy fixed by the checker. Measure miss-heavy
+  `find_or_insert` before changing the runtime ABI to reuse a probe across a
+  user copy hook.
   [Container review](source-reviews/emit_llvm_containers.md#simplification-and-boundaries)
 - **Conversion emission.** Pass checked copy information from call dispatch
   and use the common operand-copy path. Collapse the C-string null predicate

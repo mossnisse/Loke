@@ -19,7 +19,6 @@ emit_container_declarations :: proc(e: ^Emitter) {
 @(private = "file", rodata)
 CONTAINER_DECLARATIONS := [?]Runtime_Declaration {
 	{"i32", "loke_rt_v1_dyn_reserve", "ptr, ptr, i64", ""},
-	{"void", "loke_rt_v1_dyn_bind", "ptr", ""},
 	{"i32", "loke_rt_v1_dyn_append", "ptr, ptr, ptr, i64", ""},
 	{"i32", "loke_rt_v1_dyn_append_owned", "ptr, ptr, ptr, ptr, i64", ""},
 	{"i32", "loke_rt_v1_dyn_insert", "ptr, ptr, i64, ptr, i64", ""},
@@ -35,7 +34,6 @@ CONTAINER_DECLARATIONS := [?]Runtime_Declaration {
 	{"void", "loke_rt_v1_map_drop", "ptr, ptr", ""},
 	{"i64", "loke_rt_v1_hash_bytes", "ptr, i64, i64", ""},
 	{"i64", "loke_rt_v1_map_scan", "ptr, ptr, i64, ptr, ptr", ""},
-	{"void", "loke_rt_v1_map_bind", "ptr", ""},
 	{"ptr", "loke_rt_v1_map_find", "ptr, ptr, ptr", ""},
 	{"ptr", "loke_rt_v1_map_entry", "ptr, ptr, ptr, ptr", ""},
 	{"i32", "loke_rt_v1_map_remove", "ptr, ptr, ptr, ptr", ""},
@@ -251,9 +249,10 @@ emit_destination_allocator :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string 
 	return written == nil ? emit_default_allocator(e) : emit_expr(e, written)
 }
 
-// Stores a written `via`, binds the header, and reserves room for every written
-// element; the built prefix is then the literal's to drop, on a panic or an exit
-// from a later element, until the literal is complete (`hold_built_part`).
+// Stores a written `via` and reserves room for every written element, which
+// binds the header; the built prefix is then the literal's to drop, on a panic
+// or an exit from a later element, until the literal is complete
+// (`hold_built_part`).
 @(private = "file")
 begin_container_literal :: proc(
 	e: ^Emitter, v: ^Expr_Composite, address: string, as_type: Type_Id,
@@ -264,7 +263,6 @@ begin_container_literal :: proc(
 		emit_store_via(e, address, v.via)
 	}
 	family := type_is_map(e.c, as_type) ? "map" : "dyn"
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_%s_bind(ptr %s)", family, address)
 	reserved := emit_value(
 		e, "call i32 @loke_rt_v1_%s_reserve(ptr %s, ptr %s, i64 %d)",
 		family, address, ops, len(v.elements),
@@ -341,15 +339,23 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 
 // Where a map insertion reports whether the entry is new, where the entry is,
 // where the value waits to be stored, and where a replaced value waits for its
-// drop. A literal's entries share them.
+// drop, which only a managed value has. A literal's entries share them.
 @(private)
 Map_Entry_Slots :: struct {
 	inserted, place, value, old: string,
 }
 
+// `value` is a slot the caller already stages the value in, if it has one.
 @(private = "file")
-make_map_entry_slots :: proc(e: ^Emitter, element: Type_Id) -> Map_Entry_Slots {
-	return {alloca(e, "i32"), alloca(e, "ptr"), alloca(e, llvm_type(e, element)), alloca(e, llvm_type(e, element))}
+make_map_entry_slots :: proc(e: ^Emitter, element: Type_Id, value := "") -> Map_Entry_Slots {
+	slots := Map_Entry_Slots{inserted = alloca(e, "i32"), place = alloca(e, "ptr"), value = value}
+	if slots.value == "" {
+		slots.value = alloca(e, llvm_type(e, element))
+	}
+	if emit_lifecycle(e, element).managed {
+		slots.old = alloca(e, llvm_type(e, element))
+	}
+	return slots
 }
 
 // The entry `emit_map_entry` found, and the value to store there, kept in `slots`
@@ -401,7 +407,7 @@ emit_alloc_failure :: proc(e: ^Emitter, header: string) {
 emit_container_policy_failure :: proc(e: ^Emitter, header, status: string) {
 	kept := branch_on_failure(e, status)
 	emit_alloc_failure(e, header)
-	rejoin(e, kept)
+	place_label(e, kept)
 }
 
 // ------------------------------------------------------ container bodies --
@@ -479,7 +485,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		if moves {
 			kept := branch_on_failure(e, status)
 			emit_drop_place(e, element, slot)
-			rejoin(e, kept)
+			place_label(e, kept)
 		}
 
 	case .Pop:
@@ -739,7 +745,7 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 	// hooks and the old value's drop.
 	guard := guard_built_element(e, element, staged)
 	key_slot := spill(e, container_key(e.c, body.container), "%arg1")
-	slots := make_map_entry_slots(e, element)
+	slots := make_map_entry_slots(e, element, staged)
 	place := emit_map_entry(e, body.ops, "%arg0", key_slot, slots.inserted)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", place, slots.place)
 	missing, ok_label, failed_label := is_null(e, place), new_label(e, "mins.ok"), new_label(e, "mins.failed")
@@ -754,8 +760,8 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 	emit_ret(e, symbol.result, emit_alloc_result(e, symbol.result, "false"))
 }
 
-// `branch_on_failure` opens the block a zero `status` runs, such as the drop of
-// a move-only element that failed to enter the container; `rejoin` closes it.
+// Opens the block a zero `status` runs, such as the drop of a move-only element
+// that failed to enter the container, and answers the label that closes it.
 @(private = "file")
 branch_on_failure :: proc(e: ^Emitter, status: string) -> string {
 	failed := icmp_zero(e, "i32", status)
@@ -763,11 +769,6 @@ branch_on_failure :: proc(e: ^Emitter, status: string) -> string {
 	branch_if(e, failed, drop_label, kept_label)
 	place_label(e, drop_label)
 	return kept_label
-}
-
-@(private = "file")
-rejoin :: proc(e: ^Emitter, kept_label: string) {
-	place_label(e, kept_label)
 }
 
 // `key in m`: one probe, no insertion and no value. The key is evaluated, and
