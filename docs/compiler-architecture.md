@@ -1161,6 +1161,16 @@ compares the two; `tests/layout/unions.loke` covers the shapes and the tag
 widths. Constant byte images, structural equality, and debug information read
 the same record.
 
+The storage is spelled in units of the union's alignment: the payload's first
+unit, which carries the alignment, an array of the units after it, and the
+tag, so `{ i64, [2 x i64], i8 }` for a 24-byte payload aligned to 8. LLVM
+copies a first-class value member by member and element by element, so a
+payload spelled in bytes costs an instruction per byte at every copy;
+`union_copies_move_words` guards the spelling. The bytes after the tag are
+LLVM's own padding, spelled nowhere: they hold no value, a copy need not carry
+them, and nothing may read them. Equality and hashing read the tag and the
+active payload, and an atomic union is one word with no tag.
+
 Another niche changes `union_layout` and the tag reads and writes in
 `emit_llvm_union.odin`, and no specification text. Two constraints hold it. A
 designated zero stays all-zero bytes, because zero filling writes no tag. And a

@@ -371,3 +371,56 @@ timed around the whole process, on the same machine and day:
 Each cell is before / after. A default build is 9-72% faster and its
 executable 5-81% smaller: an unoptimized object keeps every function it was
 given, in one section the linker cannot split.
+
+## Union storage in words
+
+[union-words.json](union-words.json) records the working tree after commit
+`59277e0360c0c9432eda9100b99daac8fbd01ccb`, in which a union's payload is
+spelled to LLVM in units of the union's alignment and nothing is spelled after
+its tag, against [union-words-before.json](union-words-before.json), that
+commit itself, captured just before on 2026-11-20 on the same machine and with
+the same tools and conditions as [Reachable emission](#reachable-emission).
+SHA-256 values of `lokec.exe`:
+
+- before: `2866c6595d88a982d2c2f2e4a226a26f6d926bb123b69dc7ffcfebe7af537e8c`.
+- after: `6933bf303849f617b17f627a70bc82e21d260f4885ea8526e199e5d44cdd671c`.
+
+```powershell
+.\perf.ps1 -Lokec <before>/lokec.exe -Lsp <none> -Out bench/baselines/union-words-before.json
+.\perf.ps1 -Lokec <after>/lokec.exe -Lsp <none> -Baseline bench/baselines/union-words-before.json -Out bench/baselines/union-words.json
+```
+
+| Workload | Before / after build at `-opt=speed` (ms) | Before / after executable (KB) | Before / after run (ms) |
+| --- | ---: | ---: | ---: |
+| `examples/lexer.loke` | 3310 / 1315 | 292 / 216 | |
+| `examples/corpus_runner.loke` | 4538 / 2406 | 360 / 266 | |
+| `examples/binary_records.loke` | 1331 / 952 | 292 / 264 | |
+| `bench/dense.loke` | 1971 / 1770 | 330 / 316 | 4703 / 4392 |
+| `bench/geometry.loke` | 1820 / 1640 | 337 / 324 | 383 / 382 |
+| `bench/linalg.loke` | 1224 / 1214 | 282 / 282 | 12 / 11 |
+| `bench/workspace` | 667 / 653 | 192 / 192 | 6 / 5 |
+
+An optimized build changes by -60% to +2% over the 33 records, with a median
+of -2%: the gain is in programs that pass `Result` and `Option` values of
+several words around, and code that copies few unions is within noise. No
+executable grew by more than 1 KB and those of the union-heavy programs shrank
+by up to 26%. Front-end time is unchanged, compiler peak working set is within
+-3% to 0%, and benchmark outputs matched.
+
+Default builds, measured as in [Reachable emission](#reachable-emission), each
+cell before / after:
+
+| Workload | Build at `-opt=none` (ms) | Build with `-g` (ms) | Executable (KB) |
+| --- | ---: | ---: | ---: |
+| `examples/hello.loke` | 167 / 165 | 243 / 241 | 261 / 261 |
+| `examples/lexer.loke` | 747 / 438 | 888 / 550 | 807 / 460 |
+| `examples/corpus_runner.loke` | 1099 / 627 | 1303 / 778 | 1266 / 630 |
+| `bench/collections.loke` | 195 / 193 | 269 / 267 | 272 / 270 |
+| `bench/geometry.loke` | 809 / 720 | 994 / 891 | 753 / 618 |
+| `bench/linalg.loke` | 543 / 534 | 673 / 667 | 451 / 448 |
+| `bench/provenance.loke` | 173 / 174 | 249 / 247 | 268 / 265 |
+| `bench/workspace` | 339 / 334 | 425 / 419 | 305 / 297 |
+
+The "before" figures here are the "after" compiler of
+[Reachable emission](#reachable-emission) measured again, about 5% slower than
+in that section's table: the two captures are not comparable to that precision.

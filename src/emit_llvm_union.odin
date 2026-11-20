@@ -18,20 +18,22 @@ union_head_type :: proc(align: u64) -> string {
 }
 
 // The union storage type, built so LLVM's own layout matches the checker's
-// cached facts: an alignment-carrying payload head, explicit payload padding,
-// the tag, and tail padding. A bare `[N x i8]` payload would be byte-aligned,
-// which is wrong when a union is allocated directly, nested in a struct, or
-// used as an array element.
+// cached facts: an alignment-carrying payload head, the rest of the payload,
+// and the tag. A bare `[N x i8]` payload would be byte-aligned, which is wrong
+// when a union is allocated directly, nested in a struct, or used as an array
+// element. The padding after the tag is LLVM's own, since the head or the
+// aligner gives the storage the union's alignment: it holds no value, as
+// design.md "`unsafe.transmute`" says of a struct's, and a copy need not carry it.
 @(private)
 union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 	shape := union_layout(e.c, type)
 	members := union_members(shape)
-	parts := make([dynamic]string, 0, 4, context.temp_allocator)
+	parts := make([dynamic]string, 0, 3, context.temp_allocator)
 	if members.head > 0 {
 		append(&parts, union_head_type(members.head))
 	}
 	if members.padding > 0 {
-		append(&parts, fmt.aprintf("[%d x i8]", members.padding))
+		append(&parts, union_padding_type(members))
 	}
 	if members.aligner {
 		append(&parts, fmt.aprintf("[0 x %s]", union_head_type(shape.align)))
@@ -39,22 +41,26 @@ union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 	if members.tag {
 		append(&parts, union_tag_llvm(shape))
 	}
-	if members.tail > 0 {
-		append(&parts, fmt.aprintf("[%d x i8]", members.tail))
-	}
 	return strings.concatenate({"{ ", strings.join(parts[:], ", ", context.temp_allocator), " }"})
 }
 
-// The members of a union's storage, in order, each a byte count, or 0 when it
-// is absent: the payload's alignment-carrying head and the payload's padding
-// after it; without a payload, an empty member that carries the alignment; the
-// tag, which a niche union has none of; and tail padding. The storage type, a
-// union constant and the tag's member index are all read from it.
+// The members of a union's storage, in order: the payload's alignment-carrying
+// head and the payload's padding after it, each a byte count, or 0 when it is
+// absent; without a payload, an empty member that carries the alignment; and
+// the tag, which a niche union has none of. The storage type, a union constant
+// and the tag's member index are all read from it.
 @(private)
 Union_Members :: struct {
 	head, padding: u64,
 	aligner, tag:  bool,
-	tail:          u64,
+}
+
+// The payload's padding as an array of heads, which the payload region is a
+// whole number of. A copy of a union value moves each member's elements one by
+// one, so bytes here would be an instruction each (`union_copies_move_words`).
+@(private)
+union_padding_type :: proc(members: Union_Members) -> string {
+	return fmt.aprintf("[%d x %s]", members.padding / members.head, union_head_type(members.head))
 }
 
 @(private)
@@ -69,7 +75,6 @@ union_members :: proc(shape: Union_Layout) -> Union_Members {
 		members.aligner = shape.align > shape.tag_bytes
 	}
 	members.tag = true
-	members.tail = shape.size - shape.payload_size - shape.tag_bytes
 	return members
 }
 

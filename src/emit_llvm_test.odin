@@ -1372,3 +1372,42 @@ main :: proc() { c := Circle{3}; assert(through_view((dyn Drawable)(&c)) == 3); 
 	testing.expect(t, strings.count(module, `!DIGlobalVariable(name: "witness$`) == 1, "the module does not describe one witness table")
 	testing.expectf(t, strings.count(c.natvis, `Condition="witness == &amp;witness$`) == 2, "natvis names a dropped witness table:\n%s", c.natvis)
 }
+
+// compiler-architecture.md "Union layout": a union's payload is spelled in
+// units of its alignment, in its storage and in a constant, so a copy moves
+// words, and nothing is spelled after the tag.
+@(test)
+union_copies_move_words :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+Words :: union { ok: [3]int, err: u8 }
+Halves :: union { ok: [3]i32, err: u8 }
+Shorts :: union { ok: [3]i16, err: u8 }
+Bytes :: union { ok: [5]u8, none }
+Wide :: union { ok: [2]i128, err: u8 }
+words: Words = .ok({1, 2, 3});
+failed: Words = .err(7);
+halves: Halves = .ok({1, 2, 3});
+shorts: Shorts = .ok({1, 2, 3});
+bytes: Bytes = .ok({1, 2, 3, 4, 5});
+wide: Wide = .ok({1, 2});
+main :: proc() {
+    copy := words;
+    assert(copy == words && failed != words);
+}
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	finalize_semantics(&p.c)
+	module, emitted := emit_llvm_module(&p.c)
+	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+	for spelled in ([]string {
+		"{ i64, [2 x i64], i8 }\n", "{ i32, [2 x i32], i8 }\n", "{ i16, [2 x i16], i8 }\n", "{ i8, [4 x i8], i8 }\n",
+		"{ i128, [1 x i128], i8 }\n",
+		"{ i64 1, [2 x i64] [i64 2, i64 3], i8 0 }\n", "{ i64 7, [2 x i64] zeroinitializer, i8 1 }\n",
+		"{ i32 1, [2 x i32] [i32 2, i32 3], i8 0 }\n", "{ i16 1, [2 x i16] [i16 2, i16 3], i8 0 }\n",
+		"{ i8 1, [4 x i8] [i8 2, i8 3, i8 4, i8 5], i8 0 }\n", "{ i128 1, [1 x i128] [i128 2], i8 0 }\n",
+	}) {
+		testing.expectf(t, strings.contains(module, spelled), "the module has no `%s`", strings.trim_space(spelled))
+	}
+}

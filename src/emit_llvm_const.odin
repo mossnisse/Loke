@@ -9,7 +9,7 @@ import "core:slice"
 import "core:strings"
 
 // design.md "Zero values": a union constant is the payload's little-endian byte
-// image, split across the head and byte-array tail, plus the tag. Only the
+// image, split across the head and the heads after it, plus the tag. Only the
 // active payload is written out; the storage past it is zero, and a member all
 // of whose bytes are zero is `zeroinitializer`, however wide an inactive
 // variant makes it.
@@ -50,11 +50,17 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 	}
 	if members.padding > 0 {
 		padding := strings.builder_make()
-		if u64(len(payload)) > members.head {
-			write_byte_array_constant(&padding, storage_bytes(payload, members.head, members.padding))
-		} else {
-			fmt.sbprintf(&padding, "[%d x i8] zeroinitializer", members.padding)
+		strings.write_string(&padding, union_padding_type(members))
+		// The payload's bytes past the head, when it has any that are not zero.
+		rest: []u8
+		if u64(len(payload)) > members.head && !slice.all_of(payload[members.head:], 0) {
+			rest = storage_bytes(payload, members.head, members.padding)
 		}
+		for at := 0; at < len(rest); at += int(members.head) {
+			strings.write_string(&padding, at == 0 ? " [" : ", ")
+			write_union_head_constant(&padding, rest[at:at + int(members.head)])
+		}
+		strings.write_string(&padding, len(rest) > 0 ? "]" : " zeroinitializer")
 		append(&parts, strings.to_string(padding))
 	}
 	if members.aligner {
@@ -62,9 +68,6 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string
 	}
 	if members.tag {
 		append(&parts, fmt.aprintf("%s %d", union_tag_llvm(shape), index))
-	}
-	if members.tail > 0 {
-		append(&parts, fmt.aprintf("[%d x i8] zeroinitializer", members.tail))
 	}
 	return strings.concatenate({"{ ", strings.join(parts[:], ", ", context.temp_allocator), " }"})
 }

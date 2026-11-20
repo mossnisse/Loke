@@ -22,6 +22,9 @@ machine, not a threshold.
   emission 23–32%.
 - [Step 1](#1-emit-only-what-is-reachable) of the plan is done: a default build
   is 9–72% faster and one at `-opt=speed` 1–31%.
+- [Step 2](#2-spell-union-payload-padding-in-words) is done: on top of step 1,
+  builds of programs that pass unions around are 40–60% faster at either
+  level, and numeric code 1–11%.
 
 ## Conditions
 
@@ -429,6 +432,36 @@ Things to settle:
 Expected: with step 1, `clang -c` falls a further 50% at both `-opt=none` and
 `-opt=speed` on programs that use `Result` and `Option` heavily, and little on
 numeric code such as `bench/geometry.loke`.
+
+**Done** on 2026-11-20: `union_padding_type` spells the payload after the head
+as an array of heads, at every alignment, and `Union_Members` has no tail
+([Union layout](compiler-architecture.md#union-layout)). Whole builds, before
+and after, in ms, the "before" being step 1:
+
+| Program | `-opt=none` | `-g` | `-opt=speed` |
+| --- | ---: | ---: | ---: |
+| `examples/lexer.loke` | 747 / 438 | 888 / 550 | 3310 / 1315 |
+| `examples/corpus_runner.loke` | 1099 / 627 | 1303 / 778 | 4538 / 2406 |
+| `bench/geometry.loke` | 809 / 720 | 994 / 891 | 1820 / 1640 |
+| `bench/linalg.loke` | 543 / 534 | 673 / 667 | 1224 / 1214 |
+| `bench/workspace` | 339 / 334 | 425 / 419 | 667 / 653 |
+
+Executables of the first two are 43–50% smaller at `-opt=none` and 26% at
+`-opt=speed`, and `bench/dense.loke` runs 7% faster. The records are
+`union-words-before.json` and `union-words.json` under `bench/baselines`. How
+the open points settled:
+
+- Nothing reads the bytes after a tag. Equality and hashing compare the tag and
+  the active payload, a map's thunks call those, and the only atomic unions
+  are one word with no tag. The specification already says padding holds no
+  value.
+- The padding after the tag is always LLVM's own: the head, or the aligner of
+  a union without a payload, gives the storage the union's alignment, so the
+  explicit tail was never needed for the size. `-check-layout` agrees on all
+  six `tests/layout` programs.
+- One spelling covers every alignment, since the payload region is a whole
+  number of heads: `i16`, `i32`, `i64`, `i128`, and the byte vector of an
+  alignment past 16. A byte-aligned union is spelled as before.
 
 ### 3. Copy and zero aggregates with `memcpy` and `memset`
 

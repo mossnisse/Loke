@@ -98,6 +98,17 @@ checklist.
   before, so no diagnostic changes. `-emit-ll` writes the smaller module, and under `-g` a
   procedure nothing calls has no debug records, so a debugger cannot break in it or call it
   ([Common options](docs/compiler-guide.md#common-options)).
+- A union value is copied a word at a time. The compiler described a union's storage to LLVM
+  in bytes, so each copy of a `Result` or an `Option` moved its payload a byte at a time, and
+  clang spent most of a build on those copies. The storage is now described in units of the
+  union's alignment. `examples/lexer.loke` builds in 438 ms, from 747, and at `-opt=speed` in
+  1315 ms, from 3310, to an executable of 216 KB, from 292; `examples/corpus_runner.loke` in
+  627 ms, from 1099, and 2406 ms, from 4538. A program of numeric code, which copies few
+  unions, builds 1-11% faster. No size, alignment, or layout changes
+  ([Union layout](docs/compiler-architecture.md#union-layout)). The bytes after a union's tag
+  are padding, which holds no value as a struct's holds none
+  ([`unsafe.transmute`](docs/design.md#unsafetransmute)): unsafe code that read them through a
+  pointer found zeros, and now finds whatever the storage held.
 
 ### Fixed
 

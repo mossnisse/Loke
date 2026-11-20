@@ -1,5 +1,5 @@
 %union.Outcome.
-= type { i32, i8, [3 x i8] }
+= type { i32, i8 }
 define internal i32 @loke.p.Vec.double
 define internal %struct.Vec
 @loke.p.Vec.add
