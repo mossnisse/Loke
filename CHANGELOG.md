@@ -329,6 +329,11 @@ checklist.
   one's `xs[0] += 1`, and two threads could write the same element at once. A thread's view is
   installed when it first attaches to the runtime, which now calls the program's
   `loke_rt_v1_program_tls_init`.
+- Under `-g`, a debugger shows a `static` or `thread_local` local with its procedure's locals, as
+  it shows a C function-scope static; neither had a debug record. The built-in `string_view` is
+  named `string_view$` in the PDB, as `string` is `string$`, so a local type called `string_view`
+  no longer takes the view's natvis rule and leaves the view's text unshown
+  ([Common options](docs/compiler-guide.md#common-options)).
 
 ## [0.10.0] - 2026-11-16
 

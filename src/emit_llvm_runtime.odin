@@ -253,6 +253,7 @@ emit_static_locals :: proc(e: ^Emitter) {
 		name := claim_name(e, fmt.aprintf("@loke.s.%d.%s", index, llvm_safe(identifier_text(e.c, sym.name))))
 		e.names[symbol_id] = name
 		position, _ := slice.linear_search(sym.decl.symbols, symbol_id)
+		debug_mark_static(e, symbol_id)
 		emit_var_global(e, name, sym, sym.decl, position)
 	}
 	if len(e.c.static_locals) > 0 {

@@ -939,7 +939,7 @@ a_debugger_shows_values :: proc(t: ^testing.T) {
 	}
 	for shown in ([]string{
 		`string$ name = "loke"`,
-		`string_view view = "loke"`,
+		`string_view$ view = "loke"`,
 		`ages = { len=1 }`,
 		`["[\"Bob\"]"]`,
 		`"seven" [Type: map$`,

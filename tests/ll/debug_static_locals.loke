@@ -1,0 +1,28 @@
+package main;
+
+import "core:fmt";
+
+// `-g`: a `static` or `thread_local` local is a global variable scoped to its
+// procedure, as C describes a function-scope static, so a debugger lists it
+// with the procedure's locals. A dispatched procedure's static belongs to one
+// of its copies, and a generic one's to each instance.
+@(cpu_dispatch="x86-64-v3")
+kernel :: proc(x: int) -> int {
+	calls: static int = 0;
+	calls += 1;
+	return x + calls;
+}
+
+counted :: proc(x: $T) -> T {
+	seen: static int = 0;
+	seen += 1;
+	return x;
+}
+
+main :: proc() {
+	visits: static int = 5;
+	local_tls: thread_local int = 6;
+	visits += 2;
+	local_tls += 3;
+	fmt.println(visits, local_tls, kernel(1), counted(4), counted(2.5));
+}

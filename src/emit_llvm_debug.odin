@@ -21,6 +21,8 @@ OPEN_MARKER :: ";dbg.open"
 CLOSE_MARKER :: ";dbg.close"
 @(private = "file")
 WITNESS_MARKER :: ";dbg.witness "
+@(private = "file")
+STATIC_MARKER :: ";dbg.static "
 
 @(private)
 debug_mark_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
@@ -53,11 +55,22 @@ debug_mark_scope :: proc(e: ^Emitter, open: bool) {
 	}
 }
 
-// The witness table written next is `witness_order[index]`.
+// The witness table written next is `witness_order[index]`. A table without
+// slots may share its address with another, so natvis compares no view's
+// `witness` with it (`debug_dyn_natvis`) and it gets no debug name.
 @(private)
 debug_mark_witness :: proc(e: ^Emitter, index: int) {
-	if e.c.debug_info {
+	if e.c.debug_info && len(e.c.witness_order[index].slots) > 0 {
 		fmt.sbprintfln(&e.b, "%s%d", WITNESS_MARKER, index)
+	}
+}
+
+// The global written next is the storage of `symbol_id`, a `static` or
+// `thread_local` local.
+@(private)
+debug_mark_static :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
+	if e.c.debug_info {
+		fmt.sbprintfln(&e.b, "%s%d", STATIC_MARKER, u32(symbol_id))
 	}
 }
 
@@ -86,6 +99,9 @@ Debug_Info :: struct {
 	dyns:      [dynamic]Type_Id,
 	// The type names taken.
 	names:     map[string]bool,
+	// A procedure's subprogram made for its static locals, whose globals come
+	// before its `define`; the procedure's marker takes it.
+	early:     map[Symbol_Id]int,
 }
 
 // Metadata `!0` to `!3` are fixed: the unit, the two module flags, and the one
@@ -119,8 +135,8 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 	strings.write_string(&d.natvis, NATVIS_HEADER)
 	out: strings.Builder
 	current: Maybe(Debug_Proc)
-	// The witness whose table the next line defines, or -1.
-	witness := -1
+	// The metadata of the global the next line defines, or -1.
+	global := -1
 	rest := module
 	for line in strings.split_lines_iterator(&rest) {
 		p, inside := &current.?
@@ -128,7 +144,14 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		case strings.has_prefix(line, PROC_MARKER):
 			id, _ := strconv.parse_uint(line[len(PROC_MARKER):])
 			symbol := symbol_of(c, Symbol_Id(id))
-			subprogram := debug_subprogram(&d, symbol, e.names[Symbol_Id(id)])
+			// A CPU copy's marker follows the plain body's, so only one of
+			// them takes the subprogram its static locals name.
+			subprogram, early := d.early[Symbol_Id(id)]
+			if early {
+				delete_key(&d.early, Symbol_Id(id))
+			} else {
+				subprogram = debug_subprogram(&d, symbol, e.names[Symbol_Id(id)])
+			}
 			current = Debug_Proc {
 				symbol     = symbol,
 				subprogram = subprogram,
@@ -139,9 +162,9 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 			resize(&out.buf, len(out.buf) - len(" {\n"))
 			fmt.sbprintfln(&out, " !dbg !%d {{", subprogram)
 		case strings.has_prefix(line, LOCATION_MARKER):
-			fields := strings.fields(line[len(LOCATION_MARKER):])
-			file, _ := strconv.parse_uint(fields[0])
-			lo, _ := strconv.parse_uint(fields[1])
+			file_text, _, lo_text := strings.partition(line[len(LOCATION_MARKER):], " ")
+			file, _ := strconv.parse_uint(file_text)
+			lo, _ := strconv.parse_uint(lo_text)
 			// A location's file is its subprogram's, so a statement written in
 			// another file keeps the location before it.
 			if inside && u32(file) == p.symbol.span.file {
@@ -164,12 +187,15 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 			}
 		case strings.has_prefix(line, WITNESS_MARKER):
 			index, _ := strconv.parse_uint(line[len(WITNESS_MARKER):])
-			witness = int(index)
+			global = debug_witness(&d, int(index))
+		case strings.has_prefix(line, STATIC_MARKER):
+			id, _ := strconv.parse_uint(line[len(STATIC_MARKER):])
+			global = debug_static_local(&d, e, Symbol_Id(id))
 		case inside && strings.has_prefix(line, "  "):
 			write_with_dbg(&out, line, p.location)
-		case witness >= 0:
-			write_with_dbg(&out, line, debug_witness(&d, witness))
-			witness = -1
+		case global >= 0:
+			write_with_dbg(&out, line, global)
+			global = -1
 		case:
 			if line == "}" {
 				current = nil
@@ -251,8 +277,8 @@ debug_scope :: proc(p: ^Debug_Proc) -> int {
 // declaration does not see it.
 @(private = "file")
 debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, marker: string) {
-	space := strings.index_byte(marker, ' ')
-	id, _ := strconv.parse_uint(marker[:space])
+	id_text, _, address := strings.partition(marker, " ")
+	id, _ := strconv.parse_uint(id_text)
 	symbol_id := Symbol_Id(id)
 	symbol := symbol_of(d.c, symbol_id)
 	if symbol.span.file != p.symbol.span.file {
@@ -273,10 +299,8 @@ debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, mar
 	arg := ""
 	switch type_size(d.c, symbol.type) {
 	case 1, 2, 4, 8:
-		for param, index in p.symbol.param_symbols {
-			if param == symbol_id {
-				arg = fmt.aprintf("arg: %d, ", index + 1)
-			}
+		if index := int(symbol.index); index < len(p.symbol.param_symbols) && p.symbol.param_symbols[index] == symbol_id {
+			arg = fmt.aprintf("arg: %d, ", index + 1)
 		}
 	}
 	variable := debug_node(
@@ -287,8 +311,30 @@ debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, mar
 	fmt.sbprintfln(
 		out,
 		"  call void @llvm.dbg.declare(metadata ptr %s, metadata !%d, metadata !DIExpression()), !dbg !%d",
-		marker[space + 1:], variable, debug_location(d, scope, symbol.span),
+		address, variable, debug_location(d, scope, symbol.span),
 	)
+}
+
+// A `static` or `thread_local` local, described as C describes a
+// function-scope static: a global variable scoped to its procedure, which a
+// debugger lists with that procedure's locals. LLVM gives a `thread_local` one
+// the thread-relative location its storage has.
+@(private = "file")
+debug_static_local :: proc(d: ^Debug_Info, e: ^Emitter, symbol_id: Symbol_Id) -> int {
+	symbol := symbol_of(d.c, symbol_id)
+	owner := (^Expr_Proc)(symbol.def_scope.owner_proc).symbol
+	subprogram, found := d.early[owner]
+	if !found {
+		subprogram = debug_subprogram(d, symbol_of(d.c, owner), e.names[owner])
+		d.early[owner] = subprogram
+	}
+	line, _ := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
+	variable := debug_node(
+		d, `distinct !DIGlobalVariable(name: "%s", scope: !%d, file: !%d, line: %d, type: !%d, isLocal: true, isDefinition: true)`,
+		llvm_escape(identifier_text(d.c, symbol.name)), subprogram, debug_file(d, symbol.span.file), line,
+		debug_type(d, symbol.type),
+	)
+	return debug_global(d, variable)
 }
 
 @(private = "file")
@@ -484,8 +530,13 @@ debug_sequence :: proc(d: ^Debug_Info, id: int, type: Type_Id, name: string) {
 		debug_member(d, &members, "cap", TYPE_INT, 16)
 	}
 	// WinDbg shows a type named `string` its own way and ignores natvis for it.
-	if type == TYPE_STRING {
+	// The built-in view's name is one no declared type can take either, so a
+	// local type called `string_view` cannot claim the view's natvis rule.
+	switch type {
+	case TYPE_STRING:
 		name = "string$"
+	case TYPE_STRING_VIEW:
+		name = "string_view$"
 	}
 	debug_composite(d, id, name, type_size(c, type) * 8, strings.to_string(members))
 }
@@ -553,7 +604,7 @@ NATVIS_HEADER :: `<?xml version="1.0" encoding="utf-8"?>
   <Type Name="string$">
     <DisplayString>{(char*)data,[len]s8}</DisplayString>
   </Type>
-  <Type Name="string_view">
+  <Type Name="string_view$">
     <DisplayString>{(char*)data,[len]s8}</DisplayString>
   </Type>
 `
@@ -630,6 +681,12 @@ debug_witness :: proc(d: ^Debug_Info, index: int) -> int {
 		d, `distinct !DIGlobalVariable(name: "witness$%d", scope: !%d, type: !%d, isLocal: true, isDefinition: true)`,
 		index, UNIT, debug_type(d, TYPE_RAWPTR),
 	)
+	return debug_global(d, variable)
+}
+
+// The attachment of a global's definition, which the compile unit lists.
+@(private = "file")
+debug_global :: proc(d: ^Debug_Info, variable: int) -> int {
 	expression := debug_node(d, "!DIGlobalVariableExpression(var: !%d, expr: !DIExpression())", variable)
 	append(&d.globals, expression)
 	return expression

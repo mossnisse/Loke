@@ -1,0 +1,11 @@
+@loke.s.*.calls = global i64 0, !dbg !
+@loke.s.*.visits = global i64 5, !dbg !
+@loke.s.*.local_tls = thread_local global i64 6, !dbg !
+@loke.s.*.seen = global i64 0, !dbg !
+distinct !DIGlobalVariable(name: "calls", scope: !*, file: !*, line: 11, type: !*, isLocal: true, isDefinition: true)
+distinct !DIGlobalVariable(name: "visits", scope: !*, file: !*, line: 23, type: !
+distinct !DIGlobalVariable(name: "local_tls", scope: !*, file: !*, line: 24, type: !
+distinct !DIGlobalVariable(name: "seen", scope: !*, file: !*, line: 17, type: !
+not distinct !DIGlobalVariable(name: "calls", scope: !0,
+!DISubprogram(name: "counted.int",
+!DISubprogram(name: "counted.f64",

@@ -137,6 +137,76 @@ main :: proc() {
 	               strings.contains(module, "size: 64, offset: 64)"), "wide storage has no two-word layout")
 }
 
+// A local type may be called `string_view`; the built-in view's debug name and
+// natvis rule are ones it cannot take.
+@(test)
+debug_local_string_view_type_keeps_the_view_rule :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+Builtin_View :: string_view;
+main :: proc() {
+    string_view :: struct { n: int }
+    record := string_view{n = 7};
+    original: Builtin_View = "message";
+    assert(record.n == original.len());
+}
+`)
+	defer destroy_checked(&p)
+	c := &p.c
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	c.debug_info = true
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	testing.expect(t, strings.contains(module, `!DICompositeType(tag: DW_TAG_structure_type, name: "string_view", size: 64,`),
+	               "the local record lost its own name")
+	testing.expect(t, strings.contains(module, `!DICompositeType(tag: DW_TAG_structure_type, name: "string_view$", size: 128,`),
+	               "the built-in view is not named `string_view$`")
+	testing.expect(t, strings.contains(c.natvis, `<Type Name="string_view$">`) && !strings.contains(c.natvis, `<Type Name="string_view">`),
+	               "the natvis rule does not select the built-in view alone")
+}
+
+// design.md "Storage modifiers": a `static` or `thread_local` local is a global
+// scoped to its procedure, as C describes a function-scope static.
+@(test)
+debug_static_locals_are_procedure_scoped_globals :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+main :: proc() {
+    visits: static int = 5;
+    local_tls: thread_local int = 6;
+    visits += 2;
+    local_tls += 3;
+    assert(visits + local_tls == 16);
+}
+`)
+	defer destroy_checked(&p)
+	c := &p.c
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	c.debug_info = true
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	// The metadata number after `!` in `text` at `marker`.
+	number_after :: proc(text, marker: string) -> string {
+		at := strings.index(text, marker)
+		if at < 0 { return "" }
+		rest := text[at + len(marker):]
+		end := 0
+		for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' { end += 1 }
+		return rest[:end]
+	}
+	main_scope := number_after(module, " @loke.p.main() !dbg !")
+	if !testing.expect(t, main_scope != "", "main has no subprogram") { return }
+	for local in ([2][2]string{{"visits", " = global i64 5, !dbg !"}, {"local_tls", " = thread_local global i64 6, !dbg !"}}) {
+		attached := number_after(module, local[1])
+		variable := number_after(module, fmt.tprintf("\n!%s = !DIGlobalVariableExpression(var: !", attached))
+		testing.expectf(t, attached != "" && strings.contains(module, fmt.tprintf(
+			`!%s = distinct !DIGlobalVariable(name: "%s", scope: !%s, file: !`, variable, local[0], main_scope)),
+			"`%s` is not described as a global scoped to main", local[0])
+	}
+}
+
 @(test)
 checked_call_operations_are_cleared_by_syntax_cloning :: proc(t: ^testing.T) {
 	p: Checked
