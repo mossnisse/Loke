@@ -297,10 +297,8 @@ points remain:
   zero. Only a global of another value type, as a relocation image is, could
   shorten it. Decide whether the size of such initializers matters enough for
   that. [LLVM constant review](source-reviews/emit_llvm_const.md#a-small-union-variant-writes-the-largest-variants-padding-p2)
-- **Container emission.** Share the direct hash and equality call lowering
-  while keeping the map key policy fixed by the checker. Measure miss-heavy
-  `find_or_insert` before changing the runtime ABI to reuse a probe across a
-  user copy hook.
+- **Container emission.** Measure miss-heavy `find_or_insert` before
+  changing the runtime ABI to reuse a probe across a user copy hook.
   [Container review](source-reviews/emit_llvm_containers.md#simplification-and-boundaries)
 
 ## Literal elements that lend a temporary to a call

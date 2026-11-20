@@ -119,18 +119,6 @@ container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
 	)
 }
 
-// One typed operand of a direct call from a thunk to `hook`, given the address
-// the C runtime handed over: that address for a pointer-mode parameter, and
-// otherwise the value in the parameter ABI, where a large one stays an address.
-@(private)
-hook_argument :: proc(e: ^Emitter, hook: Symbol_Id, index: int, type: Type_Id, address: string) -> string {
-	mode := symbol_param_mode(e.c, symbol_of(e.c, hook), index)
-	if param_mode_is_pointer(mode) {
-		return fmt.aprintf("ptr %s", address)
-	}
-	return fmt.aprintf("%s %s", param_llvm(e, type, mode), load_temporary(e, type, address))
-}
-
 // NULL means the part is trivially destroyed, so the C loop is skipped.
 @(private = "file")
 container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
@@ -177,11 +165,7 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 		proc(e: ^Emitter, key: Type_Id) {
 			out := ""
 			if hook := settled_key_policy(e, key).hash; hook != INVALID_SYMBOL {
-				out = temp(e)
-				fmt.sbprintfln(
-					&e.b, "  %s = call i64 %s(%s, i64 %%seed)",
-					out, symbol_name(e, hook), hook_argument(e, hook, 0, key, "%p"),
-				)
+				out = emit_hash_hook_call(e, hook, key, "%p", "%seed")
 			} else {
 				out = emit_hash_value(e, key, load_temporary(e, key, "%p"), "%seed")
 			}
@@ -198,11 +182,7 @@ container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 		proc(e: ^Emitter, key: Type_Id) {
 			same := ""
 			if hook := settled_key_policy(e, key).equal; hook != INVALID_SYMBOL {
-				same = temp(e)
-				fmt.sbprintfln(
-					&e.b, "  %s = call i1 %s(%s, %s)", same, symbol_name(e, hook),
-					hook_argument(e, hook, 0, key, "%a"), hook_argument(e, hook, 1, key, "%b"),
-				)
+				same = emit_equal_hook_call(e, hook, key, "%a", "%b")
 			} else {
 				same = emit_compare(e, .Eq_Eq, key, load_temporary(e, key, "%a"), load_temporary(e, key, "%b"))
 			}

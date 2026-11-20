@@ -1154,6 +1154,19 @@ synth_receiver_value :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 	return load_place(e, symbol.params[0], "%arg0")
 }
 
+// One typed operand, parameter `index`, of a direct call to `hook` when the
+// caller holds the argument's address, as a C runtime callback is handed it:
+// that address for a pointer-mode parameter, and otherwise the value in the
+// parameter ABI, where a large one stays an address.
+@(private)
+hook_argument :: proc(e: ^Emitter, hook: Symbol_Id, index: int, type: Type_Id, address: string) -> string {
+	mode := symbol_param_mode(e.c, symbol_of(e.c, hook), index)
+	if param_mode_is_pointer(mode) {
+		return fmt.aprintf("ptr %s", address)
+	}
+	return fmt.aprintf("%s %s", param_llvm(e, type, mode), load_temporary(e, type, address))
+}
+
 // The receiver operand for a direct call to `hook` when the caller holds the
 // receiver as a value. design.md "Receiver forms": a `self: ^` receiver wants
 // the address of the value, so a held one is spilled here — once, and LLVM folds
