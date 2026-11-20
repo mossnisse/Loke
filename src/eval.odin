@@ -1635,7 +1635,7 @@ eval_hash :: proc(ev: ^Evaluator, value: Eval_Value, type: Type_Id, seed: u64, s
 			return 0, eval_fail(ev, span, "L0341", "`typeid_of` has no number at compile time, so it cannot be hashed there")
 		}
 	}
-	return hash_const(c, frozen, type, seed, ev.alloc), true
+	return hash_const(c, frozen, type, seed), true
 }
 
 // Direct and indirect calls alike.

@@ -1,0 +1,47 @@
+package main;
+
+import "core:fmt";
+
+// An integer wider than 64 bits hashes both of its words, so keys that differ
+// only in the high word hash apart, and its compile-time hash is its run-time
+// hash.
+
+Wide :: enum u128 { Small = 1, Huge = 18446744073709551617 }
+Key :: struct { tag: u8, value: i128 }
+
+LOW :: u128(5).hash(7);
+HIGH :: (u128(5) | (u128(1) << 64)).hash(7);
+NEGATIVE :: i128(-2).hash(7);
+SMALL :: Wide.Small.hash(7);
+HUGE :: Wide.Huge.hash(7);
+RECORD :: Key{1, -(i128(1) << 100)}.hash(7);
+
+main :: proc() {
+	low: u128 = 5;
+	high: u128 = 5 | (u128(1) << 64);
+	fmt.println(low.hash(7) != high.hash(7), LOW != HIGH);
+	fmt.println(low.hash(7) == LOW, high.hash(7) == HIGH);
+
+	negative: i128 = -2;
+	fmt.println(negative.hash(7) == NEGATIVE, negative.hash(7) != i128(-2 + (i128(1) << 64)).hash(7));
+
+	small, huge := Wide.Small, Wide.Huge;
+	fmt.println(small.hash(7) == SMALL, huge.hash(7) == HUGE, SMALL != HUGE);
+
+	key := Key{1, -(i128(1) << 100)};
+	fmt.println(key.hash(7) == RECORD, key.hash(7) != Key{1, -(i128(1) << 101)}.hash(7));
+
+	// Keys that share their low word: each hashes apart from the one before.
+	apart := 0;
+	previous := u128(0).hash(7);
+	for (i := 1; i < 64; i += 1) {
+		current := (u128(i) << 64).hash(7);
+		if (current != previous) { apart += 1; }
+		previous = current;
+	}
+	table: map[u128]int = {};
+	for (i := 0; i < 2000; i += 1) {
+		table[u128(i) << 64] = i;
+	}
+	fmt.println(apart, table.len(), table[u128(1999) << 64]);
+}

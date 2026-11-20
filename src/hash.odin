@@ -8,7 +8,6 @@
 package lokec
 
 import "core:fmt"
-import "core:mem"
 
 // The 64-bit FNV prime.
 HASH_MULTIPLIER :: u64(1099511628211)
@@ -343,8 +342,9 @@ inherent_hash_member :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 
 // --------------------------------------------------------- compile time --
 
-// One scalar folded into `seed`, as `emit_hash_value` does at run time.
-hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64, allocator: mem.Allocator) -> u64 {
+// One scalar folded into `seed`, as `emit_hash_value` does at run time: an
+// integer wider than 64 bits folds its low word, then its high word.
+hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64) -> u64 {
 	#partial switch underlying_kind(c, type) {
 	case .String, .String_View:
 		// As `loke_rt_v1_hash_bytes`: the bytes, then the length, so the elements
@@ -359,6 +359,10 @@ hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64, a
 	case .Raw_Pointer, .Pointer, .C_Pointer:
 		return hash_mix(seed, 0) // the only compile-time pointer constant is nil
 	}
-	bits, _ := bi_to_u64(allocator, bi_wrap(allocator, value.integer, 64, false))
-	return hash_mix(seed, bits)
+	pattern := bi_pattern(value.integer, 128)
+	result := hash_mix(seed, u64(pattern))
+	if type_bits(c, type) > 64 {
+		result = hash_mix(result, u64(pattern >> 64))
+	}
+	return result
 }

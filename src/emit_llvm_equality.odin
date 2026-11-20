@@ -364,7 +364,7 @@ emit_hash_mix :: proc(e: ^Emitter, seed, bits: string) -> string {
 }
 
 // One scalar folded into `seed`, as `hash_const` does at compile time: its
-// 64-bit integer image.
+// 64-bit integer image, or a wider integer's low word and then its high word.
 @(private = "file")
 emit_hash_scalar :: proc(e: ^Emitter, under: Type_Id, value, seed: string) -> string {
 	#partial switch type_of(e.c, under).kind {
@@ -373,5 +373,11 @@ emit_hash_scalar :: proc(e: ^Emitter, under: Type_Id, value, seed: string) -> st
 	case .Raw_Pointer, .Pointer, .C_Pointer:
 		return emit_hash_mix(e, seed, emit_value(e, "ptrtoint ptr %s to i64", value))
 	}
-	return emit_hash_mix(e, seed, widen_to_i64(e, value, under))
+	bits := type_bits(e.c, under)
+	if bits <= 64 {
+		return emit_hash_mix(e, seed, widen_to_i64(e, value, under))
+	}
+	low := resize_int(e, value, bits, 64, signed = false)
+	high := resize_int(e, emit_value(e, "lshr i%d %s, 64", bits, value), bits, 64, signed = false)
+	return emit_hash_mix(e, emit_hash_mix(e, seed, low), high)
 }

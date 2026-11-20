@@ -338,6 +338,11 @@ checklist.
   as at compile time ([Comparison operators](docs/design.md#comparison-operators)). Comparing
   records whose first fields differ ran a later field's own `==` in the executable, which a
   constant of the same comparison skipped, so a panicking `==` there failed only at run time.
+- Hashing an `i128`, a `u128`, or an enum over one, as a map key or a part of one or through
+  `hash`, folds both 64-bit words, at run time and at compile time alike
+  ([Maps](docs/design.md#maps)). It read only the low word, so
+  keys that differed only in the high word hashed alike, and inserting `n` of them into a map
+  probed quadratically: 80000 keys `u128(i) << 64` took 5.7 s, and now take 0.06 s.
 
 ## [0.10.0] - 2026-11-16
 
