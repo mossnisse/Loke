@@ -1,10 +1,10 @@
 # Compiler source reviews
 
-This review continues from `src/build_config.odin` through `src/zero.odin` at
-`ea622efe`. The range includes 171 production files, including the nested
-subprocess package and the compiler's test runner. It excludes files ending
-in `_test.odin`. See the [earlier audit](../compiler-source-audit-2026-11-18.md#file-by-file-reviews)
-for prior coverage before this starting point.
+The review series covers production Odin sources under `src/`, including the
+nested subprocess package and the compiler's test runner. Files ending in
+`_test.odin` are outside its scope. See the
+[earlier audit](../compiler-source-audit-2026-11-18.md#file-by-file-reviews)
+for coverage before `src/build_config.odin`.
 
 Each file has its own reviewer. Reviews start in path order and reports are
 written as they finish. They cover correctness, necessity, simplification,
@@ -12,6 +12,8 @@ dead code, data structures, algorithms, duplicate logic, and responsibilities
 across compiler phases. Each report describes any verification it used.
 
 ## Review reports
+
+### Continuation at `ea622efe`
 
 - [`src/build_config.odin`](build_config.md)
 - [`src/callback_summary.odin`](callback_summary.md)
@@ -43,17 +45,37 @@ across compiler phases. Each report describes any verification it used.
 - [`src/emit_llvm_box.odin`](emit_llvm_box.md)
 - [`src/emit_llvm_calls.odin`](emit_llvm_calls.md)
 
-The reviews stopped at `src/emit_llvm_calls.odin`; the files after it in path
-order have not been reviewed in this continuation.
+### Continuation at `e1aab600`
+
+- [`src/emit_llvm_coff.odin`](emit_llvm_coff.md)
+- [`src/emit_llvm_const.odin`](emit_llvm_const.md)
+- [`src/emit_llvm_containers.odin`](emit_llvm_containers.md)
+- [`src/emit_llvm_convert.odin`](emit_llvm_convert.md)
+- [`src/emit_llvm_debug.odin`](emit_llvm_debug.md)
+- [`src/emit_llvm_dispatch.odin`](emit_llvm_dispatch.md)
+- [`src/emit_llvm_entry.odin`](emit_llvm_entry.md)
+- [`src/emit_llvm_equality.odin`](emit_llvm_equality.md)
+
+This batch ends at `src/emit_llvm_equality.odin`. The next file in path order
+is `src/emit_llvm_erased.odin`.
 
 ## Resolution
 
-Every correctness finding above reproduced and was fixed, with a regression
-test, except those listed in [Known gaps](../known-gaps.md#gaps): exact unfixed
-decimals, `caller_location()` in a default the compiler cannot fold, setter
-destinations in a multiple assignment, and compound assignment through a view.
-The CHANGELOG's Unreleased section lists each fix. The simplifications were
-applied unless they asked for a measurement first or the fixing commit says
-why it declined them. Questions for the specification, and the hypotheses not
-yet measured or reproduced, are in
+The `ea622efe` continuation fixed the reproduced correctness findings with
+regression tests, with four still in [Known gaps](../known-gaps.md#gaps):
+exact unfixed decimals, `caller_location()` in a default the compiler cannot
+fold, setter destinations in a multiple assignment, and compound assignment
+through a view. The changelog lists each fix. The simplifications were applied
+unless they asked for a measurement first or the fixing commit says why it
+declined them. Questions and hypotheses are in
 [Open questions](../open-questions.md#compiler-source-audit-continuation).
+
+The `e1aab600` continuation fixed every correctness finding with a
+regression test; the changelog lists each fix. Structural comparison now
+stops at the first unequal part, which
+[Comparison operators](../design.md#comparison-operators) specifies. The
+simplifications were applied except where the fixing commit says why it
+declined them. What remains, slice literal identity, partly zero union
+padding, the measure-first `find_or_insert` probe, and debug records for
+file-scope variables, is in
+[LLVM source review follow-ups](../open-questions.md#llvm-source-review-follow-ups).

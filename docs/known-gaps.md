@@ -142,4 +142,3 @@ main :: proc() {
 
 `s = s + Tag{1};` compiles. Compound assignment needs the assignment's temporary
 extension. [Regression](../tests/err/compound_fallback_borrow.loke)
-
