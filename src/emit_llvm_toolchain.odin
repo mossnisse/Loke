@@ -343,7 +343,8 @@ collect_foreign_link_inputs :: proc(
 @(private = "file")
 warn_foreign_crt :: proc(c: ^Compiler, imp: ^Item_Foreign_Import, path: string) {
 	// An input that cannot be read asks for nothing here; the linker names it.
-	others := file_requested_crts(path) - {.Static}
+	requested, archive := file_requested_crts(path)
+	others := requested - {.Static}
 	if others == {} {
 		return
 	}
@@ -351,10 +352,14 @@ warn_foreign_crt :: proc(c: ^Compiler, imp: ^Item_Foreign_Import, path: string) 
 	for kind in others {
 		append(&descriptions, CRT_DESCRIPTIONS[kind])
 	}
+	// The linker takes an archive's member only for a symbol it defines, so
+	// those that ask for another runtime may go unused.
 	warnf(
 		c, imp.span, "L0755",
-		"`%s` was compiled for %s, but the executable links %s, so it would hold more than one C runtime",
-		path, strings.join(descriptions[:], " and ", context.temp_allocator), CRT_DESCRIPTIONS[.Static],
+		"`%s` %s for %s, but the executable links %s, so the program would hold more than one C runtime%s",
+		path, archive ? "holds objects compiled" : "was compiled",
+		strings.join(descriptions[:], " and ", context.temp_allocator), CRT_DESCRIPTIONS[.Static],
+		archive ? " if the linker takes those objects" : "",
 	)
 	add_notef(
 		c, NO_SPAN,

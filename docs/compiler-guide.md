@@ -555,7 +555,7 @@ library that matches:
 | --- | --- |
 | a static library or object compiled with `/MT` | one runtime |
 | a DLL's import library | one runtime here; the DLL keeps its own |
-| a static library or object compiled with `/MD`, `/MDd`, or `/MTd` | two runtimes, with warning `L0755` at the import |
+| a static library or object compiled with `/MD`, `/MDd`, or `/MTd` | two runtimes, with warning `L0755` at the import; from a static library, only if the link takes such an object |
 
 A DLL's runtime stays inside the DLL, so memory a DLL allocates is released
 through that library's own functions, never `free` from the program's side;
@@ -564,7 +564,11 @@ binaries, for example, have `glfw3_mt.lib` compiled with `/MT`, `glfw3.lib`
 with `/MD`, and `glfw3dll.lib` for `glfw3.dll`: import the first or the last.
 
 `lokec` reads the runtime each object asks for from its `/DEFAULTLIB`
-directives. It reads the objects and libraries an import names by path; a
+directives, before the link, in the objects and libraries an import names by
+path. The linker takes from a static library only the objects that define a
+symbol the program needs, so for a library any of whose objects asks for
+another runtime, `L0755` says the second runtime arrives if the linker takes
+those objects. A
 `system:` library comes from the Windows SDK or the MSVC toolset, which use
 the same runtime, and is not read. Nor is an object compiled for link-time
 optimization, by clang's `-flto` or MSVC's `/GL`: a library built that way

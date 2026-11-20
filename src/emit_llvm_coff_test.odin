@@ -52,14 +52,25 @@ coff_archive :: proc(members: [][2]string) -> []u8 {
 @(test)
 crt_requests_are_read_from_each_directive_spelling :: proc(t: ^testing.T) {
 	// clang's spelling.
-	testing.expect_value(t, coff_requested_crts(coff_object("-defaultlib:msvcrt.lib -defaultlib:oldnames.lib")), Crt_Kinds{.Dynamic})
+	testing.expect_value(t, requested_crts(coff_object("-defaultlib:msvcrt.lib -defaultlib:oldnames.lib")), Crt_Kinds{.Dynamic})
 	// MSVC's: upper case, quoted, after a byte-order mark.
-	testing.expect_value(t, coff_requested_crts(coff_object("\xef\xbb\xbf   /DEFAULTLIB:\"LIBCMTD\" /DEFAULTLIB:\"OLDNAMES\" ")), Crt_Kinds{.Static_Debug})
-	testing.expect_value(t, coff_requested_crts(coff_object("/DEFAULTLIB:\"msvcrtd.lib\" /FAILIFMISMATCH:\"RuntimeLibrary=MDd_DynamicDebug\"")), Crt_Kinds{.Dynamic_Debug})
-	testing.expect_value(t, coff_requested_crts(coff_object("/DEFAULTLIB:libcmt.lib")), Crt_Kinds{.Static})
+	testing.expect_value(t, requested_crts(coff_object("\xef\xbb\xbf   /DEFAULTLIB:\"LIBCMTD\" /DEFAULTLIB:\"OLDNAMES\" ")), Crt_Kinds{.Static_Debug})
+	testing.expect_value(t, requested_crts(coff_object("/DEFAULTLIB:\"msvcrtd.lib\" /FAILIFMISMATCH:\"RuntimeLibrary=MDd_DynamicDebug\"")), Crt_Kinds{.Dynamic_Debug})
+	testing.expect_value(t, requested_crts(coff_object("/DEFAULTLIB:libcmt.lib")), Crt_Kinds{.Static})
 	// A library that is no C runtime, and an option that only looks like one.
-	testing.expect_value(t, coff_requested_crts(coff_object("/DEFAULTLIB:user32.lib /NODEFAULTLIB:msvcrt.lib /EXPORT:msvcrt")), Crt_Kinds{})
-	testing.expect_value(t, coff_requested_crts(coff_object("/defaultlib:MSVCRT", bigobj = true)), Crt_Kinds{.Dynamic})
+	testing.expect_value(t, requested_crts(coff_object("/DEFAULTLIB:user32.lib /NODEFAULTLIB:msvcrt.lib /EXPORT:msvcrt")), Crt_Kinds{})
+	testing.expect_value(t, requested_crts(coff_object("/defaultlib:MSVCRT", bigobj = true)), Crt_Kinds{.Dynamic})
+	// Quotes around the whole option, as `#pragma comment(linker, "\"...\"")`
+	// writes them, or around part of it, are not part of the option.
+	testing.expect_value(t, requested_crts(coff_object("\"/DEFAULTLIB:msvcrt.lib\" \"-defaultlib:libcmtd\"")), Crt_Kinds{.Dynamic, .Static_Debug})
+	testing.expect_value(t, requested_crts(coff_object("/\"DEFAULTLIB\":ms\"vcrtd\".lib \"/NODEFAULTLIB:libcmt.lib\"")), Crt_Kinds{.Dynamic_Debug})
+}
+
+// The runtimes `coff_requested_crts` reads, whether or not `data` is an archive.
+@(private = "file")
+requested_crts :: proc(data: []u8) -> Crt_Kinds {
+	kinds, _ := coff_requested_crts(data)
+	return kinds
 }
 
 @(test)
@@ -75,10 +86,15 @@ crt_requests_are_gathered_from_an_archives_objects :: proc(t: ^testing.T) {
 		{"a.obj/", string(coff_object("-defaultlib:libcmt.lib "))},
 		{"/0", string(coff_object("/DEFAULTLIB:\"MSVCRT\""))},
 	})
-	testing.expect_value(t, coff_requested_crts(archive), Crt_Kinds{.Static, .Dynamic})
+	// It is an archive: the linker may take only some of these objects.
+	kinds, is_archive := coff_requested_crts(archive)
+	testing.expect_value(t, kinds, Crt_Kinds{.Static, .Dynamic})
+	testing.expect(t, is_archive)
+	_, is_archive = coff_requested_crts(coff_object("/DEFAULTLIB:MSVCRT"))
+	testing.expect(t, !is_archive)
 
 	// An import library alone asks for nothing, whatever its DLL was built with.
-	testing.expect_value(t, coff_requested_crts(coff_archive({{"/", "\x00\x00\x00\x00"}, {"foo.dll/", import_member}})), Crt_Kinds{})
+	testing.expect_value(t, requested_crts(coff_archive({{"/", "\x00\x00\x00\x00"}, {"foo.dll/", import_member}})), Crt_Kinds{})
 }
 
 // A damaged input reads as asking for nothing, never out of bounds: the
@@ -86,18 +102,18 @@ crt_requests_are_gathered_from_an_archives_objects :: proc(t: ^testing.T) {
 @(test)
 damaged_coff_inputs_ask_for_no_crt :: proc(t: ^testing.T) {
 	object := coff_object("/DEFAULTLIB:MSVCRT")
-	testing.expect_value(t, coff_requested_crts(object[:30]), Crt_Kinds{})
-	testing.expect_value(t, coff_requested_crts(object[:10]), Crt_Kinds{})
-	testing.expect_value(t, coff_requested_crts(nil), Crt_Kinds{})
+	testing.expect_value(t, requested_crts(object[:30]), Crt_Kinds{})
+	testing.expect_value(t, requested_crts(object[:10]), Crt_Kinds{})
+	testing.expect_value(t, requested_crts(nil), Crt_Kinds{})
 
 	// A section whose data would run past the end.
 	pointer := make([]u8, len(object), context.temp_allocator)
 	copy(pointer, object)
 	pointer[20 + 20] = 0xFF
-	testing.expect_value(t, coff_requested_crts(pointer), Crt_Kinds{})
+	testing.expect_value(t, requested_crts(pointer), Crt_Kinds{})
 
 	// A member whose size runs past the end of the archive.
 	archive := coff_archive({{"a.obj/", string(object)}})
-	testing.expect_value(t, coff_requested_crts(archive[:len(archive) - 4]), Crt_Kinds{})
-	testing.expect_value(t, coff_requested_crts(transmute([]u8)string("!<arch>\n")), Crt_Kinds{})
+	testing.expect_value(t, requested_crts(archive[:len(archive) - 4]), Crt_Kinds{})
+	testing.expect_value(t, requested_crts(transmute([]u8)string("!<arch>\n")), Crt_Kinds{})
 }

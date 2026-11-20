@@ -4310,7 +4310,10 @@ it, never handing memory or a `FILE *` across, still works, and an error would
 leave no way to link one that has no `/MT` build. The runtime is read from each
 object's `/DEFAULTLIB` directives, which is what the linker itself acts on,
 rather than from the executable's imports after the link, so the warning
-can point at the import responsible.
+can point at the import responsible. The price is a static library's unused
+objects: only the link decides which of them it takes, so a library's warning
+says the second runtime comes if the linker takes those objects, rather than
+running the link to find out.
 
 ### Container fast paths stay in the C runtime
 

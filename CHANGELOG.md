@@ -297,6 +297,13 @@ checklist.
   a file-scope `static_assert`, a `where` clause, or an interface requirement's expression, and
   hover no longer shows a doc comment `L0260` reports, as one above a local
   ([Doc comments](docs/design.md#doc-comments)).
+- `L0755` reads a `/DEFAULTLIB` directive quoted as a whole, as
+  `#pragma comment(linker, "\"/DEFAULTLIB:msvcrt.lib\"")` writes it. An object asking for the
+  dynamic C runtime that way linked it without the warning
+  ([C runtime](docs/compiler-guide.md#c-runtime)).
+- `L0755` on a static library says the second C runtime arrives if the linker takes the objects
+  that ask for it. It said the program would hold two runtimes, though the linker may take only
+  objects compiled for the static one.
 
 ## [0.10.0] - 2026-11-16
 

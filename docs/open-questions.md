@@ -286,9 +286,6 @@ points remain:
 
 ## LLVM source review follow-ups
 
-- **COFF field decoding.** Replace the two private little-endian readers
-  with Odin's endian helpers, keeping the existing bounds checks.
-  [COFF review](source-reviews/emit_llvm_coff.md#simplification)
 - **Slice literal identity.** Decide whether separate file-scope immutable
   slice literals may share a backing array when pointer equality can observe
   the sharing. Also specify the lifetime of a mutable literal's backing in a

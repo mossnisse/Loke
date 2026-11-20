@@ -143,29 +143,6 @@ main :: proc() {
 `s = s + Tag{1};` compiles. Compound assignment needs the assignment's temporary
 extension. [Regression](../tests/err/compound_fallback_borrow.loke)
 
-### C runtime warnings disagree with some foreign links
-
-The [C runtime guide](compiler-guide.md#c-runtime) describes `L0755` for a
-foreign object that brings in a second C runtime. Compile the
-[quoted `/DEFAULTLIB` example](source-reviews/emit_llvm_coff.md#quoting-a-whole-default-library-option-suppresses-l0755-p2)
-as `quoted.obj`, then compile this file beside it.
-
-```loke
-package main;
-foreign import quoted "quoted.obj";
-foreign quoted { used_answer :: proc "c" () -> i32 ---; }
-main :: proc() { _ = used_answer(); }
-```
-
-The executable imports the dynamic `malloc` without `L0755`. Removing the
-quotes around the whole directive restores the warning with the same imports.
-
-The reverse happens with an archive. Compile one C object with `/MT` that
-defines `used_answer` and another with `/MD` that defines `unused_allocate` and
-calls `malloc`. Archive both as `mixed.lib` and change the import above to
-`"mixed.lib"`. The build warns that the program would hold two C runtimes even
-though the link uses only the `/MT` member. [Archive member review](source-reviews/emit_llvm_coff.md#unused-archive-members-cause-a-definite-two-runtime-warning-p3)
-
 ### Dynamic array insertion can lose or double-drop elements during unwinding
 
 [What the unwind runs](design.md#what-the-unwind-runs-and-what-it-does-not)

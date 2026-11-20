@@ -3,6 +3,7 @@
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
 
+import "core:encoding/endian"
 import "core:mem/virtual"
 import "core:path/filepath"
 import "core:strconv"
@@ -41,27 +42,28 @@ CRT_DESCRIPTIONS := [Crt_Kind]string {
 // The file is mapped rather than read, so a large archive costs the pages of
 // its headers and directives, not a copy of all of it.
 @(private)
-file_requested_crts :: proc(path: string) -> Crt_Kinds {
+file_requested_crts :: proc(path: string) -> (kinds: Crt_Kinds, archive: bool) {
 	data, err := virtual.map_file_from_path(path, {.Read})
 	if err != nil {
-		return {}
+		return
 	}
 	defer virtual.unmap_file(data)
 	return coff_requested_crts(data)
 }
 
 // The C runtimes named by the `.drectve` sections of an object file or of each
-// object in an archive (`.lib`). An import library's members name none, and so
-// do an object compiled with `/Zl` and anything that is not plain COFF: neither
-// clang's `-flto` bitcode nor MSVC's `/GL` objects are read.
+// object in an archive (`.lib`), and whether `data` is an archive, whose
+// members the linker takes only when they define a symbol it needs. An import
+// library's members name none, and so do an object compiled with `/Zl` and
+// anything that is not plain COFF: neither clang's `-flto` bitcode nor MSVC's
+// `/GL` objects are read.
 @(private)
-coff_requested_crts :: proc(data: []u8) -> Crt_Kinds {
+coff_requested_crts :: proc(data: []u8) -> (kinds: Crt_Kinds, archive: bool) {
 	ARCHIVE_SIGNATURE :: "!<arch>\n"
 	MEMBER_HEADER :: 60
 	if len(data) < len(ARCHIVE_SIGNATURE) || string(data[:len(ARCHIVE_SIGNATURE)]) != ARCHIVE_SIGNATURE {
-		return coff_object_crts(data)
+		return coff_object_crts(data), false
 	}
-	kinds: Crt_Kinds
 	at := len(ARCHIVE_SIGNATURE)
 	for at + MEMBER_HEADER <= len(data) {
 		header := data[at:at + MEMBER_HEADER]
@@ -78,7 +80,7 @@ coff_requested_crts :: proc(data: []u8) -> Crt_Kinds {
 		// Members start on even offsets.
 		at += MEMBER_HEADER + size + (size & 1)
 	}
-	return kinds
+	return kinds, true
 }
 
 // `ANON_OBJECT_HEADER_BIGOBJ`'s class identifier, which tells a `/bigobj`
@@ -95,18 +97,18 @@ coff_object_crts :: proc(object: []u8) -> Crt_Kinds {
 		return {}
 	}
 	sections_at, count: int
-	if read_u16_le(object, 0) == 0 && read_u16_le(object, 2) == 0xFFFF {
-		if len(object) < BIGOBJ_HEADER || read_u16_le(object, 4) < 2 || string(object[12:28]) != BIGOBJ_CLASS {
+	if endian.unchecked_get_u16le(object) == 0 && endian.unchecked_get_u16le(object[2:]) == 0xFFFF {
+		if len(object) < BIGOBJ_HEADER || endian.unchecked_get_u16le(object[4:]) < 2 || string(object[12:28]) != BIGOBJ_CLASS {
 			return {}
 		}
-		sections_at, count = BIGOBJ_HEADER, int(read_u32_le(object, 44))
+		sections_at, count = BIGOBJ_HEADER, int(endian.unchecked_get_u32le(object[44:]))
 	} else {
 		// An object has no optional header; an image or other data that
 		// happens to get here would.
-		if read_u16_le(object, 16) != 0 {
+		if endian.unchecked_get_u16le(object[16:]) != 0 {
 			return {}
 		}
-		sections_at, count = HEADER, int(read_u16_le(object, 2))
+		sections_at, count = HEADER, int(endian.unchecked_get_u16le(object[2:]))
 	}
 	kinds: Crt_Kinds
 	for i in 0 ..< count {
@@ -117,8 +119,8 @@ coff_object_crts :: proc(object: []u8) -> Crt_Kinds {
 		if string(object[at:at + 8]) != ".drectve" {
 			continue
 		}
-		size := int(read_u32_le(object, at + 16))
-		start := int(read_u32_le(object, at + 20))
+		size := int(endian.unchecked_get_u32le(object[at + 16:]))
+		start := int(endian.unchecked_get_u32le(object[at + 20:]))
 		if start > len(object) || size > len(object) - start {
 			continue
 		}
@@ -128,8 +130,10 @@ coff_object_crts :: proc(object: []u8) -> Crt_Kinds {
 }
 
 // A `.drectve` section is linker options separated by spaces, each starting
-// with `/` or `-` in any case, a value possibly quoted: `/DEFAULTLIB:"MSVCRT"`
-// from MSVC, `-defaultlib:msvcrt.lib` from clang.
+// with `/` or `-` in any case: `/DEFAULTLIB:"MSVCRT"` from MSVC,
+// `-defaultlib:msvcrt.lib` from clang. As on a command line, quotes anywhere
+// in an option keep its spaces and are not part of it, so a quoted
+// `"/DEFAULTLIB:msvcrt.lib"` names the same library.
 @(private = "file")
 directive_crts :: proc(directives: string) -> Crt_Kinds {
 	SEPARATORS :: " \t\r\n\x00"
@@ -144,16 +148,15 @@ directive_crts :: proc(directives: string) -> Crt_Kinds {
 			}
 			end += 1
 		}
-		option := text[:end]
+		option, _ := strings.remove_all(text[:end], "\"", context.temp_allocator)
 		text = text[end:]
 		if len(option) < 2 || (option[0] != '/' && option[0] != '-') {
 			continue
 		}
-		name, _, value := strings.partition(option[1:], ":")
+		name, _, library := strings.partition(option[1:], ":")
 		if !strings.equal_fold(name, "defaultlib") {
 			continue
 		}
-		library := strings.trim(value, "\"")
 		if extension := filepath.ext(library); strings.equal_fold(extension, ".lib") {
 			library = strings.trim_suffix(library, extension)
 		}
@@ -164,14 +167,4 @@ directive_crts :: proc(directives: string) -> Crt_Kinds {
 		}
 	}
 	return kinds
-}
-
-@(private = "file")
-read_u16_le :: proc(data: []u8, at: int) -> u16 {
-	return u16(data[at]) | u16(data[at + 1]) << 8
-}
-
-@(private = "file")
-read_u32_le :: proc(data: []u8, at: int) -> u32 {
-	return u32(data[at]) | u32(data[at + 1]) << 8 | u32(data[at + 2]) << 16 | u32(data[at + 3]) << 24
 }
