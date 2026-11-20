@@ -1,0 +1,11 @@
+@(public)
+package provider;
+
+import "core:mem";
+import "core:os";
+
+// Runs before every test, after the test's name has left `os.args`.
+factory :: proc() -> Allocator {
+	assert(os.args.len() == 1);
+	return mem.default_allocator();
+}

@@ -10,8 +10,8 @@ import "core:fmt"
 @(private = "file")
 BASELINE_ATTRIBUTES :: `"target-cpu"="x86-64" "target-features"="+cmov,+cx8,+fxsr,+mmx,+sse,+sse2,+x87"`
 
-// compiler-guide.md "C runtime": `wmain` initializes the arguments, the
-// thread, and the providers, in that order, then calls `main`.
+// compiler-guide.md "C runtime": `wmain` initializes the arguments and the
+// thread, in that order; `init_providers` follows, then the call to `main`.
 //
 // compiler-guide.md "CPU levels": above baseline, `wmain` itself is baseline
 // code and first asks the runtime whether the processor runs the build's level.
@@ -31,6 +31,14 @@ open_program_entry :: proc(e: ^Emitter) {
 	if e.c.debug_info {
 		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_enable_panic_trace()")
 	}
+}
+
+// design.md "Provider initialization", on the attached thread. A test build
+// selects its test first, so a factory sees the `os.args` a test does, and a
+// name no test has ends the process before any factory runs (design.md "Test
+// procedures").
+@(private = "file")
+init_providers :: proc(e: ^Emitter) {
 	if any_provider_selected(e.c) {
 		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_program_init()")
 	}
@@ -81,6 +89,7 @@ emit_entry :: proc(e: ^Emitter) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	open_program_entry(e)
+	init_providers(e)
 	// design.md "Program entry and exit": an `i32` result is the exit status.
 	status := "0"
 	if symbol.result == TYPE_I32 || fallible {
@@ -98,23 +107,21 @@ emit_entry :: proc(e: ^Emitter) {
 // runtime matches the name and exits 2 on one no test has.
 @(private)
 emit_test_entry :: proc(e: ^Emitter) {
-	runners := make([]string, len(e.c.tests))
-	reported := make([]bool, len(e.c.tests))
+	// A fallible test runs through its reporter, which returns the exit status.
+	Runner :: struct { name: string, fallible: bool }
+	runners := make([]Runner, len(e.c.tests))
+	// The table of names the runtime searches.
+	entries := make([]string, len(e.c.tests))
 	for test, index in e.c.tests {
-		name := symbol_name(e, test)
-		runners[index] = name
 		symbol := symbol_of(e.c, test)
+		runners[index].name = symbol_name(e, test)
+		entries[index] = text_literal_global(e, identifier_text(e.c, symbol.name))
 		if failure, fallible := entry_failure_type(e.c, symbol.result); fallible {
-			runners[index] = emit_failure_reporter(e, fmt.aprintf("@loke.test.%d", index), name, symbol.result, failure)
-			reported[index] = true
+			runners[index] = {emit_failure_reporter(e, fmt.aprintf("@loke.test.%d", index), runners[index].name, symbol.result, failure), true}
 		}
 	}
 	names := "null"
-	if len(e.c.tests) > 0 {
-		entries := make([]string, len(e.c.tests))
-		for test, index in e.c.tests {
-			entries[index] = text_literal_global(e, identifier_text(e.c, symbol_of(e.c, test).name))
-		}
+	if len(entries) > 0 {
 		names = claim_name(e, "@loke.tests")
 		append_constant_array(e, names, "ptr", entries)
 	}
@@ -122,38 +129,43 @@ emit_test_entry :: proc(e: ^Emitter) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	open_program_entry(e)
-	selected, every := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_test_select(ptr %s, i64 %d)", selected, names, len(e.c.tests))
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, -1", every, selected)
-	failed := new_label(e, "test.failed")
+	selected := emit_value(e, "call i64 @loke_rt_v1_test_select(ptr %s, i64 %d)", names, len(runners))
+	every := emit_value(e, "icmp eq i64 %s, -1", selected)
+	init_providers(e)
+	failed := ""
 	for runner, index in runners {
 		picked := emit_value(e, "icmp eq i64 %s, %d", selected, index)
 		run := combine_or(e, every, picked)
 		body, next := new_label(e, "test.run"), new_label(e, "test.next")
 		branch_if(e, run, body, next)
 		place_label(e, body)
-		if !reported[index] {
-			fmt.sbprintfln(&e.b, "  call void %s()%s", runner, entry_call_attributes(e))
+		if !runner.fallible {
+			fmt.sbprintfln(&e.b, "  call void %s()%s", runner.name, entry_call_attributes(e))
 			branch(e, next)
 		} else {
-			status := emit_value(e, "call i32 %s()", runner)
+			if failed == "" {
+				failed = new_label(e, "test.failed")
+			}
+			status := emit_value(e, "call i32 %s()", runner.name)
 			branch_if(e, icmp_zero(e, "i32", status, equal = false), failed, next)
 		}
 		place_label(e, next)
 	}
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
 	fmt.sbprintln(&e.b, "  ret i32 0")
-	e.terminated = true
-	place_label(e, failed)
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
-	fmt.sbprintln(&e.b, "  ret i32 1")
+	if failed != "" {
+		e.terminated = true
+		place_label(e, failed)
+		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
+		fmt.sbprintln(&e.b, "  ret i32 1")
+	}
 	fmt.sbprintln(&e.b, "}")
 }
 
 // design.md "What the unwind runs, and what it does not": a fallible `main` or
 // test is called, reported, and dropped in a function of its own, whose frame
-// registers the failure it hands back while that is printed. The function's name;
-// it returns the exit status.
+// registers the failure it hands back while that is printed. The generated
+// function returns the exit status. Returns the emitted name.
 @(private = "file")
 emit_failure_reporter :: proc(e: ^Emitter, base, callee: string, result, failure: Type_Id) -> string {
 	name := claim_name(e, base)

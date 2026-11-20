@@ -1,0 +1,11 @@
+// design.md "Test procedures": a test build selects its test before it
+// initializes the providers, so the allocator factory, which asserts that
+// `os.args` holds only the executable path, sees what a test does. `-test`
+// runs `one` by name; `corpus_test.odin` also runs it with no test's name.
+@(default_allocator="./provider:factory")
+package main;
+
+import "core:os";
+
+@(test)
+one :: proc() { assert(os.args.len() == 1); }

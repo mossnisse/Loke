@@ -1172,43 +1172,57 @@ test_builds_report_each_test :: proc(t: ^testing.T) {
 }
 
 // A test executable runs one test by name, as the runner calls it, and exits
-// with status 2 on a name no test has or on a second argument.
+// with status 2 on a name no test has or on a second argument. It selects the
+// test before the providers start, so a factory never sees the name.
 @(test)
 a_test_executable_runs_one_test_by_name :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
-	exe := fmt.tprintf("%s/test-by-name.test.exe", TMP)
-	build, _, build_stderr, build_err := exec(
-		os.Process_Desc{command = []string{compiler_path(), "tests/test/outcomes.loke", "-build-mode=test", "-o", exe}},
-		context.allocator,
-	)
-	if !testing.expectf(t, build_err == nil && build.exit_code == 0, "test build failed\n%s", string(build_stderr)) {
-		return
-	}
 	Run :: struct {
 		args:   []string,
 		exit:   int,
 		stdout: string,
 		stderr: string,
 	}
-	runs := []Run {
-		{{"prints_and_passes"}, 0, "not shown", ""},
-		{{"returns_its_failure"}, 1, "", "error: Not_A_Digit"},
-		{{"absent"}, 2, "", "loke: no test is named `absent`"},
-		{{"parses_a_digit", "absent"}, 2, "", "loke: a test executable takes at most one test name"},
-		// With no name, every test in order, stopping at the first failure.
-		{{}, 1, "", "error: Not_A_Digit"},
+	Fixture :: struct {
+		root: string,
+		runs: []Run,
 	}
-	for run in runs {
-		command := make([dynamic]string, context.temp_allocator)
-		append(&command, launch_path(exe))
-		append(&command, ..run.args)
-		state, stdout, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
-		if !testing.expectf(t, err == nil, "cannot run %v", run.args) {
+	fixtures := []Fixture {
+		{
+			"tests/test/outcomes.loke",
+			{
+				{{"prints_and_passes"}, 0, "not shown", ""},
+				{{"returns_its_failure"}, 1, "", "error: Not_A_Digit"},
+				{{"absent"}, 2, "", "loke: no test is named `absent`"},
+				{{"parses_a_digit", "absent"}, 2, "", "loke: a test executable takes at most one test name"},
+				// With no name, every test in order, stopping at the first failure.
+				{{}, 1, "", "error: Not_A_Digit"},
+			},
+		},
+		// The allocator factory asserts that `os.args` holds only the path.
+		{"tests/test/provider_args", {{{"one"}, 0, "", ""}, {{"absent"}, 2, "", "loke: no test is named `absent`"}}},
+	}
+	for fixture, index in fixtures {
+		exe := fmt.tprintf("%s/test-by-name-%d.test.exe", TMP, index)
+		build, _, build_stderr, build_err := exec(
+			os.Process_Desc{command = []string{compiler_path(), fixture.root, "-build-mode=test", "-o", exe}},
+			context.allocator,
+		)
+		if !testing.expectf(t, build_err == nil && build.exit_code == 0, "%s: test build failed\n%s", fixture.root, string(build_stderr)) {
 			continue
 		}
-		testing.expectf(t, state.exit_code == run.exit, "%v: exited with %d", run.args, state.exit_code)
-		testing.expectf(t, normalise(string(stdout)) == run.stdout, "%v: stdout %q", run.args, string(stdout))
-		testing.expectf(t, normalise(string(stderr)) == run.stderr, "%v: stderr %q", run.args, string(stderr))
+		for run in fixture.runs {
+			command := make([dynamic]string, context.temp_allocator)
+			append(&command, launch_path(exe))
+			append(&command, ..run.args)
+			state, stdout, stderr, err := exec(os.Process_Desc{command = command[:]}, context.allocator)
+			if !testing.expectf(t, err == nil, "%s %v: cannot run", fixture.root, run.args) {
+				continue
+			}
+			testing.expectf(t, state.exit_code == run.exit, "%s %v: exited with %d", fixture.root, run.args, state.exit_code)
+			testing.expectf(t, normalise(string(stdout)) == run.stdout, "%s %v: stdout %q", fixture.root, run.args, string(stdout))
+			testing.expectf(t, normalise(string(stderr)) == run.stderr, "%s %v: stderr %q", fixture.root, run.args, string(stderr))
+		}
 	}
 }
 

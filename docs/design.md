@@ -8947,11 +8947,13 @@ executable takes at most one argument, the name of a test:
   includes a failed `assert`, or when it returns its failure, which the startup
   code prints and drops as it does for a failing `main`, and then exits with
   status 1. A test that returns otherwise passes, with exit status 0. The name
-  is not part of `os.args`, which holds only the executable path.
+  is not part of `os.args`, which holds only the executable path, from before
+  [provider initialization](#provider-initialization), so a factory sees the
+  same.
 - With no argument, it runs every test, in the order of the package's file names
   and then in source order, and stops at the first that fails.
 - A name no test has, or a second argument, ends the process with status 2 after
-  a message on standard error.
+  a message on standard error, before any provider is initialized.
 
 A [panic](#panics-and-unwinding) cannot be caught, so a runner that reports
 every test runs each in a process of its own; `lokec -test` does, as [Running

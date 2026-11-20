@@ -304,6 +304,10 @@ checklist.
 - `L0755` on a static library says the second C runtime arrives if the linker takes the objects
   that ask for it. It said the program would hold two runtimes, though the linker may take only
   objects compiled for the static one.
+- A test build selects its test before it initializes the providers
+  ([Test procedures](docs/design.md#test-procedures)). A `default_allocator` or `default_logger`
+  factory saw the test's name in `os.args`, and with a name no test has it ran before the
+  process ended with status 2.
 
 ## [0.10.0] - 2026-11-16
 

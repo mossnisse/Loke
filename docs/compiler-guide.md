@@ -538,7 +538,8 @@ runs on a machine without the Visual C++ redistributable.
 
 The Loke runtime's symbols all begin with `loke_rt_`, and an executable's entry
 is `wmain`, which converts the arguments, attaches the initial thread,
-initializes the providers, and calls `main`. An
+initializes the providers, and calls `main`; a test build's selects its test
+before initializing the providers. An
 [`@(export)`](design.md#export) may not use the `loke_rt_` prefix, and an
 executable or test build may not export `wmain`.
 
