@@ -394,7 +394,6 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	e.b = strings.builder_make()
 	e.fn = Function_State {
 		unwind   = parent.unwind,
-		copying  = parent.copying,
 		copy_cpu = parent.copy_cpu,
 	}
 	u.replaying = true

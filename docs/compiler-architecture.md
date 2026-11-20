@@ -1062,8 +1062,11 @@ build below the named level, is emitted twice: once for the build's level, and
 once for the named level, and that copy's direct calls, including a
 `foreach`'s `iter` and `next` and the `hook(drop)` at a scope's end, reach
 copies of their callees for the same level, made the same way. A call to the
-procedure, direct or through a procedure value, asks once per process whether
-the processor has the level and runs one copy or the other. A call a copy makes
+procedure, direct or through a procedure value, asks whether the processor has
+the level and runs one copy or the other. The answer is cached lazily in an
+internal global for each level a module dispatches to, so each module the
+compiler writes asks the runtime separately, and threads making the first call
+together may each ask before one stores it; the answer they store is the same. A call a copy makes
 through a procedure value or a `dyn` value reaches the procedure as written, and
 so does one in code shared between levels, such as a generated copy of a value,
 a container's drop of its elements, or a task's start.

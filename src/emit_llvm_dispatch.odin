@@ -1,8 +1,9 @@
 // compiler-architecture.md "CPU dispatch": a procedure marked for a level above the
 // build's is written twice, once as usual and once for that level, together
 // with every procedure the level's copy calls directly. Its own name becomes a
-// dispatcher at the build's level, which asks the runtime once whether the
-// processor has the level and calls one copy or the other.
+// dispatcher at the build's level, which asks whether the processor has the
+// level, the runtime's answer cached in the module, and calls one copy or the
+// other.
 //
 // A copy calls copies, and LLVM never inlines a function into one whose features
 // lack the callee's, so the level's code stays behind the check
@@ -20,10 +21,9 @@ Cpu_Copy :: struct {
 
 // What follows a copy's signature, or "" for a function at the build's level:
 // clang's attributes for `-march` at the copy's level, so that a copy is the code
-// the whole build would be.
+// the whole build would be. They list what may be inlined into a copy.
 @(private)
 copy_attributes :: proc(e: ^Emitter) -> string {
-	if !e.copying { return "" }
 	#partial switch e.copy_cpu {
 	case .X86_64_V2:
 		return ` "target-cpu"="x86-64-v2" "target-features"="+cmov,+crc32,+cx16,+cx8,+fxsr,+mmx,+popcnt,+sahf,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+x87"`
@@ -35,13 +35,14 @@ copy_attributes :: proc(e: ^Emitter) -> string {
 
 @(private)
 emitted_has_fma :: proc(e: ^Emitter) -> bool {
-	return cpu_has_fma(e.copying ? e.copy_cpu : e.c.target.cpu)
+	// A copy's level is above the build's.
+	return cpu_has_fma(max(e.copy_cpu, e.c.target.cpu))
 }
 
-// A copy's name for a level, and its check's.
+// A copy's name for a level above `x86-64`, and its check's: `v2` or `v3`.
 @(private = "file")
 cpu_suffix :: proc(cpu: Cpu_Level) -> string {
-	return cpu == .X86_64_V3 ? "v3" : "v2"
+	return strings.trim_prefix(cpu_level_name(cpu), "x86-64-")
 }
 
 // In a copy, the callee's copy for the level, made on first use; a procedure with
@@ -49,7 +50,7 @@ cpu_suffix :: proc(cpu: Cpu_Level) -> string {
 // which is not a copy, so it names the callee itself.
 @(private)
 callee_name :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
-	if e.copying && symbol_id in e.bodies {
+	if e.copy_cpu != .X86_64 && symbol_id in e.bodies {
 		return cpu_copy_name(e, symbol_id, e.copy_cpu)
 	}
 	return symbol_name(e, symbol_id)
@@ -66,13 +67,6 @@ cpu_copy_name :: proc(e: ^Emitter, symbol_id: Symbol_Id, cpu: Cpu_Level) -> stri
 	e.cpu_copies[key] = name
 	append(&e.unwritten_copies, key)
 	return name
-}
-
-// Whether the procedure's own name is a dispatcher: it asks for a level the
-// build does not already have.
-@(private)
-dispatched :: proc(e: ^Emitter, symbol: ^Symbol) -> bool {
-	return symbol.dispatch_cpu > e.c.target.cpu
 }
 
 // The procedure as usual under an internal name, its copy for the level, and,
@@ -116,8 +110,9 @@ emit_cpu_copies :: proc(e: ^Emitter) {
 
 // A function answering whether the processor runs `cpu`, which asks the
 // runtime the first time and then reads its cached answer: 0 before it is
-// known, then 1 for no and 2 for yes. Two threads asking at once store the
-// same answer.
+// known, then 1 for no and 2 for yes. The cache belongs to this module and
+// level, so another object's dispatchers ask again, and so may threads racing
+// on the first call; each stores the same answer.
 @(private = "file")
 dispatch_check :: proc(e: ^Emitter, cpu: Cpu_Level) -> string {
 	if name := e.dispatch_checks[cpu]; name != "" {
@@ -138,10 +133,9 @@ dispatch_check :: proc(e: ^Emitter, cpu: Cpu_Level) -> string {
 	fmt.sbprintln(&e.b, "  %yes = icmp ne i32 %runs, 0")
 	fmt.sbprintln(&e.b, "  %found = select i1 %yes, i8 2, i8 1")
 	fmt.sbprintfln(&e.b, "  store atomic i8 %%found, ptr %s monotonic, align 1", state)
-	fmt.sbprintln(&e.b, "  br label %answer")
+	fmt.sbprintln(&e.b, "  ret i1 %yes")
 	fmt.sbprintln(&e.b, "answer:")
-	fmt.sbprintln(&e.b, "  %state = phi i8 [ %known, %entry ], [ %found, %ask ]")
-	fmt.sbprintln(&e.b, "  %has = icmp eq i8 %state, 2")
+	fmt.sbprintln(&e.b, "  %has = icmp eq i8 %known, 2")
 	fmt.sbprintln(&e.b, "  ret i1 %has")
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")

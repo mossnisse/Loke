@@ -631,8 +631,9 @@ void loke_rt_v1_require_cpu(int32_t level);
 
 /* design.md "@(cpu_dispatch=<string>)": `loke_rt_v1_cpu_supports`, unless the
  * environment variable `LOKE_DISPATCH_CPU` names a lower level, or none, in
- * which case 0. A dispatched procedure asks it once per process for its level;
- * baseline code too. */
+ * which case 0, and baseline code too. A module's dispatchers cache its answer
+ * for each level on first use, so it is asked once per module and level, or
+ * more often by threads racing on that first use. */
 int32_t loke_rt_v1_cpu_dispatch(int32_t level);
 
 /* --------------------------------------------------- process arguments -- */

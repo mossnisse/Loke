@@ -182,8 +182,10 @@ also has a copy for that level in a build for a lower one, which its calls run
 where the processor has the level. `core:math/repro`'s `f64` functions are
 marked, so a baseline executable runs them with the FMA instruction on a
 processor with `x86-64-v3`, most of the way to a `x86-64-v3` build's speed,
-with the same results either way. The runtime asks the processor once per
-process. Setting the environment variable `LOKE_DISPATCH_CPU` to a level caps
+with the same results either way. The answer for each level is cached on the
+first call, separately in each module the compiler writes, so two Loke objects
+linked into one C host each ask the runtime, and threads making the first call
+together may each ask. Setting the environment variable `LOKE_DISPATCH_CPU` to a level caps
 the copies that run at that level, and a value naming no level runs none, so
 a test can take the other path on any processor:
 

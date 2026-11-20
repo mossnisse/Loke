@@ -174,9 +174,9 @@ Function_State :: struct {
 	// Where the entry block's first instruction goes in `b`, which is where the
 	// prologue goes (`write_function`); 0 until `open_entry_block`.
 	entry:      int,
-	// Set while writing a procedure's copy for `copy_cpu`, whose direct calls
-	// name copies too (compiler-architecture.md "CPU dispatch").
-	copying:    bool,
+	// The level of the procedure copy being written, whose direct calls name
+	// copies too, or `.X86_64` outside one: dispatch is only to a higher level
+	// (compiler-architecture.md "CPU dispatch").
 	copy_cpu:   Cpu_Level,
 	// INVALID_TYPE, with an empty `result_slot`, when there is no result.
 	result_type: Type_Id,
@@ -367,7 +367,8 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	llvm_name := symbol_name(e, symbol_id)
 	if !convention_is_foreign(proc_convention_of(e, symbol)) {
 		e.bodies[symbol_id] = literal
-		if dispatched(e, symbol) {
+		// It asks for a level the build does not already have.
+		if symbol.dispatch_cpu > e.c.target.cpu {
 			emit_dispatched_proc(e, symbol_id, literal, llvm_name)
 		} else {
 			emit_proc_definition(e, symbol_id, literal, llvm_name)
@@ -421,12 +422,12 @@ emit_forward_ret :: proc(e: ^Emitter, call_word, result, callee, arguments: stri
 // `copy_cpu`, the copy compiled for that level.
 @(private)
 emit_proc_definition :: proc(
-	e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc, llvm_name: string, copy_cpu := Maybe(Cpu_Level){},
+	e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc, llvm_name: string, copy_cpu := Cpu_Level.X86_64,
 ) {
 	symbol := symbol_of(e.c, symbol_id)
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	e.copy_cpu, e.copying = copy_cpu.?
+	e.copy_cpu = copy_cpu
 
 	e.result_type = symbol.result
 	e.result_inout = result_inout_of(e, symbol.proc_type)
