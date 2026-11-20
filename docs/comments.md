@@ -237,6 +237,18 @@ thread exit would need a fiber-local storage callback, and Windows runs those
 during thread teardown, where a drop that waits on another thread can
 deadlock.
 
+A thread's first attach also finishes its `thread_local` storage. A `[]mut`
+literal in a `thread_local` initializer has an array per thread, and a view
+of it needs that thread's own array's address, which no TLS template can hold:
+the loader copies the template unchanged, and no relocation names "this
+thread's copy". The template holds null, and the program's
+`loke_rt_v1_program_tls_init` stores the addresses. Attaching runs it once per
+thread, not again after a detach, since the program may have reassigned the
+view by then. A TLS callback would run it without the attach, but not on a
+thread that existed before an object build's host loaded the DLL holding it,
+and lazy setup at each access would test a flag on every use of such a
+variable.
+
 ### Waiting on a condition, not a signal
 
 A condition variable asks for three things at every use: a loop around the

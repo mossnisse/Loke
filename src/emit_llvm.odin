@@ -61,6 +61,10 @@ Emitter :: struct {
 	constants: map[string]string,
 	// One zeroed global per large type that has a zero constant (`large_zero`).
 	large_zeros: map[Type_Id]string,
+	// Set while a `thread_local`'s initializer is written, and the pointers to
+	// per-thread slice literal arrays that a thread installs when it attaches.
+	thread_local_initializer: bool,
+	thread_local_pointers:    [dynamic]Thread_Local_Pointer,
 	// Every function or global this module declares, by LLVM name with its `@`:
 	// runtime entries (`declare_runtime_entry`), foreign bindings
 	// (`emit_foreign_declarations`), and intrinsics on first use
@@ -114,6 +118,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	emit_cpu_copies(&e)
 	// Every module, object builds included: the runtime's `thread_detach` calls it.
 	emit_thread_local_teardown(&e)
+	emit_thread_local_setup(&e)
 	emit_sink_bridge(&e)
 	// design.md "Build-selected providers": no initializer unless one is selected.
 	if any_provider_selected(c) {

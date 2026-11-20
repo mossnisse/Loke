@@ -30,6 +30,7 @@ emit_foreign_declarations :: proc(e: ^Emitter) {
 	}
 	// What the compiler defines after this point.
 	defined["@loke_rt_v1_program_tls_cleanup"] = true
+	defined["@loke_rt_v1_program_tls_init"] = true
 	defined["@loke_rt_v1_sink_write"] = true
 	if any_provider_selected(e.c) {
 		defined["@loke_rt_v1_program_init"] = true

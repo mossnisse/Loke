@@ -17,16 +17,24 @@ static __declspec(thread) int32_t panicking;
  * twice. */
 enum { NOT_ATTACHED, ATTACHED, DETACHING };
 static __declspec(thread) int32_t attached;
+/* Whether the thread has set up its thread-local storage, which it does once
+ * however often it attaches again. */
+static __declspec(thread) int32_t storage_ready;
 
 /* design.md "Values that outlive every scope": every entry Loke code has from
  * foreign code calls this, so a thread attaches the first time it enters.
  * An attached thread may be running Loke frames below the entry, which an
  * unwind must still reach, so attaching again changes nothing. A thread that
  * is not attached has no frames, since it starts with none and detach clears
- * them, and is not panicking, since a panic ends in an abort. */
+ * them, and is not panicking, since a panic ends in an abort. The first attach
+ * gets the thread's `thread_local` storage ready before it runs Loke code. */
 void loke_rt_v1_thread_attach(void) {
 	if (attached == NOT_ATTACHED) {
 		attached = ATTACHED;
+		if (!storage_ready) {
+			storage_ready = 1;
+			loke_rt_v1_program_tls_init();
+		}
 	}
 }
 

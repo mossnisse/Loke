@@ -1,0 +1,51 @@
+package main;
+import "core:fmt";
+import "core:thread";
+
+// design.md "Storage modifiers": each thread has its own `thread_local`
+// instance, so a `[]mut` literal in an initializer has an array per thread,
+// also inside a record, a union, a fixed array, and another literal. Every
+// thread starts from the initial elements; they shared one array, and each
+// later thread saw the writes of the ones before it.
+
+Pair :: struct { label: string, values: []mut int }
+Held :: union { nothing, values: []mut int }
+
+counts: thread_local []mut int = []mut int{0, 10};
+pair: thread_local Pair = {label = "pair", values = []mut int{100}};
+held: thread_local Held = .values([]mut int{1000});
+rows: thread_local [][]mut int = [][]mut int{[]mut int{5}, []mut int{50}};
+grid: thread_local [2][]mut int = {[]mut int{7}, []mut int{70}};
+fixed: thread_local []int = []int{3};
+
+bump :: proc() {
+	local: thread_local []mut int = []mut int{0};
+	local[0] += 1;
+	counts[0] += 1;
+	counts[1] += 1;
+	pair.values[0] += 1;
+	switch (held) {
+	case .values(values): values[0] += 1;
+	case .nothing:
+	}
+	rows[0][0] += 1;
+	rows[1][0] += 1;
+	grid[1][0] += 1;
+	held_value := 0;
+	switch (held) {
+	case .values(values): held_value = values[0];
+	case .nothing:
+	}
+	fmt.println(
+		local[0], counts[0], counts[1], pair.label, pair.values[0], held_value,
+		rows[0][0], rows[1][0], grid[0][0], grid[1][0], fixed[0],
+	);
+}
+
+main :: proc() {
+	bump();
+	first := thread.spawn(bump);
+	first.join();
+	second := thread.spawn(bump);
+	second.join();
+}

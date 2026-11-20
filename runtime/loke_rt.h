@@ -589,8 +589,12 @@ void loke_rt_v1_thread_detach(void);
  * is the C convention on x64. */
 typedef uint32_t (__stdcall *loke_rt_task_entry_v1)(void *frame);
 void loke_rt_v1_run_task(loke_rt_task_entry_v1 run, void *frame);
-/* Supplied by every generated module. Detach invokes it on the current thread,
- * whose thread-local globals are therefore the ones the thunk addresses. */
+/* Supplied by every generated module. A thread's first attach invokes the
+ * first, which installs the addresses its thread-local initializers hold, and
+ * detach invokes the second, which drops its thread-local values; each runs on
+ * the current thread, whose thread-local globals are therefore the ones it
+ * addresses. */
+void loke_rt_v1_program_tls_init(void);
 void loke_rt_v1_program_tls_cleanup(void);
 void loke_rt_v1_frame_push(loke_rt_frame_v1 *frame, loke_rt_cleanup_v1 cleanup, void *context);
 void loke_rt_v1_frame_pop(loke_rt_frame_v1 *frame);

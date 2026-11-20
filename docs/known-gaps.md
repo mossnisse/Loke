@@ -143,31 +143,3 @@ main :: proc() {
 `s = s + Tag{1};` compiles. Compound assignment needs the assignment's temporary
 extension. [Regression](../tests/err/compound_fallback_borrow.loke)
 
-
-### A mutable slice literal in thread-local storage shares its backing array
-
-[Storage modifiers](design.md#storage-modifiers) give each thread its own
-`thread_local` instance. This initializer embeds a pointer to one shared,
-writable array in every thread's slice header.
-
-```loke
-package main;
-import "core:fmt";
-import "core:thread";
-
-worker :: proc() {
-    xs: thread_local []mut int = []mut int{0};
-    xs[0] += 1;
-    fmt.println(xs[0]);
-}
-main :: proc() {
-    first := thread.spawn(worker);
-    first.join();
-    second := thread.spawn(worker);
-    second.join();
-}
-```
-
-The two threads print `1` and `2`. Separate backing arrays initialized to zero
-would each yield `1`.
-[LLVM constant review](source-reviews/emit_llvm_const.md#mutable-slice-backing-is-shared-across-thread-local-instances-p2)

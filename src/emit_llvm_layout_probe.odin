@@ -28,7 +28,8 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Emission_Options) -> int {
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, c.target.triple)
 	fmt.sbprintln(&e.b, `@.fmt_int = private unnamed_addr constant [6 x i8] c"%lld\0A\00"`)
 	fmt.sbprintln(&e.b, "declare i32 @printf(ptr, ...)")
-	// The seed runtime calls this on thread detach.
+	// The seed runtime calls these on thread attach and detach.
+	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_init() { ret void }")
 	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() { ret void }")
 	declare_runtime_entry(&e, WRITE_STD_DECLARATION)
 	emit_sink_bridge(&e)

@@ -270,6 +270,23 @@ emit_thread_local_teardown :: proc(e: ^Emitter) {
 	emit_entry_guard(e, "@loke_rt_v1_program_tls_cleanup", "void", nil, body)
 }
 
+// Called by the runtime when a thread first attaches, before it runs Loke code:
+// points each `thread_local` slice literal at the thread's own array
+// (`Thread_Local_Pointer`). It only stores addresses, so it needs no guard.
+@(private)
+emit_thread_local_setup :: proc(e: ^Emitter) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	open_function(e, "define void @loke_rt_v1_program_tls_init()")
+	for pointer in e.thread_local_pointers {
+		field := emit_value(e, "getelementptr inbounds i8, ptr %s, i64 %d", pointer.global, pointer.offset)
+		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s, align 1", pointer.target, field)
+	}
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+}
+
 @(private = "file")
 emit_thread_local_drops :: proc(e: ^Emitter, name: string) {
 	function := begin_function_emission(e)
@@ -360,7 +377,10 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 emit_var_global :: proc(e: ^Emitter, name: string, sym: ^Symbol, d: ^Decl, position: int) {
 	value_type, value, align := llvm_type(e, sym.type), "", ""
 	if initial, constant := binding_initial_const(e.c, d, position); constant {
+		e.thread_local_initializer = sym.duration == .Thread_Local
 		value_type, value, align, _ = global_initializer(e, initial, sym.type)
+		e.thread_local_initializer = false
+		claim_thread_local_pointers(e, name)
 	} else {
 		zero, ok := llvm_zero(e, sym.type)
 		if !ok {

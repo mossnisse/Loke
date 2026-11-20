@@ -322,6 +322,13 @@ checklist.
 - A union constant writes its active payload, and storage that is all zero is one
   `zeroinitializer`. A global `.tiny(7)` of a union with a `[65536]u8` variant took 196,674
   characters of LLVM IR, and a constant holding a pointer spelled every zero of its padding.
+- A `[]mut` literal in a `thread_local` initializer has an array for each thread, also inside a
+  record, a union, a fixed array, or another slice literal
+  ([Slice literals](docs/design.md#slice-literals)). Every thread's view pointed at one shared
+  array, so with `xs: thread_local []mut int = []mut int{0};` a second thread saw the first
+  one's `xs[0] += 1`, and two threads could write the same element at once. A thread's view is
+  installed when it first attaches to the runtime, which now calls the program's
+  `loke_rt_v1_program_tls_init`.
 
 ## [0.10.0] - 2026-11-16
 

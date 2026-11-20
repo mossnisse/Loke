@@ -370,7 +370,9 @@ write_const_bytes :: proc(
 // design.md "Unions": a union payload, and a field of a combined packed/aligned
 // record, is a byte image, which in its declared LLVM type cannot hold a pointer
 // to module storage. A constant containing one is emitted whole as an image.
-// `in_image` says the walk has entered such a byte image.
+// `in_image` says the walk has entered such a byte image. A `thread_local`'s
+// initializer is an image wherever it holds a slice literal, whose pointer may
+// be one a thread installs (`Thread_Local_Pointer`).
 const_needs_image :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, in_image := false) -> bool {
 	under := type_underlying(e.c, default_type(e.c, type))
 	info := type_of(e.c, under)
@@ -389,7 +391,7 @@ const_needs_image :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, in_ima
 	elements := value.aggregate.elements
 	#partial switch info.kind {
 	case .Slice:
-		return in_image && len(elements) > 0
+		return (in_image || e.thread_local_initializer) && len(elements) > 0
 	case .Union:
 		index := value.aggregate.variant
 		return index >= 0 && index < len(info.variants) && len(elements) > 0 &&
@@ -412,7 +414,9 @@ const_needs_image :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, in_ima
 }
 
 // `values` of `type`, one after another, as an LLVM packed struct of byte runs
-// and pointers: its type, then its value.
+// and pointers: its type, then its value. A pointer to a per-thread array is
+// null, and left for `claim_thread_local_pointers` to give the image's global.
+@(private = "file")
 const_image :: proc(e: ^Emitter, values: []Const_Value, type: Type_Id) -> (string, string) {
 	stride := int(type_size(e.c, type))
 	bytes := make([]u8, stride * len(values), context.temp_allocator)
@@ -428,7 +432,12 @@ const_image :: proc(e: ^Emitter, values: []Const_Value, type: Type_Id) -> (strin
 	for relocation in relocations {
 		image_bytes(&image, bytes[cursor:relocation.offset])
 		image_member(&image, "ptr")
-		strings.write_string(&image.parts, relocation.target)
+		if strings.has_prefix(relocation.target, THREAD_LOCAL_SLICE_PREFIX) {
+			strings.write_string(&image.parts, "null")
+			append(&e.thread_local_pointers, Thread_Local_Pointer{offset = relocation.offset, target = relocation.target})
+		} else {
+			strings.write_string(&image.parts, relocation.target)
+		}
 		cursor = relocation.offset + 8
 	}
 	image_bytes(&image, bytes[cursor:])
@@ -591,7 +600,8 @@ carrier_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> (
 // The global backing array of a slice literal with at least one element. A
 // `[]mut T` literal's is never shared, since a write through one must not show
 // up in another; a read-only one's is shared with every literal of the same
-// elements.
+// elements. In a `thread_local`'s initializer, a `[]mut T` literal's, and one
+// whose elements point at such an array, is per thread.
 @(private = "file")
 slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
 	count := len(value.aggregate.elements)
@@ -599,6 +609,7 @@ slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info)
 	for slot in value.aggregate.elements {
 		imaged ||= const_needs_image(e, slot, info.element)
 	}
+	unclaimed := len(e.thread_local_pointers)
 	contents, align := "", ""
 	if imaged {
 		image_type, image := const_image(e, value.aggregate.elements, info.element)
@@ -614,11 +625,44 @@ slice_literal_storage :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info)
 		strings.write_string(&b, " ]")
 		contents = strings.to_string(b)
 	}
+	if e.thread_local_initializer && (info.mutable || len(e.thread_local_pointers) > unclaimed) {
+		name := private_global(e, THREAD_LOCAL_SLICE_PREFIX, fmt.aprintf("private thread_local global %s%s", contents, align))
+		claim_thread_local_pointers(e, name)
+		return name
+	}
 	// Only a mutable literal's elements need storage of their own.
 	if !info.mutable {
 		return private_constant(e, "@.slice.", fmt.aprintf("%s%s", contents, align))
 	}
 	return private_global(e, "@.slice.", fmt.aprintf("private global %s%s", contents, align))
+}
+
+// design.md "Storage modifiers": each thread has its own instance of a
+// `thread_local`, so a writable slice literal in its initializer has an array
+// per thread. A thread's copy of the TLS template cannot hold that copy's own
+// address, so the template holds null at `offset` in `global` and
+// `loke_rt_v1_program_tls_init` stores the address of the thread's `target`
+// there when the thread first attaches, before it runs Loke code.
+@(private)
+Thread_Local_Pointer :: struct {
+	global, target: string,
+	offset:         int,
+}
+
+// The name of each per-thread slice literal array.
+@(private = "file")
+THREAD_LOCAL_SLICE_PREFIX :: "@.slice.thread."
+
+// Gives `global`, which holds the image just written, the pointers
+// `const_image` left without one.
+@(private)
+claim_thread_local_pointers :: proc(e: ^Emitter, global: string) {
+	#reverse for &pointer in e.thread_local_pointers {
+		if pointer.global != "" {
+			break
+		}
+		pointer.global = global
+	}
 }
 
 // `text` as a literal `string_view`.

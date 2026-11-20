@@ -1163,7 +1163,9 @@ readable[0] = 99;                  // ERROR: elements of `[]int` are read-only
 The backing array of a slice literal is a hidden fixed-array owner that is
 always [extended](#temporaries-and-procedure-boundaries): it lives until the end
 of the block holding the statement, wherever the literal appears, so a view of
-it that a call returns can be kept. At file scope it has static lifetime.
+it that a call returns can be kept. At file scope it has static lifetime. A
+`[]mut` literal in a `thread_local` initializer has an array for each thread,
+as the variable has an instance for each thread.
 Returning a slice literal from a procedure is rejected because its hidden owner
 is local, just as returning a slice of a named local array is rejected.
 

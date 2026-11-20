@@ -288,9 +288,7 @@ points remain:
 
 - **Slice literal identity.** Decide whether separate file-scope immutable
   slice literals may share a backing array when pointer equality can observe
-  the sharing. Also specify the lifetime of a mutable literal's backing in a
-  file-scope `thread_local` initializer. The file-scope literal rule currently
-  gives the array static lifetime.
+  the sharing. The file-scope literal rule gives the array static lifetime.
   [LLVM constant review](source-reviews/emit_llvm_const.md#equal-file-scope-slice-literals-have-observable-shared-backing)
 - **Constant emission.** A union constant whose active payload reaches past
   the storage's head, such as `.small({1, 2, 3})` beside a `[65536]u8`
