@@ -300,6 +300,12 @@ points remain:
 - **Container emission.** Measure miss-heavy `find_or_insert` before
   changing the runtime ABI to reuse a probe across a user copy hook.
   [Container review](source-reviews/emit_llvm_containers.md#simplification-and-boundaries)
+- **Debug records for file-scope variables.** `-g` describes `static` and
+  `thread_local` locals as globals scoped to their procedures, but a
+  file-scope variable still has no `DIGlobalVariable`, so a debugger finds it
+  only by its link symbol, without a type. Describing one needs a name that
+  stays apart from another package's variable of the same name.
+  [Debug review](source-reviews/emit_llvm_debug.md#procedure-scoped-static-and-tls-locals-are-absent-from-debug-records-p3)
 
 ## Literal elements that lend a temporary to a call
 
