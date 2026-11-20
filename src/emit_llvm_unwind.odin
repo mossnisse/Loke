@@ -451,9 +451,8 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 		}
 	}
 	text := strings.builder_make()
-	write_function(e, &text, replay[:loads_at], e.entry, e.prologue[:])
-	strings.write_string(&text, strings.to_string(loads))
-	strings.write_string(&text, replay[loads_at:])
+	replay = strings.concatenate({replay[:loads_at], strings.to_string(loads), replay[loads_at:]})
+	write_function(e, &text, replay, e.entry, e.prologue[:], e.copied[:])
 	append(&e.pending_thunks, strings.to_string(text))
 
 	#reverse for shadowed in u.shadowed {

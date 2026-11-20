@@ -115,7 +115,7 @@ next_global_name :: proc(text: string, from: int) -> (name: string, after: int, 
 				return text[lo + 1:hi], min(hi + 1, len(text)), true
 			}
 			hi := lo
-			for hi < len(text) && global_name_byte(text[hi]) {
+			for hi < len(text) && unquoted_name_byte(text[hi]) {
 				hi += 1
 			}
 			return text[lo:hi], hi, true
@@ -133,8 +133,8 @@ closing_quote :: proc(text: string, open: int) -> int {
 }
 
 // A byte of a name LLVM reads without quotes.
-@(private = "file")
-global_name_byte :: proc(ch: u8) -> bool {
+@(private)
+unquoted_name_byte :: proc(ch: u8) -> bool {
 	switch ch {
 	case 'a' ..= 'z', 'A' ..= 'Z', '0' ..= '9', '_', '.', '$', '-':
 		return true

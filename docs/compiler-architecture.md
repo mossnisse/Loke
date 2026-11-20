@@ -1364,6 +1364,24 @@ Preserve these lowering rules:
   map entry's address and value wait in slots its literal's entries share
   (`park_map_entry`), as a value used past the block defining it takes a stack
   slot of its own at `-opt=none`; `long_literal_frames_do_not_grow` guards this.
+- A smaller struct, array, or union is a first-class value, but `store` writes
+  one that only moves between two places with `llvm.memcpy` and a zero one with
+  `llvm.memset`, as clang does for C. Clang's fast instruction selector
+  cannot lower a first-class aggregate `load` or `store`, the slow one splits
+  each into an instruction per scalar inside, and an optimizing build then
+  spends its time recombining those. `store` knows a copy by its value being
+  what the newest `load` read with nothing written since (`Loaded_Value`). An
+  address computation (`emit_gep`) and zeroing new storage (`zeroed_slot`)
+  write nothing the load read and keep that, through `keep_loaded`; a line
+  written any other way ends it, which costs the copy and never correctness.
+  `write_function` then drops the load if nothing else names its value. The
+  two places are one place or do not overlap, which holds for two places of
+  one type outside `unsafe` code
+  ([Copies between overlapping places](open-questions.md#copies-between-overlapping-places)).
+  A copy moves words where a first-class one moved each member at its own
+  width, and code built at `-opt=none` that copies many small values runs up
+  to 10% slower for it. `aggregate_copies_and_zeroes_move_bytes` guards the
+  lowering.
 - Fixed-array clone failures drop the built prefix in reverse order with a loop,
   keeping cleanup IR linear. `fixed_array_clone_ir_grows_linearly` guards this.
 - Debug locations follow statements, conditions, and switch subjects. Each

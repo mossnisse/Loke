@@ -25,6 +25,9 @@ machine, not a threshold.
 - [Step 2](#2-spell-union-payload-padding-in-words) is done: on top of step 1,
   builds of programs that pass unions around are 40–60% faster at either
   level, and numeric code 1–11%.
+- [Step 3](#3-copy-and-zero-aggregates-with-memcpy-and-memset) is done: on top
+  of step 2, those programs build 30–65% faster at `-opt=speed` and about 10%
+  faster at `-opt=none`, where copy-heavy code now runs 4–10% slower.
 
 ## Conditions
 
@@ -476,6 +479,49 @@ likely centres.
 
 Expected: a further 10–25% of `clang -c` at `-opt=none`, about 40% at
 `-opt=speed` after step 2, and smaller objects.
+
+**Done** on 2026-11-20, in `store`
+([emit_llvm_place.odin](../src/emit_llvm_place.odin)); the lowering rules at
+the end of [LLVM and toolchain](compiler-architecture.md#llvm-and-toolchain)
+say how a copy is recognized. Whole builds, before and after, in ms, the
+"before" being step 2:
+
+| Program | `-opt=none` | `-g` | `-opt=speed` |
+| --- | ---: | ---: | ---: |
+| `examples/streaming.loke` | | | 1367 / 486 |
+| `examples/lexer.loke` | 439 / 398 | 544 / 505 | 1369 / 916 |
+| `examples/corpus_runner.loke` | 622 / 562 | 769 / 696 | 2477 / 1478 |
+| `bench/geometry.loke` | 730 / 714 | 905 / 887 | 1641 / 1662 |
+| `bench/linalg.loke` | 541 / 538 | 677 / 672 | 1207 / 1215 |
+| `bench/workspace` | 339 / 341 | 425 / 426 | 651 / 656 |
+
+Executables of the union-heavy programs are 17–20% smaller at `-opt=none` and
+unchanged at `-opt=speed`. The records are `aggregate-copies-before.json` and
+`aggregate-copies.json` under `bench/baselines`. How it went:
+
+- The emitter has some ninety `store` calls and no record of where a value
+  came from, so the sites were not rewritten one by one. `load` notes what it
+  read and from where; `store` copies from that place when the value it is
+  given is that one and nothing was written since; and `write_function` drops
+  the load if nothing else names its value. In `examples/lexer.loke` that
+  makes 179 copies and 213 zeroes intrinsics, takes the first-class aggregate
+  stores from 675 to 283, and leaves about twenty copies that cross a branch
+  or a call.
+- An address computed between the load and the store, and the zeroing of the
+  new slot a union value is built in, write nothing the load read, and are let
+  through. Without them a fifth of the copies stayed first-class.
+- What still loads or stores an aggregate is a parameter written to its slot,
+  a call's result, a returned value, and a value built with `insertvalue`.
+  Those are the calling convention, not copies, and are not part of this step.
+- Run time at `-opt=none` was not in the estimate and is the cost:
+  `bench/geometry.loke` runs 10% slower, `bench/containers.loke` 5%,
+  `bench/binary.loke` 3%, and `bench/dense.loke` the same. Neither calls to
+  `memset` and `memcpy` nor clang's fast selector accounts for it
+  (`bench/baselines/README.md`, "Aggregate copies"). At `-opt=speed` run time
+  is unchanged.
+- `llvm.memcpy` needs its two places to be one place or share no byte, which
+  safe code cannot break and `unsafe` code can
+  ([Copies between overlapping places](open-questions.md#copies-between-overlapping-places)).
 
 ### 4. Emit on demand
 

@@ -226,6 +226,19 @@ Function_State :: struct {
 	// Per open full expression, the slot holding the stack pointer saved before
 	// its first runtime-sized alloca, or "" while it has none.
 	stack_saves: [dynamic]string,
+	// The value the newest `load` read, and the loads `store` turned into copies
+	// (`write_function`).
+	loaded: Loaded_Value,
+	copied: [dynamic]string,
+}
+
+// A loaded value, the place it was read from, and where in `b` the newest line
+// ends that left the place as it was, the load's own at first (`keep_loaded`):
+// while `b` ends there too, the place holds the value.
+@(private)
+Loaded_Value :: struct {
+	value, from: string,
+	end:         int,
 }
 
 @(private)
@@ -283,24 +296,26 @@ begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
 // Writes the finished function into the enclosing one's buffer.
 @(private)
 finish_function_emission :: proc(e: ^Emitter, state: Function_Emission) {
-	text, entry, prologue := strings.to_string(e.b), e.entry, e.prologue[:]
+	text, entry, prologue, copied := strings.to_string(e.b), e.entry, e.prologue[:], e.copied[:]
 	e.b, e.fn = state.parent, state.saved
-	write_function(e, &e.b, text, entry, prologue)
+	write_function(e, &e.b, text, entry, prologue, copied)
 }
 
 // A thunk made mid-body waits for the end of the module.
 @(private)
 finish_pending_thunk :: proc(e: ^Emitter, state: Function_Emission) {
 	out := strings.builder_make()
-	write_function(e, &out, strings.to_string(e.b), e.entry, e.prologue[:])
+	write_function(e, &out, strings.to_string(e.b), e.entry, e.prologue[:], e.copied[:])
 	e.b, e.fn = state.parent, state.saved
 	append(&e.pending_thunks, strings.to_string(out))
 }
 
 // A function's `text` with the `prologue` allocas opening its entry block, which
-// starts at `entry`.
+// starts at `entry`, and without the loads among `copied` that nothing uses.
 @(private)
-write_function :: proc(e: ^Emitter, out: ^strings.Builder, text: string, entry: int, prologue: []string) {
+write_function :: proc(
+	e: ^Emitter, out: ^strings.Builder, text: string, entry: int, prologue: []string, copied: []string = nil,
+) {
 	if entry == 0 && len(prologue) > 0 {
 		backend_fail(e, "a function has no entry block to hold its storage")
 	}
@@ -308,7 +323,7 @@ write_function :: proc(e: ^Emitter, out: ^strings.Builder, text: string, entry: 
 	for line in prologue {
 		fmt.sbprintln(out, line)
 	}
-	strings.write_string(out, text[entry:])
+	write_without_unused_loads(out, text[entry:], copied)
 }
 
 @(private)
@@ -630,10 +645,12 @@ insert :: proc(e: ^Emitter, aggregate, into, field_type, value: string, index: i
 	return emit_value(e, "insertvalue %s %s, %s %s, %d", aggregate, into, field_type, value, index)
 }
 
-// A naturally aligned load; an under-aligned place needs `, align N`.
+// A naturally aligned load; an under-aligned place needs `, align N` as `align`.
 @(private)
-load :: proc(e: ^Emitter, type: string, address: string) -> string {
-	return emit_value(e, "load %s, ptr %s", type, address)
+load :: proc(e: ^Emitter, type: string, address: string, align := "") -> string {
+	value := emit_value(e, "load %s, ptr %s%s", type, address, align)
+	e.loaded = {value, address, len(e.b.buf)}
+	return value
 }
 
 @(private)
@@ -654,9 +671,34 @@ alloca_count :: proc(e: ^Emitter, name, type, count: string) {
 	fmt.sbprintfln(&e.b, "  %s = alloca %s, i64 %s", name, type, count)
 }
 
+// The address `format`, a `getelementptr`, spells. Computing it writes nothing,
+// so the place the newest `load` read holds what was read as it did before.
+@(private)
+emit_gep :: proc(e: ^Emitter, format: string, args: ..any) -> string {
+	held := loaded_is_newest(e)
+	out := emit_value(e, format, ..args)
+	keep_loaded(e, held)
+	return out
+}
+
+// Whether the place the newest `load` read still holds what was read.
+@(private)
+loaded_is_newest :: proc(e: ^Emitter) -> bool {
+	return e.loaded.end == len(e.b.buf)
+}
+
+// With `held` what `loaded_is_newest` said before the lines just written, which
+// wrote nothing to the place the newest `load` read: it says the same after them.
+@(private)
+keep_loaded :: proc(e: ^Emitter, held: bool) {
+	if held {
+		e.loaded.end = len(e.b.buf)
+	}
+}
+
 @(private)
 gep_field :: proc(e: ^Emitter, aggregate: string, address: string, index: int) -> string {
-	return emit_value(e, "getelementptr inbounds %s, ptr %s, i32 0, i32 %d", aggregate, address, index)
+	return emit_gep(e, "getelementptr inbounds %s, ptr %s, i32 0, i32 %d", aggregate, address, index)
 }
 
 // The address of part `index`: a struct field or an array element.
@@ -665,7 +707,7 @@ gep_field :: proc(e: ^Emitter, aggregate: string, address: string, index: int) -
 element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -> string {
 	info := underlying_info(e.c, owner)
 	if info != nil && info.kind == .Array {
-		out := emit_value(e, "getelementptr inbounds %s, ptr %s, i64 0, i64 %d", llvm_type(e, owner), base, index)
+		out := emit_gep(e, "getelementptr inbounds %s, ptr %s, i64 0, i64 %d", llvm_type(e, owner), base, index)
 		if align, known := e.place_align[base]; known {
 			e.place_align[out] = align
 		}
@@ -684,7 +726,7 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 // The address of element `index`, an i64 operand.
 @(private)
 gep_at :: proc(e: ^Emitter, element: string, address: string, index: string) -> string {
-	out := emit_value(e, "getelementptr inbounds %s, ptr %s, i64 %s", element, address, index)
+	out := emit_gep(e, "getelementptr inbounds %s, ptr %s, i64 %s", element, address, index)
 	// An element of under-aligned storage, such as an array in a packed struct,
 	// is as unaligned as the storage.
 	if align, known := e.place_align[address]; known {

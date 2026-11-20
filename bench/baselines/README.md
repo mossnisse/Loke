@@ -424,3 +424,80 @@ cell before / after:
 The "before" figures here are the "after" compiler of
 [Reachable emission](#reachable-emission) measured again, about 5% slower than
 in that section's table: the two captures are not comparable to that precision.
+
+## Aggregate copies
+
+[aggregate-copies.json](aggregate-copies.json) records the working tree after
+commit `bc910f3e0071ffe5b7f011d7ce6e578e220d5f30`, in which a struct, array, or
+union that only moves between two places is copied with `llvm.memcpy` and a
+zero one is written with `llvm.memset`, against
+[aggregate-copies-before.json](aggregate-copies-before.json), that commit
+itself, captured just before on 2026-11-20 on the same machine and with the
+same tools and conditions as [Reachable emission](#reachable-emission).
+SHA-256 values of `lokec.exe`:
+
+- before: `b9a575d7e395d687d040cff1dd2b3935f6acff6b84897813463fc4e9eeda9bf6`.
+- after: `8f144f5820b1aaf5dddf7c83e86cd5344c8dcc45e4d4b3f33b9d557cf512af30`.
+
+```powershell
+.\perf.ps1 -Lokec <before>/lokec.exe -Lsp <none> -Out bench/baselines/aggregate-copies-before.json
+.\perf.ps1 -Lokec <after>/lokec.exe -Lsp <none> -Baseline bench/baselines/aggregate-copies-before.json -Out bench/baselines/aggregate-copies.json
+```
+
+| Workload | Before / after build at `-opt=speed` (ms) | Before / after executable (KB) | Before / after run (ms) |
+| --- | ---: | ---: | ---: |
+| `examples/streaming.loke` | 1367 / 486 | 182 / 182 | |
+| `examples/greeting.loke` | 1022 / 556 | 186 / 187 | |
+| `examples/corpus_runner.loke` | 2477 / 1478 | 266 / 269 | |
+| `examples/lexer.loke` | 1369 / 916 | 216 / 215 | |
+| `examples/arena_pipeline.loke` | 446 / 318 | 227 / 227 | |
+| `examples/game_of_life.loke` | 1137 / 1186 | 266 / 276 | |
+| `bench/dense.loke` | 1767 / 1784 | 316 / 316 | 4785 / 4444 |
+| `bench/geometry.loke` | 1641 / 1662 | 324 / 328 | 369 / 373 |
+| `bench/linalg.loke` | 1207 / 1215 | 282 / 282 | 11 / 11 |
+| `bench/workspace` | 651 / 656 | 192 / 192 | 6 / 5 |
+
+An optimized build changes by -64% to +4% over the 33 records, with a median
+of -3%: the gain is in programs that pass `Result` and `Option` values through
+many procedures, and numeric code is within noise. Executables change by -1 to
++10 KB, the 10 being `examples/game_of_life.loke`. Front-end time is within
+-6% to +6% with a median of 0, compiler peak working set within -1% to +5%,
+and benchmark outputs matched. Run times at `-opt=speed` are within 2% except
+`bench/dense.loke`, whose 7% is no more than it moved between two captures of
+one compiler.
+
+Default builds, measured as in [Reachable emission](#reachable-emission), each
+cell before / after:
+
+| Workload | Build at `-opt=none` (ms) | Build with `-g` (ms) | Executable (KB) |
+| --- | ---: | ---: | ---: |
+| `examples/hello.loke` | 164 / 165 | 239 / 240 | 261 / 261 |
+| `examples/lexer.loke` | 439 / 398 | 544 / 505 | 460 / 382 |
+| `examples/corpus_runner.loke` | 622 / 562 | 769 / 696 | 630 / 502 |
+| `bench/collections.loke` | 196 / 193 | 268 / 269 | 270 / 270 |
+| `bench/geometry.loke` | 730 / 714 | 905 / 887 | 618 / 564 |
+| `bench/linalg.loke` | 541 / 538 | 677 / 672 | 448 / 435 |
+| `bench/provenance.loke` | 174 / 169 | 247 / 248 | 265 / 264 |
+| `bench/workspace` | 339 / 341 | 425 / 426 | 297 / 295 |
+
+A program built at `-opt=none` can run slower. The benchmarks that run for a
+second or more, built at `-opt=none` by each compiler and run in turn for seven
+rounds, three for `bench/dense.loke`, fastest of each in ms:
+
+| Benchmark | Before | After |
+| --- | ---: | ---: |
+| `bench/geometry.loke` | 1093 | 1202 |
+| `bench/containers.loke` | 3244 | 3395 |
+| `bench/binary.loke` | 5047 | 5220 |
+| `bench/dense.loke` | 35610 | 35337 |
+
+Two variants were measured to find where the time goes. Writing each copy and
+zero of at most 128 bytes in pieces clang writes in line at `-O0`, 32-byte
+copies and word stores, left the first three where they are (1214, 3365, and
+5266 ms) and took `bench/dense.loke` to 33095 ms. Building the emitted
+`bench/geometry.loke` module with clang's fast instruction selector off
+(`-mllvm -fast-isel=false`) changed neither side: 1046 ms with it off and 1043
+with it on before, 1154 and 1147 after. So the time is not in calls to `memset` and `memcpy`,
+nor in the code the fast selector writes. What is left is the copy itself,
+which now moves words where it moved each member at its own width; that a word
+read over two narrower members just written is what costs was not measured.

@@ -269,7 +269,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 	allocator := v.bound[counts] == nil ? emit_default_allocator(e) : emit_expr(e, v.bound[counts])
 
 	header := alloca(e, CONTAINER_TYPE)
-	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", CONTAINER_TYPE, header)
+	store(e, checked.type, "zeroinitializer", header)
 	provider := gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, provider)
 

@@ -113,7 +113,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 
 @(private = "file")
 box_payload_at :: proc(e: ^Emitter, payload: Type_Id, block: string) -> string {
-	return emit_value(e, "getelementptr inbounds i8, ptr %s, i64 %d", block, box_payload_offset(e.c, payload))
+	return emit_gep(e, "getelementptr inbounds i8, ptr %s, i64 %d", block, box_payload_offset(e.c, payload))
 }
 
 // The payload a box value names: `b^`.

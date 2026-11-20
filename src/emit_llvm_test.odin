@@ -1411,3 +1411,88 @@ main :: proc() {
 		testing.expectf(t, strings.contains(module, spelled), "the module has no `%s`", strings.trim_space(spelled))
 	}
 }
+
+// A struct or a union copied from one place to another moves as bytes, also
+// when the address it goes to is computed in between or it goes into a union
+// being built, and a zeroed one is set as bytes: none of them is a first-class
+// load or store.
+@(test)
+aggregate_copies_and_zeroes_move_bytes :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+Pair :: struct { left: int, right: int, kind: u8 }
+Maybe :: union { some: Pair, none }
+Grid :: struct { cells: [4]Pair }
+main :: proc() {
+    first := Pair{1, 2, 3};
+    second := first;
+    grid := Grid{};
+    maybe: Maybe = .some(grid.cells[1]);
+    other := maybe;
+    assert(maybe == other && second.kind == 3);
+}
+`)
+	defer destroy_checked(&p)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	finalize_semantics(&p.c)
+	module, emitted := emit_llvm_module(&p.c)
+	if !testing.expect(t, emitted && p.c.error_count == 0) { report(&p.c); return }
+
+	// The line of `module` that writes to the local `name`, less the numbers
+	// that tell one local from another.
+	written :: proc(module, name: string) -> string {
+		at := strings.index(module, fmt.tprintf("(ptr %%%s.", name))
+		if at < 0 {
+			return ""
+		}
+		line := module[at:][:strings.index_byte(module[at:], '\n')]
+		spelled := strings.builder_make(context.temp_allocator)
+		for index := 0; index < len(line); index += 1 {
+			if line[index] == '.' && index + 1 < len(line) && line[index + 1] >= '0' && line[index + 1] <= '9' {
+				for index + 1 < len(line) && line[index + 1] >= '0' && line[index + 1] <= '9' {
+					index += 1
+				}
+				continue
+			}
+			strings.write_byte(&spelled, line[index])
+		}
+		return strings.to_string(spelled)
+	}
+	for expected in ([][2]string {
+		{"second", "(ptr %second, ptr %first, i64 24, i1 false)"},
+		{"grid", "(ptr %grid, i8 0, i64 96, i1 false)"},
+		{"other", "(ptr %other, ptr %maybe, i64 32, i1 false)"},
+	}) {
+		line := written(module, expected[0])
+		testing.expectf(t, line == expected[1], "`%s` is written by `%s`", expected[0], line)
+	}
+	// The payload, read through the address of an element, and the built union.
+	main := module[strings.index(module, "@loke.p.main()"):]
+	main = main[:strings.index(main, "\n}\n")]
+	testing.expect(t, strings.count(main, ", i64 24, i1 false)") == 2, "the payload is not copied into the union")
+	testing.expect(t, strings.count(main, "llvm.memcpy.p0.p0.i64(ptr %maybe.") == 1, "the built union is not copied")
+}
+
+// A load that a copy replaced goes, unless something else names its value. One
+// name may open another.
+@(test)
+a_copied_load_stays_only_for_another_use :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	copy :: "  call void @llvm.memcpy.p0.p0.i64(ptr %b, ptr %a, i64 16, i1 false)\n"
+	body := "  %t1 = load %T, ptr %a\n" + copy +
+		"  %t12 = load %T, ptr %a\n" + copy +
+		"  %t13 = extractvalue %T %t12, 0\n" +
+		"  %t2 = load %T, ptr %a, align 1\n" + copy +
+		"  ret void\n}\n"
+	expected := copy +
+		"  %t12 = load %T, ptr %a\n" + copy +
+		"  %t13 = extractvalue %T %t12, 0\n" + copy +
+		"  ret void\n}\n"
+	out := strings.builder_make()
+	write_without_unused_loads(&out, body, {"%t1", "%t12", "%t2"})
+	testing.expectf(t, strings.to_string(out) == expected, "written as:\n%s", strings.to_string(out))
+
+	unchanged := strings.builder_make()
+	write_without_unused_loads(&unchanged, body, nil)
+	testing.expect(t, strings.to_string(unchanged) == body)
+}

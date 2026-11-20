@@ -90,8 +90,7 @@ union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
 // which is nothing but its tag.
 @(private)
 emit_union_value :: proc(e: ^Emitter, union_type: Type_Id, index: int, value: string) -> string {
-	slot := temporary_slot(e, union_type)
-	store(e, union_type, "zeroinitializer", slot)
+	slot := zeroed_slot(e, union_type)
 	emit_union_write_variant(e, union_type, slot, index, value)
 	return load_temporary(e, union_type, slot)
 }
@@ -117,8 +116,7 @@ emit_option_value :: proc(e: ^Emitter, option_type: Type_Id, present, payload: s
 @(private)
 emit_union_widen :: proc(e: ^Emitter, value: string, from, to: Type_Id) -> string {
 	source := type_of(e.c, from)
-	slot := temporary_slot(e, to)
-	store(e, to, "zeroinitializer", slot)
+	slot := zeroed_slot(e, to)
 	spilled := emit_union_spill(e, from, value)
 	tag := emit_union_tag(e, from, value)
 	done := new_label(e, "widen.done")
@@ -151,8 +149,7 @@ emit_union_either :: proc(
 	true_index: int, true_payload: string,
 	false_index: int, false_payload: string,
 ) -> string {
-	slot := temporary_slot(e, union_type)
-	store(e, union_type, "zeroinitializer", slot)
+	slot := zeroed_slot(e, union_type)
 	yes, no, done := new_label(e, "variant.yes"), new_label(e, "variant.no"), new_label(e, "variant.done")
 	branch_if(e, condition, yes, no)
 
@@ -177,8 +174,7 @@ emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) 
 	value := emit_borrowed_operand(e, v.bound[0])
 	matched := emit_union_tag_is(e, subject, value, index)
 
-	slot := temporary_slot(e, as_type)
-	store(e, as_type, "zeroinitializer", slot)
+	slot := zeroed_slot(e, as_type)
 	emit_union_write_variant(e, as_type, slot, union_index_of(e.c, as_type, "none"), "")
 	then_label, done_label := new_label(e, "unionas.match"), new_label(e, "unionas.done")
 	branch_if(e, matched, then_label, done_label)

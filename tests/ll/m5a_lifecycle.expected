@@ -3,8 +3,7 @@ define internal %union.Result.Plain.Allocator_Error.
 clone.failed.
 call %union.Result.Res.Allocator_Error.
 @loke.i.Res.try_clone(
-store %struct.Group.
- zeroinitializer, ptr
+call void @llvm.memset.p0.i64(ptr %t*, i8 0, i64 16, i1 false)
 clone.unwind.
 call void @loke.p.Res.release(ptr
 store %union.Result.Group.Allocator_Error.

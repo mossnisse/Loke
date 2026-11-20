@@ -15,7 +15,7 @@ load_place :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
 		copy_bytes(e, snapshot, address, type_size(e.c, type))
 		return snapshot
 	}
-	return emit_value(e, "load %s, ptr %s%s", llvm_type(e, type), address, align_suffix(e, address, type))
+	return load(e, llvm_type(e, type), address, align_suffix(e, address, type))
 }
 
 // clang crashes in instruction selection on a first-class value with 65536 or
@@ -58,6 +58,18 @@ temporary_storage :: proc(e: ^Emitter, llvm: string, size: u64, align: u64 = 0) 
 	}
 	append(&e.large_taken, slot)
 	return slot.name
+}
+
+// New storage for one value of `type` within the current full expression,
+// holding zero.
+@(private)
+zeroed_slot :: proc(e: ^Emitter, type: Type_Id) -> string {
+	// A large slot is shared, so the newest `load` may have read from it.
+	held := loaded_is_newest(e) && !is_large_value(e, type)
+	slot := temporary_slot(e, type)
+	store(e, type, "zeroinitializer", slot)
+	keep_loaded(e, held)
+	return slot
 }
 
 // The value in storage only this value's producer can write, which a large
@@ -117,31 +129,108 @@ build_record :: proc(e: ^Emitter, record: Type_Id, parts: ..string) -> string {
 	return built
 }
 
+// Copies `size` bytes between two places, which are one place or do not overlap.
 @(private)
 copy_bytes :: proc(e: ^Emitter, to, from: string, size: u64) {
-	fmt.sbprintfln(&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %d, i1 false)", to, from, size)
+	if size > 0 {
+		fmt.sbprintfln(&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %d, i1 false)", to, from, size)
+	}
 }
 
+@(private)
+zero_bytes :: proc(e: ^Emitter, address: string, size: u64) {
+	if size > 0 {
+		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)", address, size)
+	}
+}
+
+// Whether LLVM holds a value of the type spelled `llvm` as an aggregate, a
+// struct or an array, and not as a scalar or a vector.
+@(private)
+is_llvm_aggregate :: proc(llvm: string) -> bool {
+	return llvm[0] == '%' || llvm[0] == '{' || llvm[0] == '['
+}
+
+// Writes `value` to the place at `address`. A zero aggregate is written with
+// `llvm.memset`, and one that a place still holds, having just been read from
+// it, is copied from there with `llvm.memcpy`: clang's fast instruction
+// selector cannot lower a first-class aggregate `load` or `store`, and the
+// slow one splits each into an instruction per scalar inside.
 @(private)
 store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 	if address == "" || value == "" {
 		return
 	}
-	// A large constant is written with memset or copied from a module constant.
-	if is_large_value(e, type) {
-		size := type_size(e.c, type)
-		if value == "zeroinitializer" || strings.has_prefix(value, LARGE_ZERO_PREFIX) {
-			fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)", address, size)
-			return
-		}
+	llvm, size := llvm_type(e, type), type_size(e.c, type)
+	large := is_large_value(e, type)
+	switch {
+	case large && strings.has_prefix(value, LARGE_ZERO_PREFIX), value == "zeroinitializer" && is_llvm_aggregate(llvm):
+		zero_bytes(e, address, size)
+	case large:
+		// The value is the address of its storage, which a constant has none of.
 		from := value
 		if value[0] != '%' && value[0] != '@' {
-			from = private_constant(e, "@.aggregate.", fmt.aprintf("%s %s", llvm_type(e, type), value))
+			from = private_constant(e, "@.aggregate.", fmt.aprintf("%s %s", llvm, value))
 		}
 		copy_bytes(e, address, from, size)
+	case value == e.loaded.value && loaded_is_newest(e) && is_llvm_aggregate(llvm):
+		// The load stays for whatever else names the value (`write_function`).
+		copy_bytes(e, address, e.loaded.from, size)
+		append(&e.copied, value)
+	case:
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s%s", llvm, value, address, align_suffix(e, address, type))
+	}
+}
+
+// `body`, a function's text from its entry block on, without the `load` of
+// each value among `copied` that nothing uses: `store` copied the place such a
+// value was read from, which leaves the load without a use unless the value
+// was also wanted for something else.
+@(private)
+write_without_unused_loads :: proc(out: ^strings.Builder, body: string, copied: []string) {
+	if len(copied) == 0 {
+		strings.write_string(out, body)
 		return
 	}
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s%s", llvm_type(e, type), value, address, align_suffix(e, address, type))
+	// Where each load's line is, and whether anything but that line names its value.
+	Load :: struct {
+		lo, hi: int,
+		used:   bool,
+	}
+	loads := make(map[string]Load, len(copied), context.temp_allocator)
+	for value in copied {
+		loads[value] = {}
+	}
+	for at := 0; at < len(body); {
+		lo := strings.index_byte(body[at:], '%')
+		if lo < 0 {
+			break
+		}
+		lo += at
+		at = lo + 1
+		for at < len(body) && unquoted_name_byte(body[at]) {
+			at += 1
+		}
+		load, copied_one := &loads[body[lo:at]]
+		if !copied_one {
+			continue
+		}
+		if strings.has_prefix(body[at:], " = ") {
+			load.lo = lo - len("  ")
+			load.hi = at + strings.index_byte(body[at:], '\n') + 1
+		} else {
+			load.used = true
+		}
+	}
+	// A value is named after the ones before it, so the lines are in order.
+	kept := 0
+	for value in copied {
+		if load := loads[value]; !load.used && load.hi > kept {
+			strings.write_string(out, body[kept:load.lo])
+			kept = load.hi
+		}
+	}
+	strings.write_string(out, body[kept:])
 }
 
 @(private = "file")
@@ -306,7 +395,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id, lending := fa
 		base_type, base_address := emit_base_address(e, v.operand)
 		info := underlying_info(e.c, base_type)
 		index := emit_index_below(e, v, fmt.tprintf("%d", info.count))
-		out := emit_value(
+		out := emit_gep(
 			e, "getelementptr inbounds %s, ptr %s, i64 0, i64 %s",
 			llvm_type(e, base_type), base_address, index,
 		)

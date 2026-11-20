@@ -338,6 +338,19 @@ and `[]u8{...}` take 40 `Large` slots for the by-value calls and 80 for the
 method calls. Whether they should reuse slots as the growable literals do is
 open with the summary. Found on 2026-11-12.
 
+## Copies between overlapping places
+
+A struct, array, or union copied from one place to another is an `llvm.memcpy`
+(`store` in [emit_llvm_place.odin](../src/emit_llvm_place.odin)), whose two
+places must be one place or share no byte. Two places of one type that share
+only some of their bytes cannot be named without `core:unsafe`, which can
+convert a pointer into the middle of other storage. Until 2026-11-20 a copy
+between two such places of at most 4096 bytes read the whole value and then
+wrote it; it is now undefined, as a larger one always was.
+[design.md](design.md) does not say what such a copy does. Whether it is
+defined, which would make these copies `llvm.memmove`, or is one more thing
+`unsafe` code answers for, is open.
+
 ## A public type's private `format`
 
 Such a type gets the generated default for the `Formattable` slot and prints by

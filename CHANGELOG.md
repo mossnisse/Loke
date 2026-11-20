@@ -109,6 +109,17 @@ checklist.
   are padding, which holds no value as a struct's holds none
   ([`unsafe.transmute`](docs/design.md#unsafetransmute)): unsafe code that read them through a
   pointer found zeros, and now finds whatever the storage held.
+- A struct, array, or union copied from one place to another, or set to zero, is written to
+  LLVM as a copy or a fill of its bytes, as clang writes one for C, where it was a value read
+  whole and then written whole. `examples/lexer.loke` builds at `-opt=speed` in 916 ms, from
+  1369, `examples/corpus_runner.loke` in 1478 ms, from 2477, and `examples/streaming.loke` in
+  486 ms, from 1367; default builds of the first two take 398 ms, from 439, and 562 ms, from
+  622, to executables 17% and 20% smaller. A program of numeric code builds as fast as before.
+  A program built at `-opt=speed` runs as fast as before. One built without optimization can
+  run slower where it copies many small values: `bench/geometry.loke` by 10%,
+  `bench/containers.loke` by 5%. Unsafe code that copies between two places of one type
+  sharing only some of their bytes, which a converted pointer can name, now has no defined
+  result ([Copies between overlapping places](docs/open-questions.md#copies-between-overlapping-places)).
 
 ### Fixed
 
