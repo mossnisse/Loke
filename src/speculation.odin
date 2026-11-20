@@ -4,6 +4,9 @@
 // overload resolution").
 package lokec
 
+import "core:mem"
+import "core:slice"
+
 // A hypothetical check (compiler-architecture.md "Checking and overload
 // resolution"). `end_probe` fails if a probe grew the emission registries without
 // a `begin_commit`.
@@ -138,12 +141,32 @@ hold_diagnostics :: proc(c: ^Compiler, length: int) {
 }
 
 release_held_diagnostics :: proc(c: ^Compiler) {
+	restore_diagnostics(c, c.held_diagnostics[:])
+	clear(&c.held_diagnostics)
+}
+
+// Takes every diagnostic past `length` out of the list, as `hold_diagnostics`
+// does, for the caller to keep: `restore_diagnostics` reports them, or
+// `destroy_diagnostic` drops one. The slice is `allocator`'s.
+take_diagnostics :: proc(c: ^Compiler, length: int, allocator: mem.Allocator) -> []Diagnostic {
+	wanted := clamp(length, 0, len(c.diagnostics))
+	taken := slice.clone(c.diagnostics[wanted:], allocator)
+	for d in taken {
+		if d.severity == .Error {
+			c.error_count -= 1
+		}
+	}
+	shrink_diagnostics(c, wanted)
+	return taken
+}
+
+// Reports diagnostics that were taken out of the list.
+restore_diagnostics :: proc(c: ^Compiler, taken: []Diagnostic) {
 	context.allocator = diagnostic_allocator(c)
-	for d in c.held_diagnostics {
+	for d in taken {
 		append(&c.diagnostics, d)
 		if d.severity == .Error {
 			c.error_count += 1
 		}
 	}
-	clear(&c.held_diagnostics)
 }

@@ -499,6 +499,8 @@ escape_level_name :: proc(level: Escape_Level) -> string {
 // holding it is.
 @(private)
 Prov_Solve :: struct {
+	// `solve_links` ran: it adds to the graph, so it runs once.
+	links_solved: bool,
 	// The slots a `Publish` being run lands in (`link_landed_stores`).
 	landed: ^[dynamic]int,
 	// Why a diagnostic may be imprecise; never consulted by the rules.
@@ -707,13 +709,22 @@ enter_block_tables :: proc(state: ^Prov_Solve, reach: [][]u32, precision: [][]Pr
 @(private)
 solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	state := Prov_Solve{graph = graph, k = k}
-	if !prepare_state(&state) {
-		return
+	if prepare_state(&state) {
+		solve_reaching(&state)
+		report_solved(&state)
 	}
-	solve_reaching(&state)
-	solve_links(&state)
-	solve_loan_liveness(&state)
-	report_provenance(&state)
+}
+
+// A body's root and region diagnostics, once its reach is solved. Its summaries
+// may have been read off the same solve, which solves the links for some
+// (`settle_carrier_moves`).
+@(private)
+report_solved :: proc(state: ^Prov_Solve) {
+	if !state.links_solved {
+		solve_links(state)
+	}
+	solve_loan_liveness(state)
+	report_provenance(state)
 }
 
 // Sizes the per-block lattice storage; false when there is nothing to solve.
@@ -873,6 +884,7 @@ join_block_entry :: proc(state: ^Prov_Solve, block: ^Flow_Block, id: int) -> ^Fl
 // resolve, before pending reborrows settle and the held links are solved.
 @(private)
 solve_links :: proc(state: ^Prov_Solve) {
+	state.links_solved = true
 	link_landed_stores(state)
 	resolve_content_reads(state)
 	prov_settle_pending_reborrows(state.graph)

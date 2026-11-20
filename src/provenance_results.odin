@@ -71,16 +71,22 @@ prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 }
 
 // design.md "@(cross_thread)": @(escape=static) already rules out a thread_local
-// borrow; this checks thread affinity, erasure, and the allocator region.
+// borrow; this checks thread affinity, erasure, and the allocator region. Only a
+// diagnosing walk does: a summary walk marks that there was something to check.
 @(private)
 prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
-	if graph.mode != .Prov_Diagnose || !committing(c) {
+	if !committing(c) {
+		return
+	}
+	crossings := call_cross_thread_operands(c, v, graph.alloc)
+	if graph.mode != .Prov_Diagnose {
+		graph.summary_only ||= len(crossings) > 0
 		return
 	}
 	// A procedure value carries no state, so only its writes are checked
 	// (`note_thread_spawn`).
-	for crossing in call_cross_thread_operands(c, v, graph.alloc) {
+	for crossing in crossings {
 		if crossing.of_proc {
 			continue
 		}
@@ -98,11 +104,13 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 
 // design.md "Sharing with tasks", "Borrows crossing between tasks": the argument
 // and result checks at a spawn; the solver checks thread_local borrows on crossing.
+// Only a diagnosing walk makes them, and the `Cross` events the solver reads.
 @(private)
 prov_spawn_transfers :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn, call: ^Expr_Call, held, result: []int) {
 	c := graph.k.c
 	task := s.task
 	if graph.mode != .Prov_Diagnose || !committing(c) {
+		graph.summary_only = true
 		return
 	}
 	info := underlying_info(c, call_proc_type(c, call))

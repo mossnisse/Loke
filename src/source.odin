@@ -372,7 +372,7 @@ report :: proc(c: ^Compiler) {
 	if previous != nil { fmt.eprintln() }
 }
 
-@(private = "file")
+@(private)
 same_diagnostic :: proc(a, b: Diagnostic) -> bool {
 	return a.severity == b.severity &&
 		a.code == b.code &&

@@ -570,3 +570,67 @@ Executables are the same size to the KB. The functions of a module are the
 ones it had, with its thunks and its copies for a higher CPU level in another
 order, so run time was not expected to change and was not measured beyond the
 two records.
+
+## Diagnostics from the summary solve
+
+[summary-diagnosis.json](summary-diagnosis.json) records the working tree
+after commit `b797438997ec0d1309196297bf5c7b5d1bc78484`, in which a body's
+last summary round reports its diagnostics
+([Disposable control-flow graphs](../../docs/compiler-architecture.md#disposable-control-flow-graphs)),
+against [summary-diagnosis-before.json](summary-diagnosis-before.json), that
+commit itself, captured just before on 2026-11-20 on the same machine and with
+the same tools and conditions as [Reachable emission](#reachable-emission).
+The language server was built with `-o:speed` and measured too. SHA-256
+values:
+
+- `lokec.exe` before: `52eac82584e21309925f938c38a574a40b47d9b71a116f6f18dfeaca521056c9`.
+- `lokec.exe` after: `143328c351013b4dd4d35b99aa56e7861c636f63d6d3e61c9a0dae6cb56d0e33`.
+- `loke-lsp.exe` before: `7f993e36664000c33ff54f8dbba374e16c1e981f9c147d6cf366f49709b8eafb`.
+- `loke-lsp.exe` after: `d32777f485aeb44b8576a7f67ef79f7aca8e03bda37a45cd2c8cb6fd6458bad0`.
+
+```powershell
+.\perf.ps1 -Lokec <before>/lokec.exe -Lsp <before>/loke-lsp.exe -Out bench/baselines/summary-diagnosis-before.json
+.\perf.ps1 -Lokec <after>/lokec.exe -Lsp <after>/loke-lsp.exe -Baseline bench/baselines/summary-diagnosis-before.json -Out bench/baselines/summary-diagnosis.json
+```
+
+Front-end time changes by -11% to +4% over the 33 records, with a median of
+-4%; the records round to the millisecond and take the fastest of three, which
+is coarse for a change of this size. The language server on `bench/workspace`,
+before / after in ms: 393 / 336 to open, 248 / 232 for a root edit, 308 / 306
+for a library edit, 252 / 247 for completion, with a peak working set of
+97.7 MB both times. Compiler peak working set changes by at most 1%, and no
+executable changed size.
+
+The front end (`-emit-ll`) with the two compilers taken in turn for fifteen
+rounds, fastest of each in ms; each pair wrote the same module, byte for byte:
+
+| Workload | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| `examples/hello.loke` | 15.2 | 15.0 | -1% |
+| `examples/lexer.loke` | 129.9 | 122.1 | -6% |
+| `examples/corpus_runner.loke` | 181.0 | 169.5 | -6% |
+| `examples/binary_records.loke` | 234.4 | 226.0 | -4% |
+| `examples/dice.loke` | 107.1 | 99.9 | -7% |
+| `examples/greeting.loke` | 116.9 | 106.8 | -9% |
+| `examples/lockstep.loke` | 94.0 | 89.0 | -5% |
+| `bench/binary.loke` | 151.5 | 148.9 | -2% |
+| `bench/geometry.loke` | 273.9 | 249.8 | -9% |
+| `bench/linalg.loke` | 200.8 | 185.4 | -8% |
+| `bench/workspace` | 126.6 | 117.1 | -8% |
+| `bench/dense.loke` | 311.8 | 312.1 | 0% |
+
+`bench/dense.loke` has a `parallel` statement, so its bodies are built for
+their diagnostics as before. The modules being the same, a build does after the
+front end what it did; the records' builds at `-opt=speed` differ by -7% to
++8% and their run times by -14% to +20%, which is the drift between two
+captures that [Emission on demand](#emission-on-demand) also saw.
+
+The [profiling probe](../provenance_profile/main.odin), before / after:
+
+| Workload | Check (ms) | Body builds | Normalization (ms) |
+| --- | ---: | ---: | ---: |
+| `examples/lexer.loke` | 107.8 / 99.2 | 1584 / 1194 | 38.8 / 32.0 |
+| `examples/corpus_runner.loke` | 147.6 / 135.1 | 1936 / 1467 | 54.8 / 44.4 |
+| `bench/geometry.loke` | 220.3 / 194.0 | 3935 / 2813 | 81.6 / 60.7 |
+| `bench/workspace` | 106.2 / 99.6 | 1551 / 1168 | 37.8 / 30.8 |
+| `bench/dense.loke` | 259.8 / 260.6 | 4164 / 4164 | 109.0 / 107.8 |

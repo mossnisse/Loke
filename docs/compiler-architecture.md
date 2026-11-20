@@ -153,6 +153,32 @@ Provenance construction keeps what a body does apart from the facts that grow
 while it is analyzed; [normalized provenance
 input](#normalized-provenance-input) describes that boundary.
 
+A summary round's graph is also the body's diagnosing graph wherever the two
+modes build alike. `summarize_body` solves it once, reads the summaries off the
+solve, and runs the diagnostic checks on it; the driver keeps what a body's
+last round reported until every summary has settled (`Body_Report` in
+[borrow_program.odin](../src/borrow_program.odin)). The worklist visits a body
+again whenever a summary it read grew, so its last round read the summaries its
+diagnostics would. A body is built again in `Prov_Diagnose` when:
+
+- it receives a callback, which a summary leaves to its callers to name and a
+  diagnosis takes to be any procedure of its type;
+- it passes an argument to a `@(cross_thread)` parameter or spawns a task,
+  which only a diagnosing walk checks;
+- a round read a summary that was still to be made, which a caller reads
+  otherwise than an empty one, and no growth brought the body back;
+- it has no summary to settle, having neither a result nor a parameter it may
+  write through; or
+- the program has a `parallel` statement, whose checks read the thread
+  summaries, and those settle after the result summaries.
+
+A summary walk marks the first two (`Prov_State.summary_only`). The
+diagnostics therefore rest on the worklist's dependency record as the summaries
+do: every read of a settling summary records its callee
+(`prov_note_summary_dependency`). A compiler built with
+`-define:LOKE_RECHECK_PROVENANCE=true` also builds the diagnosing graph of each
+body reported from its summary round, and stops where the two reports differ.
+
 ### Normalized provenance input
 
 The construction walk (`walk_flow_expr` and the provenance helpers it calls) is
@@ -260,7 +286,9 @@ deliberately avoids IDs, map order, and graph dumps. The `provenance_*` runtime
 and rejection cases in `tests/` are the behavioral controls. For a change to
 this boundary, also compare diagnostics over the test, example, tutorial,
 bench, and package inputs with the parent commit's compiler, each run from its
-own checkout. The [profiling probe](../bench/provenance_profile/main.odin) reports
+own checkout, and check them with a compiler built with
+`-define:LOKE_RECHECK_PROVENANCE=true`
+([Disposable control-flow graphs](#disposable-control-flow-graphs)). The [profiling probe](../bench/provenance_profile/main.odin) reports
 body builds, fact replays, normalization, replay, and materialization time, and
 the largest sampled build arena:
 
@@ -1266,7 +1294,7 @@ be file-private. Paths below are relative to `src/`.
 | `proc_contracts.odin` | Inferred callback result contracts and checked substitution bounds. |
 | `precision.odin` | Why a provenance path was merged, for diagnostics; a flagged step also no longer names one place. |
 | `prov_paths.odin` | Projection paths, the steps from a root's storage to a place in it, and how two paths compare. |
-| `borrow_program.odin` | The whole program's provenance: result summaries settled over a worklist of callers, declared escape contracts, then each body's diagnostics. |
+| `borrow_program.odin` | The whole program's provenance: result summaries settled over a worklist of callers, declared escape contracts, then each body's diagnostics, from its last summary round or a graph of their own. |
 | `borrow.odin` | The provenance solver: roots, loans, and slots; reaching loans, links, publication, and liveness in one body. |
 | `borrow_tables.odin` | What the solver keeps at block boundaries, in pages shared between neighbors and interned rows, and the bit-row primitives and joins over them. |
 | `borrow_summaries.odin` | What a body leaves for its callers' summaries: the carriers it moves, its `thread_local` writes, the regions it leaves in written arguments, and what may escape. |

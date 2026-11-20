@@ -30,6 +30,11 @@ machine, not a threshold.
   faster at `-opt=none`, where copy-heavy code now runs 4–10% slower.
 - [Step 4](#4-emit-on-demand) is done: the front end is up to 23% faster, 9%
   at the median, and the compiler's peak memory 3–34% lower.
+- [Step 5](#5-build-each-bodys-provenance-input-once) is done, otherwise than
+  planned: a body's input cannot be kept between the passes, but its last
+  summary round can report its diagnostics. Checking is 6–12% faster and the
+  front end 4–9%, except for a program with a `parallel` statement, which is
+  unchanged.
 
 ## Conditions
 
@@ -618,6 +623,74 @@ Things the spike must answer:
 
 Expected, if it works: about 20% of checking time. That is 2–4% of a build and
 most of what the language server can gain, since it never runs clang.
+
+**Done** on 2026-11-20, and not as planned. The spike's answers:
+
+- **A kept input cannot stand for a later pass.** The walk itself reads what
+  the passes settle: a call's result loans come from its callee's result
+  summary (`prov_call_result`), and the walk records a call's effects or its
+  accesses according to whether the global writes have settled. The first pass
+  runs before any summary exists and the second while they grow, so the three
+  builds of a body are three different graphs.
+  [The rationale](comments.md#provenance-replay-and-precise-publication)
+  already said so; the plan had read the phase rule about operations holding
+  no facts as covering summaries, which it does only for replay.
+- **`effect_writes`, `effect_calls`, and `summary_callees`** are read off the
+  walk of their own pass, for the same reason.
+- **The six mode tests**: three pass the mode to the callback queries, which
+  give a body that receives a callback a stand-in under a summary and every
+  procedure of the type otherwise; two make the cross-thread and spawn checks
+  only when diagnosing; one records dependencies only under a summary. The
+  first five act during the walk. They change nothing for a body that receives
+  no callback, passes nothing across threads, and spawns nothing, which is
+  about 99% of the bodies measured.
+- **Memory** is unchanged, since no graph is kept.
+- **Construction diagnostics** are reported once: a summary walk reports none,
+  and what the solve reports is taken out of the compiler's list after each
+  round.
+
+What does hold is narrower: a body's last summary round and its diagnosing
+build read the same summaries, because the worklist visits a body again
+whenever one it read grew. So `summarize_body` now runs the diagnostic checks
+on the solve it reads the summaries off, and the driver reports what each
+body's last round found
+([Disposable control-flow graphs](compiler-architecture.md#disposable-control-flow-graphs)
+lists the bodies still built for their diagnostics). The three passes took
+17, 23, and 21 ms on `examples/lexer.loke` before, with 514, 556, and 514
+builds; 95% of its bodies have a summary to settle.
+
+`bench/provenance_profile`, before / after:
+
+| Program | Check (ms) | Body builds | Normalization (ms) |
+| --- | ---: | ---: | ---: |
+| `examples/lexer.loke` | 107.8 / 99.2 | 1584 / 1194 | 38.8 / 32.0 |
+| `examples/corpus_runner.loke` | 147.6 / 135.1 | 1936 / 1467 | 54.8 / 44.4 |
+| `bench/geometry.loke` | 220.3 / 194.0 | 3935 / 2813 | 81.6 / 60.7 |
+| `bench/workspace` | 106.2 / 99.6 | 1551 / 1168 | 37.8 / 30.8 |
+| `bench/dense.loke` | 259.8 / 260.6 | 4164 / 4164 | 109.0 / 107.8 |
+
+Checking is 6–12% faster, under the 20% estimated, and `-emit-ll` 4–9%
+faster; the language server opens `bench/workspace` in 336 ms, from 393. The
+records are `summary-diagnosis-before.json` and `summary-diagnosis.json` under
+`bench/baselines`. How it went:
+
+- A quarter of the diagnosing builds remain. Most are of a body declared
+  before a callee whose summary turned out empty: the body read "no summary
+  yet", which the walk treats otherwise than an empty one, and no growth
+  brought it back. Visiting callees first would remove most of them and would
+  also change which summaries a first visit reads, so it is a change to the
+  analysis, not to its cost.
+- `bench/dense.loke` has a `parallel` statement. Its diagnostics read the
+  thread summaries, which settle after the result summaries, so every body is
+  still built for them.
+- The diagnostics now rest on the summary worklist's dependency record. Over
+  4424 inputs (every `.loke` file, and every directory of them as a package,
+  under `tests`, `examples`, `bench`, `docs`, `core`, and `base`; 2085 are
+  rejected programs), this compiler's output and exit code are the parent
+  commit's, and a compiler built with `-define:LOKE_RECHECK_PROVENANCE=true`,
+  which builds each such body's diagnosing graph as well and compares the two
+  reports, never stopped. Nor did it on the 2121 mutants of the checker
+  mutation fuzzer.
 
 ## Considered and not planned
 

@@ -206,6 +206,21 @@ body_parameter :: proc(c: ^Compiler, body: Symbol_Id, index: int) -> Symbol_Id {
 	return sym.param_symbols[index]
 }
 
+// Whether `body` has a parameter that holds a callable: what `forward` tells
+// apart in the queries here.
+body_receives_callback :: proc(c: ^Compiler, body: Symbol_Id) -> bool {
+	sym := symbol_of(c, body)
+	if sym == nil {
+		return false
+	}
+	for _, index in sym.param_symbols {
+		if body_parameter(c, body, index) != INVALID_SYMBOL {
+			return true
+		}
+	}
+	return false
+}
+
 // What a call's result may hold from the callbacks its callee calls
 // (`Callback_Read`): the callback each passes resolved as for a write-back
 // (`value_left`), `at` unused. A callable view's contract reads its

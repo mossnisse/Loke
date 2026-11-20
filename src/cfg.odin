@@ -11,7 +11,11 @@ import "core:slice"
 Block_Id :: distinct int
 
 // One walk, three jobs. Only Lifecycle reports; the provenance modes rebuild the
-// same topology without repeating its diagnostics or annotations.
+// same topology without repeating its diagnostics or annotations. The two
+// provenance modes build one graph, but for a body that receives a callback,
+// which a summary leaves to its callers to name (`call_summary_targets`), and
+// for what crosses to another thread, which only a diagnosing walk checks. A
+// summary walk marks either (`Prov_State.summary_only`).
 Flow_Mode :: enum u8 {
 	Lifecycle,
 	Prov_Summary,
@@ -299,6 +303,7 @@ new_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocato
 	use_allocator(graph, allocator)
 	if mode != .Lifecycle {
 		graph.prov = new_prov_state(allocator, normalized_input != nil ? normalized_input : new_prov_input(allocator))
+		graph.summary_only = mode == .Prov_Summary && body_receives_callback(k.c, literal.symbol)
 		if literal.signature != nil {
 			params := make([dynamic]Symbol_Id, 0, len(literal.signature.params), allocator)
 			for parameter in literal.signature.params {

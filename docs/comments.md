@@ -4561,11 +4561,26 @@ in their own pass. Each later visit differs in one of those, so a retained
 graph could not stand for the next build without also recording everything it
 read; retaining every graph until its diagnostic pass would also have held
 tens of megabytes. The summary worklist instead skips a visit when no summary
-the body reads has grown since its last one, which leaves about three builds
-per body: one collecting global writes, one discovering summaries, and one
-reporting diagnostics. The profiling records in the repository's
-`bench/baselines/README.md`, under "Provenance normalization", distinguish
-normalization, fact replay, and event materialization cost.
+the body reads has grown since its last one.
+
+One pair of visits does read the same things: a body's last summary round and
+its diagnosing build, since the worklist returns to a body whenever a summary
+it read grew. That round therefore runs the diagnostic checks as well, on the
+solve its summaries were read off, and each round's report replaces the one
+before. The bodies visited more than once are solved for diagnostics more than
+once, which is 2–13% of the visits on the examples and benchmarks, and every
+body reported this way saves a build and a solve. It holds only where the two modes
+build one graph and where the round read no summary that was still to be made;
+[Disposable control-flow graphs](compiler-architecture.md#disposable-control-flow-graphs)
+lists the bodies still built for their diagnostics. That leaves about two
+builds per body: one collecting global writes, and one discovering summaries
+and reporting diagnostics. Counting the making of a summary as growth, so that
+its callers were visited again and none was left out, was tried first. It
+added a visit for each caller declared before its callee, also in a program
+with a `parallel` statement, which is not reported this way and so only lost
+time. The profiling records in the repository's `bench/baselines/README.md`,
+under "Provenance normalization", distinguish normalization, fact replay, and
+event materialization cost.
 
 ### A store's links come from where it lands
 

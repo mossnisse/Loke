@@ -128,6 +128,11 @@ checklist.
   the names of its temporaries. A foreign binding whose type differs from the compiler's own
   declaration of the same name is reported (`L0600`) only where the program reaches code
   that uses that declaration ([C runtime](docs/compiler-guide.md#c-runtime)).
+- Checking is 6-12% faster, and `lokec -emit-ll` 4-9%: a procedure's borrow and region
+  diagnostics come from the analysis that settles its result summary, where the compiler
+  analyzed the procedure once more for them. The language server opens `bench/workspace` in
+  336 ms, from 393. A program with a `parallel` statement is checked as before, and no
+  diagnostic changes.
 
 ### Fixed
 

@@ -123,6 +123,9 @@ Prov_State :: struct {
 	operator_calls: map[rawptr]^Expr_Call,
 	// Summary mode: the direct callees whose result summaries this body reads.
 	summary_callees: [dynamic]Symbol_Id,
+	// Summary mode: a diagnosing walk would build this body otherwise, so the
+	// graph cannot stand for one (`summarize_body`).
+	summary_only: bool,
 	// Calls through a procedure type with no result contract, for notes.
 	plain_calls: [dynamic]^Expr_Call,
 	// design.md "Global write effects": this body's own writes and reads of
