@@ -142,3 +142,82 @@ main :: proc() {
 
 `s = s + Tag{1};` compiles. Compound assignment needs the assignment's temporary
 extension. [Regression](../tests/err/compound_fallback_borrow.loke)
+
+### C runtime warnings disagree with some foreign links
+
+The [C runtime guide](compiler-guide.md#c-runtime) describes `L0755` for a
+foreign object that brings in a second C runtime. Compile the
+[quoted `/DEFAULTLIB` example](source-reviews/emit_llvm_coff.md#quoting-a-whole-default-library-option-suppresses-l0755-p2)
+as `quoted.obj`, then compile this file beside it.
+
+```loke
+package main;
+foreign import quoted "quoted.obj";
+foreign quoted { used_answer :: proc "c" () -> i32 ---; }
+main :: proc() { _ = used_answer(); }
+```
+
+The executable imports the dynamic `malloc` without `L0755`. Removing the
+quotes around the whole directive restores the warning with the same imports.
+
+The reverse happens with an archive. Compile one C object with `/MT` that
+defines `used_answer` and another with `/MD` that defines `unused_allocate` and
+calls `malloc`. Archive both as `mixed.lib` and change the import above to
+`"mixed.lib"`. The build warns that the program would hold two C runtimes even
+though the link uses only the `/MT` member. [Archive member review](source-reviews/emit_llvm_coff.md#unused-archive-members-cause-a-definite-two-runtime-warning-p3)
+
+### Dynamic array insertion can lose or double-drop elements during unwinding
+
+[What the unwind runs](design.md#what-the-unwind-runs-and-what-it-does-not)
+includes registered implicit drops. The
+[container lowering review](source-reviews/emit_llvm_containers.md#verification)
+has three runnable reproductions under the default panic strategy.
+
+- Reserve spare capacity in `[dynamic]Item{Item{1}, Item{2}, Item{3}}`,
+  then insert a borrowed `Item{99}` at index zero whose copy hook panics.
+  The array has already shifted. Drops are `99, 2, 1, 1` where the original
+  owners would drop `99, 3, 2, 1`.
+- In `try_append(first, second)`, have the copy hook clone `first` as
+  `Item{101}` and panic on `second`. Unwinding drops the originals and skips
+  the initialized clone outside the array's published length.
+- `try_append(Item{1}, Item{2})` into an array backed by a zero arena refuses
+  the move-only pack. If disposal of the first value panics, the surrounding
+  `defer` runs and disposal skips the second value.
+
+### A mutable slice literal in thread-local storage shares its backing array
+
+[Storage modifiers](design.md#storage-modifiers) give each thread its own
+`thread_local` instance. This initializer embeds a pointer to one shared,
+writable array in every thread's slice header.
+
+```loke
+package main;
+import "core:fmt";
+import "core:thread";
+
+worker :: proc() {
+    xs: thread_local []mut int = []mut int{0};
+    xs[0] += 1;
+    fmt.println(xs[0]);
+}
+main :: proc() {
+    first := thread.spawn(worker);
+    first.join();
+    second := thread.spawn(worker);
+    second.join();
+}
+```
+
+The two threads print `1` and `2`. Separate backing arrays initialized to zero
+would each yield `1`.
+[LLVM constant review](source-reviews/emit_llvm_const.md#mutable-slice-backing-is-shared-across-thread-local-instances-p2)
+
+### Sequential union `as` calls can exhaust the stack
+
+[Inspecting a union](design.md#inspecting-a-union) defines `.as(.label)` as
+returning `.none` for an inactive label. Repeat `_ = value^.as(.blob);` 24
+times in one procedure with a `[65536]u8` payload type and call it with the
+inactive variant. At default optimization, the executable exits with Windows
+status `0xC00000FD`. Each source site reserves a new full-size option slot
+in the frame. The two-call control exits normally.
+[Reproduction](source-reviews/emit_llvm_convert.md#sequential-union-as-calls-exhaust-the-stack-for-large-payloads-p2)

@@ -284,6 +284,35 @@ points remain:
 - **Unifying the LLVM naming and emission walks** around one procedure
   eligibility decision. [LLVM emitter review](source-reviews/emit_llvm.md#simplification-and-compiler-boundaries)
 
+## LLVM source review follow-ups
+
+- **COFF field decoding.** Replace the two private little-endian readers
+  with Odin's endian helpers, keeping the existing bounds checks.
+  [COFF review](source-reviews/emit_llvm_coff.md#simplification)
+- **Slice literal identity.** Decide whether separate file-scope immutable
+  slice literals may share a backing array when pointer equality can observe
+  the sharing. Also specify the lifetime of a mutable literal's backing in a
+  file-scope `thread_local` initializer. The file-scope literal rule currently
+  gives the array static lifetime.
+  [LLVM constant review](source-reviews/emit_llvm_const.md#equal-file-scope-slice-literals-have-observable-shared-backing)
+- **Constant emission.** Use LLVM's compact spelling for all-zero union
+  padding and relocation ranges. Replace arbitrary-precision union-head
+  assembly with a fixed-width integer and reuse the little-endian byte
+  writer. Share the carrier decisions between the typed and byte-image
+  renderers if that reduces the existing duplication.
+  [LLVM constant review](source-reviews/emit_llvm_const.md#findings)
+- **Container emission.** Remove the duplicate pre-reservation bind and
+  forwarding label helper. Reuse the staging slot for fallible map insertion
+  and allocate replacement storage only for managed values. Share the direct
+  hash and equality call lowering while keeping the map key policy fixed by
+  the checker. Measure miss-heavy `find_or_insert` before changing the runtime
+  ABI to reuse a probe across a user copy hook.
+  [Container review](source-reviews/emit_llvm_containers.md#simplification-and-boundaries)
+- **Conversion emission.** Pass checked copy information from call dispatch
+  and use the common operand-copy path. Collapse the C-string null predicate
+  and use the existing SSA value helper in the float range guard.
+  [Conversion review](source-reviews/emit_llvm_convert.md#simplification)
+
 ## Literal elements that lend a temporary to a call
 
 A `[dynamic]T` or map literal hands each element to the container as soon as
