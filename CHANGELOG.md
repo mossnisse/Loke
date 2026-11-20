@@ -334,6 +334,10 @@ checklist.
   named `string_view$` in the PDB, as `string` is `string$`, so a local type called `string_view`
   no longer takes the view's natvis rule and leaves the view's text unshown
   ([Common options](docs/compiler-guide.md#common-options)).
+- Structural `==` and `!=` compare parts in order and stop at the first unequal one, at run time
+  as at compile time ([Comparison operators](docs/design.md#comparison-operators)). Comparing
+  records whose first fields differ ran a later field's own `==` in the executable, which a
+  constant of the same comparison skipped, so a panicking `==` there failed only at run time.
 
 ## [0.10.0] - 2026-11-16
 

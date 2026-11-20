@@ -62,8 +62,9 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 // `>=`; equal records answer `<=` and `>=`. Built from the last field back, so
 // each field's answer selects between its own `<` and the fields after it.
 //
-// ponytail: every field is compared, as `emit_equal` does, rather than
-// branching at the first difference.
+// ponytail: every field is compared rather than branching at the first
+// difference; an ordered record's fields declare no `==`, so comparing one
+// has no effect to skip.
 @(private = "file")
 emit_record_order :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
 	under := type_underlying(e.c, type)
@@ -86,13 +87,12 @@ emit_record_order :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: 
 }
 
 // Structural equality, since LLVM has no aggregate `icmp`.
-//
-// ponytail: one flat `and` chain rather than short-circuiting blocks; every
-// leaf is a pure extract plus compare.
 @(private)
 emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
+	// design.md "Comparison operators": a part with its own `==` is compared by
+	// it, with both operands in memory.
 	if equal := type_own_equality(e.c, type); equal != INVALID_SYMBOL {
-		return emit_own_equal(e, equal, type, lhs, rhs)
+		return emit_equal_hook_call(e, equal, type, value_address(e, type, lhs), value_address(e, type, rhs))
 	}
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
@@ -105,31 +105,68 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	case .Array:
 		return emit_array_equal(e, under, info, lhs, rhs)
 	case .Struct:
+		// A byte-member record's fields are read in memory, at the alignment
+		// their byte members guarantee.
 		if record_uses_byte_members(e, under, info) {
-			return emit_byte_member_struct_equal(e, under, info, lhs, rhs)
+			left, right := value_address(e, under, lhs), value_address(e, under, rhs)
+			return emit_fields_equal(e, under, info, left, right, byte_member_part)
 		}
 		return emit_fields_equal(e, under, info, lhs, rhs, record_part)
 	}
 	return emit_compare(e, .Eq_Eq, type, lhs, rhs)
 }
 
-// Both operands in memory: a large value is already an address, and a small one
-// is spilled.
-@(private = "file")
-spill_equal_operands :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> (left, right: string) {
-	return value_address(e, type, lhs), value_address(e, type, rhs)
-}
-
-// design.md "Comparison operators": a part with its own `==` is compared by it.
-@(private = "file")
-emit_own_equal :: proc(e: ^Emitter, equal: Symbol_Id, type: Type_Id, lhs, rhs: string) -> string {
-	left, right := spill_equal_operands(e, type, lhs, rhs)
-	out := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i1 %s(%s, %s)", out, callee_name(e, equal),
+// A direct call of the inherent `==` `equal` on two `type` values in memory.
+@(private)
+emit_equal_hook_call :: proc(e: ^Emitter, equal: Symbol_Id, type: Type_Id, left, right: string) -> string {
+	return emit_value(
+		e, "call i1 %s(%s, %s)", callee_name(e, equal),
 		hook_argument(e, equal, 0, type, left), hook_argument(e, equal, 1, type, right),
 	)
-	return out
+}
+
+// A direct call of the inherent `hash` `hash` on a `type` value in memory.
+@(private)
+emit_hash_hook_call :: proc(e: ^Emitter, hash: Symbol_Id, type: Type_Id, address, seed: string) -> string {
+	return emit_value(e, "call i64 %s(%s, i64 %s)", callee_name(e, hash), hook_argument(e, hash, 0, type, address), seed)
+}
+
+// design.md "Comparison operators": parts compare in order, and the first
+// unequal one ends the comparison. A part whose comparison may run an inherent
+// `==` is reached by a branch on the parts before it; comparing any other part
+// has no effect to skip, so those fold into one `and` chain.
+@(private = "file")
+Part_Chain :: struct {
+	// The parts since the last branch, folded; `true` before any.
+	result:       string,
+	// The `i1` slot a branch leaves the answer in and the label it goes to,
+	// both empty until a part needs a branch.
+	answer, done: string,
+}
+
+@(private = "file")
+chain_part :: proc(e: ^Emitter, chain: ^Part_Chain, type: Type_Id, left, right: string) {
+	if chain.result != "true" && comparison_runs_own_equality(e.c, type) {
+		if chain.answer == "" {
+			chain.answer, chain.done = alloca(e, "i1"), new_label(e, "equal.done")
+		}
+		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", chain.result, chain.answer)
+		next := new_label(e, "equal.next")
+		branch_if(e, chain.result, next, chain.done)
+		place_label(e, next)
+		chain.result = "true"
+	}
+	chain.result = combine_and(e, chain.result, emit_equal(e, type, left, right))
+}
+
+@(private = "file")
+chain_answer :: proc(e: ^Emitter, chain: Part_Chain) -> string {
+	if chain.answer == "" {
+		return chain.result
+	}
+	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", chain.result, chain.answer)
+	place_label(e, chain.done)
+	return load(e, "i1", chain.answer)
 }
 
 // An array bigger than either limit compares and hashes in a loop, since
@@ -147,21 +184,20 @@ array_walks_in_loop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> boo
 @(private = "file")
 emit_array_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
 	if array_walks_in_loop(e, type, info) {
-		left, right := spill_equal_operands(e, type, lhs, rhs)
+		left, right := value_address(e, type, lhs), value_address(e, type, rhs)
 		return emit_elements_equal(e, info.element, left, right, fmt.tprintf("%d", info.count))
 	}
 	llvm := llvm_type(e, type)
-	result := "true"
+	chain := Part_Chain{result = "true"}
 	for index in 0 ..< int(info.count) {
-		left := extract(e, llvm, lhs, index)
-		right := extract(e, llvm, rhs, index)
-		result = combine_and(e, result, emit_equal(e, info.element, left, right))
+		chain_part(e, &chain, info.element, extract(e, llvm, lhs, index), extract(e, llvm, rhs, index))
 	}
-	return result
+	return chain_answer(e, chain)
 }
 
-// Whether the `count` elements at `left` and `right` are equal. Every element is
-// compared, as `emit_equal` compares every field.
+// Whether the `count` elements at `left` and `right` are equal. As `Part_Chain`
+// does, the first unequal element ends the loop where a later one's comparison
+// could run an inherent `==`; otherwise every element is compared.
 @(private = "file")
 emit_elements_equal :: proc(e: ^Emitter, element: Type_Id, left, right, count: string) -> string {
 	element_llvm := llvm_type(e, element)
@@ -171,7 +207,14 @@ emit_elements_equal :: proc(e: ^Emitter, element: Type_Id, left, right, count: s
 	one := load_temporary(e, element, gep_at(e, element_llvm, left, loop.index))
 	other := load_temporary(e, element, gep_at(e, element_llvm, right, loop.index))
 	leaf := emit_equal(e, element, one, other)
-	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", combine_and(e, load(e, "i1", same), leaf), same)
+	if comparison_runs_own_equality(e.c, element) {
+		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", leaf, same)
+		next := new_label(e, "equal.next")
+		branch_if(e, leaf, next, loop.done)
+		place_label(e, next)
+	} else {
+		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", combine_and(e, load(e, "i1", same), leaf), same)
+	}
 	close_counted_loop(e, loop)
 	return load(e, "i1", same)
 }
@@ -222,14 +265,11 @@ emit_fields_equal :: proc(
 	e: ^Emitter, record: Type_Id, info: ^Type_Info, lhs, rhs: string,
 	read: proc(e: ^Emitter, record: Type_Id, value: string, index: int) -> string,
 ) -> string {
-	result := "true"
+	chain := Part_Chain{result = "true"}
 	for field, index in info.fields {
-		symbol := symbol_of(e.c, field)
-		left := read(e, record, lhs, index)
-		right := read(e, record, rhs, index)
-		result = combine_and(e, result, emit_equal(e, symbol.type, left, right))
+		chain_part(e, &chain, symbol_of(e.c, field).type, read(e, record, lhs, index), read(e, record, rhs, index))
 	}
-	return result
+	return chain_answer(e, chain)
 }
 
 // A field of a byte-member record in storage, loaded at its own type through the
@@ -240,25 +280,13 @@ byte_member_part :: proc(e: ^Emitter, record: Type_Id, slot: string, index: int)
 	return load_place(e, symbol_of(e.c, underlying_info(e.c, record).fields[index]).type, address)
 }
 
-@(private = "file")
-emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
-	left, right := spill_equal_operands(e, type, lhs, rhs)
-	return emit_fields_equal(e, type, info, left, right, byte_member_part)
-}
-
 // ------------------------------------------------------------ key hashing --
 
 emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {
 	// design.md "Maps": a part with its own `==` hashes by its own `hash`, which
 	// is the coherent partner of the `==` structural equality calls for it.
 	if own := part_own_hash(e.c, type); own != INVALID_SYMBOL {
-		address := value_address(e, type, value)
-		out := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i64 %s(%s, i64 %s)",
-			out, callee_name(e, own), hook_argument(e, own, 0, type, address), seed,
-		)
-		return out
+		return emit_hash_hook_call(e, own, type, value_address(e, type, value), seed)
 	}
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
@@ -326,26 +354,24 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 		data, length := string_parts(e, storage, value)
 		return emit_value(e, "call i64 @loke_rt_v1_hash_bytes(ptr %s, i64 %s, i64 %s)", data, length, seed)
 	}
-	return emit_hash_mix(e, seed, emit_hash_bits(e, under, value))
+	return emit_hash_scalar(e, under, value, seed)
 }
 
 // One hash step: `bits` folded into `seed`.
 @(private = "file")
 emit_hash_mix :: proc(e: ^Emitter, seed, bits: string) -> string {
-	mixed, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = xor i64 %s, %s", mixed, seed, bits)
-	fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", out, mixed, HASH_MULTIPLIER)
-	return out
+	return emit_value(e, "mul i64 %s, %d", emit_value(e, "xor i64 %s, %s", seed, bits), HASH_MULTIPLIER)
 }
 
-// One scalar's 64-bit integer image.
+// One scalar folded into `seed`, as `hash_const` does at compile time: its
+// 64-bit integer image.
 @(private = "file")
-emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
+emit_hash_scalar :: proc(e: ^Emitter, under: Type_Id, value, seed: string) -> string {
 	#partial switch type_of(e.c, under).kind {
 	case .Bool:
-		return resize_int(e, value, 1, 64, signed = false)
+		return emit_hash_mix(e, seed, resize_int(e, value, 1, 64, signed = false))
 	case .Raw_Pointer, .Pointer, .C_Pointer:
-		return emit_value(e, "ptrtoint ptr %s to i64", value)
+		return emit_hash_mix(e, seed, emit_value(e, "ptrtoint ptr %s to i64", value))
 	}
-	return widen_to_i64(e, value, under)
+	return emit_hash_mix(e, seed, widen_to_i64(e, value, under))
 }

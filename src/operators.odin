@@ -1218,6 +1218,16 @@ own_equalities_called :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_I
 	own_equalities_walk(c, type, out, &seen, true)
 }
 
+// Whether comparing a `type` value may run an inherent `==`, so whether
+// skipping it after an unequal part is observable (design.md "Comparison
+// operators").
+comparison_runs_own_equality :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	called: [dynamic]Type_Id
+	defer delete(called)
+	own_equalities_called(c, type, &called)
+	return len(called) > 0
+}
+
 @(private = "file")
 own_equalities_walk :: proc(c: ^Compiler, type: Type_Id, out: ^[dynamic]Type_Id, seen: ^Type_Walk, called: bool) {
 	if type_own_equality(c, type) != INVALID_SYMBOL {

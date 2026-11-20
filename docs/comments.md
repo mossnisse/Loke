@@ -2659,6 +2659,18 @@ chosen a policy. Declaring one half breaks the pairing, so it requires the other
 the alternative, taking the missing half from the underlying type, is how a coarser
 `==` came to sit beside a `hash` that told equal values apart.
 
+### Structural comparison stops at the first unequal part
+
+A part's own `==` is ordinary code: it can panic, allocate, or write state. If
+which parts ran were left open, the compile-time evaluator, which stops at the
+first difference, and generated code, which compared every part, gave one
+expression two behaviors. Stopping matches `&&` between the parts, which is how
+the comparison reads, and how C++'s defaulted `operator==` and Rust's derived
+`PartialEq` behave. Running every part would make a cheap leading field unable
+to spare a costly later `==`. Only a part whose comparison can run user code
+needs a branch; scalar parts still fold into one branch-free `and`, since
+skipping them is unobservable.
+
 ### `in` is a comparison, not an additive operator
 
 `in` produces a Boolean, so it shares comparison precedence. Giving it additive

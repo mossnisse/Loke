@@ -491,7 +491,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 
 // Unknown while a part has no compile-time comparison, as a `typeid` awaiting its
 // number (`type_consts_equal`), and then only if no other part already differs.
-// `eval_part_equal` in eval.odin follows the same rule.
+// `eval_compare` in eval.odin follows the same rule.
 @(private = "file")
 aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.Allocator) -> (equal: bool, known: bool) {
 	if a == nil || b == nil || len(a.elements) != len(b.elements) {

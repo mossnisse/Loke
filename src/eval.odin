@@ -1050,27 +1050,29 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (out: 
 				return op == .Eq_Eq, true
 			}
 		}
+		// design.md "Comparison operators": the first unequal part ends the
+		// comparison. As in `aggregate_equal`, a part with no compile-time
+		// comparison makes the answer unknown unless a later part differs, but
+		// only where no part's own `==` could run: whether a later one would is
+		// unknown.
 		known := true
 		for element, index in a.elements {
-			if !eval_part_equal(ev, element, b.elements[index], &known) {
-				return op == .Not_Eq, !ev.failed
+			same, ok := eval_compare(ev, .Eq_Eq, element, b.elements[index])
+			switch {
+			case ev.failed:
+				return false, false
+			case !ok:
+				if comparison_runs_own_equality(ev.k.c, a.type) {
+					return false, false
+				}
+				known = false
+			case !same:
+				return op == .Not_Eq, true
 			}
 		}
 		return op == .Eq_Eq, known
 	}
 	return fold_comparison(ev.k.c, op, a.constant, b.constant, ev.alloc)
-}
-
-// Whether two parts can still be equal. As in `aggregate_equal`, a part with no
-// compile-time comparison makes the answer unknown unless another part differs.
-@(private = "file")
-eval_part_equal :: proc(ev: ^Evaluator, a, b: Eval_Value, known: ^bool) -> bool {
-	same, ok := eval_compare(ev, .Eq_Eq, a, b)
-	if !ok {
-		known^ = false
-		return !ev.failed
-	}
-	return same
 }
 
 @(private = "file")

@@ -5575,7 +5575,10 @@ These terms and the result of the comparisons are defined as follows:
   and is comparable through it whatever its own fields are; any other part is
   compared structurally. An extension `==` is never used for a part, so a type
   has the same equality wherever it is nested. Comparing a value is an error
-  where a part's inherent `==` is not visible.
+  where a part's inherent `==` is not visible. Parts are compared in order,
+  struct fields in declaration order and array elements by index, and the
+  first unequal part ends the comparison: no later part's `==` runs, at
+  compile time or at run time.
 - typeid is comparable.
 - Slices, dynamic arrays, maps, boxes, and `dyn Interface` views are **not**
   comparable. None has a nil value: a `dyn Interface` always views a value, and

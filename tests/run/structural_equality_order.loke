@@ -1,0 +1,50 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Comparison operators": structural comparison compares parts in
+// order, and the first unequal part ends it, so no later part's `==` runs, at
+// compile time or at run time. `Bomb`'s `==` panics on a left operand of 99.
+
+Bomb :: struct { v: int }
+impl Bomb {
+	same :: operator(==) proc(a, b: Bomb) -> bool {
+		if (a.v == 99) { panic("a part after an unequal one was compared"); }
+		return a.v == b.v;
+	}
+}
+
+Pair :: struct { id: int, bomb: Bomb }
+Bombs :: struct { first: Bomb, second: Bomb }
+Middle :: struct { id: int, bomb: Bomb, tail: int }
+
+// The first fields differ.
+PAIR :: Pair{1, Bomb{99}} == Pair{2, Bomb{99}};
+// The first field's own `==` answers false.
+BOMBS :: Bombs{Bomb{1}, Bomb{99}} == Bombs{Bomb{2}, Bomb{99}};
+// The first elements differ, unrolled and in a loop.
+SHORT :: [2]Bomb{{1}, {99}} == [2]Bomb{{2}, {99}};
+LONG :: [10]Bomb{{1}, {0}, {0}, {0}, {0}, {0}, {0}, {0}, {0}, {99}} ==
+        [10]Bomb{{2}, {0}, {0}, {0}, {0}, {0}, {0}, {0}, {0}, {99}};
+
+main :: proc() {
+	pair := Pair{1, Bomb{99}};
+	other := Pair{2, Bomb{99}};
+	fmt.println(PAIR, pair == other, pair != other);
+
+	bombs := Bombs{Bomb{1}, Bomb{99}};
+	fmt.println(BOMBS, bombs == Bombs{Bomb{2}, Bomb{99}});
+
+	short := [2]Bomb{{1}, {99}};
+	fmt.println(SHORT, short == [2]Bomb{{2}, {99}});
+
+	long: [10]Bomb = {};
+	long[0] = Bomb{1};
+	long[9] = Bomb{99};
+	different := long;
+	different[0] = Bomb{2};
+	fmt.println(LONG, long == different);
+
+	// Equal parts before one still reach it, and a scalar after it still counts.
+	fmt.println(Middle{1, Bomb{5}, 2} == Middle{1, Bomb{5}, 3}, Middle{1, Bomb{5}, 2} == Middle{1, Bomb{5}, 2});
+}
