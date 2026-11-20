@@ -18,8 +18,12 @@ llvm_linkage :: proc(name: string) -> string {
 // unless it was omitted with its test: a witness or a format thunk on a test's
 // local type is still written, for a value no surviving code can make. "null"
 // keeps the text well formed.
+//
+// Naming a procedure is what has its body written (`Demand`), so every use of
+// one in the module's text takes its name from here.
 symbol_name :: proc(e: ^Emitter, id: Symbol_Id) -> string {
 	if name, named := e.names[id]; named {
+		demand_symbol(e, id)
 		return name
 	}
 	if !omitted_with_test(e.c, id) {

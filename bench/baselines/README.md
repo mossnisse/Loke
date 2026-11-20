@@ -501,3 +501,72 @@ with it on before, 1154 and 1147 after. So the time is not in calls to `memset` 
 nor in the code the fast selector writes. What is left is the copy itself,
 which now moves words where it moved each member at its own width; that a word
 read over two narrower members just written is what costs was not measured.
+
+## Emission on demand
+
+[emit-on-demand.json](emit-on-demand.json) records the working tree after
+commit `159149063ff3ef727e770edada4e6281b34472cc`, in which a procedure, a
+compiler-contributed member, or a witness table is written into the module
+only once something names it (`Demand`), against
+[emit-on-demand-before.json](emit-on-demand-before.json), that commit itself,
+captured on 2026-11-20 on the same machine and with the same tools and
+conditions as [Reachable emission](#reachable-emission). SHA-256 values of
+`lokec.exe`:
+
+- before: `cd74d09e8bd4b55b95e2a9326ebf6b6574f6651b29e3496951fc8f72ca0416f2`.
+- after: `4b030ae902a5367084df4b7d29f6cb04418b56a24251d271fae988b08c80eb44`.
+
+```powershell
+.\perf.ps1 -Lokec <before>/lokec.exe -Lsp <none> -Out bench/baselines/emit-on-demand-before.json
+.\perf.ps1 -Lokec <after>/lokec.exe -Lsp <none> -Baseline bench/baselines/emit-on-demand-before.json -Out bench/baselines/emit-on-demand.json
+```
+
+| Workload | Before / after front end (ms) | Before / after compiler peak (MB) |
+| --- | ---: | ---: |
+| `examples/hello.loke` | 17 / 16 | 11.1 / 10.6 |
+| `examples/dice.loke` | 140 / 108 | 53.8 / 35.4 |
+| `examples/lexer.loke` | 154 / 134 | 50.7 / 39.1 |
+| `examples/corpus_runner.loke` | 198 / 188 | 66.6 / 54.0 |
+| `examples/binary_records.loke` | 257 / 235 | 62.9 / 50.3 |
+| `bench/dense.loke` | 354 / 317 | 129.8 / 103.8 |
+| `bench/geometry.loke` | 326 / 284 | 140.7 / 111.4 |
+| `bench/linalg.loke` | 251 / 204 | 107.2 / 78.9 |
+| `bench/workspace` | 148 / 129 | 50.4 / 36.7 |
+
+Front-end time changes by -23% to 0% over the 33 records, with a median of
+-9%, and compiler peak working set by -34% to -3%, with a median of -14%. No
+executable changed size and benchmark outputs matched.
+
+The two records are not a measure of a whole build: the "before" one was
+captured over an hour before the "after" one, with the compiler built and its
+tests run in between, and their builds at `-opt=speed` differ by -4% to +8%
+and their run times by -14% to +10%, for executables of one size. With the two
+compilers taken in turn for seven rounds, a build at `-opt=speed`, fastest of
+each in ms:
+
+| Workload | Before | After |
+| --- | ---: | ---: |
+| `examples/lexer.loke` | 922 | 900 |
+| `examples/corpus_runner.loke` | 1474 | 1460 |
+| `examples/game_of_life.loke` | 1181 | 1189 |
+| `bench/dense.loke` | 1772 | 1723 |
+| `bench/linalg.loke` | 1221 | 1168 |
+
+Default builds, measured as in [Reachable emission](#reachable-emission), each
+cell before / after:
+
+| Workload | Front end (ms) | Build at `-opt=none` (ms) | Build with `-g` (ms) |
+| --- | ---: | ---: | ---: |
+| `examples/hello.loke` | 17 / 17 | 167 / 162 | 241 / 240 |
+| `examples/lexer.loke` | 154 / 133 | 393 / 376 | 503 / 477 |
+| `examples/corpus_runner.loke` | 207 / 184 | 561 / 532 | 707 / 659 |
+| `bench/collections.loke` | 35 / 32 | 192 / 191 | 264 / 263 |
+| `bench/geometry.loke` | 344 / 302 | 701 / 637 | 848 / 834 |
+| `bench/linalg.loke` | 249 / 205 | 520 / 472 | 693 / 596 |
+| `bench/provenance.loke` | 19 / 19 | 170 / 168 | 249 / 246 |
+| `bench/workspace` | 157 / 130 | 342 / 315 | 429 / 402 |
+
+Executables are the same size to the KB. The functions of a module are the
+ones it had, with its thunks and its copies for a higher CPU level in another
+order, so run time was not expected to change and was not measured beyond the
+two records.

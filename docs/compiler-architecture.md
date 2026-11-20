@@ -1315,6 +1315,7 @@ be file-private. Paths below are relative to `src/`.
 | `emit_llvm_type_info.odin` | Reflection metadata: the `type_info_of` table and its member tables. |
 | `emit_llvm_format.odin` | Printing: format thunks and bodies, the `core:fmt` sink and entry points, and the reports of formatted panics and failed entries. |
 | `emit_llvm_debug.odin` | Debug locations, scopes, locals, CodeView metadata, and Natvis rules. |
+| `emit_llvm_demand.odin` | Emission on demand: the procedures, compiler-contributed members, and witness tables that are written once something names them. |
 | `emit_llvm_prune.odin` | Reachability: the finished module without the functions and globals nothing reaches. |
 | `emit_llvm_dispatch.odin` | `@(cpu_dispatch)`: a procedure's copies for a higher CPU level with their callees', the dispatcher between them, and the cached processor check. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, and foreign inputs. |
@@ -1328,11 +1329,29 @@ process operations. It creates no types, symbols, or registry entries; only the
 shared layout cache may change. `semantic_extent` checks this boundary. Backend
 names and temporaries belong to `Emitter`, not semantic symbols.
 
-The emitter writes every procedure of every package, generic instances
-included, and a program calls few of them. `prune_unreachable` then drops, from
-the finished text, each function and global that nothing reaches from a
-definition a linker can see: the entry point, an export, a hook the runtime
-calls, a file-scope variable. It follows the names in the text, so no emitter
+A program calls few of the procedures it imports, so a procedure, a
+compiler-contributed member, and a witness table with its thunks are each
+written only once something written names it (`Demand`). The module starts
+from what a linker can see: the entry point, an export, a hook the runtime
+calls. Each body names more as it is written, and `write_demanded` writes
+those until none is left, then puts every body in the module in declaration
+order, so their order does not follow the order things were named in. The
+thunks bodies leave behind and the copies for a higher CPU level do follow it,
+as do the numbers in the names of temporaries and literals. Two rules keep it
+right:
+
+- A procedure's name comes from `symbol_name`, or `callee_name` at a call, and
+  a witness table's from `witness_name`. Asking is what has the body written,
+  so text that spells a name read straight from `Emitter.names` refers to a
+  function the module may not define, which clang rejects.
+- A body cannot leave a note for when another body is written, since that one
+  may be written already. An insertion member's consuming body was once such a
+  note, and is demanded where it is named instead (`consuming_op_name`).
+
+File-scope and `static` variables, materialized constants, and format thunks
+are still written whether or not anything names them. `prune_unreachable` then drops,
+from the finished text, each function and global that nothing reaches from a
+definition a linker can see. It follows the names in the text, so no emitter
 code records what it refers to, and it runs before `attach_debug_info`, so a
 dropped definition's markers go with it. Two rules keep it right:
 
@@ -1340,9 +1359,10 @@ dropped definition's markers go with it. Two rules keep it right:
   (`llvm_linkage`); anything else is a root.
 - A function ends at a `}` that opens a line, and a global is one line.
 
-Unreached code is still checked and still lowered, so a contract break in its
-lowering still fails the build, but LLVM never verifies it. A test of how
-something is lowered must reach it from `main`, an export, or a test procedure.
+Unreached code is checked and not lowered, so a fault in how it would be
+lowered shows only once something reaches it. A test of how something is
+lowered must reach it from `main`, an export, or a test procedure;
+`an_uncalled_procedure_is_not_written` guards that nothing else is.
 
 Non-test backend files (`emit_llvm*.odin`, `emission_contract.odin`) must not
 name `Checker`. Front-end files other than `main.odin` and `session.odin` must

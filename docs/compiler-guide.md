@@ -548,7 +548,10 @@ A [foreign](design.md#foreign-system) declaration may bind a name the compiler
 declares itself: a runtime entry, or an LLVM intrinsic a built-in calls, such
 as `llvm.ctpop.i64` for `math.count_ones` on an `i64`. It then refers to that
 declaration, so its type must lower to the same LLVM signature, or the build
-reports `L0600` at the binding.
+reports `L0600` at the binding. The compiler declares an intrinsic, and the
+runtime entries of containers, atomics, and text, only where code the program
+reaches uses one, so a binding that differs is reported once such code is
+reached.
 
 A foreign library compiled for a different C runtime brings that runtime with
 it, and the program then holds two, each with its own heap, `errno`, and

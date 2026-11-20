@@ -1,0 +1,332 @@
+[
+  {
+    "program": "examples/aliasing.loke",
+    "input": "0aece6ede636718e",
+    "flags": "",
+    "check_ms": 18.0,
+    "build_ms": 249.0,
+    "peak_mb": 11.9,
+    "exe_kb": 172.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/arena_pipeline.loke",
+    "input": "6947b9d5c1e028c5",
+    "flags": "",
+    "check_ms": 20.0,
+    "build_ms": 313.0,
+    "peak_mb": 12.4,
+    "exe_kb": 227.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/binary_records.loke",
+    "input": "f89aa377f87c8dba",
+    "flags": "",
+    "check_ms": 235.0,
+    "build_ms": 895.0,
+    "peak_mb": 50.3,
+    "exe_kb": 264.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/channels.loke",
+    "input": "34e20a8635ab3c87",
+    "flags": "",
+    "check_ms": 58.0,
+    "build_ms": 495.0,
+    "peak_mb": 21.0,
+    "exe_kb": 189.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/compile_time.loke",
+    "input": "a6e2eeb29e371a43",
+    "flags": "",
+    "check_ms": 18.0,
+    "build_ms": 281.0,
+    "peak_mb": 12.0,
+    "exe_kb": 223.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/config_parser.loke",
+    "input": "81d3e6b73ada369d",
+    "flags": "",
+    "check_ms": 28.0,
+    "build_ms": 333.0,
+    "peak_mb": 15.0,
+    "exe_kb": 180.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/corpus_runner.loke",
+    "input": "50cf56ef2d634651",
+    "flags": "",
+    "check_ms": 188.0,
+    "build_ms": 1503.0,
+    "peak_mb": 54.0,
+    "exe_kb": 269.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/dice.loke",
+    "input": "d148442b42ca3743",
+    "flags": "",
+    "check_ms": 108.0,
+    "build_ms": 650.0,
+    "peak_mb": 35.4,
+    "exe_kb": 220.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/game_of_life.loke",
+    "input": "8c01605cb4eaac42",
+    "flags": "",
+    "check_ms": 17.0,
+    "build_ms": 1214.0,
+    "peak_mb": 11.2,
+    "exe_kb": 276.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/greeting.loke",
+    "input": "f4f618d566e22c95",
+    "flags": "",
+    "check_ms": 118.0,
+    "build_ms": 530.0,
+    "peak_mb": 35.2,
+    "exe_kb": 187.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/hello.loke",
+    "input": "c4cf66af675af63c",
+    "flags": "",
+    "check_ms": 16.0,
+    "build_ms": 203.0,
+    "peak_mb": 10.6,
+    "exe_kb": 168.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/keys.loke",
+    "input": "82b245a9dfd929a5",
+    "flags": "",
+    "check_ms": 50.0,
+    "build_ms": 321.0,
+    "peak_mb": 18.3,
+    "exe_kb": 175.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/lexer.loke",
+    "input": "ea98497f20cff7b4",
+    "flags": "",
+    "check_ms": 134.0,
+    "build_ms": 901.0,
+    "peak_mb": 39.1,
+    "exe_kb": 215.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/lockstep.loke",
+    "input": "1a595f7451caf740",
+    "flags": "",
+    "check_ms": 97.0,
+    "build_ms": 1317.0,
+    "peak_mb": 38.4,
+    "exe_kb": 265.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/mixer.loke",
+    "input": "e93a86ff5ce239ff",
+    "flags": "",
+    "check_ms": 88.0,
+    "build_ms": 611.0,
+    "peak_mb": 28.8,
+    "exe_kb": 235.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/orders.loke",
+    "input": "b462638f542f7b29",
+    "flags": "",
+    "check_ms": 40.0,
+    "build_ms": 351.0,
+    "peak_mb": 16.4,
+    "exe_kb": 178.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/parallel.loke",
+    "input": "1475ff5e812e8513",
+    "flags": "",
+    "check_ms": 42.0,
+    "build_ms": 376.0,
+    "peak_mb": 17.6,
+    "exe_kb": 230.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/shapes.loke",
+    "input": "bd0f06a20d9e2f1e",
+    "flags": "",
+    "check_ms": 17.0,
+    "build_ms": 230.0,
+    "peak_mb": 11.5,
+    "exe_kb": 218.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/streaming.loke",
+    "input": "e2c7db8f19abf5e0",
+    "flags": "",
+    "check_ms": 122.0,
+    "build_ms": 459.0,
+    "peak_mb": 35.2,
+    "exe_kb": 182.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/timestamps.loke",
+    "input": "87004fd51e43a90e",
+    "flags": "",
+    "check_ms": 86.0,
+    "build_ms": 710.0,
+    "peak_mb": 29.7,
+    "exe_kb": 246.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/tokens.loke",
+    "input": "43992d785f9d8062",
+    "flags": "",
+    "check_ms": 18.0,
+    "build_ms": 277.0,
+    "peak_mb": 11.9,
+    "exe_kb": 174.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/tour.loke",
+    "input": "6860cd0006313b19",
+    "flags": "",
+    "check_ms": 17.0,
+    "build_ms": 236.0,
+    "peak_mb": 11.5,
+    "exe_kb": 172.0,
+    "run_ms": null
+  },
+  {
+    "program": "examples/word_frequency.loke",
+    "input": "e8c6a407e03a5794",
+    "flags": "",
+    "check_ms": 19.0,
+    "build_ms": 335.0,
+    "peak_mb": 12.1,
+    "exe_kb": 180.0,
+    "run_ms": null
+  },
+  {
+    "program": "bench/binary.loke",
+    "input": "dd815405cbd83361",
+    "flags": "",
+    "check_ms": 160.0,
+    "build_ms": 473.0,
+    "peak_mb": 26.9,
+    "exe_kb": 206.0,
+    "run_ms": 486.0
+  },
+  {
+    "program": "bench/collections.loke",
+    "input": "0b71e7b40d82c23f",
+    "flags": "",
+    "check_ms": 30.0,
+    "build_ms": 348.0,
+    "peak_mb": 14.3,
+    "exe_kb": 183.0,
+    "run_ms": 388.0
+  },
+  {
+    "program": "bench/containers.loke",
+    "input": "02af73fb9c3bc465",
+    "flags": "",
+    "check_ms": 70.0,
+    "build_ms": 380.0,
+    "peak_mb": 24.5,
+    "exe_kb": 177.0,
+    "run_ms": 574.0
+  },
+  {
+    "program": "bench/dense.loke",
+    "input": "6d1669235fbfe230",
+    "flags": "",
+    "check_ms": 317.0,
+    "build_ms": 1729.0,
+    "peak_mb": 103.8,
+    "exe_kb": 316.0,
+    "run_ms": 4710.0
+  },
+  {
+    "program": "bench/geometry.loke",
+    "input": "23741f1e0e4ac9c8",
+    "flags": "",
+    "check_ms": 284.0,
+    "build_ms": 1609.0,
+    "peak_mb": 111.4,
+    "exe_kb": 328.0,
+    "run_ms": 393.0
+  },
+  {
+    "program": "bench/linalg.loke",
+    "input": "6d3f8aa87ac7784a",
+    "flags": "",
+    "check_ms": 204.0,
+    "build_ms": 1162.0,
+    "peak_mb": 78.9,
+    "exe_kb": 282.0,
+    "run_ms": 12.0
+  },
+  {
+    "program": "bench/nbody.loke",
+    "input": "8bfa0afb9954b1cd",
+    "flags": "",
+    "check_ms": 25.0,
+    "build_ms": 256.0,
+    "peak_mb": 13.5,
+    "exe_kb": 220.0,
+    "run_ms": 341.0
+  },
+  {
+    "program": "bench/once_contention.loke",
+    "input": "9cc7ce5fe4c90775",
+    "flags": "",
+    "check_ms": 30.0,
+    "build_ms": 278.0,
+    "peak_mb": 14.6,
+    "exe_kb": 174.0,
+    "run_ms": 186.0
+  },
+  {
+    "program": "bench/provenance.loke",
+    "input": "aea29dc98bf06986",
+    "flags": "",
+    "check_ms": 18.0,
+    "build_ms": 228.0,
+    "peak_mb": 11.3,
+    "exe_kb": 171.0,
+    "run_ms": 6.0
+  },
+  {
+    "program": "bench/workspace",
+    "input": "4c95fdd568e502ce",
+    "flags": "",
+    "check_ms": 129.0,
+    "build_ms": 627.0,
+    "peak_mb": 36.7,
+    "exe_kb": 192.0,
+    "run_ms": 5.0
+  }
+]

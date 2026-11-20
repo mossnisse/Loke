@@ -63,7 +63,8 @@ cpu_copy_name :: proc(e: ^Emitter, symbol_id: Symbol_Id, cpu: Cpu_Level) -> stri
 	if name, found := e.cpu_copies[key]; found {
 		return name
 	}
-	name := claim_name(e, fmt.aprintf("%s.%s", symbol_name(e, symbol_id), cpu_suffix(cpu)))
+	// Spelled after the procedure, whose own body the copy does not need.
+	name := claim_name(e, fmt.aprintf("%s.%s", e.names[symbol_id], cpu_suffix(cpu)))
 	e.cpu_copies[key] = name
 	append(&e.unwritten_copies, key)
 	return name
@@ -99,7 +100,7 @@ emit_dispatched_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_P
 }
 
 // Every copy a dispatcher or another copy named, each of whose bodies may name
-// more.
+// more, and name procedures to write (`write_demanded`).
 @(private)
 emit_cpu_copies :: proc(e: ^Emitter) {
 	for len(e.unwritten_copies) > 0 {

@@ -11,7 +11,7 @@ import "core:thread"
 import "core:time"
 
 // `check_source`, plus the bootstrap's bodies and entry validation.
-@(private = "file")
+@(private)
 check_for_emission :: proc(p: ^Checked, source: string, key := "", mode := Build_Mode.Exe) {
 	parse_source(p, source)
 	p.c.build_mode = mode

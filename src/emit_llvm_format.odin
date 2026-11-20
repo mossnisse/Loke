@@ -145,7 +145,7 @@ emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	if witness := e.c.formatters[type]; witness != nil {
 		// The same slot ABI ordinary dyn calls use, with the C runtime's spilled
 		// writer and options loaded back into Loke values.
-		target := emit_witness_slot(e, e.witness_names[witness], 0)
+		target := emit_witness_slot(e, witness_name(e, witness), 0)
 		w, o := e.c.runtime_types["Writer"], e.c.runtime_types["Options"]
 		w_value, o_value := load_place(e, w, "%w"), load_place(e, o, "%o")
 		fmt.sbprintfln(

@@ -51,9 +51,6 @@ Emitter :: struct {
 	container_ops: map[Type_Id]string,
 	// The same tables with no element clone: an owned element relocates in.
 	container_move_ops: map[Type_Id]string,
-	// Insertion members also called with an owned element, which get a
-	// consuming body besides the cloning one.
-	consuming_ops: map[Symbol_Id]bool,
 	// The memoised private functions written so far (`memo_thunk`), by name.
 	memo_thunks: map[string]bool,
 	literals: map[string]string,
@@ -78,6 +75,8 @@ Emitter :: struct {
 	cpu_copies:       map[Cpu_Copy]string,
 	unwritten_copies: [dynamic]Cpu_Copy,
 	dispatch_checks:  [Cpu_Level]string,
+	// What is written only once something names it (`src/emit_llvm_demand.odin`).
+	demand: Demand,
 }
 
 make_emitter :: proc(c: ^Compiler) -> Emitter {
@@ -101,21 +100,27 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	emit_struct_definitions(&e)
 	emit_materialized_constants(&e)
 
-	// Every procedure is named before any body refers to it.
+	// Every procedure is named before any body refers to it, and listed before
+	// anything that may name it is written.
 	order := package_order(c)
 	for id in order {
 		name_package_symbols(&e, package_of(c, id))
 	}
 	name_synth_procs(&e)
 	name_witnesses(&e)
+	for id in order {
+		list_package_procs(&e, package_of(c, id))
+	}
+	begin_demand(&e)
 	emit_foreign_declarations(&e)
 	emit_static_locals(&e)
 	for id in order {
-		emit_package_items(&e, package_of(c, id))
+		emit_package_globals(&e, package_of(c, id))
 	}
-	emit_synth_procs(&e)
-	emit_witnesses(&e)
-	emit_cpu_copies(&e)
+	// What the runtime and the host call names the first bodies, so it is written
+	// before them, and it goes after them in the module.
+	bodies := e.b
+	e.b = strings.builder_make()
 	// Every module, object builds included: the runtime's `thread_detach` calls it.
 	emit_thread_local_teardown(&e)
 	emit_thread_local_setup(&e)
@@ -134,6 +139,10 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	}
 	emit_type_info_tables(&e)
 	emit_format_thunks(&e)
+	entries := strings.to_string(e.b)
+	e.b = bodies
+	write_demanded(&e)
+	strings.write_string(&e.b, entries)
 	for text in e.pending_thunks {
 		strings.write_string(&e.b, text)
 	}
@@ -335,59 +344,29 @@ backend_fail :: proc(e: ^Emitter, message: string) {
 	emission_contract_error(e.c, message)
 }
 
+// `pkg`'s file-scope variables. Its procedures are written on demand
+// (`list_package_procs`).
 @(private = "file")
-emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
+emit_package_globals :: proc(e: ^Emitter, pkg: ^Package) {
 	for file in pkg.files {
 		for item in file.active_items {
-			#partial switch v in item {
-			case ^Decl:
-				// design.md "Test procedures": only a test build calls one.
-				if len(v.symbols) == 0 || symbol_is_template(e.c, v.symbols[0]) || omitted_with_test(e.c, v.symbols[0]) {
-					continue
-				}
-				if literal := decl_proc_literal(v); literal != nil {
-					emit_proc(e, v.symbols[0], literal)
-				} else {
-					emit_global(e, v)
-				}
-			case ^Item_Impl:
-				for member in v.members {
-					d, is_decl := member.(^Decl)
-					if !is_decl || len(d.symbols) == 0 || symbol_is_template(e.c, d.symbols[0]) {
-						continue
-					}
-					if literal := decl_proc_literal(d); literal != nil {
-						emit_proc(e, d.symbols[0], literal)
-					}
-				}
+			d, is_decl := item.(^Decl)
+			if !is_decl || len(d.symbols) == 0 || decl_proc_literal(d) != nil {
+				continue
 			}
-		}
-	}
-	for literal in pkg.hoisted_procs {
-		if !omitted_with_test(e.c, literal.symbol) {
-			emit_proc(e, literal.symbol, literal)
-		}
-	}
-	for instance in pkg.instances {
-		// A generic method of an instantiated `impl` is still a template.
-		if symbol_is_template(e.c, instance.symbol) || omitted_with_test(e.c, instance.symbol) {
-			continue
-		}
-		if literal := decl_proc_literal(instance.decl); literal != nil {
-			emit_proc(e, instance.symbol, literal)
+			if !symbol_is_template(e.c, d.symbols[0]) && !omitted_with_test(e.c, d.symbols[0]) {
+				emit_global(e, d)
+			}
 		}
 	}
 }
 
-@(private = "file")
+// The body of a procedure `list_package_procs` listed.
+@(private)
 emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	symbol := symbol_of(e.c, symbol_id)
-	if symbol == nil || literal.body == nil || compile_time_only_procedure(e.c, symbol) {
-		return
-	}
 	llvm_name := symbol_name(e, symbol_id)
 	if !convention_is_foreign(proc_convention_of(e, symbol)) {
-		e.bodies[symbol_id] = literal
 		// It asks for a level the build does not already have.
 		if symbol.dispatch_cpu > e.c.target.cpu {
 			emit_dispatched_proc(e, symbol_id, literal, llvm_name)

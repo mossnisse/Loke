@@ -120,6 +120,14 @@ checklist.
   `bench/containers.loke` by 5%. Unsafe code that copies between two places of one type
   sharing only some of their bytes, which a converted pointer can name, now has no defined
   result ([Copies between overlapping places](docs/open-questions.md#copies-between-overlapping-places)).
+- The compiler writes a procedure into its LLVM module only once something reaches it, where
+  it wrote every procedure and then dropped the unreached. The front end is up to 23% faster,
+  9% at the median of the examples and benchmarks, and the compiler's peak memory 3-34%
+  lower: a default build of `bench/linalg.loke` takes 472 ms, from 520, and
+  `bench/workspace` 315 ms, from 342. The module defines what it did, with other numbers in
+  the names of its temporaries. A foreign binding whose type differs from the compiler's own
+  declaration of the same name is reported (`L0600`) only where the program reaches code
+  that uses that declaration ([C runtime](docs/compiler-guide.md#c-runtime)).
 
 ### Fixed
 

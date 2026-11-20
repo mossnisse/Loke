@@ -28,6 +28,8 @@ machine, not a threshold.
 - [Step 3](#3-copy-and-zero-aggregates-with-memcpy-and-memset) is done: on top
   of step 2, those programs build 30–65% faster at `-opt=speed` and about 10%
   faster at `-opt=none`, where copy-heavy code now runs 4–10% slower.
+- [Step 4](#4-emit-on-demand) is done: the front end is up to 23% faster, 9%
+  at the median, and the compiler's peak memory 3–34% lower.
 
 ## Conditions
 
@@ -537,6 +539,61 @@ Do this only after step 1 has landed and its roots are known to be right.
 
 Expected: emission time falls with the share of unreachable code, 55–85% on
 these programs, which is 15–25% of the front end.
+
+**Done** on 2026-11-20, as `Demand` in
+[emit_llvm_demand.odin](../src/emit_llvm_demand.odin);
+[LLVM and toolchain](compiler-architecture.md#llvm-and-toolchain) has the two
+rules it relies on. What the emitter writes before step 1's pass, and what
+that pass keeps, in KB, beside what it wrote when this report began
+([Phases](#phases)):
+
+| Program | Written at `1cded689` | Written | Kept |
+| --- | ---: | ---: | ---: |
+| `examples/hello.loke` | 72 | 16 | 15 |
+| `examples/lexer.loke` | 1900 | 536 | 533 |
+| `examples/corpus_runner.loke` | 2665 | 1206 | 1202 |
+| `bench/geometry.loke` | 5420 | 1515 | 1454 |
+| `bench/linalg.loke` | 4458 | 1002 | 940 |
+| `bench/workspace` | 1890 | 260 | 245 |
+
+Before and after, in ms, the "before" being step 3:
+
+| Program | Front end | Build at `-opt=none` | Build with `-g` |
+| --- | ---: | ---: | ---: |
+| `examples/lexer.loke` | 154 / 133 | 393 / 376 | 503 / 477 |
+| `examples/corpus_runner.loke` | 207 / 184 | 561 / 532 | 707 / 659 |
+| `bench/geometry.loke` | 344 / 302 | 701 / 637 | 848 / 834 |
+| `bench/linalg.loke` | 249 / 205 | 520 / 472 | 693 / 596 |
+| `bench/workspace` | 157 / 130 | 342 / 315 | 429 / 402 |
+
+The front end is 0–23% faster over the 33 programs `perf.ps1` measures, 9% at
+the median, which is within the estimate for the larger ones and under it for
+the rest. The compiler's peak working set is 3–34% lower, 14% at the median. A
+build at `-opt=speed` is 1–4% faster. The records are
+`emit-on-demand-before.json` and `emit-on-demand.json` under
+`bench/baselines`. How it went:
+
+- An export is demanded by its linkage, and the entry point and each test by
+  the code that calls it. A file-scope initializer names no procedure, since a
+  constant of a procedure type is null, so it starts nothing.
+- A witness table and a compiler-contributed member are written on demand
+  too. A table's thunks name its members, so writing every table would have
+  had every implementation's members written, and what those call.
+- An insertion member's consuming body was written with the member if a call
+  had asked for one by then. A member may now be written before that call is,
+  so the body is demanded where it is named.
+- On the six programs above, the module has the same number of definitions
+  and instructions as before, and the same names but for one claimed suffix.
+  The bodies are in declaration order. The thunks bodies leave behind and the
+  copies for a higher CPU level are in the order they were made, which follows
+  the worklist, as do the numbers in temporaries' and literals' names.
+- Step 1's pass still drops 0.3–7% of the text: materialized constants, and
+  format thunks with the witnesses they name, none of which the worklist
+  governs.
+- Unreached code is no longer lowered. A fault in its lowering shows only when
+  something reaches it, and `L0600`, the one diagnostic lowering gives, is no
+  longer reported for a conflict with a declaration only unreached code
+  needs.
 
 ### 5. Build each body's provenance input once
 

@@ -696,8 +696,11 @@ consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol, call_node: ^Expr_Cal
 	return slot, true
 }
 
+// The body of the insertion member `symbol_id` that takes its element owned, a
+// second one beside the cloning body, written once this names it.
 consuming_op_name :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
-	return fmt.aprintf("%s.consume", symbol_name(e, symbol_id))
+	demand_consuming_body(e, symbol_id)
+	return fmt.aprintf("%s.consume", e.names[symbol_id])
 }
 
 // A call's parameter bindings, which its default arguments read. A default reads
@@ -993,7 +996,6 @@ emit_bound_call :: proc(
 	}
 	consumed, consuming_body := consumed_element_slot(e, symbol, call_node)
 	if consuming_body {
-		e.consuming_ops[symbol_id] = true
 		callee = consuming_op_name(e, symbol_id)
 	}
 	call := emit_call_operands(e, symbol, callee_type, bound, call_node, receiver, consumed, consuming_body)

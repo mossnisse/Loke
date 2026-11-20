@@ -504,64 +504,60 @@ alloc_failed_if :: proc(e: ^Emitter, cond: string, provider: string, prefix: str
 
 // ------------------------------------------- compiler-contributed procedures --
 
-// Compiler-provided members of built-in types, emitted once after all packages.
+// A compiler-provided member of a built-in type, or with `consuming` the body
+// of an insertion member that takes its element owned, which only a container
+// operation has (`consuming_op_name`).
 @(private)
-emit_synth_procs :: proc(e: ^Emitter) {
+emit_synth_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, consuming: bool) {
+	symbol := symbol_of(e.c, symbol_id)
+	if symbol == nil || symbol.synth == .None || consuming && symbol.synth != .Container_Op {
+		return
+	}
+	if len(symbol.params) > 0 && type_is_compile_time_only(e.c, symbol.params[0]) { return }
 	e.synth_bodies = true
 	defer e.synth_bodies = false
-	for symbol_id in e.c.synth_procs {
-		symbol := symbol_of(e.c, symbol_id)
-		if symbol == nil || symbol.synth == .None {
-			continue
-		}
-		if len(symbol.params) > 0 && type_is_compile_time_only(e.c, symbol.params[0]) { continue }
-		e.terminated = false
-		name := symbol_name(e, symbol_id)
-		switch symbol.synth {
-		case .Adapter_View, .Adapter_Iter, .Indexed_Next, .Copied_Next, .Iterator_Copy:
-			emit_synth_adapter(e, symbol, name)
-		case .Standard_Len, .Standard_Cap, .Standard_Hash:
-			emit_synth_standard_customization(e, symbol, name)
-		case .Standard_Format:
-			emit_synth_format(e, symbol, name)
-		case .Range_Iter, .Range_Iter_Reverse,
-		     .Array_Iter, .Array_Iter_Reverse,
-		     .Dynamic_Iter, .Dynamic_Iter_Reverse, .Map_Iter,
-		     .Map_View_Iter, .Text_Iter:
-			emit_synth_iter(e, symbol, name)
-		case .Range_Next:
-			emit_synth_range_next(e, symbol, name)
-		case .Slice_Mut_Next, .Slice_Ref_Next:
-			emit_synth_slice_next(e, symbol, name)
-		case .Map_Next, .Map_Keys_Next, .Map_Values_Next:
-			emit_synth_map_next(e, symbol, name)
-		case .Text_Next, .Rune_Offsets_Next:
-			emit_synth_text_next(e, symbol, name)
-		case .Chunks_Next:
-			emit_synth_chunks_next(e, symbol, name)
-		case .Try_Clone:
-			emit_synth_try_clone(e, symbol, name)
-		case .Clone:
-			emit_synth_clone(e, symbol, name)
-		case .Dyn_Forward:
-			emit_dyn_forwarding_slot(e, symbol, name)
-		case .Dyn_Proc_Adapter:
-			emit_dyn_proc_adapter(e, symbol, name)
-		case .Container_Op:
-			emit_synth_container_op(e, symbol, name)
-			if e.consuming_ops[symbol_id] {
-				fmt.sbprintln(&e.b, "")
-				emit_synth_container_op(e, symbol, consuming_op_name(e, symbol_id), consuming = true)
-			}
-		case .Provider_Op:
-			emit_synth_provider_op(e, symbol, name)
-		case .Variant_Construct:
-			emit_synth_variant_construct(e, symbol, name)
-		case .None, .Array_Next:
-			// `.Array_Next`'s iterator is compile-time-only, so it was skipped above.
-		}
-		fmt.sbprintln(&e.b, "")
+	e.terminated = false
+	name := symbol_name(e, symbol_id)
+	switch symbol.synth {
+	case .Adapter_View, .Adapter_Iter, .Indexed_Next, .Copied_Next, .Iterator_Copy:
+		emit_synth_adapter(e, symbol, name)
+	case .Standard_Len, .Standard_Cap, .Standard_Hash:
+		emit_synth_standard_customization(e, symbol, name)
+	case .Standard_Format:
+		emit_synth_format(e, symbol, name)
+	case .Range_Iter, .Range_Iter_Reverse,
+	     .Array_Iter, .Array_Iter_Reverse,
+	     .Dynamic_Iter, .Dynamic_Iter_Reverse, .Map_Iter,
+	     .Map_View_Iter, .Text_Iter:
+		emit_synth_iter(e, symbol, name)
+	case .Range_Next:
+		emit_synth_range_next(e, symbol, name)
+	case .Slice_Mut_Next, .Slice_Ref_Next:
+		emit_synth_slice_next(e, symbol, name)
+	case .Map_Next, .Map_Keys_Next, .Map_Values_Next:
+		emit_synth_map_next(e, symbol, name)
+	case .Text_Next, .Rune_Offsets_Next:
+		emit_synth_text_next(e, symbol, name)
+	case .Chunks_Next:
+		emit_synth_chunks_next(e, symbol, name)
+	case .Try_Clone:
+		emit_synth_try_clone(e, symbol, name)
+	case .Clone:
+		emit_synth_clone(e, symbol, name)
+	case .Dyn_Forward:
+		emit_dyn_forwarding_slot(e, symbol, name)
+	case .Dyn_Proc_Adapter:
+		emit_dyn_proc_adapter(e, symbol, name)
+	case .Container_Op:
+		emit_synth_container_op(e, symbol, consuming ? consuming_op_name(e, symbol_id) : name, consuming = consuming)
+	case .Provider_Op:
+		emit_synth_provider_op(e, symbol, name)
+	case .Variant_Construct:
+		emit_synth_variant_construct(e, symbol, name)
+	case .None, .Array_Next:
+		// `.Array_Next`'s iterator is compile-time-only, so it was skipped above.
 	}
+	fmt.sbprintln(&e.b, "")
 }
 
 // `U.name` as a value. The payload arrives owned, so it becomes the variant

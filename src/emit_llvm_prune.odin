@@ -15,9 +15,9 @@ Definition :: struct {
 
 // `module` without the functions and globals that nothing reaches from one a
 // linker can see, which is every one not `internal` or `private`. What stays keeps
-// its text and order. Every package's every procedure is written, and a program
-// calls few of them, so most of a module is code clang would compile only to
-// have the linker drop it.
+// its text and order. A procedure is written only once something names it
+// (`Demand`), but a variable, a constant, or a format thunk is written where it
+// is met, and a body that names one may itself be reached by nothing.
 //
 // This reads the text alone, so no part of the emitter says what it refers to: a
 // witness table keeps its thunks, and a thunk its target, because their names

@@ -12,7 +12,7 @@ emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	storage := llvm_type(e, as_type)
 	data := emit_expr(e, v.bound[0])
 	witness := v.operation.(Call_Dyn_Conversion).witness
-	second := e.witness_names[witness]
+	second := witness_name(e, witness)
 	if dyn_proc_signature(e.c, as_type) != INVALID_TYPE {
 		second = witness_thunk_name(e, witness, 0)
 	}
@@ -36,7 +36,7 @@ emit_dyn_view_value :: proc(e: ^Emitter, address: string, from, as_type: Type_Id
 		backend_fail(e, "a value reached a `dyn` view with no witness")
 		return "undef"
 	}
-	return dyn_view_value(e, llvm_type(e, as_type), address, e.witness_names[witness])
+	return dyn_view_value(e, llvm_type(e, as_type), address, witness_name(e, witness))
 }
 
 // design.md "Borrowed callable views": a procedure is the data word itself,
@@ -77,32 +77,38 @@ emit_witness_slot :: proc(e: ^Emitter, witness: string, index: int) -> string {
 	return load(e, "ptr", gep_at(e, "ptr", witness, fmt.aprintf("%d", index)))
 }
 
-// One witness table per `(Interface, Concrete, arguments)`, holding a thunk per
-// slot that re-types the erased receiver.
+// The witness table `witness_order[order]`, one per `(Interface, Concrete,
+// arguments)`, after the thunk it holds per slot, which re-types the erased
+// receiver.
 @(private)
-emit_witnesses :: proc(e: ^Emitter) {
-	for witness in e.c.witness_order {
-		for slot, index in witness.slots {
-			emit_witness_thunk(e, witness, slot, index)
-		}
+emit_witness :: proc(e: ^Emitter, order: int) {
+	witness := e.c.witness_order[order]
+	for slot, index in witness.slots {
+		emit_witness_thunk(e, witness, slot, index)
 	}
-	for witness, order in e.c.witness_order {
-		debug_mark_witness(e, order)
-		fmt.sbprintf(&e.b, "%s = private unnamed_addr constant [%d x ptr] [", e.witness_names[witness], len(witness.slots))
-		for _, index in witness.slots {
-			if index > 0 {
-				fmt.sbprint(&e.b, ",")
-			}
-			fmt.sbprintf(&e.b, " ptr %s", witness_thunk_name(e, witness, index))
+	debug_mark_witness(e, order)
+	fmt.sbprintf(&e.b, "%s = private unnamed_addr constant [%d x ptr] [", witness_name(e, witness), len(witness.slots))
+	for _, index in witness.slots {
+		if index > 0 {
+			fmt.sbprint(&e.b, ",")
 		}
-		fmt.sbprintln(&e.b, " ]")
+		fmt.sbprintf(&e.b, " ptr %s", witness_thunk_name(e, witness, index))
 	}
+	fmt.sbprintln(&e.b, " ]")
 	fmt.sbprintln(&e.b, "")
+}
+
+// The table's name. Naming it, or one of its thunks, is what has the table and
+// its thunks written (`Demand`).
+@(private)
+witness_name :: proc(e: ^Emitter, witness: ^Witness) -> string {
+	demand_witness(e, witness)
+	return e.witness_names[witness]
 }
 
 @(private)
 witness_thunk_name :: proc(e: ^Emitter, witness: ^Witness, index: int) -> string {
-	return fmt.aprintf("%s.thunk.%d", e.witness_names[witness], index)
+	return fmt.aprintf("%s.thunk.%d", witness_name(e, witness), index)
 }
 
 @(private = "file")

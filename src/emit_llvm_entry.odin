@@ -75,11 +75,11 @@ emit_object_cpu_check :: proc(e: ^Emitter) {
 // `wmain` for an executable: startup, then `main`.
 @(private)
 emit_entry :: proc(e: ^Emitter) {
-	entry, found := e.names[e.c.entry_point]
-	if !found {
+	if e.c.entry_point not_in e.names {
 		backend_fail(e, "the validated entry procedure has no emitted name")
 		return
 	}
+	entry := symbol_name(e, e.c.entry_point)
 	symbol := symbol_of(e.c, e.c.entry_point)
 	callee := entry
 	failure, fallible := entry_failure_type(e.c, symbol.result)
