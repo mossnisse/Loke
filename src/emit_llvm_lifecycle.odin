@@ -256,6 +256,15 @@ emit_drop_elements_reversed :: proc(e: ^Emitter, element: Type_Id, items, count:
 	if flags == "" && emit_lifecycle(e, element).drop_may_panic {
 		guard = register_array_cleanup(e, element, items, "", cursor)
 	}
+	emit_drop_counted_elements(e, element, items, cursor, flags)
+	finish_temporary_drop(e, guard)
+}
+
+// `emit_drop_elements_reversed` over the first `cursor` elements, counting the
+// cursor down before each drop, so a registration the caller holds over the
+// cursor, and the flags, leaves the unwind exactly the elements not yet dropped.
+@(private)
+emit_drop_counted_elements :: proc(e: ^Emitter, element: Type_Id, items, cursor: string, flags := "") {
 	head := new_label(e, "elements.drop.head")
 	body, done := new_label(e, "elements.drop.body"), new_label(e, "elements.drop.done")
 	place_label(e, head)
@@ -277,7 +286,6 @@ emit_drop_elements_reversed :: proc(e: ^Emitter, element: Type_Id, items, count:
 	emit_drop_place(e, element, gep_at(e, llvm_type(e, element), items, index))
 	branch(e, head)
 	place_label(e, done)
-	finish_temporary_drop(e, guard)
 }
 
 // Drops what a variadic call's staged array, `entry`, still flags as owned.

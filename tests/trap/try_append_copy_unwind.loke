@@ -1,0 +1,25 @@
+// design.md "What the unwind runs, and what it does not": the array counts each
+// copy an append makes as soon as it is made, so a copy hook that panics on a
+// later element still leaves the earlier copy to the array's drop, and the
+// borrowed originals to their owners.
+package main;
+import "core:fmt";
+
+Item :: struct { id: int }
+impl Item {
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
+        if (self.id == 99) { panic("copy failed"); }
+        return .ok(Item{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Item) {
+        fmt.println("drop", self.id);
+    }
+}
+
+main :: proc() {
+    items: [dynamic]Item = {};
+    items.reserve(8);
+    first := Item{1};
+    second := Item{99};
+    _ = items.try_append(first, second);
+}

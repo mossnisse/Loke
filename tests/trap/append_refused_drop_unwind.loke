@@ -1,0 +1,22 @@
+// design.md "Container insertion": a failed `try_append` drops the move-only
+// elements it was handed, last first. Those not dropped yet stay registered, so
+// a drop hook that panics still leaves them to the unwind ("What the unwind
+// runs, and what it does not").
+package main;
+import "core:fmt";
+import "core:mem";
+
+@(move_only) Item :: struct { id: int }
+impl Item {
+    release :: hook(drop) proc(self: inout Item) {
+        fmt.println("drop", self.id);
+        if (self.id == 3) { panic("drop failed"); }
+    }
+}
+
+main :: proc() {
+    defer fmt.println("unwound");
+    arena: mem.Arena = {};
+    items := make([dynamic]Item, 0, arena.allocator());
+    _ = items.try_append(Item{1}, Item{2}, Item{3});
+}

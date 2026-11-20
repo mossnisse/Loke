@@ -352,16 +352,23 @@ void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v
  * ordinary source. Growth therefore never releases the old block until the copy
  * out of it is complete (m6b-plan decision "Dynamic-array operations").
  *
+ * design.md "What the unwind runs, and what it does not": the length counts
+ * each new element as soon as it is complete, and an insert moves its elements
+ * into place only once all are, so a clone hook that panics leaves every
+ * element the array holds to the array's own drop.
+ *
  * The `int32_t` returns are 1 on success. An allocation that fails leaves the
  * container bit-for-bit unchanged; an invalid index or a negative count is an
  * ordinary program fault and does not return at all. */
 int32_t loke_rt_v1_dyn_append(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const void *src, int64_t count);
 /* `dyn_append` where each element `owned` marks moves in and the rest are
- * cloned. On failure every owned element still belongs to the caller. */
+ * cloned. A flag is cleared once the container holds its element, so the
+ * elements still flagged, after a failure or a panicking clone, are the
+ * caller's to drop. */
 int32_t loke_rt_v1_dyn_append_owned(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
-	const void *src, const uint8_t *owned, int64_t count);
+	const void *src, uint8_t *owned, int64_t count);
 int32_t loke_rt_v1_dyn_insert(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
 	int64_t index, const void *src, int64_t count);

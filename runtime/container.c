@@ -10,9 +10,9 @@
  *
  *   - Nothing wrapped reaches a provider. Every product and sum that sizes an
  *     allocation goes through the checked helpers at the top of this file.
- *   - A failed operation leaves the container bit-for-bit unchanged. New
- *     storage is filled completely before any header word is published, and a
- *     clone that fails part-way destroys exactly the prefix it built.
+ *   - A failed operation leaves the container bit-for-bit unchanged. Growth
+ *     keeps the old storage until the operation succeeds, and a clone that
+ *     fails part-way destroys exactly the elements it built.
  */
 #include "loke_rt.h"
 
@@ -221,7 +221,7 @@ typedef struct dyn_grow_undo {
 
 static int32_t dyn_regrow(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
-	int64_t need, int32_t force, dyn_grow_undo *undo) {
+	int64_t need, dyn_grow_undo *undo) {
 	int64_t target;
 	uint64_t bytes, used;
 	void *fresh;
@@ -229,7 +229,7 @@ static int32_t dyn_regrow(
 	undo->grew = 0;
 	undo->old_data = self->data;
 	undo->old_cap = self->cap;
-	if (need <= self->cap && !force) {
+	if (need <= self->cap) {
 		return 1;
 	}
 	target = dyn_growth_target(self->cap, need);
@@ -277,56 +277,124 @@ static void dyn_regrow_rollback(
 	self->cap = undo->old_cap;
 }
 
-/* Whether `src` points into this container's own storage, in which case a shift
- * of the existing elements would overwrite it and the operation has to build a
- * fresh block instead. */
-static int32_t dyn_src_aliases(
-	const loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const void *src) {
-	const char *base = (const char *)self->data;
-	const char *p = (const char *)src;
-	uint64_t bytes;
-	if (base == 0 || !loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes)) {
-		return 0;
+/* design.md "Uninitialized capacity": a container shortens before it drops what
+ * it took, last element first, so a drop hook that panics leaves the length
+ * counting exactly the elements still owed a drop, and the unwind drops each
+ * of them once. */
+static void dyn_truncate(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len) {
+	if (ops->elem_drop == 0) {
+		self->len = new_len;
+		return;
 	}
-	return p >= base && p < base + bytes;
+	while (self->len > new_len) {
+		self->len -= 1;
+		ops->elem_drop(dyn_at(self, ops, self->len));
+	}
 }
 
-/* Fills slots [at, at+count) from `src`. An element `owned` marks moves in;
- * every other one is cloned, and if a clone fails exactly the clones already
- * made are destroyed. A moved element is left to its source, which still holds
- * it after a failure. */
+/* Appends `count` elements from `src` into capacity already reserved for them.
+ * An element `owned` marks moves in, and its flag is cleared as it does; every
+ * other one is cloned.
+ *
+ * design.md "What the unwind runs, and what it does not": the length counts each
+ * element as soon as it is complete, so when a clone hook panics the array's own
+ * cleanup drops every element this call made or took, and the caller's cleanup
+ * drops the owned elements still flagged. A clone that fails takes the new
+ * elements back out, last first, by the shortening `dyn_truncate` does, and the
+ * owned elements still flagged are the caller's to drop. `src` is only read, and
+ * every write lands past the live elements, so it may point into them. */
 static int32_t dyn_fill(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
-	int64_t at, const void *src, const uint8_t *owned, int64_t count) {
-	int64_t i, j;
+	const void *src, uint8_t *owned, int64_t count) {
+	int64_t start = self->len, i;
 	uint64_t bytes;
 	if (ops->elem_clone == 0) {
 		if (!loke_rt_v1_checked_bytes(count, ops->elem_size, &bytes)) {
 			return 0;
 		}
 		if (bytes != 0) {
-			memcpy(dyn_at(self, ops, at), src, (size_t)bytes);
+			memcpy(dyn_at(self, ops, start), src, (size_t)bytes);
 		}
+		if (owned != 0) {
+			memset(owned, 0, (size_t)count);
+		}
+		self->len = start + count;
 		return 1;
 	}
 	for (i = 0; i < count; i += 1) {
 		const void *from = (const char *)src + (uint64_t)i * ops->elem_size;
 		if (owned != 0 && owned[i]) {
-			memcpy(dyn_at(self, ops, at + i), from, (size_t)ops->elem_size);
-			continue;
+			memcpy(dyn_at(self, ops, self->len), from, (size_t)ops->elem_size);
+			owned[i] = 0;
+		} else if (!ops->elem_clone(dyn_at(self, ops, self->len), from, self->allocator)) {
+			dyn_truncate(self, ops, start);
+			return 0;
 		}
-		if (ops->elem_clone(dyn_at(self, ops, at + i), from, self->allocator)) {
-			continue;
+		self->len += 1;
+	}
+	return 1;
+}
+
+static void dyn_swap_bytes(char *a, char *b, uint64_t bytes) {
+	char buffer[256];
+	while (bytes != 0) {
+		size_t step = bytes < sizeof buffer ? (size_t)bytes : sizeof buffer;
+		memcpy(buffer, a, step);
+		memcpy(a, b, step);
+		memcpy(b, buffer, step);
+		a += step;
+		b += step;
+		bytes -= step;
+	}
+}
+
+/* Turns the `before` bytes at `base` and the `after` bytes that follow them
+ * around, so those come first. Only bytes move: no hook runs. A short `after`
+ * waits in a buffer while the rest shifts; a long one is the block swap that
+ * puts one part in its final place on each step. */
+static void dyn_rotate(char *base, uint64_t before, uint64_t after) {
+	char buffer[256];
+	while (before != 0 && after != 0) {
+		if (after <= sizeof buffer) {
+			memcpy(buffer, base + before, (size_t)after);
+			memmove(base + after, base, (size_t)before);
+			memcpy(base, buffer, (size_t)after);
+			return;
 		}
-		if (ops->elem_drop != 0) {
-			for (j = 0; j < i; j += 1) {
-				if (owned == 0 || !owned[j]) {
-					ops->elem_drop(dyn_at(self, ops, at + j));
-				}
-			}
+		if (before <= after) {
+			/* [A | B1 B2], |B2| = |A|  ->  [B2 B1 | A]: A is in place. */
+			dyn_swap_bytes(base, base + after, before);
+			after -= before;
+		} else {
+			/* [A1 A2 | B], |A1| = |B|  ->  [B | A2 A1]: B is in place. */
+			dyn_swap_bytes(base, base + before, after);
+			base += after;
+			before -= after;
 		}
+	}
+}
+
+/* Binds the provider, makes room for `count` more elements, and appends them
+ * by `dyn_fill`. A failure gives the storage back as it was. Growth keeps the old
+ * block until the copy is done, since `src` may point into it. */
+static int32_t dyn_grow_fill(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	const void *src, uint8_t *owned, int64_t count) {
+	dyn_grow_undo undo;
+	int64_t need;
+
+	if (count == 0) {
+		return 1;
+	}
+	loke_rt_v1_dyn_bind(self);
+	if (!loke_rt_v1_checked_add(self->len, count, &need) || !dyn_regrow(self, ops, need, &undo)) {
 		return 0;
 	}
+	if (!dyn_fill(self, ops, src, owned, count)) {
+		dyn_regrow_rollback(self, ops, &undo);
+		return 0;
+	}
+	dyn_regrow_commit(self, ops, &undo);
 	return 1;
 }
 
@@ -348,42 +416,20 @@ LOKE_RT_FAST_PATH int32_t loke_rt_v1_dyn_append(
 
 LOKE_RT_SLOW_PATH int32_t loke_rt_v1_dyn_append_owned(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
-	const void *src, const uint8_t *owned, int64_t count) {
-	dyn_grow_undo undo;
-	int64_t need;
-
+	const void *src, uint8_t *owned, int64_t count) {
 	if (count < 0) {
 		loke_rt_v1_container_fault("a container append count cannot be negative");
 	}
-	if (count == 0) {
-		return 1;
-	}
-	loke_rt_v1_dyn_bind(self);
-	if (!loke_rt_v1_checked_add(self->len, count, &need)) {
-		return 0;
-	}
-	/* Appending writes past `len`, which no live element and therefore no
-	 * possible source overlaps, so only reallocation is a hazard here. */
-	if (!dyn_regrow(self, ops, need, 0, &undo)) {
-		return 0;
-	}
-	if (!dyn_fill(self, ops, self->len, src, owned, count)) {
-		dyn_regrow_rollback(self, ops, &undo);
-		return 0;
-	}
-	self->len = need;
-	dyn_regrow_commit(self, ops, &undo);
-	return 1;
+	return dyn_grow_fill(self, ops, src, owned, count);
 }
 
+/* The new elements are appended first, by the path `append` takes, and only
+ * then turned around past the tail they precede: no element is out of place
+ * while a clone hook runs. */
 int32_t loke_rt_v1_dyn_insert(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
 	int64_t index, const void *src, int64_t count) {
-	dyn_grow_undo undo;
-	int64_t need, tail;
-	/* Read again on the rollback path, where the checked product may not have
-	 * been computed at all. */
-	uint64_t tail_bytes = 0;
+	int64_t tail;
 
 	if (index < 0 || index > self->len) {
 		loke_rt_v1_container_fault("this insert index is out of range");
@@ -391,32 +437,13 @@ int32_t loke_rt_v1_dyn_insert(
 	if (count < 0) {
 		loke_rt_v1_container_fault("a container insert count cannot be negative");
 	}
-	if (count == 0) {
-		return 1;
-	}
-	loke_rt_v1_dyn_bind(self);
-	if (!loke_rt_v1_checked_add(self->len, count, &need)) {
-		return 0;
-	}
-	/* An insert shifts live elements, so a source inside this container's own
-	 * storage would be overwritten by that shift. Building a fresh block leaves
-	 * the source block untouched until the copy is done. */
-	if (!dyn_regrow(self, ops, need, dyn_src_aliases(self, ops, src), &undo)) {
-		return 0;
-	}
 	tail = self->len - index;
-	if (loke_rt_v1_checked_bytes(tail, ops->elem_size, &tail_bytes) && tail_bytes != 0) {
-		memmove(dyn_at(self, ops, index + count), dyn_at(self, ops, index), (size_t)tail_bytes);
-	}
-	if (!dyn_fill(self, ops, index, src, 0, count)) {
-		if (tail_bytes != 0) {
-			memmove(dyn_at(self, ops, index), dyn_at(self, ops, index + count), (size_t)tail_bytes);
-		}
-		dyn_regrow_rollback(self, ops, &undo);
+	if (!dyn_grow_fill(self, ops, src, 0, count)) {
 		return 0;
 	}
-	self->len = need;
-	dyn_regrow_commit(self, ops, &undo);
+	dyn_rotate(
+		(char *)dyn_at(self, ops, index),
+		(uint64_t)tail * ops->elem_size, (uint64_t)count * ops->elem_size);
 	return 1;
 }
 
@@ -450,21 +477,6 @@ void loke_rt_v1_dyn_remove(
 	}
 	if (loke_rt_v1_checked_bytes(self->len - index, ops->elem_size, &tail_bytes) && tail_bytes != 0) {
 		memmove(dyn_at(self, ops, index), dyn_at(self, ops, index + 1), (size_t)tail_bytes);
-	}
-}
-
-/* design.md "Uninitialized capacity": a container shortens before it drops what
- * it took, last element first, so a drop hook that panics leaves the length
- * counting exactly the elements still owed a drop, and the unwind drops each
- * of them once. */
-static void dyn_truncate(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len) {
-	if (ops->elem_drop == 0) {
-		self->len = new_len;
-		return;
-	}
-	while (self->len > new_len) {
-		self->len -= 1;
-		ops->elem_drop(dyn_at(self, ops, self->len));
 	}
 }
 

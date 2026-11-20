@@ -456,7 +456,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	open_synth_function(e, symbol, name, masked ? ", ptr %owned" : "")
 	// design.md "Container insertion": a value this body owns stays registered
 	// until the container holds it, since a helper or a key hook can panic first.
-	framed := op == .Map_Find_Or_Insert || op == .Map_Try_Insert || op == .Insert && moves
+	framed := op == .Map_Find_Or_Insert || op == .Map_Try_Insert || (op == .Insert || op == .Append) && moves
 	frame_header: strings.Builder
 	if framed {
 		frame_header = begin_generated_frame(e, name)
@@ -600,37 +600,38 @@ status_call :: proc(e: ^Emitter, helper, ops: string) -> string {
 	return emit_value(e, "call i32 @loke_rt_v1_%s(ptr %%arg0, ptr %s, i64 %%arg1)", helper, ops)
 }
 
+// design.md "What the unwind runs, and what it does not": the elements this body
+// owns, a move-only pack or the ones `%owned` flags, stay registered until the
+// container holds them, through a clone hook or the provider panicking in the
+// helper, and through the drop of the ones a failure leaves here.
 @(private = "file")
 emit_synth_append :: proc(e: ^Emitter, body: Container_Body) -> string {
-	pack := llvm_type(e, body.symbol.params[1])
-	data, count := ptr_len_parts(e, pack, "%arg1")
-	status := temp(e)
+	data, count := ptr_len_parts(e, llvm_type(e, body.symbol.params[1]), "%arg1")
+	helper, flags, owned_count := "dyn_append", "", count
 	if body.masked {
-		fmt.sbprintfln(
-			&e.b, "  %s = call i32 @loke_rt_v1_dyn_append_owned(ptr %%arg0, ptr %s, ptr %s, ptr %%owned, i64 %s)",
-			status, body.ops, data, count,
-		)
-		// A failed append leaves every owned element with this body. A `try_`
-		// form passes no flags: it owns nothing, and its caller drops the pack.
-		kept := branch_on_failure(e, status)
-		flagged := emit_value(e, "icmp ne ptr %%owned, null")
-		drop_owned, dropped := new_label(e, "append.owned"), new_label(e, "append.dropped")
-		branch_if(e, flagged, drop_owned, dropped)
-		place_label(e, drop_owned)
-		emit_drop_elements_reversed(e, body.element, data, count, "%owned")
-		place_label(e, dropped)
-		rejoin(e, kept)
+		// The helper clears a flag as it takes the element. A `try_` form passes
+		// no flags: it owns nothing, and its caller drops the pack.
+		helper, flags = "dyn_append_owned", "%owned"
+		owned_count = emit_value(e, "select i1 %s, i64 0, i64 %s", is_null(e, flags), count)
+	}
+	owns := body.moves && body.lifecycle.managed
+	owned, guard := "", Deferred{}
+	if owns {
+		owned = alloca(e, "i64")
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", owned_count, owned)
+		guard = register_array_cleanup(e, body.element, data, flags, owned)
+	}
+	status := emit_value(
+		e, "call i32 @loke_rt_v1_%s(ptr %%arg0, ptr %s, ptr %s, %si64 %s)",
+		helper, body.ops, data, flags == "" ? "" : "ptr %owned, ", count,
+	)
+	if !owns {
 		return status
 	}
-	fmt.sbprintfln(
-		&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %%arg0, ptr %s, ptr %s, i64 %s)",
-		status, body.ops, data, count,
-	)
-	if body.moves {
-		kept := branch_on_failure(e, status)
-		emit_drop_run(e, body.element, data, count)
-		rejoin(e, kept)
-	}
+	kept := branch_on_failure(e, status)
+	emit_drop_counted_elements(e, body.element, data, owned, flags)
+	place_label(e, kept)
+	finish_temporary_drop(e, guard)
 	return status
 }
 
@@ -767,14 +768,6 @@ branch_on_failure :: proc(e: ^Emitter, status: string) -> string {
 @(private = "file")
 rejoin :: proc(e: ^Emitter, kept_label: string) {
 	place_label(e, kept_label)
-}
-
-// Every element of a `..T` pack, in order.
-@(private = "file")
-emit_drop_run :: proc(e: ^Emitter, element: Type_Id, data, count: string) {
-	loop := open_counted_loop(e, new_counter(e), "unconsumed", count, "ult")
-	emit_drop_place(e, element, gep_at(e, llvm_type(e, element), data, loop.index))
-	close_counted_loop(e, loop)
 }
 
 // `key in m`: one probe, no insertion and no value. The key is evaluated, and

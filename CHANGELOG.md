@@ -102,6 +102,13 @@ checklist.
 - `L0537` says a drop or reset "may" end an allocator control block when the live handle was
   read out of merged storage, such as an array of more than eight elements, as its
   precision notes already said.
+- A copy hook or drop hook that panics during a dynamic array's `insert` or `append` drops every
+  element once ([What the unwind runs, and what it does not](docs/design.md#what-the-unwind-runs-and-what-it-does-not)).
+  Inserting a borrowed element whose copy panicked dropped one element twice and skipped another,
+  an append whose copy of a later element panicked skipped the copies already made and the
+  temporaries of its pack not yet reached, and a drop that panicked while a failed append
+  disposed of its pack skipped the elements after it. A refused pack is now dropped last element
+  first.
 - A `when` condition that waits on two names of a conditional expression reports the one
   written first, the value before `if`.
 - A borrow a call returns or leaves in an argument keeps every `thread_local` global its callee

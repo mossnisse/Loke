@@ -1,0 +1,34 @@
+// design.md "Dynamic array container operations": `insert` places its element
+// before the tail at every size, including elements too large to wait in the
+// runtime's small buffer while the tail moves, and an element copied out of the
+// array itself.
+package main;
+import "core:fmt";
+
+Large :: struct { id: int, padding: [40]int }
+
+ids :: proc(items: []Large) {
+    seen: [dynamic]int = {};
+    foreach (item in items) {
+        seen.append(item.id);
+    }
+    fmt.println(seen[:]);
+}
+
+main :: proc() {
+    items: [dynamic]Large = {};
+    items.append(Large{id = 1});
+    items.insert(0, Large{id = 0});
+    items.append(Large{id = 3}, Large{id = 4}, Large{id = 5});
+    items.insert(2, Large{id = 2});
+    items.insert(6, Large{id = 6});
+    ids(items[:]);
+
+    items.insert(1, items[4]);
+    ids(items[:]);
+
+    small: [dynamic]int = {10, 20, 30};
+    small.insert(1, small[2]);
+    small.insert(0, small[3]);
+    fmt.println(small[:]);
+}

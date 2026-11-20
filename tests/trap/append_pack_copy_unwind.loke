@@ -1,0 +1,26 @@
+// design.md "What the unwind runs, and what it does not": a pack that mixes
+// temporaries with borrowed places hands the temporaries to `append`. When a
+// copy hook panics part-way, the array drops what it already holds, a copy and
+// a temporary, and the append's own cleanup drops the temporaries it had not
+// reached yet.
+package main;
+import "core:fmt";
+
+Item :: struct { id: int }
+impl Item {
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
+        if (self.id == 99) { panic("copy failed"); }
+        return .ok(Item{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Item) {
+        fmt.println("drop", self.id);
+    }
+}
+
+main :: proc() {
+    items: [dynamic]Item = {};
+    items.reserve(8);
+    first := Item{1};
+    second := Item{99};
+    items.append(first, Item{5}, second, Item{6}, Item{7});
+}

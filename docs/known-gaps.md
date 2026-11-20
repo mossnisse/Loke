@@ -143,23 +143,6 @@ main :: proc() {
 `s = s + Tag{1};` compiles. Compound assignment needs the assignment's temporary
 extension. [Regression](../tests/err/compound_fallback_borrow.loke)
 
-### Dynamic array insertion can lose or double-drop elements during unwinding
-
-[What the unwind runs](design.md#what-the-unwind-runs-and-what-it-does-not)
-includes registered implicit drops. The
-[container lowering review](source-reviews/emit_llvm_containers.md#verification)
-has three runnable reproductions under the default panic strategy.
-
-- Reserve spare capacity in `[dynamic]Item{Item{1}, Item{2}, Item{3}}`,
-  then insert a borrowed `Item{99}` at index zero whose copy hook panics.
-  The array has already shifted. Drops are `99, 2, 1, 1` where the original
-  owners would drop `99, 3, 2, 1`.
-- In `try_append(first, second)`, have the copy hook clone `first` as
-  `Item{101}` and panic on `second`. Unwinding drops the originals and skips
-  the initialized clone outside the array's published length.
-- `try_append(Item{1}, Item{2})` into an array backed by a zero arena refuses
-  the move-only pack. If disposal of the first value panics, the surrounding
-  `defer` runs and disposal skips the second value.
 
 ### A mutable slice literal in thread-local storage shares its backing array
 

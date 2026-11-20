@@ -1,0 +1,23 @@
+// design.md "What the unwind runs, and what it does not": an insert copies its
+// borrowed element before it moves any element aside, so a copy hook that
+// panics leaves the array exactly as it was, and each element drops once.
+package main;
+import "core:fmt";
+
+Item :: struct { id: int }
+impl Item {
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
+        if (self.id == 99) { panic("copy failed"); }
+        return .ok(Item{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Item) {
+        fmt.println("drop", self.id);
+    }
+}
+
+main :: proc() {
+    items := [dynamic]Item{Item{1}, Item{2}, Item{3}};
+    items.reserve(8);
+    borrowed := Item{99};
+    items.insert(0, borrowed);
+}
