@@ -1,4 +1,4 @@
-// Union storage, construction, widening, and tag and payload reads.
+// Union storage, construction, widening, `u.as(.name)`, and tag and payload reads.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
@@ -161,6 +161,38 @@ emit_union_either :: proc(
 
 	place_label(e, done)
 	return load_temporary(e, union_type, slot)
+}
+
+// `u.as(.name)` borrows `u`: the result is `.none` in its own storage, and only
+// once the tag matched is the payload cloned and `.some` written over it. A large
+// result is that storage, which other full expressions share.
+@(private)
+emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) -> string {
+	subject := type_underlying(e.c, expr_base(v.bound[0]).type)
+	value := emit_borrowed_operand(e, v.bound[0])
+	matched := emit_union_tag_is(e, subject, value, index)
+
+	slot := temporary_slot(e, as_type)
+	store(e, as_type, "zeroinitializer", slot)
+	emit_union_write_variant(e, as_type, slot, union_index_of(e.c, as_type, "none"), "")
+	then_label, done_label := new_label(e, "unionas.match"), new_label(e, "unionas.done")
+	branch_if(e, matched, then_label, done_label)
+	place_label(e, then_label)
+	payload := ""
+	if union_variant_payload(e.c, subject, index) != TYPE_VOID {
+		// The payload is read in place: it is stored or cloned before anything
+		// else runs.
+		payload_type := option_payload(e.c, as_type)
+		address := gep_field(e, llvm_type(e, subject), value_address(e, subject, value), 0)
+		payload = load_temporary(e, payload_type, address)
+		if emit_lifecycle(e, payload_type).managed {
+			payload = emit_clone_value(e, payload_type, payload)
+		}
+	}
+	emit_union_write_variant(e, as_type, slot, union_index_of(e.c, as_type, "some"), payload)
+	branch(e, done_label)
+	place_label(e, done_label)
+	return load_temporary(e, as_type, slot)
 }
 
 // Writes a variant into zeroed storage. An empty `payload` means the caller has

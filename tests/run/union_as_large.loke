@@ -1,0 +1,59 @@
+package main;
+import "core:fmt";
+
+// design.md "Inspecting a union": each `u.as(.name)` of a large payload builds
+// its option in storage that other full expressions share, so repeating it does
+// not grow the frame by a whole option per use.
+
+Payload :: [32768]u8;
+Choice :: union { blob: Payload, absent }
+
+ends :: proc(option: Option(Payload)) -> int {
+	switch (option) {
+	case .some(payload): return int(payload[0]) + int(payload[32767]);
+	case .none:          return 0;
+	}
+}
+
+// Two results live at once.
+both :: proc(first, second: Option(Payload)) -> int {
+	return ends(first) + 10 * ends(second);
+}
+
+probe :: proc(value, other: ^Choice) -> int {
+	total := 0;
+	_ = value^.as(.blob);
+	_ = value^.as(.blob);
+	_ = value^.as(.blob);
+	_ = value^.as(.blob);
+	_ = value^.as(.blob);
+	_ = value^.as(.blob);
+	_ = value^.as(.blob);
+	_ = value^.as(.blob);
+	total += ends(value^.as(.blob));
+	total += ends(value^.as(.blob));
+	total += ends(value^.as(.blob));
+	total += ends(value^.as(.blob));
+	total += ends(value^.as(.blob));
+	total += ends(value^.as(.blob));
+	total += ends(value^.as(.blob));
+	total += ends(value^.as(.blob));
+	total += both(value^.as(.blob), other^.as(.blob));
+	total += both(value^.as(.blob), other^.as(.blob));
+	total += both(value^.as(.blob), other^.as(.blob));
+	total += both(value^.as(.blob), other^.as(.blob));
+	total += both(value^.as(.blob), other^.as(.blob));
+	total += both(value^.as(.blob), other^.as(.blob));
+	total += both(value^.as(.blob), other^.as(.blob));
+	total += both(value^.as(.blob), other^.as(.blob));
+	return total;
+}
+
+main :: proc() {
+	absent: Choice = .absent;
+	blob := Payload{};
+	blob[0] = 3;
+	blob[32767] = 4;
+	held: Choice = .blob(move(blob));
+	fmt.println(probe(&absent, &absent), probe(&held, &absent), probe(&absent, &held), probe(&held, &held));
+}

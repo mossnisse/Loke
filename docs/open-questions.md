@@ -303,10 +303,6 @@ points remain:
   `find_or_insert` before changing the runtime ABI to reuse a probe across a
   user copy hook.
   [Container review](source-reviews/emit_llvm_containers.md#simplification-and-boundaries)
-- **Conversion emission.** Pass checked copy information from call dispatch
-  and use the common operand-copy path. Collapse the C-string null predicate
-  and use the existing SSA value helper in the float range guard.
-  [Conversion review](source-reviews/emit_llvm_convert.md#simplification)
 
 ## Literal elements that lend a temporary to a call
 

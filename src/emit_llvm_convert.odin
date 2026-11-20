@@ -1,5 +1,5 @@
 // Conversions: `T(value)` between scalars, lanes and references with their
-// checks, and the union constructions and narrowings written as calls.
+// checks, and the union constructions written as calls.
 //
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
@@ -7,12 +7,9 @@ package lokec
 import "core:fmt"
 
 @(private)
-emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, clones: bool, as_type: Type_Id) -> string {
 	source := expr_base(v.bound[0]).type
-	value := emit_expr(e, v.bound[0])
-	if v.operation.(Call_Conversion).clones {
-		value = emit_clone_value(e, source, value)
-	}
+	value := emit_copied_expr(e, v.bound[0], source, clones)
 	return emit_value_conversion(e, value, source, as_type, checked = true)
 }
 
@@ -110,8 +107,7 @@ guard_integer_conversion :: proc(e: ^Emitter, value: string, from, to: Type_Id) 
 		if bad == "" {
 			bad = under
 		} else {
-			joined := emit_value(e, "or %s %s, %s", form.mask, bad, under)
-			bad = joined
+			bad = emit_value(e, "or %s %s, %s", form.mask, bad, under)
 		}
 	}
 	panic_if(e, form_any(e, form, bad), "cast.int", "an integer outside the destination type's range; `math.wrap` keeps the low bits")
@@ -122,17 +118,10 @@ guard_integer_conversion :: proc(e: ^Emitter, value: string, from, to: Type_Id) 
 // it and nothing that uses one tests it again.
 @(private)
 guard_null_reference :: proc(e: ^Emitter, value: string, from, to: Type_Id) {
-	#partial switch underlying_kind(e.c, from) {
-	case .Raw_Pointer, .C_Pointer:
-	case:
-		return
+	from_kind, to_kind := underlying_kind(e.c, from), underlying_kind(e.c, to)
+	if (from_kind == .Raw_Pointer || from_kind == .C_Pointer) && (to_kind == .Pointer || to_kind == .CString_View) {
+		panic_if(e, is_null(e, value), "cast.null", "a null address converted to a reference")
 	}
-	#partial switch underlying_kind(e.c, to) {
-	case .Pointer, .CString_View:
-	case:
-		return
-	}
-	panic_if(e, is_null(e, value), "cast.null", "a null address converted to a reference")
 }
 
 // Guard LLVM float-to-integer casts from poison on invalid inputs.
@@ -157,11 +146,10 @@ guard_float_to_int :: proc(e: ^Emitter, value: string, from, from_lane, to_lane:
 		low, high = simd_repeated(e, info, low), simd_repeated(e, info, high)
 	}
 	llvm := llvm_type(e, from)
-	under, over, bad := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = fcmp %s %s %s, %s", under, below, llvm, value, low)
-	fmt.sbprintfln(&e.b, "  %s = fcmp uge %s %s, %s", over, llvm, value, high)
+	under := emit_value(e, "fcmp %s %s %s, %s", below, llvm, value, low)
+	over := emit_value(e, "fcmp uge %s %s, %s", llvm, value, high)
 	predicate := lanes ? fmt.aprintf("<%d x i1>", info.count) : "i1"
-	fmt.sbprintfln(&e.b, "  %s = or %s %s, %s", bad, predicate, under, over)
+	bad := emit_value(e, "or %s %s, %s", predicate, under, over)
 	// A panic is not lane-wise, so one invalid lane faults the whole conversion.
 	if lanes {
 		bad = simd_any_lane(e, info, bad)
@@ -174,29 +162,4 @@ guard_float_to_int :: proc(e: ^Emitter, value: string, from, from_lane, to_lane:
 emit_union_construct :: proc(e: ^Emitter, v: ^Expr_Call, operation: Call_Union_Construct, as_type: Type_Id) -> string {
 	payload := emit_copied_expr(e, v.bound[0], expr_base(v.bound[0]).type, operation.clone)
 	return emit_union_value(e, as_type, operation.index, payload)
-}
-
-// `u.as(.name)` borrows `u`: the payload is cloned only once the tag matched,
-// and the option is written only on that path.
-@(private)
-emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) -> string {
-	subject := type_underlying(e.c, expr_base(v.bound[0]).type)
-	value := emit_borrowed_operand(e, v.bound[0])
-	matched := emit_union_tag_is(e, subject, value, index)
-
-	slot := spill(e, as_type, emit_union_value(e, as_type, union_index_of(e.c, as_type, "none"), ""))
-	then_label, done_label := new_label(e, "unionas.match"), new_label(e, "unionas.done")
-	branch_if(e, matched, then_label, done_label)
-	place_label(e, then_label)
-	payload_type := option_payload(e.c, as_type)
-	payload := "zeroinitializer"
-	if union_variant_payload(e.c, subject, index) != TYPE_VOID {
-		payload = emit_union_payload(e, subject, payload_type, emit_union_spill(e, subject, value))
-		if emit_lifecycle(e, payload_type).managed {
-			payload = emit_clone_value(e, payload_type, payload)
-		}
-	}
-	store(e, as_type, emit_option_some(e, as_type, payload), slot)
-	place_label(e, done_label)
-	return load_place(e, as_type, slot)
 }

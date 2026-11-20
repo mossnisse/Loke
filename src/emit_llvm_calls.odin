@@ -56,7 +56,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	case Call_Text_Conversion:
 		return emit_text_conversion(e, v, as_type)
 	case Call_Conversion:
-		return emit_conversion(e, v, as_type)
+		return emit_conversion(e, v, operation.clones, as_type)
 	case Call_Reflect:
 		return emit_descriptor_operation(e, v)
 	case Call_Union_Construct:

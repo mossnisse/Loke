@@ -171,13 +171,3 @@ main :: proc() {
 The two threads print `1` and `2`. Separate backing arrays initialized to zero
 would each yield `1`.
 [LLVM constant review](source-reviews/emit_llvm_const.md#mutable-slice-backing-is-shared-across-thread-local-instances-p2)
-
-### Sequential union `as` calls can exhaust the stack
-
-[Inspecting a union](design.md#inspecting-a-union) defines `.as(.label)` as
-returning `.none` for an inactive label. Repeat `_ = value^.as(.blob);` 24
-times in one procedure with a `[65536]u8` payload type and call it with the
-inactive variant. At default optimization, the executable exits with Windows
-status `0xC00000FD`. Each source site reserves a new full-size option slot
-in the frame. The two-call control exits normally.
-[Reproduction](source-reviews/emit_llvm_convert.md#sequential-union-as-calls-exhaust-the-stack-for-large-payloads-p2)

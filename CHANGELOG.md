@@ -315,6 +315,10 @@ checklist.
   ([Test procedures](docs/design.md#test-procedures)). A `default_allocator` or `default_logger`
   factory saw the test's name in `os.args`, and with a name no test has it ran before the
   process ended with status 2.
+- `u.as(.label)` builds its `Option` in storage that later full expressions reuse
+  ([Inspecting a union](docs/design.md#inspecting-a-union)). With a 64 KiB payload, 24
+  `_ = value^.as(.blob);` statements in one procedure took a whole option slot each and
+  overflowed the stack.
 
 ## [0.10.0] - 2026-11-16
 
