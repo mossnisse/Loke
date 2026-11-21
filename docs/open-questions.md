@@ -775,6 +775,62 @@ a join is not one, since [structured
 concurrency](design.md#structured-concurrency) already answers it
 ([reasons](comments.md#tasks-that-borrow-joined-by-their-block)).
 
+## Open questions in `core:thread`
+
+- **Share the pool's task execution path.** Have idle workers and helping
+  joiners take and run an eligible task through the same procedure. Read
+  and update the unfinished-task count as an `int` under the pool lock.
+  When tasks remain, keep the lock from completion through the next queue
+  check. When the count reaches zero, release it before waking joiners.
+  This cut nine lines. Waking with the lock held cut another four lines
+  but slowed the four-worker probe from 114 ms to 126 ms.
+  [Pool scheduler](../core/thread/pool.loke)
+- **Use the Win32 names in the private foreign block.** Drop the eight
+  `link_name` attributes whose only purpose is to rename kernel32 calls.
+  [Thread bindings](../core/thread/thread.loke)
+- **Let field destruction join the threads of a bare `parallel`.** The
+  scope's thread array drops immediately after the scope hook. Drop the
+  explicit `clear` and use `if (case .some(pool) = self.pool)` in the start
+  and join paths. This cut six lines. [Task lowering](compiler-architecture.md#lowering-parallel-blocks)
+- **Derive a channel side's closure from its endpoint count.** Keep the
+  split flag and one flag for explicit `close`. After the first split, a
+  zero count closes that side because no endpoint remains to fork. An
+  explicit close still allows live endpoints to fork and receivers to drain
+  the queue. This cut three lines. [Channel endpoints](standard-library.md#channels)
+- **Use the slot array's length as the ring modulus.** Drop the stored
+  `size` and use `int` for the indices, including the endpoint caches. An
+  index is below `slots.len()`, so its successor fits in `int`. This cut a
+  line, one word per ring, and the signedness conversions in the slot path.
+  [Ring implementation](../core/thread/ring.loke)
+- **Put the pool queue links in pooled task frames.** Add the next link and
+  owning scope to the generated header for pooled spawns. The queue then
+  holds the frame itself, and the worker keeps the scope in a local before
+  calling the run procedure that frees the frame. This removes one 24-byte
+  allocation and free per spawn, grows pooled frames by 16 bytes before
+  alignment, and adds four compiler lines. For 1,000 blocks of 128 tiny
+  tasks, adding this change to the shared execution path took the median
+  of nine `-opt=speed` runs from 53.4 to 36.0 ms with one worker and from
+  115.4 to 98.7 ms with four. [Task lowering](compiler-architecture.md#lowering-parallel-blocks)
+- **Wake channel waiters when their predicates can become true.** Signal
+  on empty becoming nonempty, full becoming nonfull, the last endpoint on
+  either side dropping, or the first explicit close. A fork, a receive at
+  end of stream, and a nonfinal endpoint drop can leave the private guard's
+  `changed` flag clear. This added four lines. Filling a capacity-64 channel
+  and draining it in one thread takes two queue wake calls per batch, down
+  from 128. The timing ranges overlapped across nine runs of 12,000 batches.
+  [Channel implementation](../core/thread/channel.loke)
+
+Together the prototypes removed 23 lines from `core/thread` and added four
+to the compiler. The interface file matched, 17 thread and parallel run
+cases matched their expected output at `-opt=none` and `-opt=speed`, and the
+ring allocation case ran a million transfers with its allocator exhausted.
+
+Reusing `container.Deque` for the channel queue needs an append operation
+whose allocation effects exclude growth. With `append_moved`, the checker
+sees a possible allocator reservation and reports `L0732` for existing
+multiple-sender cases even when the channel preallocates and checks capacity.
+[Deque interface](../core/container/api.loki)
+
 ## Open questions in `core:sync`
 
 **Waiting on each `Once` state word.** `WaitOnAddress` and `WakeByAddressAll`
@@ -1281,6 +1337,14 @@ copyable, and nothing already in the package changes.
 - **The system zone's name.** Windows names its zones its own way, and the
   IANA name needs CLDR's mapping, which ICU has, so a `Zone` has no name. A
   caller that shows one, or records the zone beside a time, would need it.
+
+## Open questions in `core:term`
+
+- **Buffer redirected lines across calls.** Redirected input goes through
+  `io.read_line`, which requests one byte at a time. A caller-owned buffered
+  reader could cut those reads while retaining bytes past the line ending
+  for the next call. The current `term.read_line` acquires a fresh borrowed
+  input on each call. [Line reader interface](../core/io/api.loki)
 
 ## Formatting
 

@@ -1,5 +1,8 @@
 .ok("hé")
 .err(Read_Line failed: End_Of_Input)
+1004 😀
+.ok("")
+true
 false
 Character 65 true false false
 Up 0 false false false

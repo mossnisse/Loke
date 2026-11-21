@@ -8,6 +8,6 @@ main :: proc() {
 	os.rt_exit(0);
 	_ = os.rt_last_error();
 	_ = fs.rt_last_error();
-	_ = term.rt_last_error();
+	_ = term.GetLastError();
 	_ = math.rt_exp_f64(1.5);
 }

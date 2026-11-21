@@ -9,7 +9,7 @@ L0336
 `rt_last_error` is not public in package `fs`
 L0336
 @11:6
-`rt_last_error` is not public in package `term`
+`GetLastError` is not public in package `term`
 L0336
 @12:6
 `rt_exp_f64` is not public in package `math`

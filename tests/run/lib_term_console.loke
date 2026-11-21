@@ -93,6 +93,21 @@ main :: proc() {
 	press(console, 90, 0x1A, 0x0008);
 	press(console, 13, 13);
 	fmt.println(term.read_line());
+	// Windows 10's console drops what passes the first read's buffer, which once
+	// cut this line to its first 510 characters.
+	for (i := 0; i < 1000; i += 1) { press(console, 65, 'a'); }
+	press(console, 0, 0xD83D);
+	press(console, 0, 0xDE00);
+	press(console, 13, 13);
+	long := term.read_line() or_else panic("no long line");
+	fmt.println(long.len(), long[1000:]);
+	// A blank line is a line, and `keep_ending` keeps the console's `\r\n`.
+	press(console, 13, 13);
+	fmt.println(term.read_line());
+	press(console, 72, 'h');
+	press(console, 13, 13);
+	kept := term.read_line(options = io.Line_Options{keep_ending = true}) or_else panic("no line");
+	fmt.println(kept == "h\r\n");
 
 	// Raw mode turns virtual-terminal input off, or every key below would arrive
 	// as the characters of an escape sequence.

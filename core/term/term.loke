@@ -44,7 +44,16 @@ impl Input {
 	// not have.
 	read :: proc(self: inout Input, destination: []mut u8) -> Result(int, io.Error) {
 		if (destination.len() == 0) { return 0; }
-		return read_handle(self.handle, destination);
+		read: u32 = 0;
+		if (ReadFile(self.handle, unsafe.raw_data(destination), chunk(destination.len()), &mut read, nil) == 0) {
+			// A closed pipe is the end of input; `ReadFile` has stored a count of zero.
+			error := from_last_error(.Read);
+			if (!io.is(error, .Broken_Pipe)) { return .err(error); }
+		}
+		if (read == 0) {
+			return .err(io.make_error(.End_Of_Input, .Read));
+		}
+		return int(read);
 	}
 }
 
@@ -60,16 +69,17 @@ impl Output {
 	write :: proc(self: inout Output, source: []u8) -> Result(int, io.Error) {
 		if (source.len() == 0) { return 0; }
 		rt_flush_stdout();
-		return write_handle(self.handle, source);
+		written: u32 = 0;
+		if (WriteFile(self.handle, unsafe.raw_data(source), chunk(source.len()), &mut written, nil) == 0) {
+			return .err(from_last_error(.Write));
+		}
+		return int(written);
 	}
 }
 
-stdin :: proc() -> Input { return Input{standard_handle(.Input)}; }
-stdout :: proc() -> Output { return Output{standard_handle(.Output)}; }
-stderr :: proc() -> Output { return Output{standard_handle(.Error)}; }
-
-@(private)
-Stream :: enum {Input, Output, Error}
+stdin :: proc() -> Input { return Input{GetStdHandle(STD_INPUT_HANDLE)}; }
+stdout :: proc() -> Output { return Output{GetStdHandle(STD_OUTPUT_HANDLE)}; }
+stderr :: proc() -> Output { return Output{GetStdHandle(STD_ERROR_HANDLE)}; }
 
 // The seed runtime is part of every link, as `core:os` relies on too.
 @(private)
@@ -149,9 +159,9 @@ when (LOKE_OS == .Windows) {
 
 foreign import kernel32 "system:kernel32.lib";
 
-@(private) STD_INPUT :: 0xFFFFFFF6;  // -10
-@(private) STD_OUTPUT :: 0xFFFFFFF5; // -11
-@(private) STD_ERROR :: 0xFFFFFFF4;  // -12
+@(private) STD_INPUT_HANDLE :: u32(0xFFFFFFF6);  // -10
+@(private) STD_OUTPUT_HANDLE :: u32(0xFFFFFFF5); // -11
+@(private) STD_ERROR_HANDLE :: u32(0xFFFFFFF4);  // -12
 
 @(private) ENABLE_PROCESSED_INPUT :: 0x0001;
 @(private) ENABLE_LINE_INPUT :: 0x0002;
@@ -171,32 +181,23 @@ foreign import kernel32 "system:kernel32.lib";
 
 @(private)
 foreign kernel32 {
-	@(link_name="GetStdHandle")
-	rt_std_handle :: proc "stdcall" (which: u32) -> int ---;
-	@(link_name="ReadFile")
-	rt_read_file :: proc "stdcall" (
+	GetStdHandle :: proc "stdcall" (which: u32) -> int ---;
+	ReadFile :: proc "stdcall" (
 		handle: int, buffer: [^]u8, count: u32, read: ^mut u32, overlapped: rawptr,
 	) -> i32 ---;
-	@(link_name="WriteFile")
-	rt_write_file :: proc "stdcall" (
+	WriteFile :: proc "stdcall" (
 		handle: int, buffer: [^]u8, count: u32, written: ^mut u32, overlapped: rawptr,
 	) -> i32 ---;
-	@(link_name="GetLastError")
-	rt_last_error :: proc "stdcall" () -> u32 ---;
-	@(link_name="GetConsoleMode")
-	rt_get_console_mode :: proc "stdcall" (handle: int, mode: ^mut u32) -> i32 ---;
-	@(link_name="SetConsoleMode")
-	rt_set_console_mode :: proc "stdcall" (handle: int, mode: u32) -> i32 ---;
-	@(link_name="ReadConsoleW")
-	rt_read_console :: proc "stdcall" (
+	GetLastError :: proc "stdcall" () -> u32 ---;
+	GetConsoleMode :: proc "stdcall" (handle: int, mode: ^mut u32) -> i32 ---;
+	SetConsoleMode :: proc "stdcall" (handle: int, mode: u32) -> i32 ---;
+	ReadConsoleW :: proc "stdcall" (
 		handle: int, buffer: [^]u16, count: u32, read: ^mut u32, control: rawptr,
 	) -> i32 ---;
-	@(link_name="ReadConsoleInputW")
-	rt_read_console_input :: proc "stdcall" (
+	ReadConsoleInputW :: proc "stdcall" (
 		handle: int, records: rawptr, count: u32, read: ^mut u32,
 	) -> i32 ---;
-	@(link_name="SetConsoleCtrlHandler")
-	rt_set_ctrl_handler :: proc "stdcall" (
+	SetConsoleCtrlHandler :: proc "stdcall" (
 		handler: proc "stdcall" (event: u32) -> i32, add: i32,
 	) -> i32 ---;
 }
@@ -216,106 +217,74 @@ Input_Record :: struct {
 	control_state: u32,
 }
 
-@(private)
-standard_handle :: proc(stream: Stream) -> int {
-	if (stream == .Input) { return rt_std_handle(u32(STD_INPUT)); }
-	if (stream == .Output) { return rt_std_handle(u32(STD_OUTPUT)); }
-	return rt_std_handle(u32(STD_ERROR));
-}
-
 // Whether the handle is a real console rather than a pipe or a file. It is also
 // exactly the question `begin_raw` has to answer.
 @(private)
 is_console :: proc(handle: int) -> bool {
 	mode: u32 = 0;
-	return rt_get_console_mode(handle, &mut mode) != 0;
+	return GetConsoleMode(handle, &mut mode) != 0;
 }
 
 @(private)
 from_last_error :: proc(operation: io.Operation) -> io.Error {
-	native := rt_last_error();
+	native := GetLastError();
 	// A handle that is not a console is the one code only a terminal reads
 	// differently; `ERROR_INVALID_HANDLE` elsewhere stays `Other`.
 	if (native == 6) { return io.make_error(.Not_A_Terminal, operation, native); }
 	return io.from_native_code(native, operation);
 }
 
-@(private)
-read_handle :: proc(handle: int, destination: []mut u8) -> Result(int, io.Error) {
-	wanted := destination.len();
-	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
-	read: u32 = 0;
-	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, nil) == 0) {
-		error := from_last_error(.Read);
-		if (io.is(error, .Broken_Pipe)) {
-			return .err(io.make_error(.End_Of_Input, .Read));
-		}
-		return .err(error);
-	}
-	if (read == 0) {
-		return .err(io.make_error(.End_Of_Input, .Read));
-	}
-	return int(read);
-}
-
-@(private)
-write_handle :: proc(handle: int, source: []u8) -> Result(int, io.Error) {
-	wanted := source.len();
-	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
-	written: u32 = 0;
-	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
-		return .err(from_last_error(.Write));
-	}
-	return int(written);
-}
-
 // One call moves at most this many bytes: the count is a `DWORD`, and a caller's
 // slice is not. A shorter count is an ordinary partial read or write.
+@(private)
+chunk :: proc(wanted: int) -> u32 { return u32(wanted if wanted < MAX_CHUNK else MAX_CHUNK); }
 @(private) MAX_CHUNK :: 0x3FFFFFFF;
 
-// A console delivers UTF-16, one cooked line at a time. The loop is for a line
-// longer than the buffer, not for the ordinary case.
+// A console delivers UTF-16, one cooked line at a time. A line that fits one
+// read is decoded straight from `units`; the dynamic buffer is for a longer one.
 //
-// Every chunk lands in one buffer that is decoded once, at the end. A long line
-// is exactly where `ReadConsoleW` splits a surrogate pair across two calls, and
-// decoding chunk by chunk would report that ordinary line as invalid data.
+// `units` is as large as cmd's: Windows 10's console caps a cooked line at the
+// first read's buffer and drops the rest. A newer console hands a longer line
+// over in chunks instead, decoded once, together: a long line is exactly where
+// `ReadConsoleW` splits a surrogate pair across two calls, and decoding chunk by
+// chunk would report that ordinary line as invalid data.
 @(private)
 read_console_line :: proc(
 	handle: int, allocator: Allocator, options: io.Line_Options,
 ) -> Result(string, io.Error) {
 	line: [dynamic]u16 = {};
-	units: [512]u16 = {};
+	units: [8192]u16 = {};
 	for (;;) {
 		read: u32 = 0;
-		if (rt_read_console(handle, unsafe.raw_data(units[mut :]), u32(units.len()), &mut read, nil) == 0) {
+		if (ReadConsoleW(handle, unsafe.raw_data(units[mut :]), u32(units.len()), &mut read, nil) == 0) {
 			return .err(from_last_error(.Read_Line));
 		}
-		if (read == 0) {
-			if (line.len() == 0) {
-				return .err(io.make_error(.End_Of_Input, .Read_Line));
-			}
-			break;
-		}
 		count := int(read);
-		switch (line.try_append(..units[0:count])) {
-		case .ok:
-		case .err:
-			return .err(io.make_error(.Out_Of_Memory, .Read_Line));
+		ended := count == 0 || units[count - 1] == u16('\n');
+		if (ended && line.len() == 0) {
+			return decode_console_line(units[0:count], allocator, options);
 		}
-		if (units[count - 1] == u16('\n')) { break; }
+		line.try_append(..units[0:count]) or_return io.from_allocator_error(.Read_Line);
+		if (ended) { return decode_console_line(line[:], allocator, options); }
 	}
+}
+
+@(private)
+decode_console_line :: proc(
+	units: []u16, allocator: Allocator, options: io.Line_Options,
+) -> Result(string, io.Error) {
 	// Ctrl+Z at the start of a line is the console's end of input. `ReadConsoleW`
 	// does not say so itself: it hands the U+001A back as the line's first unit.
-	if (line.len() > 0 && line[0] == u16(0x1A)) {
+	if (units.len() == 0 || units[0] == u16(0x1A)) {
 		return .err(io.make_error(.End_Of_Input, .Read_Line));
 	}
-	kept := line.len();
-	if (!options.keep_ending && kept > 0 && line[kept - 1] == u16('\n')) {
+	kept := units.len();
+	if (!options.keep_ending && units[kept - 1] == u16('\n')) {
 		kept -= 1;
 		// The `\r` of a `\r\n` ending goes with it.
-		if (kept > 0 && line[kept - 1] == u16('\r')) { kept -= 1; }
+		if (kept > 0 && units[kept - 1] == u16('\r')) { kept -= 1; }
 	}
-	switch (utf16.decode(line[0:kept], allocator)) {
+	switch (utf16.decode(units[0:kept], allocator)) {
 	case .ok(text):
 		return text;
 	case .err(error):
@@ -364,7 +333,7 @@ read_console_line :: proc(
 restore_handler :: proc "stdcall" (event: u32) -> i32 {
 	handle := handler_handle.load();
 	if (handle != 0) {
-		rt_set_console_mode(handle, handler_mode.load());
+		SetConsoleMode(handle, handler_mode.load());
 	}
 	// FALSE: the next handler in the chain still runs, so the default terminating
 	// behaviour is unchanged. Restoring the mode is all this does.
@@ -390,7 +359,7 @@ begin_raw :: proc(
 	// live scope's raw mode that the scope restores and releases in between;
 	// this scope would then save raw as its original and put it back on close.
 	previous: u32 = 0;
-	if (rt_get_console_mode(input.handle, &mut previous) == 0) {
+	if (GetConsoleMode(input.handle, &mut previous) == 0) {
 		handler_handle.store(0);
 		return .err(io.make_error(.Not_A_Terminal, .Terminal_Mode));
 	}
@@ -407,13 +376,13 @@ begin_raw :: proc(
 	// Install the process-level restore path before changing the terminal. A
 	// registration failure therefore leaves the console untouched.
 	if (!handler_installed.load()) {
-		if (rt_set_ctrl_handler(restore_handler, 1) == 0) {
+		if (SetConsoleCtrlHandler(restore_handler, 1) == 0) {
 			handler_handle.store(0);
 			return .err(from_last_error(.Terminal_Mode));
 		}
 		handler_installed.store(true);
 	}
-	if (rt_set_console_mode(input.handle, wanted) == 0) {
+	if (SetConsoleMode(input.handle, wanted) == 0) {
 		handler_handle.store(0);
 		return .err(from_last_error(.Terminal_Mode));
 	}
@@ -441,7 +410,7 @@ impl Raw_Mode {
 	close :: proc(self: inout Raw_Mode) -> Status(io.Error) {
 		if (!self.live) { return .ok; }
 		self.live = false;
-		if (rt_set_console_mode(self.handle, self.previous) == 0) {
+		if (SetConsoleMode(self.handle, self.previous) == 0) {
 			return .err(from_last_error(.Terminal_Mode));
 		}
 		handler_handle.store(0);
@@ -472,15 +441,13 @@ impl Raw_Mode {
 		record: Input_Record = {};
 		for (;;) {
 			read: u32 = 0;
-			if (rt_read_console_input(self.handle, &mut record, 1, &mut read) == 0) {
+			if (ReadConsoleInputW(self.handle, &mut record, 1, &mut read) == 0) {
 				return .err(from_last_error(.Read_Key));
 			}
 			if (read == 0) {
-				if (self.pending != 0) {
-					self.pending = 0;
-					return .err(io.make_error(.Invalid_Data, .Read_Key));
-				}
-				return .err(io.make_error(.End_Of_Input, .Read_Key));
+				code := io.Code.Invalid_Data if self.pending != 0 else io.Code.End_Of_Input;
+				self.pending = 0;
+				return .err(io.make_error(code, .Read_Key));
 			}
 			if (record.event_type != u16(KEY_EVENT) || record.key_down == 0) {
 				continue;
@@ -490,100 +457,61 @@ impl Raw_Mode {
 				continue;
 			}
 			// standard-library "Raw mode and key events": malformed UTF-16 is
-			// Invalid_Data. Retain the following valid key in the repeat buffer.
-			low := record.unicode_char >= 0xDC00 && record.unicode_char <= 0xDFFF;
-			if (low && self.pending == 0) {
+			// Invalid_Data. A high half still set in `high` after this is unmatched.
+			unit := int(record.unicode_char);
+			high := int(self.pending);
+			self.pending = 0;
+			if (unit >= 0xDC00 && unit <= 0xDFFF) {
+				if (high == 0) { return .err(io.make_error(.Invalid_Data, .Read_Key)); }
+				unit = 0x10000 + ((high - 0xD800) << 10) + (unit - 0xDC00);
+				high = 0;
+			} else if (unit >= 0xD800 && unit <= 0xDBFF) {
+				self.pending = u16(unit);
+				if (high == 0) { continue; }
 				return .err(io.make_error(.Invalid_Data, .Read_Key));
 			}
-			unmatched := self.pending != 0 && !low;
-			if (unmatched) { self.pending = 0; }
-			switch (decode_record(inout self, record)) {
-			case .some(event):
-				if (record.repeat_count > 1 || unmatched) {
-					self.repeats = record.repeat_count;
-					if (self.repeats == 0) { self.repeats = 1; }
-					if (!unmatched) { self.repeats -= 1; }
-					self.repeated = event;
-				}
-				if (!unmatched) { return event; }
-			case .none:
+			state := record.control_state;
+			event := Key_Event{
+				key = .Character, value = rune(unit),
+				shift = (state & u32(SHIFT_PRESSED)) != 0,
+				control = (state & u32(LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0,
+				alt = (state & u32(LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0,
+			};
+			// A named key first: Enter, Tab, Escape and Backspace all carry a control
+			// character as well, and the name is the more useful answer.
+			named := key_for(int(vk));
+			if (named != .Character && unit <= 0xFFFF) {
+				event.key = named;
+				event.value = 0;
+			} else if (unit == 0) {
+				event.key = .Unknown;
 			}
-			if (unmatched) {
-				return .err(io.make_error(.Invalid_Data, .Read_Key));
-			}
+			// After an unmatched high half's error, this key follows in full.
+			self.repeated = event;
+			self.repeats = record.repeat_count if record.repeat_count > 0 else 1;
+			if (high != 0) { return .err(io.make_error(.Invalid_Data, .Read_Key)); }
+			self.repeats -= 1;
+			return event;
 		}
 	}
 }
 
-// One native record to one event, or `.none` when the record was only half of a
-// surrogate pair and the other half has still to arrive. `read_key` validates
-// UTF-16 first, so a pending high half here always has a matching low half.
+// The name of each low virtual-key code that has one. The zero, `.Character`,
+// marks a code without a name: the event carries its character instead.
 @(private)
-decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> Option(Key_Event) {
-	event: Key_Event = {};
-	event.shift = (record.control_state & u32(SHIFT_PRESSED)) != 0;
-	event.control =
-		(record.control_state & u32(LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
-	event.alt = (record.control_state & u32(LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
-
-	unit := record.unicode_char;
-	if (mode.pending != 0) {
-		high := mode.pending;
-		mode.pending = 0;
-		combined := 0x10000 + ((int(high) - 0xD800) << 10) + (int(unit) - 0xDC00);
-		event.key = .Character;
-		event.value = rune(combined);
-		return event;
-	}
-	if (unit >= 0xD800 && unit <= 0xDBFF) {
-		mode.pending = unit;
-		return .none;
-	}
-
-	// A named key first: Enter, Tab, Escape and Backspace all carry a control
-	// character as well, and the name is the more useful answer.
-	named := key_for(record.virtual_key);
-	if (named != .Unknown) {
-		event.key = named;
-		return event;
-	}
-	if (unit != 0) {
-		event.key = .Character;
-		event.value = rune(int(unit));
-		return event;
-	}
-	event.key = .Unknown;
-	return event;
-}
+LOW_KEYS :: [47]Key{
+	8 = .Backspace, 9 = .Tab, 13 = .Enter, 27 = .Escape,
+	33 = .Page_Up, 34 = .Page_Down, 35 = .End, 36 = .Home,
+	37 = .Left, 38 = .Up, 39 = .Right, 40 = .Down, 45 = .Insert, 46 = .Delete,
+};
 
 @(private)
-key_for :: proc(virtual_key: u16) -> Key {
-	code := int(virtual_key);
-	if (code == 8) { return .Backspace; }
-	if (code == 9) { return .Tab; }
-	if (code == 13) { return .Enter; }
-	if (code == 27) { return .Escape; }
-	if (code == 33) { return .Page_Up; }
-	if (code == 34) { return .Page_Down; }
-	if (code == 35) { return .End; }
-	if (code == 36) { return .Home; }
-	if (code == 37) { return .Left; }
-	if (code == 38) { return .Up; }
-	if (code == 39) { return .Right; }
-	if (code == 40) { return .Down; }
-	if (code == 45) { return .Insert; }
-	if (code == 46) { return .Delete; }
+key_for :: proc(code: int) -> Key {
+	if (code < LOW_KEYS.len()) { return LOW_KEYS[code]; }
 	if (code >= 112 && code <= 123) {
 		return Key.from_int(int(Key.F1) + (code - 112)) or_else Key.Unknown;
 	}
-	return .Unknown;
+	return .Character;
 }
-
-} else {
-
-// No non-Windows backend yet; `LOKE_OS` is a fixed `.Windows`, so this branch is
-// never selected.
-@(private)
-standard_handle :: proc(stream: Stream) -> int { return 0; }
 
 }

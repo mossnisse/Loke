@@ -240,6 +240,10 @@ checklist.
 
 ### Fixed
 
+- [`term.read_line`](docs/standard-library.md#standard-byte-streams-and-line-input) reads a
+  console line of up to 8,190 characters on Windows 10. Its console dropped what passed the
+  first read's buffer, so a typed or pasted line longer than 510 characters lost its end without
+  an error. It now also makes no scratch allocation for a line that fits that read.
 - `path.stem` removes the extension of a last element that begins like a drive
   ([`core:path`](docs/standard-library.md#corepath)). `stem("dir\\C:.foo")` was `C:.foo`, though
   `extension` of the same path was `.foo`; it is now `C:`.
