@@ -106,6 +106,11 @@ checklist.
 
 ### Changed
 
+- [`simd.reduce_add`](docs/standard-library.md#coresimd) over `u8` or `u16` lanes adds them at
+  twice their width and checks for overflow once, on the total, rather than lane by lane; it
+  panics for the same vectors as before. `simd.any` and `simd.all` fold the mask's lanes as bits.
+  At `-opt=speed`, 12 million rounds of a 32-lane `u8` sum and a 16-lane `any` and `all` take
+  85 ms, from 139.
 - A fixed-buffer [`mem.Arena`](docs/standard-library.md#coremem) needs 96 bytes rather than
   128, and keeps 32 more of them for allocations. After a reset, a provider-backed arena sizes
   its next block for the request at hand rather than for the largest block it held before the

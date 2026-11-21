@@ -959,10 +959,8 @@ eval_simd_reduce :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Eval_Value, suc
 		case .All:
 			result.boolean = result.boolean && lane.boolean
 		case .Add, .Mul:
-			folded, folded_ok := fold_arithmetic(
-				ev.k.c, fold == .Add ? .Plus : .Star, v.span, result.constant, lane.constant, info.element, ev.alloc,
-			)
-			result = eval_folded(ev, folded, folded_ok, info.element) or_return
+			op: Token_Kind = fold == .Add ? .Plus : .Star
+			result = eval_scalar_binary(ev, op, v.span, result, lane, info.element, info.element) or_return
 		case .Min, .Max:
 			if lane.kind == .Float && lane.float != lane.float {
 				continue

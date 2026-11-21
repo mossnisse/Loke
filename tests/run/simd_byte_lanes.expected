@@ -1,3 +1,7 @@
 [200, 3, 255, 9] 3 255 115
 [0, 0, 0, 0] [-127, 6, -2, 10]
 [true, false, true, false] [false, true, false, true] [false, true, false, true]
+255 64
+65535 65504
+true false
+true true

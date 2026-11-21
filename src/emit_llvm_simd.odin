@@ -141,9 +141,15 @@ emit_simd_select :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string
 	mask := emit_expr(e, v.bound[0])
 	left := emit_expr(e, v.bound[1])
 	right := emit_expr(e, v.bound[2])
-	bits := emit_value(e, "trunc <%d x i8> %s to <%d x i1>", info.count, mask, info.count)
+	bits := simd_mask_bits(e, int(info.count), mask)
 	llvm := llvm_type(e, as_type)
 	return emit_value(e, "select <%d x i1> %s, %s %s, %s %s", info.count, bits, llvm, left, llvm, right)
+}
+
+// A mask's `i8` lanes as the `i1` lanes `select` and the reductions take.
+@(private = "file")
+simd_mask_bits :: proc(e: ^Emitter, count: int, mask: string) -> string {
+	return emit_value(e, "trunc <%d x i8> %s to <%d x i1>", count, mask, count)
 }
 
 // Float sums and products use the ordered form, seeded with `-0.0` or `1.0`
@@ -159,14 +165,16 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	name := ""
 	switch fold := v.operation.(Call_Simd_Reduce).fold; fold {
 	case .Any, .All:
-		folded := simd_call_reduce(e, fold == .Any ? "or" : "and", lane, count, value, "")
-		return emit_value(e, "trunc i8 %s to i1", folded)
+		return simd_call_reduce(e, fold == .Any ? "or" : "and", "i1", count, simd_mask_bits(e, count, value), "")
 	case .Add, .Mul:
+		bits := type_bits(e.c, info.element)
+		if fold == .Add && !float && !signed && bits <= 16 {
+			return emit_simd_widened_sum(e, lane, bits, count, value)
+		}
 		if !float {
 			return emit_simd_checked_fold(e, fold == .Add ? .Plus : .Star, signed, lane, count, value)
 		}
-		bits := u16(type_bits(e.c, info.element))
-		start := fmt.aprintf("%s %s, ", lane, llvm_float(float_pattern(fold == .Add ? -0.0 : 1.0, bits), bits))
+		start := fmt.aprintf("%s %s, ", lane, llvm_float(float_pattern(fold == .Add ? -0.0 : 1.0, u16(bits)), u16(bits)))
 		return simd_call_reduce(e, fold == .Add ? "fadd" : "fmul", lane, count, value, start)
 	case .Min:
 		name = float ? "fmin" : (signed ? "smin" : "umin")
@@ -187,4 +195,18 @@ emit_simd_checked_fold :: proc(e: ^Emitter, op: Token_Kind, signed: bool, lane: 
 		result = index == 0 ? element : emit_checked_integer(e, op, signed, lane, result, element)
 	}
 	return result
+}
+
+// Every prefix of an unsigned sum is at most its total, so checking the total
+// once panics exactly where the left-to-right fold would. At twice the lane
+// width the sum is exact: at most 64 lanes (design.md "Element types and lane
+// counts") cannot carry past it. Measured for 8- and 16-bit lanes only.
+@(private = "file")
+emit_simd_widened_sum :: proc(e: ^Emitter, lane: string, bits, count: int, vector: string) -> string {
+	wide := fmt.aprintf("i%d", bits * 2)
+	widened := emit_value(e, "zext <%d x %s> %s to <%d x %s>", count, lane, vector, count, wide)
+	total := simd_call_reduce(e, "add", wide, count, widened, "")
+	overflowed := emit_value(e, "icmp ugt %s %s, %d", wide, total, (1 << uint(bits)) - 1)
+	panic_if(e, overflowed, "int.overflow", overflow_message(false))
+	return emit_value(e, "trunc %s %s to %s", wide, total, lane)
 }

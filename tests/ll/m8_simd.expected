@@ -15,8 +15,14 @@ declare { <4 x i32>, <4 x i1> } @llvm.sadd.with.overflow.v4i32(<4 x i32>, <4 x i
 br i1 %t*, label %div.zero.*, label %ok.*
 %t* = sdiv <4 x i32> %t*, %t*
 %t* = fadd <4 x float> %t*, %t*
-declare i8 @llvm.vector.reduce.or.v4i8(<4 x i8>)
-declare i8 @llvm.vector.reduce.and.v4i8(<4 x i8>)
+%t* = trunc <4 x i8> %t* to <4 x i1>
+declare i1 @llvm.vector.reduce.and.v4i1(<4 x i1>)
+not reduce.or.v4i8
+not reduce.and.v4i8
+%t* = zext <16 x i8> %t* to <16 x i16>
+%t* = call i16 @llvm.vector.reduce.add.v16i16(<16 x i16> %t*)
+%t* = icmp ugt i16 %t*, 255
+%t* = trunc i16 %t* to i8
 declare float @llvm.vector.reduce.fadd.v4f32(float, <4 x float>)
 declare float @llvm.vector.reduce.fmax.v4f32(<4 x float>)
 declare i1 @llvm.vector.reduce.or.v4i1(<4 x i1>)

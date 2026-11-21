@@ -10,4 +10,18 @@ main :: proc() {
 	fmt.println(i % -1, i + 1);
 	m: Simd(bool, 4) = {true, false, true, false};
 	fmt.println(m, ~m, m ~ true);
+
+	// An unsigned sum checks only its total, which bounds every prefix; a total
+	// at the type's maximum fits, from the widest vector down.
+	wide: Simd(u8, 64) = {200, 55};
+	fmt.println(simd.reduce_add(wide), simd.reduce_add(Simd(u8, 64)(1)));
+	halves: Simd(u16, 32) = {65000, 535};
+	fmt.println(simd.reduce_add(halves), simd.reduce_add(Simd(u16, 32)(2047)));
+
+	// A mask from an array, as well as from a comparison, folds lane by lane.
+	flags: [16]bool = {};
+	flags[9] = true;
+	fmt.println(simd.any(simd.from_array(flags)), simd.all(simd.from_array(flags)));
+	flags = {true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true};
+	fmt.println(simd.any(simd.from_array(flags)), simd.all(simd.from_array(flags)));
 }

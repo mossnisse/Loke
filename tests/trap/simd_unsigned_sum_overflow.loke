@@ -1,0 +1,14 @@
+package main;
+
+import "core:fmt";
+import "core:simd";
+
+// design.md "SIMD vectors": an integer sum folds left to right through the
+// checked scalar operator. An unsigned sum is checked once, on its total, which
+// panics exactly when a prefix would: here the last lane overflows it.
+main :: proc() {
+	bytes: Simd(u8, 32) = {100, 100, 55};
+	fmt.println(simd.reduce_add(bytes));
+	bytes[31] = 1;
+	fmt.println(simd.reduce_add(bytes));
+}

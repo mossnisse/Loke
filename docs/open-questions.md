@@ -427,6 +427,79 @@ that the flag fits in the node's spare bits and that carrying it in `Number`
 does not increase the view's size.
 [Runtime validator](../runtime/text.c) · [String conversions](design.md#string-type-conversions) · [JSON number conversions](../core/encoding/json/document.loke)
 
+## Sharing the SIMD array casts
+
+Should `simd.from_array` and `simd.to_array` call `unsafe.transmute` instead of
+the dedicated `simd_cast` intrinsic? Deleting the intrinsic removes about 35
+lines from the checker, evaluator, and backend, and a substitution passed
+`lib_simd` at `-opt=none` and `-opt=speed`, plus separate round trips for
+masks, 64-byte vectors, and distinct float lanes carrying a NaN payload and
+negative zero. Two costs offset most of that saving. The evaluator's
+`transmute` serializes a value through its bytes, so it needs its own
+copy-and-retype path for a vector and its array. The backend's aggregate
+`transmute` stores the value to a new slot, so it needs to load a place in
+place, at that place's effective alignment, to keep the cast as short as it is.
+For `from_array([16]bool)` on baseline x86-64 at `-O0`, the current wrapper
+emits 77 instructions, direct `transmute` emits 107, and loading from the
+existing parameter slot emits 73. The second path would help every aggregate
+`transmute`, which is the better reason to write it.
+[Cast wrappers](../core/simd/simd.loke) ·
+[Reinterpretation lowering](../src/emit_llvm_expr.odin) ·
+[SIMD runtime and compile-time coverage](../tests/run/lib_simd.loke)
+
+## Slice library audit follow-ups
+
+- **Move `sort_by` into Loke.** Build introsort from selection's pivot,
+  partition, and insertion-sort helpers, with `make_heap` and `pop_heap` as
+  the depth fallback. Keep the small `Ordering` adapter to pass the comparator
+  by reference. The dedicated checker, LLVM thunk, and stateful C entry point
+  can go, saving about 120 implementation lines after adding the Loke loop.
+  The prototype passed the slice, heap, priority-queue, capture, local-impl,
+  and large-record cases. The optimized benchmark executable grew by 1.5 KiB
+  for two comparator types. Check code size across more instantiations and
+  unoptimized performance for large elements. The emitted IR for the large
+  record case had more 4 KiB temporaries and copies.
+  [Slice sort](../core/slice/slice.loke) ·
+  [Selection helpers](../core/slice/select.loke) ·
+  [Checker](../src/container.odin) ·
+  [LLVM thunk](../src/emit_llvm_sequence.odin) ·
+  [Runtime sort](../runtime/container.c)
+- **Reuse `partition` in the median-of-medians fallback.** Split off the
+  pivot with `split_at_mut(1)`, partition the remainder into strictly earlier
+  elements, then partition the tail into ties and strictly later elements.
+  Swap the pivot into the tie block, then narrow to a strict side or finish.
+  The prototype used `Ordering` in the predicates so private caller
+  comparators still worked. It removed 20 lines and passed the forced
+  fallback, adversarial, and move-only tests, plus a compile-time fallback
+  probe. The fast path keeps its two-ended partition. In the benchmark,
+  forcing the fallback took 38.7 to 37.6 ms for scattered keys and 23.3 to
+  23.9 ms with eight distinct keys.
+  [Selection and partition](../core/slice/select.loke) ·
+  [Forced fallback tests](../core/slice/select_test.loke) ·
+  [Selection contract](standard-library.md#partitioning-and-selection)
+- **Use existing operations in the small helpers.** Have `binary_search`
+  call `partition_point` with a borrowed key, then check equality at the
+  insertion index. Compare `index_of` directly with `.none` in `contains`,
+  use `.reversed()` over the index range in `last_index_of`, use a half-length
+  loop in `reverse`, and assign through `foreach (&mut element in values)` in
+  `fill`. Together these cut 16 lines in a prototype that passed `lib_slice`,
+  `lib_sort_member`, and `eval_slice_rearrange`.
+  [Slice helpers](../core/slice/slice.loke)
+- **Scan once for the first or last rank.** Share the index scan with `min`
+  and `max`, and swap the winner into place at the end. For these ranks the
+  prototype does exactly `n - 1` comparisons and at most one swap, with
+  about 12 lines added overall. It passed `lib_slice`, `lib_slice_select`,
+  and `eval_slice_rearrange`.
+  [Selection entry point](../core/slice/select.loke) ·
+  [Minimum and maximum](../core/slice/slice.loke)
+
+The Windows x86-64 timing probe used `-opt=speed`. Each result is the median
+of five runs, timing 65 operations on 32,768 elements per run with input
+preparation excluded. With scattered keys, `sort_by` took 215 to 108 ms for
+`int` and 222 to 122 ms for a 32-byte record. Selecting the first rank took
+14.1 to 1.7 ms and selecting the last took 13.0 to 1.7 ms. Checksums matched
+for every timed case.
+
 ## Sharing the endian wrappers
 
 Should `Little_Endian(T)` and `Big_Endian(T)` become aliases for
