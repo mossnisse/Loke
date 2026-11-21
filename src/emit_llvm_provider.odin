@@ -22,30 +22,29 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	switch symbol.provider_op {
 	case .None:
-	case .Open:
-		opened := emit_value(e, "call ptr @loke_rt_v1_arena_open(ptr %%arg0)")
-		emit_provider_open_check(e, opened, "%arg0")
-		emit_provider_policy(e, opened)
-		out := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
-		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
+	case .Open, .Try_Open:
+		// The constructor's `policy` is its second parameter.
+		opened := emit_value(e, "call ptr @loke_rt_v1_arena_open(ptr %%arg0, i64 %%arg1)")
+		value := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
+		failed := is_null(e, opened)
+		if symbol.provider_op == .Try_Open {
+			fmt.sbprintfln(
+				&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, failed, value),
+			)
+		} else {
+			alloc_failed_if(e, failed, "%arg0", "arena.failed")
+			fmt.sbprintfln(&e.b, "  ret %s %s", provider, value)
+		}
 
 	case .Open_Fixed:
 		// Fixed storage cannot run out; a too-small buffer is a runtime fault.
 		buffer := llvm_type(e, symbol.params[0])
 		data, length := ptr_len_parts(e, buffer, "%arg0")
-		opened := emit_value(e, "call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", data, length)
-		emit_provider_policy(e, opened)
+		opened := emit_value(
+			e, "call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s, i64 %%arg1)", data, length,
+		)
 		out := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
 		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
-
-	case .Try_Open:
-		opened := emit_value(e, "call ptr @loke_rt_v1_arena_open(ptr %%arg0)")
-		emit_provider_policy(e, opened)
-		value := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
-		failed := is_null(e, opened)
-		fmt.sbprintfln(
-			&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, failed, value),
-		)
 
 	case .Handle:
 		control := extract(e, provider, "%arg0", PROVIDER_CONTROL)
@@ -53,16 +52,4 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  ret ptr %s", handle)
 	}
 	fmt.sbprintln(&e.b, "}")
-}
-
-// The constructor's `policy`, its second parameter. A failed `try_` open has no
-// control block, which the runtime ignores.
-@(private = "file")
-emit_provider_policy :: proc(e: ^Emitter, control: string) {
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_arena_set_failure(ptr %s, i64 %%arg1)", control)
-}
-
-@(private = "file")
-emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
-	alloc_failed_if(e, is_null(e, control), allocator, "arena.failed")
 }

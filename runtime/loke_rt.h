@@ -118,26 +118,9 @@ void loke_rt_v1_provider_init_end(void);
  * to it, so moving the owner never moves the record, and `record.region` points
  * at the record itself. That is what makes region identity survive a move.
  *
- * One bump-allocated chain of blocks. A fixed-buffer arena has `parent == NULL`
- * and cannot grow past the buffer it was given; a provider-backed one asks its
- * parent for another block. `first` is the block the control itself lives in and
- * is never released by a reset, which is what makes a reset *reusable*. */
-typedef struct loke_rt_arena_block_v1 {
-	struct loke_rt_arena_block_v1 *next;
-	uint64_t size; /* usable bytes following this header */
-	uint64_t used;
-	uint64_t owned; /* 1 when a reset releases it back to `parent` */
-} loke_rt_arena_block_v1;
-
-typedef struct loke_rt_arena_v1 {
-	/* First, so `&arena->record` is the handle and the two addresses coincide. */
-	loke_rt_allocator_v1 record;
-	const loke_rt_allocator_v1 *parent;
-	loke_rt_arena_block_v1 *blocks; /* newest first */
-	loke_rt_arena_block_v1 *first;
-	uint64_t block_bytes;   /* what the next parent block asks for */
-	uint64_t control_bytes; /* the control allocation's own size, for `drop` */
-} loke_rt_arena_v1;
+ * The record is private to the runtime: generated code only passes the
+ * pointer back. */
+typedef struct loke_rt_arena_v1 loke_rt_arena_v1;
 
 /* The smallest fixed buffer that can host a control block at all. A caller's
  * buffer smaller than this is a program fault, not an allocation failure. */
@@ -145,13 +128,11 @@ uint64_t loke_rt_v1_arena_min_buffer(void);
 
 /* Both answer NULL on allocation failure, leaving nothing behind. `fixed` carves
  * its control block out of the front of the caller's buffer and therefore never
- * allocates; the buffer must outlive the arena, which the compiler checks. */
-loke_rt_arena_v1 *loke_rt_v1_arena_open(const loke_rt_allocator_v1 *parent);
-loke_rt_arena_v1 *loke_rt_v1_arena_open_fixed(void *buffer, int64_t size);
-/* design.md "Allocation failure": a `LOKE_RT_ON_FAILURE_*` policy for the
- * region's own failures, set right after it opens. NULL, a failed open, is
- * ignored. */
-void loke_rt_v1_arena_set_failure(loke_rt_arena_v1 *arena, int64_t policy);
+ * allocates; the buffer must outlive the arena, which the compiler checks.
+ * `policy` is the design.md "Allocation failure" `LOKE_RT_ON_FAILURE_*` policy
+ * for the region's own failures. */
+loke_rt_arena_v1 *loke_rt_v1_arena_open(const loke_rt_allocator_v1 *parent, int64_t policy);
+loke_rt_arena_v1 *loke_rt_v1_arena_open_fixed(void *buffer, int64_t size, int64_t policy);
 /* Releases every block and, for a provider-backed arena, the control block
  * itself. A NULL arena is the moved-from/zero value and drops to nothing. */
 void loke_rt_v1_arena_drop(loke_rt_arena_v1 *arena);

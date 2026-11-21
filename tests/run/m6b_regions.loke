@@ -283,6 +283,35 @@ shrink_below_top :: proc() {
 	fmt.println(xs.cap(), xs[0]);
 }
 
+// The smallest buffer an arena accepts holds the control block, its alignment
+// slack, and at least one byte to allocate.
+smallest_buffer :: proc() {
+	buffer: [96]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[mut :]);
+	switch (unsafe.try_new(u8(7), arena.allocator())) {
+	case .ok(p): fmt.println(p[0]);
+	case .err: fmt.println(false);
+	}
+}
+
+// A reset forgets a child's large block, so its next one is sized for the next
+// request: 8 KiB rather than 32, which leaves the 48 KiB parent room for 16,000
+// more bytes.
+reset_forgets_large_block :: proc() {
+	buffer: [49152]u8 = {};
+	parent := mem.Arena.from_buffer(buffer[mut :]);
+	child := mem.Arena.init(parent.allocator());
+	{
+		big: [dynamic]u8 via child.allocator() = {};
+		big.reserve(20000);
+	}
+	free_all(child.allocator());
+	small: [dynamic]u8 via child.allocator() = {};
+	small.reserve(5000);
+	after: [dynamic]u8 via parent.allocator() = {};
+	fmt.println(after.try_reserve(16000) == .ok);
+}
+
 // A fixed arena's buffer is the caller's again once the arena has ended.
 buffer_after_arena :: proc() {
 	buffer: [256]u8 = {};
@@ -383,6 +412,8 @@ main :: proc() {
 	zero_allocator();
 	zero_provider();
 	buffer_after_arena();
+	smallest_buffer();
+	reset_forgets_large_block();
 	shrink_below_top();
 	provider_ends();
 	environment();

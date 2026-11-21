@@ -18,6 +18,31 @@
 #define ARENA_DEFAULT_BLOCK 4096u
 #define ARENA_CONTROL_ALIGN 16u
 
+/* A block's bytes run from just past its header to `limit`; `cursor` is the
+ * next free one. Both are addresses, so a bump compares against `limit`
+ * directly. */
+typedef struct arena_block {
+	struct arena_block *next;
+	uintptr_t cursor;
+	uintptr_t limit;
+} arena_block;
+
+/* A fixed-buffer arena has `parent == NULL` and cannot grow past the buffer it
+ * was given; a provider-backed one asks its parent for another block. */
+struct loke_rt_arena_v1 {
+	/* First, so `&arena->record` is the handle and the two addresses coincide. */
+	loke_rt_allocator_v1 record;
+	const loke_rt_allocator_v1 *parent;
+	arena_block *blocks; /* newest first, ending at `first` */
+	/* The block whose bytes follow this record. A reset keeps it, which is what
+	 * makes a reset *reusable*; for a provider-backed arena it shares the one
+	 * `ARENA_DEFAULT_BLOCK` allocation with the record. */
+	arena_block first;
+};
+
+LOKE_RT_STATIC_ASSERT(
+	sizeof(loke_rt_arena_v1) + ARENA_CONTROL_ALIGN <= ARENA_DEFAULT_BLOCK, arena_control_fits);
+
 static uint64_t arena_align(uint64_t align) {
 	return align == 0 ? 1 : align;
 }
@@ -31,103 +56,42 @@ static uint64_t arena_round_up(uint64_t value, uint64_t align) {
 	return slack & ~(align - 1);
 }
 
-static uint8_t *arena_block_bytes(loke_rt_arena_block_v1 *block) {
-	return (uint8_t *)block + sizeof(loke_rt_arena_block_v1);
-}
-
 /* The bump itself. Answers NULL when this block cannot hold the request, which
  * is the caller's signal to reach for another one. */
-static void *arena_bump(loke_rt_arena_block_v1 *block, uint64_t size, uint64_t align) {
-	uint64_t base = (uint64_t)(uintptr_t)arena_block_bytes(block);
-	uint64_t at = arena_round_up(base + block->used, align);
-	uint64_t end;
-	if (at == 0) {
+static void *arena_bump(arena_block *block, uint64_t size, uint64_t align) {
+	uint64_t at = arena_round_up(block->cursor, align);
+	uint64_t end = at + size;
+	if (at == 0 || end < at || end > block->limit) {
 		return 0;
 	}
-	end = at + size;
-	if (end < at || end > base + block->size) {
-		return 0;
-	}
-	block->used = end - base;
+	block->cursor = end;
 	return (void *)(uintptr_t)at;
 }
 
 uint64_t loke_rt_v1_arena_min_buffer(void) {
-	return sizeof(loke_rt_arena_v1) + sizeof(loke_rt_arena_block_v1) + ARENA_CONTROL_ALIGN;
+	return sizeof(loke_rt_arena_v1) + ARENA_CONTROL_ALIGN;
 }
 
-/* Lays the control block, its embedded first block header, and the usable
- * remainder out over `storage`. Shared by both constructors, because a
- * provider-backed arena's first block is exactly a fixed buffer it happens to
- * own. */
-static loke_rt_arena_v1 *arena_place(
-	void *storage, uint64_t size, const loke_rt_allocator_v1 *parent, uint64_t block_bytes) {
-	uint64_t base = (uint64_t)(uintptr_t)storage;
-	uint64_t control_at = arena_round_up(base, ARENA_CONTROL_ALIGN);
-	uint64_t header_at, usable_at;
-	loke_rt_arena_v1 *arena;
-	loke_rt_arena_block_v1 *block;
-
-	if (control_at == 0 || control_at < base) {
-		return 0;
+/* Returns every block newer than `first` to the parent and rewinds `first`.
+ * A fixed-buffer arena never has any, since it cannot grow. */
+static void arena_rewind(loke_rt_arena_v1 *arena) {
+	while (arena->blocks != &arena->first) {
+		arena_block *block = arena->blocks;
+		arena->blocks = block->next;
+		loke_rt_v1_free(arena->parent, block, block->limit - (uintptr_t)block, ARENA_CONTROL_ALIGN);
 	}
-	header_at = arena_round_up(control_at + sizeof(loke_rt_arena_v1), ARENA_CONTROL_ALIGN);
-	if (header_at == 0) {
-		return 0;
-	}
-	usable_at = header_at + sizeof(loke_rt_arena_block_v1);
-	if (usable_at < header_at || usable_at > base + size) {
-		return 0;
-	}
-
-	arena = (loke_rt_arena_v1 *)(uintptr_t)control_at;
-	block = (loke_rt_arena_block_v1 *)(uintptr_t)header_at;
-	block->next = 0;
-	block->size = base + size - usable_at;
-	block->used = 0;
-	block->owned = 0; /* it lives in the control allocation, so drop releases it */
-
-	memset(&arena->record, 0, sizeof(arena->record));
-	arena->record.abi_version = LOKE_RT_ABI_VERSION;
-	arena->record.record_size = (uint32_t)sizeof(loke_rt_allocator_v1);
-	arena->record.state = arena;
-	/* design.md: "a provider whose allocations all belong to one resettable
-	 * region points this at itself". */
-	arena->record.region = arena;
-	arena->record.ops = 0; /* filled in by the caller, which owns the ops table */
-	arena->record.on_failure = LOKE_RT_ON_FAILURE_PANIC;
-	arena->parent = parent;
-	arena->blocks = block;
-	arena->first = block;
-	arena->block_bytes = block_bytes;
-	arena->control_bytes = size;
-	return arena;
-}
-
-static void arena_release_blocks(loke_rt_arena_v1 *arena, int32_t keep_first) {
-	loke_rt_arena_block_v1 *block = arena->blocks;
-	while (block != 0) {
-		loke_rt_arena_block_v1 *next = block->next;
-		if (block->owned && arena->parent != 0) {
-			loke_rt_v1_free(
-				arena->parent, block, sizeof(loke_rt_arena_block_v1) + block->size, ARENA_CONTROL_ALIGN);
-		}
-		block = next;
-	}
-	arena->blocks = keep_first ? arena->first : 0;
-	if (keep_first) {
-		arena->first->next = 0;
-		arena->first->used = 0;
-	}
+	arena->first.cursor = (uintptr_t)(arena + 1);
 }
 
 /* One more block from the parent, at least large enough for `size`/`align`. The
- * request doubles until it is comfortable, so a long-lived arena stops asking. */
+ * request starts at the newest block's size and doubles until it is
+ * comfortable, so a long-lived arena stops asking; a reset rewinds to `first`
+ * and so forgets an earlier large request. */
 static int32_t arena_grow(loke_rt_arena_v1 *arena, uint64_t size, uint64_t align) {
-	uint64_t want = arena->block_bytes;
-	uint64_t needed = size + align + sizeof(loke_rt_arena_block_v1);
-	void *storage;
-	loke_rt_arena_block_v1 *block;
+	arena_block *newest = arena->blocks;
+	uint64_t want = newest == &arena->first ? ARENA_DEFAULT_BLOCK : newest->limit - (uintptr_t)newest;
+	uint64_t needed = size + align + sizeof(arena_block);
+	arena_block *block;
 
 	if (arena->parent == 0) {
 		return 0; /* a fixed buffer is exactly as large as the caller made it */
@@ -142,27 +106,23 @@ static int32_t arena_grow(loke_rt_arena_v1 *arena, uint64_t size, uint64_t align
 		}
 		want = doubled;
 	}
-	storage = loke_rt_v1_alloc(arena->parent, want, ARENA_CONTROL_ALIGN);
-	if (storage == 0) {
+	block = (arena_block *)loke_rt_v1_alloc(arena->parent, want, ARENA_CONTROL_ALIGN);
+	if (block == 0) {
 		return 0;
 	}
-	block = (loke_rt_arena_block_v1 *)storage;
-	block->next = arena->blocks;
-	block->size = want - sizeof(loke_rt_arena_block_v1);
-	block->used = 0;
-	block->owned = 1;
+	block->next = newest;
+	block->cursor = (uintptr_t)(block + 1);
+	block->limit = (uintptr_t)block + want;
 	arena->blocks = block;
-	arena->block_bytes = want;
 	return 1;
 }
 
+/* Every operation accepts a NULL state: that is the zero value's empty region,
+ * which holds no memory and has nothing to release. */
 static void *arena_alloc(void *state, uint64_t size, uint64_t align) {
 	loke_rt_arena_v1 *arena = (loke_rt_arena_v1 *)state;
 	void *out;
-	if (arena == 0) {
-		return 0;
-	}
-	if (size == 0) {
+	if (arena == 0 || size == 0) {
 		return 0;
 	}
 	align = arena_align(align);
@@ -179,12 +139,7 @@ static void *arena_alloc(void *state, uint64_t size, uint64_t align) {
 /* Whether `ptr` is the newest allocation of the newest block, which is the case
  * a growing container hits every time it is the only thing allocating. */
 static int32_t arena_is_top(loke_rt_arena_v1 *arena, void *ptr, uint64_t old_size) {
-	uint64_t base;
-	if (ptr == 0 || arena->blocks == 0) {
-		return 0;
-	}
-	base = (uint64_t)(uintptr_t)arena_block_bytes(arena->blocks);
-	return (uint64_t)(uintptr_t)ptr + old_size == base + arena->blocks->used;
+	return ptr != 0 && (uintptr_t)ptr + old_size == arena->blocks->cursor;
 }
 
 static void *arena_resize(void *state, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align) {
@@ -197,10 +152,9 @@ static void *arena_resize(void *state, void *ptr, uint64_t old_size, uint64_t ne
 		return arena_alloc(state, new_size, align);
 	}
 	if (arena_is_top(arena, ptr, old_size)) {
-		uint64_t base = (uint64_t)(uintptr_t)arena_block_bytes(arena->blocks);
-		uint64_t end = (uint64_t)(uintptr_t)ptr + new_size;
-		if (end >= (uint64_t)(uintptr_t)ptr && end <= base + arena->blocks->size) {
-			arena->blocks->used = end - base;
+		uintptr_t end = (uintptr_t)ptr + new_size;
+		if (end >= (uintptr_t)ptr && end <= arena->blocks->limit) {
+			arena->blocks->cursor = end;
 			return ptr;
 		}
 	}
@@ -213,7 +167,7 @@ static void *arena_resize(void *state, void *ptr, uint64_t old_size, uint64_t ne
 	if (out == 0) {
 		return 0; /* design.md: the old allocation is still live and unchanged */
 	}
-	memcpy(out, ptr, (size_t)(old_size < new_size ? old_size : new_size));
+	memcpy(out, ptr, (size_t)old_size);
 	return out;
 }
 
@@ -224,11 +178,8 @@ static void *arena_resize(void *state, void *ptr, uint64_t old_size, uint64_t ne
 static void arena_free(void *state, void *ptr, uint64_t size, uint64_t align) {
 	loke_rt_arena_v1 *arena = (loke_rt_arena_v1 *)state;
 	(void)align;
-	if (arena == 0 || ptr == 0) {
-		return;
-	}
-	if (arena_is_top(arena, ptr, size)) {
-		arena->blocks->used -= size;
+	if (arena != 0 && arena_is_top(arena, ptr, size)) {
+		arena->blocks->cursor -= size;
 	}
 }
 
@@ -236,11 +187,9 @@ static void arena_free(void *state, void *ptr, uint64_t size, uint64_t align) {
  * region", and the region stays usable afterwards -- which is what makes a
  * successful reset permit later reuse. */
 static int32_t arena_reset(void *state) {
-	loke_rt_arena_v1 *arena = (loke_rt_arena_v1 *)state;
-	if (arena == 0) {
-		return 0;
+	if (state != 0) {
+		arena_rewind((loke_rt_arena_v1 *)state);
 	}
-	arena_release_blocks(arena, 1);
 	return 1;
 }
 
@@ -251,93 +200,63 @@ static const loke_rt_allocator_ops_v1 loke_rt_arena_ops = {
 	arena_reset,
 };
 
-loke_rt_arena_v1 *loke_rt_v1_arena_open(const loke_rt_allocator_v1 *parent) {
+/* Lays the control record and its embedded first block over `storage`, which
+ * both constructors have already checked is large enough. A provider-backed
+ * arena's first block is exactly a fixed buffer it happens to own. */
+static loke_rt_arena_v1 *arena_place(
+	void *storage, uint64_t size, const loke_rt_allocator_v1 *parent, int64_t policy) {
+	loke_rt_arena_v1 *arena =
+		(loke_rt_arena_v1 *)(uintptr_t)arena_round_up((uintptr_t)storage, ARENA_CONTROL_ALIGN);
+	*arena = (loke_rt_arena_v1){
+		/* design.md: "a provider whose allocations all belong to one resettable
+		 * region points this at itself". */
+		.record = {LOKE_RT_ABI_VERSION, (uint32_t)sizeof(loke_rt_allocator_v1), arena, arena,
+			&loke_rt_arena_ops, (uint32_t)policy, 0},
+		.parent = parent,
+		.blocks = &arena->first,
+		.first = {0, (uintptr_t)(arena + 1), (uintptr_t)storage + size},
+	};
+	return arena;
+}
+
+loke_rt_arena_v1 *loke_rt_v1_arena_open(const loke_rt_allocator_v1 *parent, int64_t policy) {
 	void *storage;
-	loke_rt_arena_v1 *arena;
 	if (parent == 0) {
 		parent = loke_rt_v1_selected_allocator();
 	}
 	storage = loke_rt_v1_alloc(parent, ARENA_DEFAULT_BLOCK, ARENA_CONTROL_ALIGN);
-	if (storage == 0) {
-		return 0;
-	}
-	arena = arena_place(storage, ARENA_DEFAULT_BLOCK, parent, ARENA_DEFAULT_BLOCK);
-	if (arena == 0) {
-		loke_rt_v1_free(parent, storage, ARENA_DEFAULT_BLOCK, ARENA_CONTROL_ALIGN);
-		return 0;
-	}
-	arena->record.ops = &loke_rt_arena_ops;
-	return arena;
+	return storage == 0 ? 0 : arena_place(storage, ARENA_DEFAULT_BLOCK, parent, policy);
 }
 
-loke_rt_arena_v1 *loke_rt_v1_arena_open_fixed(void *buffer, int64_t size) {
-	loke_rt_arena_v1 *arena;
+loke_rt_arena_v1 *loke_rt_v1_arena_open_fixed(void *buffer, int64_t size, int64_t policy) {
 	if (buffer == 0 || size < 0 || (uint64_t)size < loke_rt_v1_arena_min_buffer()) {
 		/* A buffer too small to hold a control block is a caller error, not an
 		 * allocation failure: no policy could make it succeed. */
 		loke_rt_v1_container_fault("this buffer is too small to host an arena");
 	}
-	arena = arena_place(buffer, (uint64_t)size, 0, 0);
-	if (arena == 0) {
-		loke_rt_v1_container_fault("this buffer is too small to host an arena");
-	}
-	arena->record.ops = &loke_rt_arena_ops;
-	return arena;
-}
-
-void loke_rt_v1_arena_set_failure(loke_rt_arena_v1 *arena, int64_t policy) {
-	if (arena != 0) {
-		arena->record.on_failure = (uint32_t)policy;
-	}
+	return arena_place(buffer, (uint64_t)size, 0, policy);
 }
 
 void loke_rt_v1_arena_drop(loke_rt_arena_v1 *arena) {
-	const loke_rt_allocator_v1 *parent;
 	if (arena == 0) {
 		return; /* the zero or moved-from value */
 	}
-	parent = arena->parent;
-	arena_release_blocks(arena, 0);
-	if (parent != 0) {
-		loke_rt_v1_free(parent, arena, arena->control_bytes, ARENA_CONTROL_ALIGN);
+	arena_rewind(arena);
+	if (arena->parent != 0) {
+		loke_rt_v1_free(arena->parent, arena, ARENA_DEFAULT_BLOCK, ARENA_CONTROL_ALIGN);
 	}
 }
 
 /* design.md "Allocators": the zero `Arena` or `Scratch` owns an empty region.
  * Allocating from it fails and resetting it does nothing, so its handle is one
- * shared record rather than nil, which would mean the default provider. */
-static void *empty_alloc(void *state, uint64_t size, uint64_t align) {
-	(void)state, (void)size, (void)align;
-	return 0;
-}
-
-static void *empty_resize(void *state, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align) {
-	(void)state, (void)ptr, (void)old_size, (void)new_size, (void)align;
-	return 0;
-}
-
-static void empty_free(void *state, void *ptr, uint64_t size, uint64_t align) {
-	(void)state, (void)ptr, (void)size, (void)align;
-}
-
-static int32_t empty_reset(void *state) {
-	(void)state;
-	return 1;
-}
-
-static const loke_rt_allocator_ops_v1 loke_rt_empty_ops = {
-	empty_alloc,
-	empty_resize,
-	empty_free,
-	empty_reset,
-};
-
+ * shared record with a NULL state rather than nil, which would mean the default
+ * provider. */
 static const loke_rt_allocator_v1 loke_rt_empty_region = {
 	LOKE_RT_ABI_VERSION,
 	(uint32_t)sizeof(loke_rt_allocator_v1),
 	0,
 	(void *)&loke_rt_empty_region,
-	&loke_rt_empty_ops,
+	&loke_rt_arena_ops,
 	LOKE_RT_ON_FAILURE_PANIC,
 	0,
 };

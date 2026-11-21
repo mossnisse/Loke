@@ -106,6 +106,11 @@ checklist.
 
 ### Changed
 
+- A fixed-buffer [`mem.Arena`](docs/standard-library.md#coremem) needs 96 bytes rather than
+  128, and keeps 32 more of them for allocations. After a reset, a provider-backed arena sizes
+  its next block for the request at hand rather than for the largest block it held before the
+  reset, so a child arena in a 48 KiB fixed parent that allocated 20,000 bytes, reset, and then
+  allocated 5,000 asks the parent for 8 KiB rather than 32, leaving it room for 16,000 more.
 - [`io.copy`](docs/standard-library.md#shared-io-contract) given a `buffer` no longer reserves
   and zeroes its own 4 KiB fallback buffer as well.
 - [`Directory_Reader.next`](docs/standard-library.md#filesystem-operations) decodes each name

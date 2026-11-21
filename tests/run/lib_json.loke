@@ -441,7 +441,7 @@ allocation :: proc() {
 	failed := 0;
 	succeeded := 0;
 	other := 0;
-	for (size := 256; size <= 4096; size += 8) {
+	for (size := 96; size <= 4096; size += 8) {
 		room: [4096]u8 = {};
 		arena := mem.Arena.from_buffer(room[mut :size]);
 		switch (json.parse_text(text, arena.allocator())) {
@@ -459,7 +459,7 @@ allocation :: proc() {
 	failed = 0;
 	succeeded = 0;
 	other = 0;
-	for (size := 256; size <= 4096; size += 8) {
+	for (size := 96; size <= 4096; size += 8) {
 		room: [4096]u8 = {};
 		arena := mem.Arena.from_buffer(room[mut :size]);
 		switch (json.stringify(root_of(&document), arena.allocator())) {

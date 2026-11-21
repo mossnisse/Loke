@@ -1,0 +1,10 @@
+package main; import "core:fmt"; import "core:mem";
+
+// core:mem "from_buffer": a buffer below the 96-byte minimum ends the process
+// rather than failing, since no policy could make it succeed.
+
+main :: proc() {
+	buffer: [95]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[mut :]);
+	fmt.println("not reached", arena.allocator() != Allocator{});
+}

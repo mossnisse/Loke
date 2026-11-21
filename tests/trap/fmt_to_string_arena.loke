@@ -11,17 +11,17 @@ package main;
 // allocation failure policy and the process stops. There is no `try_to_string`
 // to report it to.
 //
-// 448 is tuned, and is the point of the case: the arena holds the 120-byte
+// 416 is tuned, and is the point of the case: the arena holds the 120-byte
 // result comfortably, and does not hold it *plus* the scratch buffer and the
-// one growth step that filling it costs. Below 320 both spellings fail and
-// above 512 both succeed, so a change to the 64-byte initial reserve or to the
+// one growth step that filling it costs. Below 288 both spellings fail and
+// above 480 both succeed, so a change to the 64-byte initial reserve or to the
 // growth factor moves this window and the number has to move with it.
 
 import "core:fmt";
 import "core:mem";
 
 main :: proc() {
-	room: [448]u8 = {};
+	room: [416]u8 = {};
 	arena := mem.Arena.from_buffer(room[mut :]);
 	fmt.println("before");
 	long := "0123456789" + "0123456789" + "0123456789" + "0123456789" +

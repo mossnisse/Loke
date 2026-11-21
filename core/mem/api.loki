@@ -77,9 +77,9 @@ Arena :: ---;
 impl Arena {
 	/*
 		An arena over `buffer`, allocating nothing. The buffer needs room for the
-		control block, one block header, and the slack to align the first of
-		them, 128 bytes on x86-64; a smaller one ends the process rather than
-		failing, since no policy could make it succeed.
+		control block and the slack to align it, 96 bytes on x86-64; a smaller
+		one ends the process rather than failing, since no policy could make it
+		succeed.
 	*/
 	@(intrinsic)
 	from_buffer :: proc(buffer: []mut u8, policy: Failure_Policy = .Panic) -> Arena ---;
