@@ -36,8 +36,6 @@ resolve_limits :: proc(options: Parse_Options, length: int) -> Result(Limits, Pa
 @(private)
 State :: enum {
 	Value,
-	First_Element,
-	First_Key,
 	Key,
 	After_Value,
 }
@@ -51,22 +49,10 @@ scan :: proc(
 	text: string_view,
 	limits: Limits,
 ) -> Status(Parse_Error) {
-	switch (scan_values(inout nodes, inout decoded, text, limits)) {
-	case .ok: return .ok;
-	case .err(error):
+	errdefer {
 		nodes.clear();
 		decoded.clear();
-		return .err(error);
 	}
-}
-
-@(private)
-scan_values :: proc(
-	nodes: inout [dynamic]Node,
-	decoded: inout strings.String_Builder,
-	text: string_view,
-	limits: Limits,
-) -> Status(Parse_Error) {
 	bytes := text.bytes();
 	end := bytes.len();
 	// The node index of each open array or object, innermost last.
@@ -77,26 +63,6 @@ scan_values :: proc(
 	for (;;) {
 		at = skip_space(bytes, at);
 		switch (state) {
-		case .First_Element:
-			if (at < end && bytes[at] == u8(']')) {
-				close(inout nodes, open[depth - 1]);
-				depth -= 1;
-				at += 1;
-				state = .After_Value;
-			} else {
-				state = .Value;
-			}
-
-		case .First_Key:
-			if (at < end && bytes[at] == u8('}')) {
-				close(inout nodes, open[depth - 1]);
-				depth -= 1;
-				at += 1;
-				state = .After_Value;
-			} else {
-				state = .Key;
-			}
-
 		case .Key:
 			if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
 			if (bytes[at] != u8('"')) { return .err(Parse_Error{.Invalid_Syntax, at}); }
@@ -125,8 +91,10 @@ scan_values :: proc(
 				open[depth] = u32(nodes.len());
 				depth += 1;
 				push(inout nodes, Node{u32(kind), u32(at), 0, 0}) or_return;
-				at += 1;
-				state = State.First_Key if object else State.First_Element;
+				// An empty container's closer is left for `.After_Value`.
+				at = skip_space(bytes, at + 1);
+				closer := u8('}') if object else u8(']');
+				if (at >= end || bytes[at] != closer) { state = State.Key if object else State.Value; }
 			} else if (byte == u8('"')) {
 				at = scan_string(inout nodes, inout decoded, text, at) or_return;
 			} else if (byte == u8('t')) {
@@ -259,7 +227,9 @@ digits :: proc(bytes: []u8, at: int, start: int) -> Result(int, Parse_Error) {
 
 // The string whose opening quote is at `quote`, as a node, and the offset past
 // its closing quote. Text without escapes stays in the source; text with them
-// is decoded once into `decoded`, a run of unchanged bytes at a time.
+// is decoded once into `decoded`, a run of unchanged bytes at a time. The first
+// loop is kept apart: folding it into the second slowed a 32 KiB unescaped
+// string from 36 to 59 ms at `-opt=speed`.
 @(private)
 scan_string :: proc(
 	nodes: inout [dynamic]Node,
@@ -281,11 +251,12 @@ scan_string :: proc(
 	}
 	first := decoded.len();
 	run := quote + 1;
+	oom := Parse_Error{.Out_Of_Memory, quote};
 	for (;;) {
 		if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
 		byte := bytes[at];
 		if (byte == u8('"')) {
-			append_text(inout decoded, text[run:at], quote) or_return;
+			decoded.try_append_text(text[run:at]) or_return oom;
 			info := u32(Kind.String) | DECODED_FLAG;
 			push(inout nodes, Node{info, u32(quote), u32(first), u32(decoded.len() - first)}) or_return;
 			return at + 1;
@@ -295,7 +266,7 @@ scan_string :: proc(
 			at += 1;
 			continue;
 		}
-		append_text(inout decoded, text[run:at], quote) or_return;
+		decoded.try_append_text(text[run:at]) or_return oom;
 		escape := at;
 		at += 1;
 		if (at >= end) { return .err(Parse_Error{.Unexpected_End, end}); }
@@ -328,21 +299,8 @@ scan_string :: proc(
 		} else {
 			return .err(Parse_Error{.Invalid_Escape, escape});
 		}
-		switch (decoded.try_append_rune(rune(value))) {
-		case .ok:
-		case .err: return .err(Parse_Error{.Out_Of_Memory, quote});
-		}
+		decoded.try_append_rune(rune(value)) or_return oom;
 		run = at;
-	}
-}
-
-@(private)
-append_text :: proc(
-	decoded: inout strings.String_Builder, text: string_view, quote: int,
-) -> Status(Parse_Error) {
-	switch (decoded.try_append_text(text)) {
-	case .ok:  return .ok;
-	case .err: return .err(Parse_Error{.Out_Of_Memory, quote});
 	}
 }
 

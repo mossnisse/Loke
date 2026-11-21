@@ -6,6 +6,7 @@ package json;
 
 import "core:fmt";
 import "core:io";
+import "core:math";
 import "core:mem";
 import "core:strings";
 
@@ -121,20 +122,16 @@ impl Writer($W) {
 	*/
 	string :: proc(self: inout, text: string_view) -> Status(Write_Error) where io.Writer(W) {
 		self.start_value() or_return;
-		self.quoted(text) or_return;
-		self.end_value();
+		return self.quoted(text);
 	}
 
 	boolean :: proc(self: inout, value: bool) -> Status(Write_Error) where io.Writer(W) {
-		self.start_value() or_return;
-		self.emit("true" if value else "false") or_return;
-		self.end_value();
+		spelled: string_view = "true" if value else "false";
+		return self.scalar(spelled.bytes());
 	}
 
 	null :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
-		self.start_value() or_return;
-		self.emit("null") or_return;
-		self.end_value();
+		return self.scalar("null".bytes());
 	}
 
 	i64 :: proc(self: inout, value: i64) -> Status(Write_Error) where io.Writer(W) {
@@ -156,9 +153,7 @@ impl Writer($W) {
 	*/
 	f64 :: proc(self: inout, value: f64) -> Status(Write_Error) where io.Writer(W) {
 		self.check() or_return;
-		if (value != value || value > 1.7976931348623157e308 || value < -1.7976931348623157e308) {
-			return self.fail(.Non_Finite);
-		}
+		if (!math.is_finite(value)) { return self.fail(.Non_Finite); }
 		spelled: [fmt.FLOAT_SPELLING_MAX]u8 = {};
 		used := 0;
 		switch (fmt.try_spell_f64(value, &mut spelled)) {
@@ -222,7 +217,7 @@ impl Writer($W) {
 		case .none:
 		}
 		if (self.sealed) { return .ok; }
-		if (!self.rooted) { return self.fail(.Invalid_State); }
+		if (!self.rooted || self.depth != 0) { return self.fail(.Invalid_State); }
 		self.drain() or_return;
 		self.sealed = true;
 	}
@@ -261,6 +256,7 @@ impl Writer($W) {
 		self.check() or_return;
 		if (self.depth == 0) {
 			if (self.rooted) { return self.fail(.Invalid_State); }
+			self.rooted = true;
 			return .ok;
 		}
 		frame := self.frames[self.depth - 1];
@@ -275,15 +271,9 @@ impl Writer($W) {
 	}
 
 	@(private)
-	end_value :: proc(self: inout) {
-		if (self.depth == 0) { self.rooted = true; }
-	}
-
-	@(private)
 	scalar :: proc(self: inout, spelled: []u8) -> Status(Write_Error) where io.Writer(W) {
 		self.start_value() or_return;
-		self.emit_bytes(spelled) or_return;
-		self.end_value();
+		return self.emit_bytes(spelled);
 	}
 
 	@(private)
@@ -303,8 +293,7 @@ impl Writer($W) {
 		if ((frame & OBJECT) != kind || (frame & KEYED) != 0) { return self.fail(.Invalid_State); }
 		self.depth -= 1;
 		if ((frame & FILLED) != 0) { self.newline() or_return; }
-		self.emit("}" if kind == OBJECT else "]") or_return;
-		self.end_value();
+		return self.emit("}" if kind == OBJECT else "]");
 	}
 
 	// A line break and the indentation of the current depth, in pretty output.
@@ -370,10 +359,8 @@ impl Writer($W) {
 	@(private)
 	drain :: proc(self: inout) -> Status(Write_Error) where io.Writer(W) {
 		if (self.used == 0) { return .ok; }
-		switch (io.write_all(inout self.output^, self.buffer[:self.used])) {
-		case .ok: self.used = 0;
-		case .err(error): return self.latch(Write_Error{.Io, error});
-		}
+		self.send(self.buffer[:self.used]) or_return;
+		self.used = 0;
 	}
 
 	@(private)

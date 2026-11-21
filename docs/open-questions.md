@@ -414,56 +414,10 @@ design questions stay open until a caller or a measurement settles them:
 
 ## Encoding library audit follow-ups
 
-A scratch refactor removed 73 lines from `core/encoding`. The regenerated
-interfaces matched, and `lib_json`, `lib_binary_reader`, `lib_binary_writer`,
-and `lib_text` matched their expected output at `-opt=speed`.
-
-- **Drop the JSON parser's two first-item states (16 lines).** After an opening
-  bracket or brace, check for its matching closer once. All other input goes
-  to the ordinary value or key state. A closer after a comma still reaches
-  that ordinary state and is rejected. [Scanner](../core/encoding/json/parse.loke)
-- **Use `errdefer` to clear a partially parsed document (12 lines).** Register
-  cleanup of the node and decoded text buffers in the scanner itself. Their
-  capacity remains available for a later reparse. [Scanner](../core/encoding/json/parse.loke)
-- **Remove the JSON escape allocation adapters (12 lines).** Construct the
-  allocation error once at the opening quote and use `or_return` with that
-  error on the three builder appends. [String scanner](../core/encoding/json/parse.loke)
-- **Simplify JSON writer state and output (12 lines).** Mark the root when it
-  starts and require depth zero at `finish`, which removes the bookkeeping
-  after scalar writes and closes. Use the existing scalar path for booleans
-  and null, `send` for draining, and `math.is_finite` for the float guard.
-  [Writer](../core/encoding/json/write.loke)
-- **Read binary lengths and counts through a reader checkpoint (7 lines).**
-  Read the field with `get` on the copy and reuse `get_length` for counts.
-  Commit only the cursor position after the applicable checks pass, so
-  errors still report the field's original offset. [Binary reader](../core/encoding/binary/binary.loke)
-- **Look up JSON object members through their iterator (6 lines).** Keep
-  walking after the first match to detect a duplicate. The key node immediately
-  precedes its value, so the duplicate still reports the second key's opening
-  quote. [Document views](../core/encoding/json/document.loke)
-- **Use `fmt.concat_to` for binary errors (4 lines).** Spell the existing
-  punctuation and spaces in one call. [Binary error](../core/encoding/binary/binary.loke)
-- **Let the first binary `write` check room for the full span (2 lines).**
-  Route `put` through `put_bytes`; `io.write_all` first passes the entire span
-  to `Writer.write`. Keep `fill`'s full-length check because it sends several
-  chunks. [Binary writer](../core/encoding/binary/binary.loke)
-- **Use `slice.index_of` to find the UTF-16 terminator (2 lines).** Fall back
-  to the slice length when no zero is present. [UTF-16 conversion](../core/encoding/utf16/utf16.loke)
-
-In seven interleaved Windows runs at `-opt=speed`, the combined refactor
-reduced median time from 28.4 to 26.9 ms for 180 reparses of a 1,000-object
-array with escaped strings and nested containers. Writing 8,388,608 `u32`
-fields into a slice went from 38.7 to 36.7 ms. Parsing a 32 KiB unescaped string
-and encoding 384 KiB of ASCII stayed within 1%. In a separate seven-run
-comparison, combining the two JSON string loops raised the 32 KiB workload
-from 36.4 to 59.0 ms, and replacing the UTF-16 allocation switch with
-`or_return` raised the ASCII workload from 112.0 to 116.4 ms. The revised
-refactor retains both original forms.
-
-Two further optimizations need prototypes. The runtime UTF-8 validator could
-return the first invalid sequence's offset along with the validity result,
-which would let `json.parse` delete its second decoder and avoid rescanning
-the prefix on failure. A checked conversion would still have to lend from
+Two optimizations in `core/encoding` need prototypes. The runtime UTF-8
+validator could return the first invalid sequence's offset along with the
+validity result, which would let `json.parse` delete its second decoder and
+avoid rescanning the prefix on failure. A checked conversion would still have to lend from
 its byte input and report invalid UTF-8 ahead of JSON syntax errors. The
 number scanner could also record whether it saw a point or exponent, so
 `Number.to_i64` and `Number.to_u64` skip their extra spelling scan. Check

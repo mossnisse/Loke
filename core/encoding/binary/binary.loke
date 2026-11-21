@@ -61,11 +61,7 @@ Error :: struct {
 impl Error {
 	/// Prints the code and where it happened, as `fmt.eprintln("error:", error)` wants.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		// One call per piece: `format_to` separates its own arguments with a space.
-		fmt.format_to(writer, self.code, "at offset", self.offset);
-		fmt.format_to(writer, " (length ");
-		fmt.format_to(writer, self.length);
-		fmt.format_to(writer, ")");
+		fmt.concat_to(writer, self.code, " at offset ", self.offset, " (length ", self.length, ")");
 	}
 }
 
@@ -201,9 +197,22 @@ impl Reader {
 	*/
 	get_length :: proc(self: inout, $T: type, limit: int) -> Result(int, Error)
 		where endian.is_fixed_width(T), Integral(T) {
-		length := self.length_field(T, limit) or_return;
-		self.position += size_of(T);
-		return length;
+		if (limit < 0) { panic("binary.Reader: negative limit"); }
+		// Read from a checkpoint, so that a refused length stays on its own field.
+		probe := self;
+		value := probe.get(T) or_return;
+		if (value < T(0)) {
+			return .err(Error{.Invalid_Length, self.offset(), reported_length(value)});
+		}
+		switch (math.to(int, value)) {
+		case .some(length):
+			if (length <= limit) {
+				self.position = probe.position;
+				return length;
+			}
+		case .none:
+		}
+		return .err(Error{.Limit_Exceeded, self.offset(), reported_length(value)});
 	}
 
 	/**
@@ -216,12 +225,13 @@ impl Reader {
 	get_count :: proc(self: inout, $T: type, item_size: int, limit: int) -> Result(int, Error)
 		where endian.is_fixed_width(T), Integral(T) {
 		if (item_size < 1) { panic("binary.Reader.get_count: item_size below one"); }
-		count := self.length_field(T, limit) or_return;
+		probe := self;
+		count := probe.get_length(T, limit) or_return;
 		// Division, so that a large count cannot overflow the comparison.
-		if (count > (self.remaining() - size_of(T)) / item_size) {
+		if (count > probe.remaining() / item_size) {
 			return .err(Error{.Unexpected_End, self.offset(), u64(count)});
 		}
-		self.position += size_of(T);
+		self.position = probe.position;
 		return count;
 	}
 
@@ -263,26 +273,6 @@ impl Reader {
 		}
 		// Compared against what remains: nothing is added to the position first.
 		return .err(Error{.Unexpected_End, self.offset(), reported_length(length)});
-	}
-
-	// The length field at the position, without moving past it, which is what keeps
-	// a refused count on its own field.
-	@(private)
-	length_field :: proc(self, $T: type, limit: int) -> Result(int, Error) {
-		if (limit < 0) { panic("binary.Reader: negative limit"); }
-		if (self.remaining() < size_of(T)) {
-			return .err(Error{.Unexpected_End, self.offset(), u64(size_of(T))});
-		}
-		value := endian.load(T, self.bytes[self.position:], self.byte_order);
-		if (value < T(0)) {
-			return .err(Error{.Invalid_Length, self.offset(), reported_length(value)});
-		}
-		switch (math.to(int, value)) {
-		case .some(length):
-			if (length <= limit) { return length; }
-		case .none:
-		}
-		return .err(Error{.Limit_Exceeded, self.offset(), reported_length(value)});
 	}
 }
 
@@ -327,15 +317,14 @@ impl Writer($W) {
 		is the form for a value that comes from data.
 	*/
 	put :: proc(self: inout, value: $T) -> Status(io.Error) where endian.is_fixed_width(T) {
-		self.check_room(size_of(T)) or_return;
 		field: [size_of(T)]u8 = {};
 		endian.store(field[mut :], value, self.byte_order);
-		return io.write_all(inout self, field[:]);
+		return self.put_bytes(field[:]);
 	}
 
 	/// Every byte, looping over a sink's short writes. Empty bytes never reach the sink.
 	put_bytes :: proc(self: inout, bytes: []u8) -> Status(io.Error) {
-		self.check_room(bytes.len()) or_return;
+		// `write_all` first passes `write` the whole span, which checks its room.
 		return io.write_all(inout self, bytes);
 	}
 

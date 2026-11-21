@@ -282,23 +282,16 @@ impl Object {
 	*/
 	find :: proc(self, key: string_view) -> Result(Option(Value), Access_Error) {
 		// A match must still scan the rest, to find a second one.
-		found: u32 = 0;
-		matched := false;
-		at := self.index + 1;
-		count := self.document.nodes[int(self.index)].count;
-		for (i: u32 = 0; i < count; i += 1) {
-			name := self.document.nodes[int(at)];
-			if (string_of(self.document, name) == key) {
-				if (matched) {
-					return .err(access_error(.Duplicate_Key, int(name.start)));
-				}
-				matched = true;
-				found = at + 1;
+		found := Option(Value).none;
+		foreach (name, value in self) {
+			if (name != key) { continue; }
+			if (found != .none) {
+				// The key node immediately precedes its value.
+				return .err(access_error(.Duplicate_Key, int(self.document.nodes[int(value.index - 1)].start)));
 			}
-			at = next_sibling(self.document, at + 1);
+			found = .some(Value{self.document, value.index});
 		}
-		if (!matched) { return Option(Value).none; }
-		return Option(Value).some(Value{self.document, found});
+		return found;
 	}
 
 	/// `find`, with no member at all reported as `Missing_Key`.
