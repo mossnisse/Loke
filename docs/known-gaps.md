@@ -65,7 +65,7 @@ through an `inout` receiver compiles.
 them. A declaration `Difference: f64 : 9007199254740993.0 - 9007199254740992.0;`
 also gets zero instead of one. [Open questions](open-questions.md#compiler-source-audit-continuation)
 says what an exact representation needs.
-[Number literals](design.md#number-literals) · [Expression checker review](source-reviews/check_expr.md#findings)
+[Number literals](design.md#number-literals)
 
 ### `caller_location()` in a computed default names the declaration
 
@@ -86,7 +86,7 @@ main :: proc() {
 
 The program prints `5`, the declaration's line, instead of `7`. The emitter and
 evaluator find a default only by its identity with the declaration's syntax, so
-a call-site copy would need a per-call marker. [Built-in checker review](source-reviews/check_builtin.md#findings)
+a call-site copy would need a per-call marker.
 
 ### A multiple assignment through a setter writes before its other destinations are prepared
 
@@ -118,7 +118,6 @@ by the same statement. Without `g[0]` it prints `[1, 9] [3, 4]`. Likewise, in
 `g[0], a[i] = 7, 8;` with `i` out of bounds the setter runs before the bounds
 check panics. Fixing both moves the setter call into the ordinary assignment's
 destination preparation in the emitter, control-flow graph, and evaluator.
-[Statement checker review](source-reviews/check_stmt.md#findings)
 
 ### A compound assignment cannot view its operator's result
 

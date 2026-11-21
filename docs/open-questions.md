@@ -205,15 +205,14 @@ diagnostic, needs a decision, or reaches further than such a cleanup should.
 - **Use one ordered representation for checked variadic arguments.** Carry the
   spread flag with each expression so the checker, provenance and LLVM lowering
   consume the same sequence. Preserve forwarding of a single slice and the
-  existing evaluation order. [AST review](compiler-source-audit-2026-11-18.md#srcastodin)
+  existing evaluation order.
 - **Shorten the lifetime of overload-ranking alias views.** Alias expansion used
   to compare candidates allocates transient ASTs in the compilation's semantic
   arena. Measure an alias-heavy workload before assigning those views to a
-  shorter-lived allocator. [Clone review](compiler-source-audit-2026-11-18.md#srcast_cloneodin)
+  shorter-lived allocator.
 - **Use exact hashed membership for wide integers.** Duplicate checking scans
   every previous value outside `i64`. Keep keys exact and measure generated
   switches and backed enum lookups before changing the representation.
-  [Integer review](compiler-source-audit-2026-11-18.md#srcbigintodin)
 - **Measure the borrow solver's allocation and rescanning hypotheses.** The
   audit lists changes it could not justify without a workload: skipping the
   loaded-below rows of a body with no cursor anchor, caching `at_once_reaches`
@@ -222,18 +221,15 @@ diagnostic, needs a decision, or reaches further than such a cleanup should.
   enumerating set bits in `merge_escape_event`, per-body scratch in
   `stored_thread_facts`, and collecting an event's released loans once for
   `mark_released` and `end_loans`. Run `perf.ps1` on borrow-heavy bodies before
-  and after each. [Solver reviews](compiler-source-audit-2026-11-18.md#srcborrowodin)
+  and after each.
 
-The [source audit](compiler-source-audit-2026-11-18.md#resolution) records
-which of its findings were fixed and which were declined. The divergences it
-led to that remain are in [Known gaps](known-gaps.md#gaps).
+The divergences the audit led to that remain are in
+[Known gaps](known-gaps.md#gaps).
 
 ## Compiler source audit continuation
 
-The [per-file reviews](source-reviews/README.md#review-reports) hold the
-evidence for the continuation at `ea622efe`; the
-[resolution](source-reviews/README.md#resolution) says what was fixed. These
-points remain:
+The per-file source reviews were removed from the repository; these points
+remain from them:
 
 - **A distinct type's hidden `<`.** `Reverse :: distinct int` with an inherent
   `<` that is not `@(public)` orders by `int`'s built-in operators in an
@@ -256,10 +252,9 @@ points remain:
   walks after overflow, keyed precision for slices reached through a carrier,
   a worklist for the private-declaration closure in `doc.odin`, opt-in
   provenance profiling counters, and grouping disposable compiler state for
-  checkpoints. [Control-flow review](source-reviews/cfg.md#findings) ·
-  [Compiler state review](source-reviews/compiler.md#findings)
+  checkpoints.
 - **Unifying the LLVM naming and emission walks** around one procedure
-  eligibility decision. [LLVM emitter review](source-reviews/emit_llvm.md#simplification-and-compiler-boundaries)
+  eligibility decision.
 
 ## LLVM source review follow-ups
 
@@ -269,16 +264,14 @@ points remain:
   is one `[N x i8]`, which has no compact spelling for a value only partly
   zero. Only a global of another value type, as a relocation image is, could
   shorten it. Decide whether the size of such initializers matters enough for
-  that. [LLVM constant review](source-reviews/emit_llvm_const.md#a-small-union-variant-writes-the-largest-variants-padding-p2)
+  that.
 - **Container emission.** Measure miss-heavy `find_or_insert` before
   changing the runtime ABI to reuse a probe across a user copy hook.
-  [Container review](source-reviews/emit_llvm_containers.md#simplification-and-boundaries)
 - **Debug records for file-scope variables.** `-g` describes `static` and
   `thread_local` locals as globals scoped to their procedures, but a
   file-scope variable still has no `DIGlobalVariable`, so a debugger finds it
   only by its link symbol, without a type. Describing one needs a name that
   stays apart from another package's variable of the same name.
-  [Debug review](source-reviews/emit_llvm_debug.md#procedure-scoped-static-and-tls-locals-are-absent-from-debug-records-p3)
 
 ## Literal elements that lend a temporary to a call
 
