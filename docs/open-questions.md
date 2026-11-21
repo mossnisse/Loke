@@ -12,6 +12,35 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 2026-10-31, and the proposals from them not yet decided, are in
 [design-review-2026-10-31.md](design-review-2026-10-31.md).
 
+## Simplifying core:cstrings
+
+- **Keep the allocation switch and trim its branches.** Put the `.err`
+  case on one line and combine the comments explaining capacity and `move`.
+  This cut four lines and produced identical `-opt=speed` machine code for
+  the benchmark. The payload append already uses `memcpy`. Combining the
+  payload spread and the terminator in one append would construct a
+  temporary variadic pack with a 256 KiB limit.
+  [Constructor](../core/cstrings/cstrings.loke) · [Variadic parameters](design.md#variadic-parameters)
+- **Reuse a bounded byte search for large inputs.** A scratch `memchr` scan
+  passed exactly the view's byte count and skipped empty views. The shared
+  byte-search routine could provide this fast path while `from_string`
+  continues to reject zero before allocating.
+  [`strings.index_byte`](standard-library.md#corestrings)
+
+Replacing the allocation switch with `or_return .Out_Of_Memory` cut seven
+lines. In the optimized executable, the scalar scan's backward branch crossed
+a 32-byte boundary in this build. For 1,800 valid 384 KiB inputs, the median
+time rose from 558 to 682 ms. Using `slice.contains` with `or_return` took
+684 ms and saved the same seven lines after counting the import.
+
+The `memchr` variant with `or_return` took 344 ms on the same valid inputs
+and cut rejection of a zero at the end from 238 to 22 ms. For 750,000 valid
+24-byte inputs, it took 56 ms against 55 ms for the original. Rejection at
+the first byte rose from 2.3 to 3.6 ms for 750,000 inputs. These are medians
+of seven interleaved runs on one Windows machine at `-opt=speed`. Scratch
+variants matched the generated interface, the text fixture's output, and the
+expected borrow diagnostics.
+
 ## What the region and overload matrices left open
 
 The [region matrix](../tests/region_matrix_test.odin) and the [overload
