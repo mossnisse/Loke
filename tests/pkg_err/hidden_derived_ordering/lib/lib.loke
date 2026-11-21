@@ -1,0 +1,8 @@
+@(public)
+package lib;
+
+Version :: struct { n: int }
+
+impl Version {
+	@(private) less :: operator(<) proc(a, b: Version) -> bool { return a.n < b.n; }
+}

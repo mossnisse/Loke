@@ -545,6 +545,47 @@ form_operator_set :: proc(k: ^Checker, symbol: string, operands: []Type_Id, args
 	return Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args)}
 }
 
+// design.md "Operator declarations": what stands in for an operator that has no
+// overload of its own: `symbol` over the same operands, exchanged for `swap`,
+// with its result negated for `negate`.
+Operator_Fallback :: struct {
+	symbol:       string,
+	swap, negate: bool,
+}
+
+operator_fallback :: proc(op: Token_Kind) -> (Operator_Fallback, bool) {
+	#partial switch op {
+	case .Not_Eq:
+		return {symbol = "==", negate = true}, true
+	case .Gt:
+		return {symbol = "<", swap = true}, true
+	case .Lt_Eq:
+		return {symbol = "<", swap = true, negate = true}, true
+	case .Gt_Eq:
+		return {symbol = "<", negate = true}, true
+	}
+	return {}, false
+}
+
+// The candidates a fallback chooses among. A `delegate` that reaches the
+// built-in `<` is that operation, whose other orderings are built in as well,
+// so it stands in for none of them: `a <= b` on a distinct float stays false
+// for a NaN, where `!(b < a)` would hold.
+form_fallback_set :: proc(k: ^Checker, symbol: string, operands: []Type_Id, args: []Arg_Info) -> Operator_Set {
+	members := operator_candidates(k, symbol, operands)
+	if symbol == "<" {
+		kept := 0
+		for member in members {
+			if _, builtin := operator_delegate_end(k.c, member); !builtin {
+				members[kept] = member
+				kept += 1
+			}
+		}
+		members = members[:kept]
+	}
+	return Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args)}
+}
+
 resolve_operator :: proc(k: ^Checker, span: Span, symbol: string, members: []Symbol_Id, args: []Arg_Info) -> (Symbol_Id, []Expr) {
 	return resolve_operator_set(k, span, Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args)}, args)
 }

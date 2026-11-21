@@ -399,12 +399,12 @@ emit_unary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, operand: strin
 @(private = "file")
 emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 	if v.resolution.kind == .User_Operator {
-		operands := [2]Expr{v.lhs, v.rhs}
-		result := emit_operator_call(e, v.resolution.symbol, operands[:])
+		operands, order := binary_operator_operands(v)
+		result := emit_operator_call(e, v.resolution.symbol, operands[:], order = order)
 		if !v.negated {
 			return result
 		}
-		// The `!=` fallback: `!(a == b)`.
+		// A fallback such as `!(a == b)` for `a != b`.
 		return not_i1(e, result)
 	}
 	// SIMD is lane-wise, and its comparisons produce a mask, not a `bool`.

@@ -1,0 +1,108 @@
+// design.md "Operator declarations": `>`, `<=`, and `>=` with no overload of
+// their own fall back to `<`: `b < a`, `!(b < a)`, and `!(a < b)`. The operands
+// are still evaluated as written, at run time and at compile time.
+package main;
+
+import "core:fmt";
+
+Reverse :: distinct int;
+impl Reverse {
+	less :: operator(<) proc(a, b: Reverse) -> bool { return int(b) < int(a); }
+}
+// An inherited `<` stands in as a declared one does.
+Twice :: distinct Reverse;
+
+Version :: struct { major: int, minor: int }
+impl Version {
+	less :: operator(<) proc(a, b: Version) -> bool {
+		return a.major < b.major || (a.major == b.major && a.minor < b.minor);
+	}
+	// Mixed operands fall back to the overload their exchanged order finds.
+	below :: operator(<) proc(a: Version, major: int) -> bool { return a.major < major; }
+	above :: operator(<) proc(major: int, a: Version) -> bool { return major < a.major; }
+}
+
+// An overload of the operator itself is used as written.
+Odd :: struct { n: int }
+impl Odd {
+	less :: operator(<) proc(a, b: Odd) -> bool { return a.n < b.n; }
+	greater :: operator(>) proc(a, b: Odd) -> bool { return true; }
+}
+
+// A `delegate` that reaches the built-in `<` leaves the built-in orderings,
+// which a NaN fails where `!(b < a)` would hold.
+Meters :: distinct f64;
+impl Meters { delegate(<); }
+
+// A file-scope operator, and operands in other parameter modes.
+Loose :: struct { n: int }
+less_loose :: operator(<) proc(a, b: Loose) -> bool { return a.n < b.n; }
+
+Lent :: struct { n: int }
+impl Lent {
+	less :: operator(<) proc(a: ^Lent, b: Lent) -> bool { return a.n < b.n; }
+}
+
+Taken :: struct { parts: [dynamic]int }
+impl Taken {
+	less :: operator(<) proc(a: move Taken, b: Taken) -> bool { return a.parts.len() < b.parts.len(); }
+}
+
+Name :: struct { text: string, parts: [dynamic]int }
+impl Name {
+	less :: operator(<) proc(a, b: Name) -> bool { return a.text < b.text; }
+}
+name :: proc(text: string) -> Name { return {text, {1, 2}}; }
+
+Traced :: struct { n: int }
+impl Traced {
+	less :: operator(<) proc(a, b: Traced) -> bool {
+		fmt.println("  <", a.n, b.n);
+		return a.n < b.n;
+	}
+}
+traced :: proc(n: int) -> Traced {
+	fmt.println("  operand", n);
+	return {n};
+}
+
+largest :: proc(a, b: $T) -> T where Ordered(T) {
+	return a if a >= b else b;
+}
+
+folded :: proc() -> bool {
+	a, b := Version{1, 2}, Version{1, 3};
+	return b > a && a <= b && !(a >= b) && a <= a && a >= a;
+}
+FOLDED :: folded();
+
+main :: proc() {
+	a, b := Reverse(1), Reverse(2);
+	fmt.println(a < b, a > b, a <= b, a >= b, a <= a, a >= a);
+	c, d := Twice(1), Twice(2);
+	fmt.println(c < d, c > d, c <= d, c >= d);
+
+	v, w := Version{1, 2}, Version{1, 3};
+	fmt.println(v < w, v > w, v <= w, v >= w, v <= v, v > v);
+	fmt.println(v < 2, v > 0, 2 > v, v >= 1, 1 <= v);
+	fmt.println(Odd{1} > Odd{2}, Odd{1} >= Odd{2});
+
+	zero := 0.0;
+	nan := Meters(zero / zero);
+	fmt.println(Meters(1) <= Meters(2), nan <= Meters(1), nan >= Meters(1), Meters(1) > nan);
+
+	fmt.println(Loose{1} > Loose{0}, Loose{1} <= Loose{0});
+	lent, other := Lent{1}, Lent{2};
+	fmt.println(other > &lent, &lent >= other);
+	taken, more := Taken{{1}}, Taken{{1, 2}};
+	fmt.println(taken > move(more), Taken{{1, 2, 3}} >= taken, taken > Taken{{}});
+
+	first, second := name("a"), name("b");
+	fmt.println(first > second, second > first, first <= name("a"), name("c") >= second);
+	names := [dynamic]Name{name("x"), name("y")};
+	fmt.println(names[0] > names[1], names[1] >= names[0]);
+
+	fmt.println(traced(1) > traced(2));
+	fmt.println(traced(3) <= traced(4));
+	fmt.println(largest(v, w).minor, int(largest(a, b)), FOLDED);
+}

@@ -260,10 +260,12 @@ points remain:
   is written" in [Doc comments](design.md#doc-comments) covers a type declared
   in a procedure body. Its fields warn with `L0260` today, and hover agrees.
   [Doc comment review](source-reviews/doc_comments.md#findings)
-- **Derived orderings.** A type that declares only `<` gets no `>`, `<=`, or
-  `>=`: `Reverse(1) > Reverse(2)` uses `int`'s built-in `>` for
-  `Reverse :: distinct int`, and on a struct it is `L0355`. Decide whether the
-  other orderings follow from `<`, as sorting already does.
+- **A distinct type's hidden `<`.** `Reverse :: distinct int` with an inherent
+  `<` that is not `@(public)` orders by `int`'s built-in operators in an
+  importing package, with no diagnostic, while its own package and every
+  `sort` use the declared one. A hidden `==` is `L0355` there, since [one type
+  has one equality](design.md#maps); decide whether a hidden `<` is refused the
+  same way. A struct's is already `L0355`, having no built-in order to fall to.
 - **Exact unfixed decimals.** Folding them exactly needs rationals for `/`, a
   second representation through every consumer of `.float`, and a limit for
   literals such as `1e-99999999999`. The spec does not yet say how precise

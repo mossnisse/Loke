@@ -2680,6 +2680,33 @@ two, as Swift's do, so `c in 'a' ..= 'z'` tests a range while `0 ..< n + 1`
 still ends at `n + 1`; no grouping the move changed had a meaning before,
 because each put a `bool` at a range's end.
 
+### `<` gives the other orderings
+
+A type that declared only `<` used to keep whatever else applied to `>`, `<=`,
+and `>=`: nothing on a struct, and on `Reverse :: distinct int` the built-in
+operators of `int`, so `a < b` and `a > b` were both false for one pair of
+values with no diagnostic, and a sort disagreed with a written comparison. The
+three now [fall back](design.md#operator-declarations) to `<`, as `!=` does to
+`==`, which is Swift's `Comparable`: one declaration, and four operators that
+cannot disagree.
+
+`<=` is `!(right < left)`, not `left < right || left == right`. The second
+needs an `==` that agrees with `<` and runs two user procedures; the first
+needs what a sort already assumes of `<`. It is wrong for a partial order,
+where two values may be unordered, so such a type declares `<=` and `>=`, and
+the built-in `<` of a float derives nothing: a `delegate(<)` on a distinct
+`f64` leaves the IEEE operators, under which a NaN fails all four.
+
+The fallback is chosen where the operator is written, as the `!=` one is,
+rather than declared on the type as three generated methods. That reaches a
+file-scope or extension `<` and mixed operands, such as `2 > version`, and
+adds no names to a type's interface. The operands are still evaluated left to
+right: `f() > g()` calls `f` first though it passes `g()`'s value first.
+
+Only `<` is a basis. Deriving in every direction, `<` from a lone `>`, would
+need a rule for a type that declares two of them inconsistently, and a sort
+reads `<` alone.
+
 ### Comparisons do not chain
 
 `a == b == false` looks like a chain but a left-associative reading means

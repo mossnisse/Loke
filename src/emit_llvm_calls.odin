@@ -189,29 +189,31 @@ emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 }
 
 // An operator, index, or slice call. A non-empty `left_place` is the address
-// of an already-evaluated left operand.
+// of an already-evaluated left operand, and `order` is the slots of `bound` in
+// evaluation order where that is not their own.
 @(private)
-emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr, left_place := "") -> string {
+emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr, left_place := "", order: []int = nil) -> string {
 	symbol := symbol_of(e.c, symbol_id)
 	if symbol == nil {
 		return "0"
 	}
 	if symbol.delegated {
-		return emit_delegated(e, symbol, bound, left_place)
+		return emit_delegated(e, symbol, bound, left_place, order)
 	}
 	info := type_of(e.c, symbol.proc_type)
 	receiver := left_place
 	if left_place != "" && !param_mode_is_pointer(info.param_modes[0]) {
 		receiver = load_place(e, info.parameters[0], left_place)
 	}
-	return emit_bound_call(e, symbol_id, callee_name(e, symbol_id), info, bound, receiver = receiver)
+	return emit_bound_call(e, symbol_id, callee_name(e, symbol_id), info, bound, receiver = receiver, order = order)
 }
 
-// A `distinct` newtype's forwarding overload.
+// A `distinct` newtype's forwarding overload. Only one that forwards to an
+// overload is called out of order (`form_fallback_set`).
 @(private = "file")
-emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: string) -> string {
+emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: string, order: []int) -> string {
 	if symbol.delegate_target != INVALID_SYMBOL {
-		return emit_operator_call(e, symbol.delegate_target, bound, left_place)
+		return emit_operator_call(e, symbol.delegate_target, bound, left_place, order)
 	}
 	op := operator_token(symbol.operator)
 	underlying := symbol.delegate_underlying
@@ -767,11 +769,12 @@ Bound_Operands :: struct {
 	refused_pack:      Variadic_Pack,
 }
 
-// Binds operands left to right. `consumed` and `consuming_body` are
-// `consumed_element_slot`'s answer.
+// Binds operands in evaluation order: `order`'s slots, or left to right
+// without one. `consumed` and `consuming_body` are `consumed_element_slot`'s
+// answer.
 @(private = "file")
 emit_call_operands :: proc(
-	e: ^Emitter, symbol: ^Symbol, callee_type: ^Type_Info, bound: []Expr, call_node: ^Expr_Call,
+	e: ^Emitter, symbol: ^Symbol, callee_type: ^Type_Info, bound: []Expr, call_node: ^Expr_Call, order: []int,
 	receiver: string, consumed: int, consuming_body: bool,
 ) -> Bound_Operands {
 	scope := begin_default_scope(e, symbol)
@@ -787,7 +790,7 @@ emit_call_operands :: proc(
 	defer delete(handoff_cleanups)
 	result_borrows := callee_type.result != INVALID_TYPE && type_carries_borrow(e.c, callee_type.result).any
 	for step in 0 ..< len(bound) {
-		index := call_node != nil ? call_slot_at(call_node, step) : step
+		index := step < len(order) ? order[step] : step
 		argument := bound[index]
 		enter_default_scope(e, &scope, index, argument)
 		if index == 0 && receiver != "" {
@@ -983,6 +986,7 @@ emit_bound_call :: proc(
 	call_node: ^Expr_Call = nil,
 	receiver := "",
 	receiver_type := "",
+	order: []int = nil,
 ) -> string {
 	if callee_type == nil {
 		return "0"
@@ -998,7 +1002,8 @@ emit_bound_call :: proc(
 	if consuming_body {
 		callee = consuming_op_name(e, symbol_id)
 	}
-	call := emit_call_operands(e, symbol, callee_type, bound, call_node, receiver, consumed, consuming_body)
+	order := call_node != nil ? call_node.bound_order : order
+	call := emit_call_operands(e, symbol, callee_type, bound, call_node, order, receiver, consumed, consuming_body)
 	defer delete(call.argument_cleanups)
 
 	if convention_is_foreign(callee_type.convention) {

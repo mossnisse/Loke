@@ -850,10 +850,10 @@ eval_unary_value :: proc(ev: ^Evaluator, op: Token_Kind, site: Span, value: Cons
 @(private = "file")
 eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (out: Eval_Value, success: bool) {
 	// design.md "Operator declarations": a user operator is an ordinary call,
-	// and `!=` without its own overload negates the user `==`.
+	// and one that falls back to `==` or `<` negates the result.
 	if v.resolution.kind == .User_Operator {
-		operands := [2]Expr{v.lhs, v.rhs}
-		result := eval_operator_call(ev, v.resolution.symbol, operands[:], v.op_span) or_return
+		operands, order := binary_operator_operands(v)
+		result := eval_operator_call(ev, v.resolution.symbol, operands[:], v.op_span, order = order) or_return
 		if !v.negated {
 			return result, true
 		}
@@ -1785,17 +1785,18 @@ eval_release_frame :: proc(ev: ^Evaluator, frame: ^Eval_Frame) {
 // design.md "Delegating operators": a forwarding overload calls what it
 // forwards to, and one with no overload behind it applies the underlying type's
 // built-in operation, as `emit_delegated` does. `values`, when given, are the
-// operands already evaluated.
+// operands already evaluated, and `order` the slots of `args` in evaluation
+// order where that is not their own.
 @(private)
 eval_operator_call :: proc(
-	ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil,
+	ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil, order: []int = nil,
 ) -> (out: Eval_Value, success: bool) {
 	symbol := symbol_of(ev.k.c, symbol_id)
 	if symbol == nil || !symbol.delegated {
-		return eval_invoke(ev, symbol_id, args, site, values)
+		return eval_invoke(ev, symbol_id, args, site, values, order)
 	}
 	if symbol.delegate_target != INVALID_SYMBOL {
-		return eval_operator_call(ev, symbol.delegate_target, args, site, values)
+		return eval_operator_call(ev, symbol.delegate_target, args, site, values, order)
 	}
 	operands: [2]Eval_Value
 	count := min(max(len(args), len(values)), len(operands))

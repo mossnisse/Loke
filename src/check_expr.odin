@@ -1238,39 +1238,49 @@ annotate_user_operator :: proc(k: ^Checker, v: ^Expr_Base, chosen: Symbol_Id) ->
 	return sym
 }
 
-// design.md "Operator declarations": `!=` falls back to `!(left == right)`
-// when `==` is available and no more specific `!=` overload exists.
+// design.md "Operator declarations": an operator with no overload of its own
+// that applies falls back to `==` or `<`, with the operands exchanged, the
+// result negated, or both.
 check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bool {
-	symbol := operator_text(v.op)
-	operands := []Type_Id{lhs, rhs}
-	args := make([]Arg_Info, 2, context.temp_allocator)
-	args[0] = arg_from_expr(v.lhs)
-	args[1] = arg_from_expr(v.rhs)
-	negate := false
-	set := form_operator_set(k, symbol, operands, args)
+	operands := [2]Type_Id{lhs, rhs}
+	written := make([]Arg_Info, 2, context.temp_allocator)
+	written[0] = arg_from_expr(v.lhs)
+	written[1] = arg_from_expr(v.rhs)
+	args := written
+	fallback: Operator_Fallback
+	set := form_operator_set(k, operator_text(v.op), operands[:], args)
 	if !candidates_viable(set.formed) {
-		equal := v.op == .Not_Eq ? form_operator_set(k, "==", operands, args) : Operator_Set{}
-		if !candidates_viable(equal.formed) {
-			if operator_exists(k, set.members, operands) {
-				resolve_operator_set(k, v.op_span, set, args)
+		base, falls_back := operator_fallback(v.op)
+		if base.swap {
+			operands = {rhs, lhs}
+			args = make([]Arg_Info, 2, context.temp_allocator)
+			args[0], args[1] = written[1], written[0]
+		}
+		derived := falls_back ? form_fallback_set(k, base.symbol, operands[:], args) : Operator_Set{}
+		if !candidates_viable(derived.formed) {
+			// The operand types in either order: only whether one is mentioned.
+			if operator_exists(k, set.members, operands[:]) {
+				resolve_operator_set(k, v.op_span, set, written)
 				return true
 			}
 			return false
 		}
-		set = equal
-		negate = true
+		set, fallback = derived, base
 	}
 	chosen, bound := resolve_operator_set(k, v.op_span, set, args)
 	if chosen == INVALID_SYMBOL {
 		return true
 	}
 	// A delegated vector `==` produces a lane mask, which `!` does not apply to.
-	if negate && !type_is_boolean(k.c, symbol_of(k.c, chosen).result) {
+	if fallback.negate && !type_is_boolean(k.c, symbol_of(k.c, chosen).result) {
 		operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
 		return true
 	}
 	v.lhs, v.rhs = bound[0], bound[1]
-	v.negated = negate
+	if fallback.swap {
+		v.lhs, v.rhs = bound[1], bound[0]
+	}
+	v.negated, v.swapped = fallback.negate, fallback.swap
 	annotate_user_operator(k, &v.base, chosen)
 	return true
 }
@@ -1580,11 +1590,19 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 	if ordered && !type_is_ordered(k.c, operand_type) {
 		// Said in the message, not a note: an interface requirement keeps only
 		// the message.
+		// A hidden `<` would also have stood in for the others (design.md
+		// "Operator declarations").
+		hidden := ""
 		if hidden_inherent_operator(k, operator_text(v.op), both) {
+			hidden = operator_text(v.op)
+		} else if hidden_inherent_operator(k, "<", both) {
+			hidden = "<"
+		}
+		if hidden != "" {
 			errorf(
 				k.c, v.op_span, "L0355",
 				"`%s` does not order `%s` here: its inherent `%s` is not `@(public)`",
-				operator_text(v.op), type_name(k.c, operand_type), operator_text(v.op),
+				operator_text(v.op), type_name(k.c, operand_type), hidden,
 			)
 		} else {
 			errorf(k.c, v.op_span, "L0355", "`%s` does not order `%s`", operator_text(v.op), type_name(k.c, operand_type))

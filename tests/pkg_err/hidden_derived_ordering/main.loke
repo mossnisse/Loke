@@ -1,0 +1,10 @@
+// design.md "Operator declarations": `>` falls back to a `<` that is visible
+// where it is written. The message names the hidden operator that would have
+// stood in for it.
+package main;
+
+import "./lib";
+
+main :: proc() {
+	_ = lib.Version{n = 1} > lib.Version{n = 2};
+}

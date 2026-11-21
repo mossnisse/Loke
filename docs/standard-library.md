@@ -528,8 +528,9 @@ Growable_Sequence :: interface($Self: type) {
 - `Ordered` means the `<` operation is available; it does not promise a
   mathematical total order, so floating-point types satisfy it with IEEE-754
   comparisons. An algorithm needing a total or strict-weak order states that
-  precondition or takes a comparator. `Numeric` does not compose `Ordered` and
-  requires no ordering.
+  precondition or takes a comparator. A bounded body may write `>`, `<=`, and
+  `>=` too: each is built in or [falls back](design.md#operator-declarations)
+  to `<`. `Numeric` does not compose `Ordered` and requires no ordering.
 - `Cloneable` names the fallible public `try_clone` operation, not the
   policy-following `clone`. Every copyable type satisfies it, including plain
   values such as `int`, pointers, and slices, each of which is its own clone. A

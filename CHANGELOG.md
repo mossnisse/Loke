@@ -85,6 +85,24 @@ checklist.
   - `-define:if=1` is `L0388`: `build_config(if, 0)` cannot be written, so a reserved keyword
     names no configuration value ([Build configuration](docs/compiler-guide.md#build-configuration)).
     A contextual keyword such as `where` still does.
+- `>`, `<=`, and `>=` fall back to a declared `<`: `right < left`, `!(right < left)`, and
+  `!(left < right)`, as `!=` falls back to `==`
+  ([Operator declarations](docs/design.md#operator-declarations)). A struct that declares `<`
+  now has the other three, which were `L0355`. A `distinct` type that declares `<` now orders
+  by it under all four, where the other three silently used its underlying type's built-in
+  operators: with a reversing `<` on `Reverse :: distinct int`, `Reverse(1) > Reverse(2)` was
+  false and is true. The operands are evaluated as written, left before right. An overload of
+  the operator itself is still used first, and a `delegate(<)` that reaches the built-in `<`
+  changes nothing. Upgrade a distinct type that relied on the built-in operators beside its own
+  `<` by declaring them:
+
+  ```
+  impl Reverse { less :: operator(<) proc(a, b: Reverse) -> bool { return int(b) < int(a); } }   // before: `>` was `int`'s
+  impl Reverse {                                                                                 // after, to keep that
+      less :: operator(<) proc(a, b: Reverse) -> bool { return int(b) < int(a); }
+      greater :: operator(>) proc(a, b: Reverse) -> bool { return int(a) > int(b); }
+  }
+  ```
 
 ### Changed
 

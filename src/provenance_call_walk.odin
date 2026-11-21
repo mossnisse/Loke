@@ -17,6 +17,7 @@ prov_operator_call :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
 	}
 	assert(!graph.replaying_facts, "fact replay reached an operator call absent from normalization")
 	bound: []Expr
+	order: []int
 	indexes := false
 	#partial switch v in e {
 	case ^Expr_Index:
@@ -24,14 +25,15 @@ prov_operator_call :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
 	case ^Expr_Slice:
 		bound, indexes = v.bound, true
 	case ^Expr_Binary:
-		bound = make([]Expr, 2, graph.alloc)
-		bound[0], bound[1] = v.lhs, v.rhs
+		operands: [2]Expr
+		operands, order = binary_operator_operands(v)
+		bound = slice.clone(operands[:], graph.alloc)
 	case ^Expr_Unary:
 		bound = make([]Expr, 1, graph.alloc)
 		bound[0] = v.operand
 	}
 	base := expr_base(e)
-	call := prov_synthetic_call(graph, base.resolution.chosen_overload, bound, prov_unconverted_type(e), base.span, indexes)
+	call := prov_synthetic_call(graph, base.resolution.chosen_overload, bound, prov_unconverted_type(e), base.span, indexes, order)
 	graph.operator_calls[rawptr(base)] = call
 	return call
 }
@@ -40,10 +42,12 @@ prov_operator_call :: proc(graph: ^Flow_Graph, e: Expr) -> ^Expr_Call {
 // assignment's, or `operator([]=)`. An indexing receiver is borrowed after its
 // operands, as a built-in container is, so `x[x.len() - 1]` and the `len()` an
 // omitted endpoint reads are not uses under the receiver's own borrow; an
-// operand's borrow that outlives it still conflicts at the call.
+// operand's borrow that outlives it still conflicts at the call. Any other
+// call takes `order`, its slots in evaluation order.
 @(private)
 prov_synthetic_call :: proc(
 	graph: ^Flow_Graph, callee: Symbol_Id, bound: []Expr, type: Type_Id, span: Span, indexes := false,
+	order: []int = nil,
 ) -> ^Expr_Call {
 	key := Prov_Synthetic_Call_Key{callee, type, span, graph.expansion, indexes}
 	cached := graph.effect_program != nil
@@ -57,6 +61,7 @@ prov_synthetic_call :: proc(
 	call.bound = slice.clone(bound, graph.alloc)
 	call.resolution = Resolution{kind = .User_Operator, symbol = callee, chosen_overload = callee}
 	call.operation = Call_Procedure{}
+	call.bound_order = order
 	if indexes && len(bound) > 1 {
 		call.bound_order = make([]int, len(bound), graph.alloc)
 		for index in 1 ..< len(bound) {

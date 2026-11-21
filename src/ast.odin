@@ -345,8 +345,24 @@ Expr_Binary :: struct {
 	op_span:    Span,
 	lhs:        Expr,
 	rhs:        Expr,
-	// `a != b` through a user `==`, whose result is negated.
+	// design.md "Operator declarations": the fallbacks. `a != b` through a user
+	// `==`, or `a <= b` and `a >= b` through a user `<`, negates the result.
 	negated:    bool,
+	// `a > b` and `a <= b` through a user `<`, called as `b < a`. `lhs` and `rhs`
+	// stay as written, so they are still evaluated in that order.
+	swapped:    bool,
+}
+
+@(private = "file", rodata)
+SWAPPED_OPERANDS := [2]int{1, 0}
+
+// A user operator's operands in parameter order, and those slots in evaluation
+// order where the two differ, as `Expr_Call.bound_order` holds them.
+binary_operator_operands :: proc(v: ^Expr_Binary) -> (bound: [2]Expr, order: []int) {
+	if v.swapped {
+		return {v.rhs, v.lhs}, SWAPPED_OPERANDS[:]
+	}
+	return {v.lhs, v.rhs}, nil
 }
 
 // `a ..= b` and `a ..< b`, kept apart from Expr_Binary.

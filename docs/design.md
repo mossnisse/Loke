@@ -1754,7 +1754,9 @@ conversion hooks, interfaces, and formatting. Compared with its underlying type:
 - **Comparisons** are inherited: a distinct type is comparable, and ordered,
   exactly when its underlying type is, and its values compare as the underlying
   values do. A comparison overload declared for the distinct type takes
-  precedence, as for any user type.
+  precedence, as for any user type, and so does a comparison that [falls
+  back](#operator-declarations) to one: a distinct type that declares `<`
+  orders by it under all four operators.
 - **Hashing** follows equality: a distinct type that declares neither `==` nor
   `hash` has its underlying type's `hash`, so it [keys a map](#maps) as that type
   does.
@@ -3388,9 +3390,32 @@ impl Bag {
 }
 ```
 
-`!=` falls back to `!(left == right)` when `==` exists and no more specific `!=`
-overload does. A compound assignment falls back to the binary operator plus
-assignment; a direct compound overload can avoid a temporary or allocation:
+A comparison with no overload of its own that applies falls back to `==` or
+`<`:
+
+| Written | Falls back to |
+| --- | --- |
+| `left != right` | `!(left == right)` |
+| `left > right` | `right < left` |
+| `left <= right` | `!(right < left)` |
+| `left >= right` | `!(left < right)` |
+
+So a type that declares `==` and `<` has all six comparisons, and they agree
+with one another and with the `<` a [sort](#dynamic-array-container-operations)
+uses. The operands are evaluated once, left before right as written, whichever
+way the call takes them. The `==` or `<` is chosen by ordinary overload
+resolution over the operands in the order the table gives, so `2 > version`
+uses a `<` taking a `Version` and an `int`. `==` and `<` themselves never fall
+back.
+
+A `<` whose order is partial, where `!(right < left)` does not mean
+`left <= right`, declares `<=` and `>=` beside it. A
+[`delegate`](#delegating-operators) that reaches the built-in `<` is that
+operation and stands in for nothing: the distinct type's other orderings are
+the built-in ones it [inherits](#distinct-types), which a NaN fails.
+
+A compound assignment falls back to the binary operator plus assignment; a
+direct compound overload can avoid a temporary or allocation:
 
 ```loke
 impl Big_Int {
