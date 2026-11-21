@@ -10,7 +10,6 @@ import "core:mem";
 import "core:os";
 import "core:path";
 import "core:strings";
-import "core:thread";
 import "core:unsafe";
 
 Stdio :: enum {Inherit, Null, Pipe}
@@ -91,12 +90,7 @@ impl Child {
 }
 
 impl Pipe {
-	release :: hook(drop) proc(self: inout Pipe) {
-		if (self.handle != NO_HANDLE) {
-			close_handle(self.handle);
-			self.handle = NO_HANDLE;
-		}
-	}
+	release :: hook(drop) proc(self: inout Pipe) { _ = self.close(); }
 
 	/// Idempotent: the value is left inert even when the close itself failed.
 	close :: proc(self: inout Pipe) -> Status(io.Error) {
@@ -125,6 +119,9 @@ impl Pipe {
 	}
 }
 
+// standard-library "`core:process`": spawning reports a failed scratch
+// allocation as `Out_Of_Memory`, never a panic, so every step that grows scratch
+// storage is a fallible one.
 spawn :: proc(command: Command) -> Result(Child, io.Error) {
 	// Checked before the `PATH` lookup, which would report U+0000 as not found.
 	if (strings.contains(command.program, "\"") || strings.contains(command.program, "\x00")) {
@@ -139,7 +136,7 @@ spawn :: proc(command: Command) -> Result(Child, io.Error) {
 	// `core:fmt` buffers standard output, so what it holds is written first;
 	// otherwise a child writing to an inherited stdout comes out of order.
 	rt_flush_stdout();
-	return spawn_native(command, program);
+	return spawn_native(command, program[:]);
 }
 
 // The seed runtime is part of every link, as `core:term` relies on too.
@@ -173,57 +170,26 @@ output :: proc(command: Command) -> Result(Output, io.Error) {
 	// Nothing is written to a piped stdin, so a child reading it to its end
 	// finishes rather than waiting on the parent.
 	_ = child.stdin.close();
-	collected := shared(thread.Mutex(Collected){value = .ok({})});
-	result: Output = {};
-	reader := thread.spawn(collect, Collecting{exchange(inout child.stderr, {}), child.handle, collected.clone()});
-	switch (io.read_to_end(inout child.stdout)) {
-	case .ok(bytes): result.stdout = move(bytes);
-	case .err(error):
-		// The child may be blocked writing stdout, and then never closes
-		// stderr, so it is ended before the stderr reader is joined.
-		_ = child.kill();
-		reader.join();
-		return .err(error);
+	stdout: Result([dynamic]u8, io.Error);
+	stderr: Result([dynamic]u8, io.Error);
+	parallel {
+		spawn stderr = collect(exchange(inout child.stderr, {}), child.handle);
+		stdout = collect(exchange(inout child.stdout, {}), child.handle);
 	}
-	reader.join();
-	{
-		guard := collected.get().lock();
-		switch (exchange(inout guard.get(), .ok({}))) {
-		case .ok(bytes): result.stderr = move(bytes);
-		case .err(error):
-			_ = child.kill();
-			return .err(error);
-		}
-	}
-	result.status = child.wait() or_return;
-	return move(result);
+	out := move(stdout) or_return;
+	err := move(stderr) or_return;
+	status := child.wait() or_return;
+	return Output{status, move(out), move(err)};
 }
 
+// A failed read ends the child before the reader returns. Otherwise the other
+// reader could wait forever: a child blocked writing one pipe, or one that
+// simply keeps running, never closes the other. `process` borrows the parent's
+// handle to the child, which `output` closes only after the join.
 @(private)
-Collected :: Result([dynamic]u8, io.Error);
-
-// `process` borrows the parent's handle to the child: `output` joins the reader
-// on every path before its `Child` closes that handle.
-@(private)
-Collecting :: struct {
-	pipe:    Pipe,
-	process: Handle,
-	into:    Shared(thread.Mutex(Collected)),
-}
-
-// A failed read ends the child here rather than leaving it to the parent. The
-// parent is reading stdout to its end and so cannot look before the child
-// closes stdout, which a child blocked writing stderr, or one that simply
-// keeps running, never does.
-@(private)
-collect :: proc(job: move Collecting) {
-	outcome := io.read_to_end(inout job.pipe);
-	switch (outcome) {
-	case .ok:
-	case .err: _ = kill_native(job.process);
-	}
-	guard := job.into.get().lock();
-	guard.get() = move(outcome);
+collect :: proc(pipe: move Pipe, process: Handle) -> Result([dynamic]u8, io.Error) {
+	errdefer _ = kill_native(process);
+	return io.read_to_end(inout pipe);
 }
 
 // The `core:os` name rules, and each name once, ignoring ASCII case, since
@@ -259,33 +225,41 @@ ascii_lower :: proc(byte: u8) -> u8 {
 
 // A path is used as written. A name is tried in each `PATH` directory, as
 // written and then with `.exe` when it has no extension; the working directory
-// is not searched.
+// is not searched. The program comes back as `wide` gives it.
 @(private)
-find_program :: proc(program: string_view) -> Result(string, io.Error) {
+find_program :: proc(program: string_view) -> Result([dynamic]u16, io.Error) {
 	if (program.len() == 0) {
 		return .err(io.make_error(.Invalid_Path, .Spawn));
 	}
 	if (strings.contains(program, "/") || strings.contains(program, "\\")) {
-		return scratch_join([]string_view{program});
+		return wide(program);
 	}
+	oom := io.from_allocator_error(.Spawn);
 	directories := "";
 	switch (os.get_environment("PATH")) {
 	case .ok(found):
 		directories = found or_else "";
 	case .err(error):
 		// Without memory to read `PATH`, no search could be honest.
-		if (io.is(error, .Out_Of_Memory)) { return .err(io.from_allocator_error(.Spawn)); }
+		if (io.is(error, .Out_Of_Memory)) { return .err(oom); }
 	}
+	add_extension := path.extension(program).len() == 0;
+	candidate: strings.String_Builder = {};
 	foreach (entry in strings.split(directories, ";")) {
 		directory := strings.trim(entry, "\"");
 		if (directory.len() == 0) { continue; }
-		separator: string_view = "" if strings.ends_with(directory, "\\") || strings.ends_with(directory, "/") else "\\";
-		candidate := scratch_join([]string_view{directory, separator, program}) or_return;
-		if (is_file(candidate) or_return) { return candidate; }
-		if (path.extension(program).len() == 0) {
-			with_extension := scratch_join([]string_view{candidate, ".exe"}) or_return;
-			if (is_file(with_extension) or_return) { return with_extension; }
+		candidate.clear();
+		candidate.try_append(directory) or_return oom;
+		if (!strings.ends_with(directory, "\\") && !strings.ends_with(directory, "/")) {
+			candidate.try_append("\\") or_return oom;
 		}
+		candidate.try_append(program) or_return oom;
+		found := wide_file(candidate.view()) or_return;
+		if (found.len() == 0 && add_extension) {
+			candidate.try_append(".exe") or_return oom;
+			found = wide_file(candidate.view()) or_return;
+		}
+		if (found.len() > 0) { return move(found); }
 	}
 	return .err(io.make_error(.Not_Found, .Spawn));
 }
@@ -294,24 +268,21 @@ find_program :: proc(program: string_view) -> Result(string, io.Error) {
 // `CommandLineToArgvW` and the C runtime parse back exactly what was given: a
 // run of backslashes is doubled only where a quote follows it.
 @(private)
-command_line :: proc(command: Command) -> Result(string, io.Error) {
+command_line :: proc(command: Command) -> Result([dynamic]u16, io.Error) {
+	oom := io.from_allocator_error(.Spawn);
 	line: strings.String_Builder = {};
-	built := put(inout line, "\"") && put(inout line, command.program) && put(inout line, "\"");
+	line.try_append("\"") or_return oom;
+	line.try_append(command.program) or_return oom;
+	line.try_append("\"") or_return oom;
 	foreach (argument in command.arguments) {
-		built = built && put(inout line, " ") && quote_argument(inout line, argument);
+		line.try_append(" ") or_return oom;
+		quote_argument(inout line, argument) or_return oom;
 	}
-	if (built) {
-		switch (line.try_finish()) {
-		case .ok(text): return text;
-		case .err:
-		}
-	}
-	return .err(io.from_allocator_error(.Spawn));
+	return wide(line.view());
 }
 
-// False once the line cannot grow.
 @(private)
-quote_argument :: proc(line: inout strings.String_Builder, argument: string_view) -> bool {
+quote_argument :: proc(line: inout strings.String_Builder, argument: string_view) -> Status(Allocator_Error) {
 	plain := argument.len() > 0;
 	foreach (character in argument) {
 		if (character == ' ' || character == '\t' || character == '\n' || character == '\v' || character == '"') {
@@ -319,9 +290,9 @@ quote_argument :: proc(line: inout strings.String_Builder, argument: string_view
 		}
 	}
 	if (plain) {
-		return put(inout line, argument);
+		return line.try_append(argument);
 	}
-	built := put(inout line, "\"");
+	line.try_append("\"") or_return;
 	backslashes := 0;
 	foreach (character in argument) {
 		if (character == '\\') {
@@ -332,46 +303,12 @@ quote_argument :: proc(line: inout strings.String_Builder, argument: string_view
 		if (character == '"') {
 			backslashes = backslashes * 2 + 1;
 		}
-		for (; backslashes > 0; backslashes -= 1) { built = built && put(inout line, "\\"); }
-		built = built && put(inout line, character);
+		for (; backslashes > 0; backslashes -= 1) { line.try_append("\\") or_return; }
+		line.try_append(character) or_return;
 	}
 	// And before the closing quote, themselves.
-	for (; backslashes > 0; backslashes -= 1) { built = built && put(inout line, "\\\\"); }
-	return built && put(inout line, "\"");
-}
-
-// standard-library "`core:process`": spawning reports a failed scratch
-// allocation as `Out_Of_Memory`, never a panic, so every step that grows
-// scratch storage is a fallible one.
-@(private)
-put_text :: proc(line: inout strings.String_Builder, text: string_view) -> bool {
-	switch (line.try_append(text)) {
-	case .ok:  return true;
-	case .err: return false;
-	}
-}
-
-@(private)
-put_rune :: proc(line: inout strings.String_Builder, value: rune) -> bool {
-	switch (line.try_append(value)) {
-	case .ok:  return true;
-	case .err: return false;
-	}
-}
-
-@(private)
-put :: proc{put_text, put_rune};
-
-@(private)
-scratch_join :: proc(parts: []string_view) -> Result(string, io.Error) {
-	line: strings.String_Builder = {};
-	foreach (part in parts) {
-		if (!put(inout line, part)) { return .err(io.from_allocator_error(.Spawn)); }
-	}
-	switch (line.try_finish()) {
-	case .ok(text): return text;
-	case .err:      return .err(io.from_allocator_error(.Spawn));
-	}
+	for (; backslashes > 0; backslashes -= 1) { line.try_append("\\\\") or_return; }
+	return line.try_append("\"");
 }
 
 when (LOKE_OS == .Windows) {
@@ -505,9 +442,8 @@ Handles :: struct {
 }
 
 @(private)
-spawn_native :: proc(command: Command, program: string_view) -> Result(Child, io.Error) {
-	application := wide(program) or_return;
-	line := wide(command_line(command) or_return) or_return;
+spawn_native :: proc(command: Command, application: []u16) -> Result(Child, io.Error) {
+	line := command_line(command) or_return;
 	directory: [dynamic]u16 = {};
 	if (command.directory.len() > 0) {
 		directory = wide(command.directory) or_return;
@@ -609,9 +545,9 @@ standard_handle :: proc(mode: Stdio, index: int) -> Result([2]Handle, io.Error) 
 		}
 		return [2]Handle{copy, NO_HANDLE};
 	case .Null:
-		name := wide("NUL") or_return;
+		name := [4]u16{'N', 'U', 'L', 0};
 		device := rt_create_file(
-			unsafe.raw_data(name), u32(GENERIC_READ) | u32(GENERIC_WRITE), SHARE_READ_WRITE,
+			unsafe.raw_data(name[:]), u32(GENERIC_READ) | u32(GENERIC_WRITE), SHARE_READ_WRITE,
 			&mut security, OPEN_EXISTING, 0, 0,
 		);
 		if (device == INVALID_HANDLE) {
@@ -655,23 +591,20 @@ close_all :: proc(handles: Handles) {
 // is found that does.
 @(private)
 environment_block :: proc(variables: []Variable) -> Result([dynamic]u16, io.Error) {
+	oom := io.from_allocator_error(.Spawn);
 	block: [dynamic]u16 = {};
+	entry: strings.String_Builder = {};
 	foreach (variable in variables) {
-		entry := scratch_join([]string_view{variable.name, "=", variable.value}) or_return;
-		units := wide(entry) or_return;
-		append_units(inout block, units[:]) or_return;
+		entry.clear();
+		entry.try_append(variable.name) or_return oom;
+		entry.try_append("=") or_return oom;
+		entry.try_append(variable.value) or_return oom;
+		units := wide(entry.view()) or_return;
+		block.try_append(..units[:]) or_return oom;
 	}
-	if (variables.len() == 0) { append_units(inout block, []u16{0}) or_return; }
-	append_units(inout block, []u16{0}) or_return;
+	if (variables.len() == 0) { block.try_append(0) or_return oom; }
+	block.try_append(0) or_return oom;
 	return move(block);
-}
-
-@(private)
-append_units :: proc(block: inout [dynamic]u16, units: []u16) -> Status(io.Error) {
-	switch (block.try_append(..units)) {
-	case .ok:  return .ok;
-	case .err: return .err(io.from_allocator_error(.Spawn));
-	}
 }
 
 @(private)
@@ -698,18 +631,17 @@ kill_native :: proc(handle: Handle) -> Status(io.Error) {
 	}
 }
 
-// A name that cannot be a path is not a file; running out of memory to ask is
-// an error rather than a missing program.
+// The path as `wide` gives it when it names a file, and otherwise empty. Neither
+// a `PATH` entry nor a checked program holds U+0000, so `wide` fails only when
+// out of memory, which is an error rather than a missing program.
 @(private)
-is_file :: proc(path: string_view) -> Result(bool, io.Error) {
-	switch (utf16.encode(path, mem.default_allocator())) {
-	case .ok(units):
-		attributes := rt_file_attributes(unsafe.raw_data(units));
-		return attributes != INVALID_FILE_ATTRIBUTES && (attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) == 0;
-	case .err(error):
-		if (error == .Out_Of_Memory) { return .err(io.from_allocator_error(.Spawn)); }
-		return false;
+wide_file :: proc(path: string_view) -> Result([dynamic]u16, io.Error) {
+	units := wide(path) or_return;
+	attributes := rt_file_attributes(unsafe.raw_data(units));
+	if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) != 0) {
+		units.clear();
 	}
+	return move(units);
 }
 
 @(private)
@@ -767,13 +699,5 @@ wide :: proc(text: string_view) -> Result([dynamic]u16, io.Error) {
 from_last_error :: proc(operation: io.Operation) -> io.Error {
 	return io.from_native_code(rt_last_error(), operation);
 }
-
-} else {
-
-// No non-Windows backend exists yet: `LOKE_OS` is a fixed `.Windows`, so this
-// branch is never selected, and it holds only the names the portable half
-// above spells out.
-@(private) Handle :: int;
-@(private) NO_HANDLE :: 0;
 
 }

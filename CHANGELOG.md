@@ -197,6 +197,11 @@ checklist.
   and no temporary heap buffer, and the runtime caches each [argument's](docs/standard-library.md#osargs)
   byte length at startup. At `-opt=speed`, 200,000 reads of a short environment variable take
   867 ms, from 1,641, and iterating a six-argument vector 700,000 times takes 320 ms, from 391.
+- [`process.spawn`](docs/standard-library.md#coreprocess) and the calls built on it make fewer
+  scratch allocations: the program path, the command line, and each environment entry are
+  encoded to UTF-16 without an intermediate UTF-8 copy, a `PATH` search reuses one candidate
+  buffer and hands the match it found straight to the system, and a `.Null` stream allocates
+  nothing. `process.output` collects stderr without a shared, locked result.
 
 ### Fixed
 
