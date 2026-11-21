@@ -186,12 +186,14 @@ unchecked_pointer_conversion :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if source == dest {
 		return false
 	}
-	dest_kind := type_kind(c, dest)
+	if dest_kind := type_kind(c, dest); dest_kind != .Pointer && dest_kind != .C_Pointer {
+		return false
+	}
 	#partial switch type_kind(c, source) {
 	case .Raw_Pointer, .C_Pointer:
-		return dest_kind == .Pointer || dest_kind == .C_Pointer
+		return true
 	case .Pointer:
-		return dest_kind == .Pointer && type_of(c, source).element != type_of(c, dest).element
+		return type_of(c, source).element != type_of(c, dest).element
 	}
 	return false
 }

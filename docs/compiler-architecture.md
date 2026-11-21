@@ -1428,7 +1428,7 @@ Preserve these lowering rules:
   `write_function` then drops the load if nothing else names its value. The
   two places are one place or do not overlap, which holds for two places of
   one type outside `unsafe` code
-  ([Copies between overlapping places](open-questions.md#copies-between-overlapping-places)).
+  ([What is not checked](design.md#what-is-not-checked)).
   A copy moves words where a first-class one moved each member at its own
   width, and code built at `-opt=none` that copies many small values runs up
   to 10% slower for it. `aggregate_copies_and_zeroes_move_bytes` guards the

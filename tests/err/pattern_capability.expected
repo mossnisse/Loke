@@ -1,0 +1,7 @@
+L0392
+@13:2
+no overload of `fill` applies to these arguments
+`[dynamic]int` does not match the shape of parameter 1
+L0392
+@14:2
+`[3]int` does not match the shape of parameter 1

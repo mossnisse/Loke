@@ -1,0 +1,32 @@
+package main; import "core:fmt";
+
+// design.md "Specialization": a pattern binds through an implicit conversion
+// of the argument to the pattern's shape, and the argument ranks as that
+// conversion does.
+
+first :: proc(values: []$E) -> E { return values[0]; }
+read :: proc(pointer: ^$T) -> T { return pointer^; }
+
+// No conversion adds a capability, so only a `[]mut` slice reaches this.
+fill :: proc(values: []mut $E, value: E) {
+	foreach (index in 0..<values.len()) { values[index] = value; }
+}
+
+// The member whose pattern is the argument's own shape wins.
+shape :: proc { shape_slice, shape_dynamic, shape_array }
+shape_slice :: proc(values: []$E) -> string_view { return "slice"; }
+shape_dynamic :: proc(values: [dynamic]$E) -> string_view { return "dynamic"; }
+shape_array :: proc(values: [$N]$E) -> string_view { return "array"; }
+
+main :: proc() {
+	growable := [dynamic]int{4, 5};
+	fixed := [3]f64{7, 8, 9};
+	writable := []mut u8{1};
+	boxed := box(11);
+	count := 3;
+	fmt.println(first(growable), first(fixed), first(writable), first(fixed[:]));
+	fmt.println(read(boxed), read(&mut count), read(&count));
+	fmt.println(shape(growable), shape(fixed), shape(writable), shape(fixed[:]));
+	fill(writable, 9);
+	fmt.println(writable);
+}

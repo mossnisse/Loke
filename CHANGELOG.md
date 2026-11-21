@@ -103,6 +103,11 @@ checklist.
       greater :: operator(>) proc(a, b: Reverse) -> bool { return int(a) > int(b); }
   }
   ```
+- Converting a `^T` or `^mut T` to a C pointer to another element type is an unchecked
+  operation ([C pointers](docs/design.md#c-pointers)). `([^]u64)(p)` for a `p: ^u8` compiled in
+  a file that does not import `core:unsafe`, though it reads the pointee as a type it was not
+  declared with, as `(^u64)(p)` does; it is now `L0706` there. `([^]u8)(p)` still needs no
+  import. Upgrade by importing `core:unsafe` in the file that converts.
 
 ### Changed
 
@@ -207,7 +212,7 @@ checklist.
   run slower where it copies many small values: `bench/geometry.loke` by 10%,
   `bench/containers.loke` by 5%. Unsafe code that copies between two places of one type
   sharing only some of their bytes, which a converted pointer can name, now has no defined
-  result ([Copies between overlapping places](docs/open-questions.md#copies-between-overlapping-places)).
+  result ([What is not checked](docs/design.md#what-is-not-checked)).
 - The compiler writes a procedure into its LLVM module only once something reaches it, where
   it wrote every procedure and then dropped the unreached. The front end is up to 23% faster,
   9% at the median of the examples and benchmarks, and the compiler's peak memory 3-34%
@@ -241,6 +246,20 @@ checklist.
   encoded to UTF-16 without an intermediate UTF-8 copy, a `PATH` search reuses one candidate
   buffer and hands the match it found straight to the system, and a `.Null` stream allocates
   nothing. `process.output` collects stderr without a shared, locked result.
+- The specification now states six things the compiler already did:
+  - a generic pattern binds through an implicit conversion, so `[]$E` binds from a
+    `[dynamic]int` or a `[3]int`, and never gains a capability
+    ([Specialization](docs/design.md#specialization));
+  - `panic()` reports `explicit panic`, and `assert(condition)` reports `assertion failed`
+    ([Built-in procedures](docs/design.md#built-in-procedures));
+  - `unsafe.raw_data` takes a `string_view` or a `cstring_view`
+    ([unsafe.raw_data procedure](docs/design.md#unsaferaw_data-procedure));
+  - read-only slice literals with equal elements may share one array, so comparing their
+    elements' addresses is unspecified ([Slice literals](docs/design.md#slice-literals));
+  - a doc comment on a field of a type declared in a procedure body is `L0260`
+    ([Doc comments](docs/design.md#doc-comments));
+  - a copy between two places that share only some of their bytes is undefined
+    ([What is not checked](docs/design.md#what-is-not-checked)).
 
 ### Fixed
 

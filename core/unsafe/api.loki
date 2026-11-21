@@ -17,13 +17,15 @@ package unsafe;
 	The address of the first element of `data`, as a C pointer that carries
 	neither a length nor a read-only capability, and whose lifetime is no longer
 	checked. `data` is a slice, a mutable slice, a dynamic array, a pointer to a
-	fixed array, or a `string`:
+	fixed array, or text:
 
 	    raw_data([]$E)          -> [^]E   // read-only slices; the capability is discarded
 	    raw_data([]mut $E)      -> [^]E
 	    raw_data([dynamic]$E)   -> [^]E
 	    raw_data(^[$N]$E)       -> [^]E   // one array level at a time
 	    raw_data(string)        -> [^]byte
+	    raw_data(string_view)   -> [^]byte
+	    raw_data(cstring_view)  -> [^]byte   // the terminator follows the text
 */
 @(intrinsic)
 raw_data :: proc(data: []$E) -> [^]E ---;

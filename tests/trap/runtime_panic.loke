@@ -1,5 +1,8 @@
 package main; import "core:fmt";
 
+// design.md "Built-in procedures": `panic` with no message reports
+// `explicit panic`.
+
 main :: proc() {
 	n := 0;
 	if (n == 0) {

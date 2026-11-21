@@ -2221,6 +2221,22 @@ A file-level gate makes these operations searchable without adding an unsafe
 expression language. `base:` packages are exempt because they implement runtime
 facilities and cannot import `core:`.
 
+`([^]u64)(p)` for a `p: ^u8` is gated too, though using its result already
+was. `([^]u8)(p)` only forgets where `p` points, while another element type
+claims storage `p` never named, and a foreign procedure can be handed that
+claim by a file that never indexes the pointer itself. `(^u64)(p)` was gated
+for the same reason.
+
+### A copy between partly overlapping places is undefined
+
+A struct, array, or union is copied with `llvm.memcpy`, as clang copies one
+for C. Two places of one type either are one place or share no byte, unless
+`core:unsafe` converted a pointer into the middle of other storage. So
+`llvm.memmove` would define the result only for code that already answers for
+its own aliasing, and would take from every checked copy the fact that its two
+places are apart, which the optimizer uses to forward and remove copies. C
+makes the same choice for struct assignment.
+
 ### The interface catalogue is predeclared
 
 A bound used to reach its interface through the package:
@@ -3019,6 +3035,11 @@ is a warning, so a doc comment cannot be lost by a blank line or by standing
 above something that is not documented. See
 [Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21).
 
+A type declared in a procedure body has no documented fields, since the type
+itself is not documented there: `-doc` and an interface file never show a
+local, and a field's comment with no type above it to belong to would be shown
+by hover alone.
+
 ### Long doc comments are `/** */` blocks
 
 A paragraph written as `///` lines repeats its marker on every line, which is
@@ -3080,6 +3101,11 @@ avoids special parsing rules for composite literals in conditions.
 `[]T{...}` produces a read-only slice and `[]mut T{...}` a mutable one.
 Inferring mutability from surrounding context would make the written type fail
 to describe the value.
+
+Two read-only literals with equal elements may share an array, as two equal
+string literals may in C. Their contents cannot differ, so only an address
+comparison tells them apart, and a guarantee of distinct addresses would stop
+the compiler from merging constant tables to serve it.
 
 ### No uniform call syntax
 

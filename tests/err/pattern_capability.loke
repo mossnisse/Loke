@@ -1,0 +1,15 @@
+package main;
+
+// design.md "Specialization": a pattern binds through an implicit conversion,
+// and none adds a capability, so `[]mut $E` binds only from a `[]mut` slice.
+
+fill :: proc(values: []mut $E, value: E) {
+	foreach (index in 0..<values.len()) { values[index] = value; }
+}
+
+main :: proc() {
+	growable := [dynamic]int{4, 5};
+	fixed := [3]int{7, 8, 9};
+	fill(growable, 1);
+	fill(fixed, 2);
+}

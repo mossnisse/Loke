@@ -48,4 +48,18 @@ main :: proc() {
 	case .some: fmt.println(-1);
 	case .none: fmt.println(0);
 	}
+
+	// A view is text too: a `string_view` starts where the view does, and a
+	// `cstring_view` has its terminator after the text.
+	view: string_view = text[1:];
+	fmt.println(unsafe.raw_data(view)[0] == 'e');
+	c_text: cstring_view = "abc";
+	c_bytes := unsafe.raw_data(c_text);
+	fmt.println(c_bytes[2] == 'c', c_bytes[3]);
+
+	// Another element type reads the pointee as what it was not declared, so
+	// that conversion needs the import where `([^]int)(single)` does not.
+	word: u32 = 0x01020304;
+	parts := ([^]u8)(&word);
+	fmt.println(int(parts[0]) + int(parts[1]) + int(parts[2]) + int(parts[3]));
 }

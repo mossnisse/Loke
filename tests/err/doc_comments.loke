@@ -181,5 +181,13 @@ Bounded :: interface($T: type) where size_of((
 	(t: T) t -> T;
 }
 
+local_type :: proc() -> int {
+	// A declaration in a body is not an item, so neither is its field.
+	Local :: struct {
+		/// A field of a type declared in a body.
+		n: int,
+	}
+	return Local{n = 1}.n;
+}
 
 /// At the end of the file.

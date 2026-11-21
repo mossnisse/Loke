@@ -377,7 +377,8 @@ These items can be documented:
 - a declaration at file scope, including one in an `impl` block, a foreign
   block, or a file-scope `when`;
 - a record's field or variant, an enum's member, and an interface's requirement,
-  wherever the type is written.
+  wherever the type is written outside a procedure body. A declaration in a
+  body is not an item, so neither are the members of a type written there.
 
 An item's comment block sits directly above the item or its first attribute.
 Each comment occupies its own line, with no intervening or trailing blank line.
@@ -955,7 +956,9 @@ than dereferenced with `^`. Conversions to checked pointer syntax remain
 explicit because the address has no checked lifetime. Indexing, slicing, and
 converting a C pointer to a checked pointer are [unchecked
 operations](#the-unsafe-package), valid only in a file that imports
-`core:unsafe`.
+`core:unsafe`. So is converting a `^T` or `^mut T` to a C pointer to another
+element type, `[^]U`, which reads the pointee as a type it was not declared
+with; converting it to `[^]T` only loses provenance.
 
 Indexing and slicing produce these types:
 
@@ -997,6 +1000,8 @@ unsafe.raw_data([]mut $E)          -> [^]E;    // mutable slices
 unsafe.raw_data([dynamic]$E)       -> [^]E;    // dynamic arrays
 unsafe.raw_data(^[$N]$E)           -> [^]E;    // fixed arrays
 unsafe.raw_data(string)            -> [^]byte;
+unsafe.raw_data(string_view)       -> [^]byte;
+unsafe.raw_data(cstring_view)      -> [^]byte; // the terminator follows the text
 ```
 
 For a nested fixed array, `unsafe.raw_data` exposes one array level at a time.
@@ -1166,6 +1171,10 @@ of the block holding the statement, wherever the literal appears, so a view of
 it that a call returns can be kept. At file scope it has static lifetime. A
 `[]mut` literal in a `thread_local` initializer has an array for each thread,
 as the variable has an instance for each thread.
+Read-only slice literals with equal constant elements may be backed by one
+array, since nothing can write through either, so whether the addresses of
+their elements compare equal is unspecified. A literal that can be written
+through has an array of its own.
 Returning a slice literal from a procedure is rejected because its hidden owner
 is local, just as returning a slice of a named local array is rejected.
 
@@ -7490,6 +7499,15 @@ flip :: proc(pair: ($A, $B)) -> (B, A) {
   `Io_Result($T)`, is its expansion: it binds as `Result($T, Io_Error)` binds,
   and is as specific as that pattern for tie-breaker 5.
 
+A pattern binds through an [implicit conversion](#implicit-type-conversions) of
+the argument to the pattern's shape. `[]$E` binds `E` to `int` from a
+`[]mut int`, a `[dynamic]int`, or a `[3]int`, and `^$T` binds `T` from a
+`^mut T` or a `Box(T)`. The argument ranks as that conversion does in [overload
+resolution](#operator-lookup-and-overload-resolution), so a member whose pattern
+is the argument's own shape, `[dynamic]$E` for a dynamic array, is chosen over
+it. No conversion adds a capability: `[]mut $E` binds only from a `[]mut`
+slice.
+
 The pattern binds types only. The argument must still convert to the parameter
 type it produces, following the mode, calling-convention, type-level effect, and
 result-contract rules for [procedure types](#procedure-type). Inferred [global
@@ -8573,6 +8591,10 @@ responsibility:
 - dereferencing `rawptr`, `[^]T`, or a `^T` with unknown provenance;
 - pointers or views manufactured or stripped of provenance through
   `core:unsafe`;
+- a copy between two places that share some of their bytes but not all, which
+  only a pointer converted into the middle of other storage can name: an
+  assignment or initialization of a struct, array, or union from such a place
+  is undefined behavior;
 - aliases hidden by foreign code, and what a foreign procedure retains of a
   borrowed argument after it returns;
 - transferring unchecked addresses between threads, and anything handed to
@@ -8624,8 +8646,8 @@ usable shape, and one trusts storage the compiler cannot see filled:
 
 - an explicit conversion to `^T` or `^mut T` from `rawptr`, from a C pointer, or
   from a pointer to a different pointee;
-- an explicit conversion to a C pointer from `rawptr` or from a C pointer to a
-  different element;
+- an explicit conversion to a C pointer from `rawptr`, or from a C pointer or a
+  pointer to a different element;
 - indexing or slicing a C pointer;
 - leaving a variable uninitialized with [`x: T = ---`](#built-in-values).
 
@@ -9183,8 +9205,8 @@ The predeclared operations used by this document are:
 | `typeid_of(T)` | The runtime [`typeid`](#type-and-typeid) constant for a compile-time type |
 | `type_info_of(id)` | read-only `^runtime.Type_Info` for a `typeid`; the table is shared static storage |
 | `fields_of(T)`, `enum_values_of(T)`, `variants_of(T)` | Typed [compile-time reflection](#compile-time-reflection) descriptor arrays |
-| `assert(condition, message := "", ..args)` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string, and `args` are printable values printed after it |
-| `panic(message, ..args)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string, and `args` are printable values printed after it. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
+| `assert(condition, message := "assertion failed", ..args)` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation. `message` is a compile-time string, and `args` are printable values printed after it |
+| `panic(message := "explicit panic", ..args)` | Panics at runtime or diagnoses the currently evaluated compile-time call. `message` is a compile-time string, and `args` are printable values printed after it. It [diverges](#diverging-procedures), so it stands wherever a value is expected |
 | `make`, `free_all`, `drop` | [Allocation and release](#allocators) |
 | `box(value, allocator)`, `try_box(value, allocator)` | An [owned value](#owned-values) in an allocation of its own |
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
@@ -9575,7 +9597,7 @@ A **panic** is an unrecoverable runtime fault. In required compile-time
 procedure evaluation, it produces a compilation diagnostic with the evaluator
 call stack. Runtime panics arise from:
 
-- `panic(message, ..args)`
+- a call of `panic`
 - a failed `assert`
 - an unchecked conversion of a null address to a reference
 - integer division or remainder by zero

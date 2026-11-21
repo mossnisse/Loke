@@ -26,6 +26,12 @@ conversions :: proc(p: [^]int, f: ^f64, r: rawptr) {
 	fmt.println(a == nil, b == nil, c == nil, d == nil);
 }
 
+// A C pointer to another element type reads the pointee as that type.
+punned :: proc(f: ^f64) {
+	a := ([^]u64)(f);
+	fmt.println(a == nil);
+}
+
 accesses :: proc(p: [^]int) {
 	x := p[0];
 	s := p[0:4];
@@ -56,6 +62,7 @@ main :: proc() {
 	value := 1;
 	fmt.println(escape()^);
 	real := 1.0; conversions(nil, &real, nil);
+	punned(&real);
 	accesses(nil);
 	allowed(&mut value);
 	uninitialised();

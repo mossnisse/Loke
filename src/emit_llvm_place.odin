@@ -129,7 +129,8 @@ build_record :: proc(e: ^Emitter, record: Type_Id, parts: ..string) -> string {
 	return built
 }
 
-// Copies `size` bytes between two places, which are one place or do not overlap.
+// Copies `size` bytes between two places, which are one place or do not
+// overlap: design.md "What is not checked" leaves any other to `unsafe` code.
 @(private)
 copy_bytes :: proc(e: ^Emitter, to, from: string, size: u64) {
 	if size > 0 {

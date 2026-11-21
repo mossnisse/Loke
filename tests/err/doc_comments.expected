@@ -15,4 +15,6 @@ warning[L0260]: this doc comment documents nothing
 L0315
 @76:17
 warning[L0260]: this doc comment documents nothing
-@185:1
+@187:3
+warning[L0260]: this doc comment documents nothing
+@193:1

@@ -12,12 +12,11 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 2026-10-31, and the proposals from them not yet decided, are in
 [design-review-2026-10-31.md](design-review-2026-10-31.md).
 
-## What the region and overload matrices left open
+## What the region matrix left open
 
-The [region matrix](../tests/region_matrix_test.odin) and the [overload
-matrix](../tests/overload_matrix_test.odin) each judge the compiler against a
-model of the rules written apart from it. Writing the models met two places
-where [design.md](design.md) does not decide, and each model follows the
+The [region matrix](../tests/region_matrix_test.odin) judges the compiler
+against a model of the rules written apart from it. Writing the model met a
+place where [design.md](design.md) does not decide, and the model follows the
 compiler there (2026-11-16):
 
 - **A received resettable allocator beside the default provider.** A reset of
@@ -28,13 +27,6 @@ compiler there (2026-11-16):
   global, to such a parameter is `L0538`. So the two regions could be told
   apart, which would accept more programs and reject none. Whether that
   precision is wanted is open.
-- **A pattern binding through an implicit conversion.** `proc(values: []$E)`
-  called with a `[dynamic]int` or a `[3]int` binds `E` to `int` and ranks as
-  the view conversion does, 3.
-  [Specialization](design.md#specialization) says the argument must convert to
-  the type the pattern produces, and its example calls the pattern one that
-  allows only read-only slices; it does not say that binding looks through the
-  conversion. The text should say which.
 
 ## Provenance architecture
 
@@ -243,23 +235,11 @@ evidence for the continuation at `ea622efe`; the
 [resolution](source-reviews/README.md#resolution) says what was fixed. These
 points remain:
 
-- **Settle the public contracts for two built-ins.** `unsafe.raw_data`
-  accepts `string_view` and `cstring_view` beyond the documented operand list.
-  The compiler and a test support `panic()`, while the built-in table requires
-  a message. [Built-in checker](source-reviews/check_builtin.md#findings)
 - **Type-valued conditionals in postfix position.** `(i32 if true else i64)(7)`
   reports `L0320` and `(A if true else B).member` reports `L0363`, while
   binding the conditional to a name first works. Decide whether every constant
   `type` expression denotes a type before a call or selector.
   [Expression checker review](source-reviews/check_expr.md#open-question)
-- **Checked pointer to C pointer of another element type.** `([^]u64)(p)` for
-  `p: ^u8` converts without `core:unsafe`, while [C pointers](design.md#c-pointers)
-  describes that direction with matching element types.
-  [Conversions review](source-reviews/conversions.md#simplification-and-boundaries)
-- **Doc comments on a local type's fields.** Decide whether "wherever the type
-  is written" in [Doc comments](design.md#doc-comments) covers a type declared
-  in a procedure body. Its fields warn with `L0260` today, and hover agrees.
-  [Doc comment review](source-reviews/doc_comments.md#findings)
 - **A distinct type's hidden `<`.** `Reverse :: distinct int` with an inherent
   `<` that is not `@(public)` orders by `int`'s built-in operators in an
   importing package, with no diagnostic, while its own package and every
@@ -288,10 +268,6 @@ points remain:
 
 ## LLVM source review follow-ups
 
-- **Slice literal identity.** Decide whether separate file-scope immutable
-  slice literals may share a backing array when pointer equality can observe
-  the sharing. The file-scope literal rule gives the array static lifetime.
-  [LLVM constant review](source-reviews/emit_llvm_const.md#equal-file-scope-slice-literals-have-observable-shared-backing)
 - **Constant emission.** A union constant whose active payload reaches past
   the storage's head, such as `.small({1, 2, 3})` beside a `[65536]u8`
   variant, still spells the whole padding member byte by byte: its LLVM type
@@ -339,19 +315,6 @@ A fixed-array or slice literal reuses no slot in either form, since only the
 and `[]u8{...}` take 40 `Large` slots for the by-value calls and 80 for the
 method calls. Whether they should reuse slots as the growable literals do is
 open with the summary. Found on 2026-11-12.
-
-## Copies between overlapping places
-
-A struct, array, or union copied from one place to another is an `llvm.memcpy`
-(`store` in [emit_llvm_place.odin](../src/emit_llvm_place.odin)), whose two
-places must be one place or share no byte. Two places of one type that share
-only some of their bytes cannot be named without `core:unsafe`, which can
-convert a pointer into the middle of other storage. Until 2026-11-20 a copy
-between two such places of at most 4096 bytes read the whole value and then
-wrote it; it is now undefined, as a larger one always was.
-[design.md](design.md) does not say what such a copy does. Whether it is
-defined, which would make these copies `llvm.memmove`, or is one more thing
-`unsafe` code answers for, is open.
 
 ## A public type's private `format`
 
