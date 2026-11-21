@@ -88,6 +88,11 @@ checklist.
 
 ### Changed
 
+- [`strings.index_byte`](docs/standard-library.md#corestrings) searches with the C runtime's
+  `memchr`, and [`cstrings.from_string`](docs/standard-library.md#corecstrings) uses it to look
+  for a zero byte. At `-opt=speed`, converting 1,800 strings of 384 KiB takes 330 ms, from 540,
+  and rejecting them for a zero at the end takes 21 ms, from 230. Short strings take as long as
+  before.
 - [`core:container`](docs/standard-library.md#corecontainer) is faster with no API change.
   `Small_Array` insertion moves each later element once rather than swapping the new one down,
   so filling 64 slots from the front takes a fifteenth of the time at `-opt=speed`. `Bit_Set`

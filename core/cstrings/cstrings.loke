@@ -15,6 +15,7 @@
 package cstrings;
 
 import "core:mem";
+import "core:strings";
 
 Error :: enum {
 	/**
@@ -34,22 +35,18 @@ C_String :: struct {
 from_string :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(C_String, Error) {
-	foreach (byte in text.bytes()) {
-		if (byte == 0) {
-			return .err(.Contains_Zero);
-		}
+	if (strings.index_byte(text, 0) != .none) {
+		return .err(.Contains_Zero);
 	}
 	switch (try_make([dynamic]u8, 0, text.len() + 1, allocator)) {
 	case .ok(buffer):
-		// The capacity covers the text and the terminator, so neither append
-		// can grow the buffer, and neither can fail.
+		// The capacity covers the text and the terminator, so neither append can
+		// grow or fail; `move` keeps the caller's allocator, where a copy would
+		// clone into the default one.
 		buffer.append(..text.bytes());
 		buffer.append(0);
-		// `move`, because a copy would clone the bytes into the *default*
-		// allocator and discard the one the caller chose.
 		return C_String{move(buffer)};
-	case .err:
-		return .err(.Out_Of_Memory);
+	case .err: return .err(.Out_Of_Memory);
 	}
 }
 

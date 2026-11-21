@@ -26,6 +26,7 @@
 package strings;
 
 import "core:mem";
+import "core:unsafe";
 
 // ------------------------------------------------------------ allocation --
 
@@ -114,12 +115,22 @@ last_index :: proc(text: string_view, needle: string_view) -> Option(int) {
 	return .none;
 }
 
+// The C runtime's `memchr` searches a word or vector at a time; a Loke loop
+// compares one byte per iteration. That runtime is part of every link, as the
+// `exit` binding in `core:os` relies on, so no `foreign import` names it.
+@(private)
+foreign loke_runtime {
+	@(link_name="memchr")
+	rt_memchr :: proc "c" (data: [^]u8, value: i32, count: uint) -> [^]u8 ---;
+}
+
 index_byte :: proc(text: string_view, value: u8) -> Option(int) {
-	bytes := text.bytes();
-	foreach (b, offset in bytes.indexed()) {
-		if (b == value) { return offset; }
-	}
-	return .none;
+	// C requires an address even for zero bytes, which an empty view need not have.
+	if (text.len() == 0) { return .none; }
+	start := unsafe.raw_data(text.bytes());
+	found := rt_memchr(start, i32(value), uint(text.len()));
+	if (found == nil) { return .none; }
+	return int(unsafe.transmute(uintptr, found) - unsafe.transmute(uintptr, start));
 }
 
 /**

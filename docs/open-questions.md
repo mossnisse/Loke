@@ -12,34 +12,16 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 2026-10-31, and the proposals from them not yet decided, are in
 [design-review-2026-10-31.md](design-review-2026-10-31.md).
 
-## Simplifying core:cstrings
+## The allocation switch in core:cstrings
 
-- **Keep the allocation switch and trim its branches.** Put the `.err`
-  case on one line and combine the comments explaining capacity and `move`.
-  This cut four lines and produced identical `-opt=speed` machine code for
-  the benchmark. The payload append already uses `memcpy`. Combining the
-  payload spread and the terminator in one append would construct a
-  temporary variadic pack with a 256 KiB limit.
-  [Constructor](../core/cstrings/cstrings.loke) · [Variadic parameters](design.md#variadic-parameters)
-- **Reuse a bounded byte search for large inputs.** A scratch `memchr` scan
-  passed exactly the view's byte count and skipped empty views. The shared
-  byte-search routine could provide this fast path while `from_string`
-  continues to reject zero before allocating.
-  [`strings.index_byte`](standard-library.md#corestrings)
-
-Replacing the allocation switch with `or_return .Out_Of_Memory` cut seven
-lines. In the optimized executable, the scalar scan's backward branch crossed
-a 32-byte boundary in this build. For 1,800 valid 384 KiB inputs, the median
-time rose from 558 to 682 ms. Using `slice.contains` with `or_return` took
-684 ms and saved the same seven lines after counting the import.
-
-The `memchr` variant with `or_return` took 344 ms on the same valid inputs
-and cut rejection of a zero at the end from 238 to 22 ms. For 750,000 valid
-24-byte inputs, it took 56 ms against 55 ms for the original. Rejection at
-the first byte rose from 2.3 to 3.6 ms for 750,000 inputs. These are medians
-of seven interleaved runs on one Windows machine at `-opt=speed`. Scratch
-variants matched the generated interface, the text fixture's output, and the
-expected borrow diagnostics.
+[`from_string`](../core/cstrings/cstrings.loke) handles a failed allocation
+with a `switch`, where `or_return .Out_Of_Memory` would save seven lines. The
+`switch` was kept because, with the byte-by-byte zero scan, the `or_return`
+build placed that loop's backward branch across a 32-byte boundary: 1,800
+valid 384 KiB inputs took 682 ms, from 558, at `-opt=speed` on Windows. The
+scan is now `strings.index_byte`, which calls `memchr`, and the two forms
+measured alike (about 345 ms, and 56 ms for 750,000 inputs of 24 bytes).
+Whether to take the shorter form is open (2026-11-21).
 
 ## What the region and overload matrices left open
 
@@ -440,6 +422,65 @@ design questions stay open until a caller or a measurement settles them:
   pays only if repeated random access outweighs its build time and memory, and
   `validate_unique_keys` waits for a protocol that requires globally unique
   keys.
+
+## Encoding library audit follow-ups
+
+A scratch refactor removed 73 lines from `core/encoding`. The regenerated
+interfaces matched, and `lib_json`, `lib_binary_reader`, `lib_binary_writer`,
+and `lib_text` matched their expected output at `-opt=speed`.
+
+- **Drop the JSON parser's two first-item states (16 lines).** After an opening
+  bracket or brace, check for its matching closer once. All other input goes
+  to the ordinary value or key state. A closer after a comma still reaches
+  that ordinary state and is rejected. [Scanner](../core/encoding/json/parse.loke)
+- **Use `errdefer` to clear a partially parsed document (12 lines).** Register
+  cleanup of the node and decoded text buffers in the scanner itself. Their
+  capacity remains available for a later reparse. [Scanner](../core/encoding/json/parse.loke)
+- **Remove the JSON escape allocation adapters (12 lines).** Construct the
+  allocation error once at the opening quote and use `or_return` with that
+  error on the three builder appends. [String scanner](../core/encoding/json/parse.loke)
+- **Simplify JSON writer state and output (12 lines).** Mark the root when it
+  starts and require depth zero at `finish`, which removes the bookkeeping
+  after scalar writes and closes. Use the existing scalar path for booleans
+  and null, `send` for draining, and `math.is_finite` for the float guard.
+  [Writer](../core/encoding/json/write.loke)
+- **Read binary lengths and counts through a reader checkpoint (7 lines).**
+  Read the field with `get` on the copy and reuse `get_length` for counts.
+  Commit only the cursor position after the applicable checks pass, so
+  errors still report the field's original offset. [Binary reader](../core/encoding/binary/binary.loke)
+- **Look up JSON object members through their iterator (6 lines).** Keep
+  walking after the first match to detect a duplicate. The key node immediately
+  precedes its value, so the duplicate still reports the second key's opening
+  quote. [Document views](../core/encoding/json/document.loke)
+- **Use `fmt.concat_to` for binary errors (4 lines).** Spell the existing
+  punctuation and spaces in one call. [Binary error](../core/encoding/binary/binary.loke)
+- **Let the first binary `write` check room for the full span (2 lines).**
+  Route `put` through `put_bytes`; `io.write_all` first passes the entire span
+  to `Writer.write`. Keep `fill`'s full-length check because it sends several
+  chunks. [Binary writer](../core/encoding/binary/binary.loke)
+- **Use `slice.index_of` to find the UTF-16 terminator (2 lines).** Fall back
+  to the slice length when no zero is present. [UTF-16 conversion](../core/encoding/utf16/utf16.loke)
+
+In seven interleaved Windows runs at `-opt=speed`, the combined refactor
+reduced median time from 28.4 to 26.9 ms for 180 reparses of a 1,000-object
+array with escaped strings and nested containers. Writing 8,388,608 `u32`
+fields into a slice went from 38.7 to 36.7 ms. Parsing a 32 KiB unescaped string
+and encoding 384 KiB of ASCII stayed within 1%. In a separate seven-run
+comparison, combining the two JSON string loops raised the 32 KiB workload
+from 36.4 to 59.0 ms, and replacing the UTF-16 allocation switch with
+`or_return` raised the ASCII workload from 112.0 to 116.4 ms. The revised
+refactor retains both original forms.
+
+Two further optimizations need prototypes. The runtime UTF-8 validator could
+return the first invalid sequence's offset along with the validity result,
+which would let `json.parse` delete its second decoder and avoid rescanning
+the prefix on failure. A checked conversion would still have to lend from
+its byte input and report invalid UTF-8 ahead of JSON syntax errors. The
+number scanner could also record whether it saw a point or exponent, so
+`Number.to_i64` and `Number.to_u64` skip their extra spelling scan. Check
+that the flag fits in the node's spare bits and that carrying it in `Number`
+does not increase the view's size.
+[Runtime validator](../runtime/text.c) · [String conversions](design.md#string-type-conversions) · [JSON number conversions](../core/encoding/json/document.loke)
 
 ## Package and import versioning
 
