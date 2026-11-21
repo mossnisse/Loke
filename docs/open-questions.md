@@ -375,6 +375,44 @@ it in every package, its own included
   the same value uses the default. Whether a call through the bound should instead
   reach the slot's method is part of the first question.
 
+## Format library audit follow-ups
+
+- **Shorten the Loke formatting path.** Use the file-wide visibility default
+  for top-level public declarations. Walk `args.indexed()` in `emit` to place
+  the separator, and construct one `Format_View` in `Padded.format` for both
+  formatting calls. The prototype cut 27 lines, passed `-api-check` and the
+  width and precision case, and formatted an already erased value through
+  `pad_left`. [Formatting code](../core/fmt/fmt.loke) ·
+  [Variadic parameters](design.md#variadic-parameters)
+- **Write integer digits backwards into the output buffer.** Share the final
+  buffer and sign handling across the four integer entry points. Use 64-bit
+  division for the digits once the magnitude fits. The runtime prototype cut
+  18 lines and matched the existing formatting case and a checksum over bases
+  2 through 36 and the signed and unsigned limits. On Windows x86-64 at
+  `-opt=speed`, the median of five runs formatting six million 64-bit integers
+  into a checksum sink fell from 3.33 s to 1.36 s.
+  [Scalar runtime](../runtime/format.c) · [Printed forms](standard-library.md#printed-forms)
+- **Share scalar spelling setup.** One fallible float helper can acquire the
+  locale for both decimal printing and `try_spell_f64`. One rune encoder can
+  supply U+FFFD to both quoted and unquoted output. Together the prototypes
+  cut two lines and matched the numeric, locale, and printed-form cases.
+  [Scalar runtime](../runtime/format.c) · [Float spelling](standard-library.md#corefmt)
+- **Batch padding writes.** Send slices of a 32-byte space or zero literal.
+  The isolated prototype added three lines. On Windows x86-64 at `-opt=speed`,
+  the median of five runs padding to widths 30, 128, and 260 fell from
+  177 ms to 82 ms, with 32.88 million sink calls falling to 1.44 million for
+  the same output bytes. This changes the chunks a custom sink receives.
+  Forwarding and counting in one pass for `pad_right` would also change how
+  often custom formatters run, which the current documentation specifies.
+  [Padding implementation](../core/fmt/fmt.loke) · [Padding contract](standard-library.md#corefmt)
+- **Measure the cost of sharing `strings.copy`.** Calling it from `to_string`
+  can replace the local allocation failure switch and the two compiler
+  builtins contributed to `fmt` for it. The prototype preserved the existing
+  formatting and fixed-buffer arena cases. It added a package dependency and
+  took hello world's emitted IR from 380 to 417 lines. Avoiding the final copy
+  is the same ownership question as in [JSON follow-ups](#json-follow-ups).
+  [String collection](../core/fmt/fmt.loke) · [Compiler builtins](../src/stdlib.odin)
+
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
@@ -426,6 +464,15 @@ number scanner could also record whether it saw a point or exponent, so
 that the flag fits in the node's spare bits and that carrying it in `Number`
 does not increase the view's size.
 [Runtime validator](../runtime/text.c) · [String conversions](design.md#string-type-conversions) · [JSON number conversions](../core/encoding/json/document.loke)
+
+## Sharing the endian wrappers
+
+Should `Little_Endian(T)` and `Big_Endian(T)` become aliases for
+`Endian(T, Order.Little)` and `Endian(T, Order.Big)`, sharing one `impl`? A
+prototype cut 19 lines and passed the wrapper tests, but it exposes the new
+record and changes reflected type names, so it waits for a breaking release
+that wants those changes. [Wrappers](standard-library.md#coreendian) ·
+[Parametric aliases](design.md#parametric-aliases)
 
 ## Package and import versioning
 

@@ -24,6 +24,7 @@ package endian;
 
 import "core:fmt";
 import "core:math";
+import "core:unsafe";
 
 Little_Endian :: struct($T: type) where Integral(T) {
 	// Little-endian bytes of the value, held in a `T` because that is the only
@@ -124,17 +125,15 @@ host_to :: proc(value: $T, $wanted: Order) -> T where Integral(T) {
 	unchanged.
 */
 // The `when` keeps the wide-mask arithmetic below out of checking for a
-// one-byte `T`: `T(0xFF)` does not fit in an `i8`.
+// one-byte `T`: `T(0xFF)` does not fit in an `i8`. The static `foreach` leaves
+// no loop or shift-count arithmetic even in an unoptimized build.
 byte_swap :: proc(value: $T) -> T where Integral(T) {
 	when (size_of(T) == 1) {
 		return value;
 	} else {
-		width := size_of(T);
-		mask := T(0xFF);
 		result := T(0);
-		foreach (i in 0 ..< width) {
-			part := (value >> uint(8*i)) & mask;
-			result |= part << uint(8*(width - 1 - i));
+		foreach ($i in 0 ..< size_of(T)) {
+			result |= ((value >> uint(8*i)) & T(0xFF)) << uint(8*(size_of(T) - 1 - i));
 		}
 		return result;
 	}
@@ -151,46 +150,49 @@ is_fixed_width :: proc($T: type) -> bool {
 		T == f16 || T == f32 || T == f64;
 }
 
+// The unsigned integer as wide as `T`: a field's bytes are assembled in one,
+// swapped once for a big-endian field, and bit-cast to or from `T`, so a float
+// keeps its exact bits and integers and floats share one codec.
+@(private)
+Word :: proc($T: type) -> type {
+	when (size_of(T) == 1) {
+		return u8;
+	} else when (size_of(T) == 2) {
+		return u16;
+	} else when (size_of(T) == 4) {
+		return u32;
+	} else when (size_of(T) == 8) {
+		return u64;
+	} else {
+		return u128;
+	}
+}
+
 /**
 	The `T` held by the first `size_of(T)` bytes, in `order`. A shorter slice
 	panics: the caller has already validated the offset.
 */
-// A float goes through its own width's bits (`math.from_bits`), never through
-// arithmetic, so a signalling NaN comes back as it was stored.
 load :: proc($T: type, bytes: []u8, order: Order) -> T where is_fixed_width(T) {
-	when (T == f16) {
-		return math.from_bits(load(u16, bytes, order));
-	} else when (T == f32) {
-		return math.from_bits(load(u32, bytes, order));
-	} else when (T == f64) {
-		return math.from_bits(load(u64, bytes, order));
-	} else {
-		width := size_of(T);
-		field := bytes[:width];
-		value := T(0);
-		foreach (i in 0 ..< width) {
-			shift := i;
-			if (order == .Big) { shift = width - 1 - i; }
-			value |= math.wrap(T, field[i]) << uint(8*shift);
-		}
-		return value;
+	field := bytes[:size_of(T)];
+	word := Word(T)(0);
+	foreach ($i in 0 ..< size_of(T)) {
+		word |= Word(T)(field[i]) << uint(8*i);
 	}
+	if (order == .Big) { word = byte_swap(word); }
+	return unsafe.transmute(T, word);
 }
 
 /**
 	`value` into the first `size_of(T)` bytes, in `order`. A shorter slice panics
 	and writes nothing.
 */
+// The slice is cut before the first write, so a short one traps with the
+// field untouched.
 store :: proc(bytes: []mut u8, value: $T, order: Order) where is_fixed_width(T) {
-	when (T == f16 || T == f32 || T == f64) {
-		store(bytes, math.to_bits(value), order);
-	} else {
-		width := size_of(T);
-		field := bytes[mut :width];
-		foreach (i in 0 ..< width) {
-			shift := i;
-			if (order == .Big) { shift = width - 1 - i; }
-			field[i] = math.wrap(u8, value >> uint(8*shift));
-		}
+	field := bytes[mut :size_of(T)];
+	word := unsafe.transmute(Word(T), value);
+	if (order == .Big) { word = byte_swap(word); }
+	foreach ($i in 0 ..< size_of(T)) {
+		field[i] = math.wrap(u8, word >> uint(8*i));
 	}
 }

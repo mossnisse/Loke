@@ -106,6 +106,11 @@ checklist.
 
 ### Changed
 
+- [`endian.load` and `endian.store`](docs/standard-library.md#fields-of-a-byte-slice) assemble
+  a field in one unsigned word, swap it once for a big-endian field, and bit-cast it to or from
+  the integer or float, and [`endian.byte_swap`](docs/standard-library.md#coreendian) unrolls
+  at compile time, so a default build has no loop or shift-count checks left in either. At
+  `-opt=speed`, `bench/binary.loke` runs about 3% faster, with the same output.
 - [`strings.index_byte`](docs/standard-library.md#corestrings) searches with the C runtime's
   `memchr`, and [`cstrings.from_string`](docs/standard-library.md#corecstrings) uses it to look
   for a zero byte. At `-opt=speed`, converting 1,800 strings of 384 KiB takes 330 ms, from 540,
