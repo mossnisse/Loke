@@ -21,6 +21,7 @@
 package checksum;
 
 import "core:io";
+import "core:math";
 
 /**
 	A CRC in the Rocksoft model. `polynomial` is in normal form with the top bit
@@ -40,108 +41,49 @@ Crc_Params :: struct($T: type) where Integral(T) {
 	Whether `P` describes a CRC a `T` can hold: an unsigned `T`, a width that fits,
 	an odd polynomial, and no value with bits above `width`.
 */
+// A shift by the whole width gives zero, so a width that fills `T` passes the
+// high-bit check (design.md "Integer operators").
 valid_params :: proc($T: type, P: Crc_Params(T)) -> bool {
 	unsigned := T == u8 || T == u16 || T == u32 || T == u64 || T == u128;
 	if (!unsigned || P.width < 1 || P.width > 8*size_of(T)) { return false; }
-	if ((P.polynomial & T(1)) == T(0)) { return false; }
-	if (P.width == 8*size_of(T)) { return true; }
-	high := ~T(0) << uint(P.width);
-	return (P.polynomial & high) == T(0) && (P.initial & high) == T(0) && (P.final_xor & high) == T(0);
+	high := (P.polynomial | P.initial | P.final_xor) >> uint(P.width);
+	return (P.polynomial & T(1)) != T(0) && high == T(0);
 }
 
 // The low `width` bits of `value`, in the opposite order.
 @(private)
 reversed :: proc(value: $T, width: int) -> T where Integral(T) {
-	result := T(0);
-	rest := value;
-	foreach (_ in 0 ..< width) {
-		result = (result << uint(1)) | (rest & T(1));
-		rest = rest >> uint(1);
-	}
-	return result;
-}
-
-// One byte through the register, bit by bit, as the table entry for that byte. A
-// reflected register holds the CRC in its low bits and shifts right; any other
-// holds it in its high bits and shifts left, so one loop serves every width.
-@(private)
-table_entry :: proc(byte_value: int, $T: type, P: Crc_Params(T)) -> T {
-	bits := 8*size_of(T);
-	register := T(0);
-	if (P.reflect_in) {
-		register = T(byte_value);
-		polynomial := reversed(P.polynomial, P.width);
-		foreach (_ in 0 ..< 8) {
-			if ((register & T(1)) != T(0)) {
-				register = (register >> uint(1)) ~ polynomial;
-			} else {
-				register = register >> uint(1);
-			}
-		}
-	} else {
-		register = T(byte_value) << uint(bits - 8);
-		top := T(1) << uint(bits - 1);
-		polynomial := P.polynomial << uint(bits - P.width);
-		foreach (_ in 0 ..< 8) {
-			if ((register & top) != T(0)) {
-				register = (register << uint(1)) ~ polynomial;
-			} else {
-				register = register << uint(1);
-			}
-		}
-	}
-	return register;
+	return math.reverse_bits(value) >> uint(8*size_of(T) - width);
 }
 
 // `[k][b]` is the effect of byte `b` followed by `k` zero bytes. Each table follows
 // from the one before, and an update of eight bytes is then the XOR of eight
 // lookups. Only a reflected register has more than one table.
+//
+// A reflected register holds the CRC in its low bits and shifts right; any other
+// holds it in its high bits and shifts left, which is the reflected register seen
+// in a mirror. So one bit loop serves both: a non-reflected entry is the mirrored
+// entry of the mirrored byte.
 @(private)
 tables_of :: proc($T: type, $P: Crc_Params(T), $COUNT: int) -> [COUNT][256]T {
 	tables: [COUNT][256]T = {};
+	polynomial := reversed(P.polynomial, P.width);
 	foreach (b in 0 ..< 256) {
-		tables[0][b] = table_entry(b, T, P);
+		register := T(b) if P.reflect_in else T(math.reverse_bits(u8(b)));
+		foreach (_ in 0 ..< 8) {
+			carry := (register & T(1)) != T(0);
+			register = register >> uint(1);
+			if (carry) { register = register ~ polynomial; }
+		}
+		tables[0][b] = register if P.reflect_in else math.reverse_bits(register);
 	}
 	foreach (k in 1 ..< COUNT) {
 		foreach (b in 0 ..< 256) {
 			before := tables[k - 1][b];
-			tables[k][b] = tables[0][int(before & T(0xFF))] ~ shift_right_8(before);
+			tables[k][b] = tables[0][int(before & T(0xFF))] ~ (before >> uint(8));
 		}
 	}
 	return tables;
-}
-
-// A shift of the whole width is not a shift a `u8` register can spell.
-@(private)
-shift_right_8 :: proc(value: $T) -> T {
-	when (size_of(T) == 1) {
-		return T(0);
-	} else {
-		return value >> uint(8);
-	}
-}
-
-@(private)
-shift_left_8 :: proc(value: $T) -> T {
-	when (size_of(T) == 1) {
-		return T(0);
-	} else {
-		return value << uint(8);
-	}
-}
-
-// Slice-by-8 is worth its eight tables only for a reflected register of 32 or 64
-// bits, the shape of the CRCs in common use. Every other shape takes a byte at a
-// time from one table. Which applies is no part of the contract.
-@(private)
-uses_slices :: proc($T: type, P: Crc_Params(T)) -> bool {
-	return P.reflect_in && (size_of(T) == 4 || size_of(T) == 8);
-}
-
-@(private)
-table_count :: proc($T: type, P: Crc_Params(T)) -> int {
-	if (uses_slices(T, P)) { return 8; }
-	return 1;
 }
 
 /**
@@ -162,17 +104,13 @@ Crc :: struct($T: type, $P: Crc_Params(T)) where valid_params(T, P) {
 impl Crc($T, $P) {
 	// Constants, computed during compilation for each parameter set a program
 	// names, and absent for the others.
-	@(private) TABLE_COUNT :: table_count(T, P);
+	//
+	// Slice-by-8 is worth its eight tables only for a reflected register of 32 or
+	// 64 bits, the shape of the CRCs in common use. Every other shape takes a byte
+	// at a time from one table. Which applies is no part of the contract.
+	@(private) TABLE_COUNT :: 8 if P.reflect_in && (size_of(T) == 4 || size_of(T) == 8) else 1;
 	@(private) TABLES :: tables_of(T, P, Crc(T, P).TABLE_COUNT);
-
-	@(private)
-	register_start :: proc() -> T {
-		when (P.reflect_in) {
-			return reversed(P.initial, P.width);
-		} else {
-			return P.initial << uint(8*size_of(T) - P.width);
-		}
-	}
+	@(private) START :: reversed(P.initial, P.width) if P.reflect_in else P.initial << uint(8*size_of(T) - P.width);
 
 	/// The checksum of `bytes`, in one call.
 	of :: proc(bytes: []u8) -> T {
@@ -183,9 +121,9 @@ impl Crc($T, $P) {
 
 	/// Adds `bytes` to the checksum.
 	update :: proc(self: inout, bytes: []u8) {
-		register := self.state ~ Crc(T, P).register_start();
+		register := self.state ~ Crc(T, P).START;
 		at := 0;
-		when (uses_slices(T, P)) {
+		when (Crc(T, P).TABLE_COUNT == 8) {
 			count := bytes.len();
 			for (; count - at >= 8; at += 8) {
 				register = Crc(T, P).step_8(register, bytes[at:at + 8]);
@@ -194,12 +132,12 @@ impl Crc($T, $P) {
 		foreach (i in at ..< bytes.len()) {
 			register = Crc(T, P).step_1(register, bytes[i]);
 		}
-		self.state = register ~ Crc(T, P).register_start();
+		self.state = register ~ Crc(T, P).START;
 	}
 
 	/// The checksum of everything so far.
 	sum :: proc(self) -> T {
-		register := self.state ~ Crc(T, P).register_start();
+		register := self.state ~ Crc(T, P).START;
 		when (!P.reflect_in) {
 			register = register >> uint(8*size_of(T) - P.width);
 		}
@@ -215,31 +153,31 @@ impl Crc($T, $P) {
 		return source.len();
 	}
 
+	// A shift by eight gives zero for a `u8` register (design.md "Integer
+	// operators").
 	@(private)
 	step_1 :: proc(register: T, byte_value: u8) -> T {
 		when (P.reflect_in) {
 			index := int((register ~ T(byte_value)) & T(0xFF));
-			return Crc(T, P).TABLES[0][index] ~ shift_right_8(register);
+			return Crc(T, P).TABLES[0][index] ~ (register >> uint(8));
 		} else {
-			top_byte := int(register >> uint(8*size_of(T) - 8)) ~ int(byte_value);
-			return Crc(T, P).TABLES[0][top_byte] ~ shift_left_8(register);
+			index := int(register >> uint(8*size_of(T) - 8)) ~ int(byte_value);
+			return Crc(T, P).TABLES[0][index] ~ (register << uint(8));
 		}
 	}
 
 	// Eight bytes at once. Each byte of the register is XORed with the message
 	// byte it lines up with, and a byte `j` from the start is followed by `7 - j`
 	// more bytes, which is the table it looks up. A register narrower than the
-	// eight bytes contributes nothing to the later ones, and a CRC is linear in
-	// its bits, so this holds at every width.
+	// eight bytes runs out of bytes and contributes nothing to the later ones, and
+	// a CRC is linear in its bits, so this holds at every width.
 	@(private)
 	step_8 :: proc(register: T, block: []u8) -> T {
 		result := T(0);
+		rest := u64(register);
 		foreach (j in 0 ..< 8) {
-			index := int(block[j]);
-			if (j < size_of(T)) {
-				index = int(((register >> uint(8*j)) ~ T(block[j])) & T(0xFF));
-			}
-			result = result ~ Crc(T, P).TABLES[7 - j][index];
+			result = result ~ Crc(T, P).TABLES[7 - j][int((rest ~ u64(block[j])) & 0xFF)];
+			rest = rest >> uint(8);
 		}
 		return result;
 	}

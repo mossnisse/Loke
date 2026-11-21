@@ -88,6 +88,10 @@ checklist.
 
 ### Changed
 
+- A [`core:checksum`](docs/standard-library.md#corechecksum) update no longer reverses the start
+  value bit by bit each time it runs, so a default build checksums four million nine-byte
+  pieces with `Crc32` in about a quarter of the time. The eight-byte path drops a branch per
+  byte, and an optimized CRC-32, CRC-32C, or CRC-64/XZ of 1 GiB is 4-9% faster.
 - A build compiles only what the program reaches. The compiler wrote every procedure of every
   package a program imports into its LLVM module, and clang compiled them all for the linker to
   drop; it now leaves out each one that nothing reaches from the entry point, an export, or a
