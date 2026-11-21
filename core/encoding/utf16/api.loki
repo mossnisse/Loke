@@ -11,6 +11,7 @@
 package utf16;
 
 import "core:mem";
+import "core:strings";
 
 Error :: enum {
 	/*
@@ -47,6 +48,13 @@ encode :: proc(
 decode :: proc(
 	units: []u16, allocator: Allocator = mem.default_allocator(),
 ) -> Result(string, Error) ---;
+
+/*
+	`decode`, appended to `builder` rather than returned as a new `string`, so a
+	caller converting many names can clear and reuse one buffer. On failure the
+	builder keeps what was appended before the failing unit.
+*/
+decode_into :: proc(units: []u16, builder: inout strings.String_Builder) -> Status(Error) ---;
 
 /*
 	The units up to the first zero, which is what a wide API returning a

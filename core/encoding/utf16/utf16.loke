@@ -82,6 +82,16 @@ decode :: proc(
 	units: []u16, allocator: Allocator = mem.default_allocator(),
 ) -> Result(string, Error) {
 	builder := strings.init(allocator);
+	decode_into(units, inout builder) or_return;
+	return builder.try_finish() or_return .Out_Of_Memory;
+}
+
+/**
+	`decode`, appended to `builder` rather than returned as a new `string`, so a
+	caller converting many names can clear and reuse one buffer. On failure the
+	builder keeps what was appended before the failing unit.
+*/
+decode_into :: proc(units: []u16, builder: inout strings.String_Builder) -> Status(Error) {
 	at := 0;
 	for (; at < units.len(); at += 1) {
 		value := int(units[at]);
@@ -96,7 +106,6 @@ decode :: proc(
 		}
 		builder.try_append(rune(value)) or_return .Out_Of_Memory;
 	}
-	return builder.try_finish() or_return .Out_Of_Memory;
 }
 
 /**

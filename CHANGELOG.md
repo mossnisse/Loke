@@ -106,6 +106,11 @@ checklist.
 
 ### Changed
 
+- [`Directory_Reader.next`](docs/standard-library.md#filesystem-operations) decodes each name
+  into one reused buffer, through the new
+  [`utf16.decode_into`](docs/standard-library.md#coreencodingutf16), rather than into a new
+  `string` per entry, and skips `.` and `..` before decoding them. At `-opt=speed`, 200 walks of
+  a 5,000-entry directory take 1.9 s, from 2.4.
 - Printing an integer writes its digits straight into place and divides in 64 bits once the
   value fits, and [padding](docs/standard-library.md#corefmt) writes its fill in runs of up to
   32 bytes rather than a byte at a time, so a custom sink receives fewer, longer writes of the

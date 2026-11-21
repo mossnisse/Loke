@@ -363,16 +363,12 @@ append :: proc(path: string_view) -> Result(File, io.Error) {
 read_bytes :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result([dynamic]u8, io.Error) {
+	// A failed read returns early and leaves `file` to its drop; a successful one
+	// closes explicitly so that a failed close is still reported.
 	file := open_read(path) or_return;
-	outcome := io.read_to_end(inout file, allocator, limit);
-	closed := file.close();
-	switch (move(outcome)) {
-	case .ok(bytes):
-		closed or_return;
-		return move(bytes);
-	case .err(error):
-		return .err(error);
-	}
+	bytes := io.read_to_end(inout file, allocator, limit) or_return;
+	file.close() or_return;
+	return move(bytes);
 }
 
 /**
@@ -401,10 +397,8 @@ read_text :: proc(
 */
 write_bytes :: proc(path: string_view, data: []u8) -> Status(io.Error) {
 	file := create(path) or_return;
-	written := io.write_all(inout file, data);
-	closed := file.close();
-	written or_return;
-	return closed;
+	io.write_all(inout file, data) or_return;
+	return file.close();
 }
 
 write_text :: proc(path: string_view, text: string_view) -> Status(io.Error) {
@@ -413,10 +407,8 @@ write_text :: proc(path: string_view, text: string_view) -> Status(io.Error) {
 
 append_bytes :: proc(path: string_view, data: []u8) -> Status(io.Error) {
 	file := append(path) or_return;
-	written := io.write_all(inout file, data);
-	closed := file.close();
-	written or_return;
-	return closed;
+	io.write_all(inout file, data) or_return;
+	return file.close();
 }
 
 append_text :: proc(path: string_view, text: string_view) -> Status(io.Error) {
@@ -1184,15 +1176,12 @@ rename_handle :: proc(handle: Handle, information: []mut u16, posix: bool) -> St
 @(private)
 rename_information :: proc(path: string_view) -> Result([dynamic]u16, io.Error) {
 	name := wide_path(path, .Rename) or_return;
-	switch (try_make([dynamic]u16, 0, 10 + name.len(), mem.default_allocator())) {
-	case .ok(information):
-		length := u32((name.len() - 1) * 2);
-		information.append(0, 0, 0, 0, 0, 0, 0, 0, u16(length & 0xFFFF), u16(length >> 16));
-		information.append(..name[:]);
-		return move(information);
-	case .err:
-		return .err(io.from_allocator_error(.Rename));
-	}
+	information := try_make([dynamic]u16, 0, 10 + name.len(), mem.default_allocator())
+		or_return io.from_allocator_error(.Rename);
+	length := u32((name.len() - 1) * 2);
+	information.append(0, 0, 0, 0, 0, 0, 0, 0, u16(length & 0xFFFF), u16(length >> 16));
+	information.append(..name[:]);
+	return move(information);
 }
 
 // The path Windows normalizes `path` to before it looks up any element, by the
@@ -1211,11 +1200,8 @@ full_path_native :: proc(path: string_view, operation: io.Operation) -> Result(s
 		if (needed == 0) {
 			return .err(from_last_error(operation));
 		}
-		buffer: [dynamic]u16 = {};
-		switch (try_make([dynamic]u16, int(needed), int(needed), mem.default_allocator())) {
-		case .ok(made):  buffer = move(made);
-		case .err: return .err(io.from_allocator_error(operation));
-		}
+		buffer := try_make([dynamic]u16, int(needed), int(needed), mem.default_allocator())
+			or_return io.from_allocator_error(operation);
 		written := rt_full_path_name(unsafe.raw_data(wide), needed, unsafe.raw_data(buffer), nil);
 		if (written != 0 && written < needed) {
 			switch (utf16.decode(buffer[0:int(written)], mem.default_allocator())) {
@@ -1251,10 +1237,10 @@ remove_directory_native :: proc(path: string_view) -> Status(io.Error) {
 	@(private) handle:    Handle,
 	@(private) pending:   bool,
 	@(private) data:      Find_Data,
-	// The decoded name of the current entry, kept alive exactly as long as the
-	// borrowed view a caller holds is valid.
-	@(private) current:   string,
-	@(private) allocator: Allocator,
+	// The current entry's decoded name, which the borrowed view a caller holds
+	// reads; cleared and refilled at each step, so a walk allocates only while
+	// its names keep getting longer.
+	@(private) name:      strings.String_Builder,
 }
 
 impl Directory_Reader {
@@ -1283,11 +1269,6 @@ impl Directory_Reader {
 	// The contract is standard-library.md "Filesystem operations". `.` and `..`
 	// are an artefact of the platform's enumeration, not entries a program
 	// asked for.
-	//
-	// ponytail: one allocation per entry, because the name is decoded into an
-	// owned `string` whose view is handed out. Decoding straight into a reused
-	// byte buffer would avoid it, and needs a UTF-16 decoder that writes into a
-	// caller's buffer — worth doing when a directory walk is measured.
 	next :: proc(self: inout Directory_Reader) -> Result(Option(Directory_Entry), io.Error) {
 		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) {
 			return .ok(.none);
@@ -1307,12 +1288,14 @@ impl Directory_Reader {
 			// A slice, not a copy: the record is 592 bytes and the name alone is 520.
 			units := self.data.name[:];
 			count := utf16.length_of(units);
-			switch (utf16.decode(units[0:count], self.allocator)) {
-			case .ok(decoded): self.current = decoded;
+			dot := u16('.');
+			if (units[0] == dot && (count == 1 || (count == 2 && units[1] == dot))) { continue; }
+			self.name.clear();
+			switch (utf16.decode_into(units[0:count], inout self.name)) {
+			case .ok:
 			case .err(error): return .err(from_utf16_error(error, .Read_Directory));
 			}
-			if (self.current == "." || self.current == "..") { continue; }
-			return .ok(.some(Directory_Entry{self.current, kind_of(self.data.attributes)}));
+			return .ok(.some(Directory_Entry{self.name.view(), kind_of(self.data.attributes)}));
 		}
 	}
 }
@@ -1330,7 +1313,7 @@ read_directory_native :: proc(
 	wide := wide_path(pattern, .Read_Directory) or_return;
 
 	reader: Directory_Reader = {};
-	reader.allocator = allocator;
+	reader.name = strings.init(allocator);
 	handle := rt_find_first(unsafe.raw_data(wide), &mut reader.data);
 	if (handle == INVALID_HANDLE) {
 		error := from_last_error(.Read_Directory);
@@ -1351,15 +1334,9 @@ read_directory_native :: proc(
 scratch_join :: proc(parts: []string_view, operation: io.Operation) -> Result(string, io.Error) {
 	builder: strings.String_Builder = {};
 	foreach (part in parts) {
-		switch (builder.try_append(part)) {
-		case .ok:
-		case .err: return .err(io.from_allocator_error(operation));
-		}
+		builder.try_append(part) or_return io.from_allocator_error(operation);
 	}
-	switch (builder.try_finish()) {
-	case .ok(joined): return joined;
-	case .err:        return .err(io.from_allocator_error(operation));
-	}
+	return builder.try_finish() or_return io.from_allocator_error(operation);
 }
 
 @(private)

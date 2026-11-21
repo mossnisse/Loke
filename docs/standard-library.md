@@ -1809,6 +1809,8 @@ encode(text: string_view, allocator := mem.default_allocator())
 	-> Result([dynamic]u16, Error)
 decode(units: []u16, allocator := mem.default_allocator())
 	-> Result(string, Error)
+decode_into(units: []u16, builder: inout strings.String_Builder)
+	-> Status(Error)
 length_of(units: []u16) -> int
 ```
 
@@ -1816,7 +1818,9 @@ length_of(units: []u16) -> int
 so the unit count is `len() - 1`. Text containing U+0000 is `Contains_Zero`, for
 the same reason `core:cstrings` rejects it. `decode` converts exactly the range
 it is given, zeros included, and an unpaired surrogate is `Invalid_Data` rather
-than U+FFFD. `length_of` counts the units before the first zero, for an API that
+than U+FFFD. `decode_into` appends the same conversion to a caller's builder,
+so a loop that clears and reuses one allocates only while its text grows; on
+failure the builder keeps what came before the failing unit. `length_of` counts the units before the first zero, for an API that
 returns a terminated buffer.
 
 ## `core:encoding/json`
