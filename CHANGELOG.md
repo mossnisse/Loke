@@ -263,6 +263,13 @@ checklist.
 
 ### Fixed
 
+- A constant expression of type `type` names its type wherever an expression may be written
+  ([`type` and `typeid`](docs/design.md#type-and-typeid)). `(i32 if WIDE else i64)(7)` was
+  `L0320`, `(Small if WIDE else Large).make()` and a field descriptor's
+  `fields_of(Pair)[0].type` before a call or a selector were `L0320` and `L0363`, and
+  `Holder(u8 if WIDE else u32)` was `L0432`, though each compiled once the expression was bound
+  to a name. `size_of(i32 if WIDE else i64)` was 0, the size of the expression's own type,
+  `type`; it is now 4.
 - [`term.read_line`](docs/standard-library.md#standard-byte-streams-and-line-input) reads a
   console line of up to 8,190 characters on Windows 10. Its console dropped what passed the
   first read's buffer, so a typed or pasted line longer than 510 characters lost its end without

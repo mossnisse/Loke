@@ -2864,6 +2864,22 @@ compile-time known, and it can be called but not held as a procedure value. A
 call that computes a type names that type wherever a type may be written:
 `small: Index_Type(10)` is a `u8`.
 
+Any other constant expression of type `type` names its type wherever an
+expression may be written: as the callee of a conversion, the operand of a
+member selection, a built-in's type operand, and a generic argument. A
+[conditional](#conditional-expression) between types names the one it selects,
+and a field descriptor's [`type`](#compile-time-reflection) names the field's:
+
+```loke
+count := (i32 if WIDE else i64)(7);              // converts to the selected type
+first := (Small if COMPACT else Large).make();   // the selected type's `make`
+Buffer :: Holder(u8 if COMPACT else u32);
+width := size_of(fields_of(Pair)[0].type);
+```
+
+Where the grammar takes only a type, as a declaration's type and a literal's
+type do, bind the expression to a name first: `Picked :: i32 if WIDE else i64;`.
+
 Two `type` values support `==` and `!=` during compilation; equality means the
 same Loke type identity after aliases are resolved. They have no ordering and
 cannot be elements or keys of runtime or materialized containers.

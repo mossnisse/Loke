@@ -1,0 +1,12 @@
+L0453
+@15:8
+`type` exists only during compilation, so this expression must be a constant
+L0408
+@17:7
+`Small` has no member `make`
+L0320
+@19:8
+`typeid` is not callable
+L0432
+@21:22
+a generic `type` parameter needs a type argument

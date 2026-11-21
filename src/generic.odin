@@ -2566,7 +2566,10 @@ bind_record_argument :: proc(
 	}
 	bound: Generic_Arg
 	if wanted == TYPE_TYPE || wanted == INVALID_TYPE {
-		denoted := resolve_type_syntax(k, arg.value)
+		denoted, checked := resolve_type_expression(k, arg.value)
+		if !checked {
+			return false
+		}
 		if denoted == INVALID_TYPE {
 			if call, is_call := arg.value.(^Expr_Call); is_call && report && report_handle_type_spelling(k, call, type_position = true) {
 				return false

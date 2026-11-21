@@ -1,0 +1,69 @@
+package main; import "core:fmt";
+
+// design.md "`type` and `typeid`": a constant expression of type `type` names
+// its type wherever an expression may be written, not only when it is bound to
+// a name first.
+
+WIDE :: true;
+
+Small :: struct { v: u8 }
+impl Small {
+	LIMIT :: 255;
+	make :: proc() -> Small { return {v = 1}; }
+}
+Large :: struct { v: u64 }
+impl Large {
+	LIMIT :: 1 << 40;
+	make :: proc() -> Large { return {v = 2}; }
+}
+
+Colour :: enum { Red, Green }
+Shade :: enum { Dark, Green }
+Pair :: struct { a: i16, b: f64 }
+Holder :: struct($T: type) { value: T }
+
+// A generic argument, in a declaration and in a type.
+Wide_Holder :: Holder(i32 if WIDE else i64);
+
+// The selected arm may depend on a `$T`.
+widen :: proc(value: $T) -> f64 {
+	return f64((i64 if size_of(T) < 8 else T)(value));
+}
+
+// A procedure that computes a type may return one.
+Counter :: proc($Count: uint) -> type {
+	return u8 if Count <= 256 else u32;
+}
+
+size :: proc($T: type) -> int { return size_of(T); }
+
+main :: proc() {
+	// The callee of a conversion.
+	narrow := (i32 if WIDE else i64)(7);
+	fmt.println(narrow, size_of(narrow));
+
+	// The operand of a selector: an associated procedure, an associated
+	// constant, and an enum member. Only the selected type is asked.
+	fmt.println((Small if WIDE else Large).make().v, (Large if WIDE else Small).make().v);
+	fmt.println((Small if WIDE else Large).LIMIT);
+	fmt.println((Colour if WIDE else Shade).Red);
+
+	// A built-in's type operand. `size_of` also takes a value, and this is not one.
+	fmt.println(size_of(i32 if WIDE else i64), align_of(u8 if WIDE else u64));
+	fmt.println(typeid_of(Small if WIDE else Large) == typeid_of(Small));
+
+	// A generic argument.
+	held: Holder(u8 if WIDE else u32) = {value = 4};
+	fmt.println(size_of(held), size_of(Wide_Holder), size(i16 if WIDE else i64));
+
+	// A field descriptor's `type` is such an expression too.
+	fmt.println(fields_of(Pair)[0].type(300), size_of(fields_of(Pair)[1].type));
+
+	fmt.println(widen(i8(-3)), widen(u64(9)));
+	counter: Counter(1000) = 7;
+	fmt.println(size_of(counter));
+
+	// A `typeid` constant is a runtime value, and stays one.
+	id := typeid_of(Small) if WIDE else typeid_of(Large);
+	fmt.println(id == typeid_of(Small));
+}

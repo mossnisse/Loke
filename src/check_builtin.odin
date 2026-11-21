@@ -636,19 +636,10 @@ check_type_predicate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Id
 // `accepts_value` built-ins take a value's type, defaulting an untyped constant
 // as a declaration would.
 operand_type :: proc(k: ^Checker, e: Expr, builtin: string, accepts_value: bool) -> Type_Id {
-	// The type reading comes first. It is silent for non-type syntax, so an
-	// error means broken type syntax, which the value reading would report again.
-	before := k.c.error_count
-	if denoted := resolve_type_syntax(k, e); denoted != INVALID_TYPE {
+	if denoted, checked := resolve_type_expression(k, e); denoted != INVALID_TYPE || !checked {
 		return denoted
 	}
-	if k.c.error_count != before || check_single_expr(k, e) == INVALID_TYPE {
-		return INVALID_TYPE
-	}
 	base := expr_base(e)
-	if base.value_category == .Type {
-		return base.denoted_type
-	}
 	if !accepts_value {
 		errorf(k.c, expr_span(e), "L0386", "`%s` needs a type, found a value of type `%s`", builtin, type_name(k.c, base.type))
 		return INVALID_TYPE

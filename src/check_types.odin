@@ -165,6 +165,24 @@ resolve_type_reporting :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 	return resolved
 }
 
+// The type `e` names where a type or an expression may be written: type
+// syntax, or another constant `type` expression such as `A if WIDE else B`
+// (design.md "`type` and `typeid`"). `checked` is false when the reading
+// reported an error; an expression that names no type is left checked.
+resolve_type_expression :: proc(k: ^Checker, e: Expr) -> (type: Type_Id, checked: bool) {
+	// The type reading comes first. It is silent for non-type syntax, so an
+	// error means broken type syntax, which the value reading would report again.
+	before := k.c.error_count
+	if denoted := resolve_type_syntax(k, e); denoted != INVALID_TYPE {
+		return denoted, true
+	}
+	if k.c.error_count != before || check_single_expr(k, e) == INVALID_TYPE {
+		return INVALID_TYPE, false
+	}
+	base := expr_base(e)
+	return base.value_category == .Type ? base.denoted_type : INVALID_TYPE, true
+}
+
 resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 	#partial switch value in syntax {
 	case ^Expr_Ident:

@@ -142,15 +142,16 @@ check_expr :: proc(
 	if call, is_call := e.(^Expr_Call); is_call && base.type != INVALID_TYPE && !base_is_const(base) {
 		callee := symbol_of(k.c, call.resolution.symbol)
 		if callee != nil && callee.kind == .Proc && compile_time_only_procedure(k.c, callee) {
-			folded, ok := require_const(k, e, "a call to a compile-time-only procedure", "L0453")
-			if !ok {
+			if _, ok := require_const(k, e, "a call to a compile-time-only procedure", "L0453"); !ok {
 				base.type = INVALID_TYPE
-			} else if folded.kind == .Type {
-				// It names a type, as `Simd(f32, 4)` does.
-				base.value_category = .Type
-				base.denoted_type = folded.type_value
 			}
 		}
+	}
+	// A constant `type` expression names its type, as `Simd(f32, 4)`, a field
+	// descriptor's `type`, and `i32 if WIDE else i64` do.
+	if base.type != INVALID_TYPE && const_names_type(k.c, base.const_value, base.type) {
+		base.value_category = .Type
+		base.denoted_type = base.const_value.type_value
 	}
 	// design.md "Compile-time reflection": a descriptor or `type` value is only
 	// ever folded, so one computed at run time, such as `fields_of(T)[i]` with a

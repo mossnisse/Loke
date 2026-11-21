@@ -1,0 +1,25 @@
+package main; import "core:fmt";
+
+// design.md "`type` and `typeid`": only a constant `type` expression names a
+// type, and it names the one it selects.
+
+WIDE :: true;
+
+Small :: struct { v: u8 }
+Large :: struct { v: u64 }
+impl Large { make :: proc() -> Large { return {v = 2}; } }
+
+main :: proc() {
+	flag := WIDE;
+	// A `type` chosen at run time has no representation.
+	a := (i32 if flag else i64)(7);
+	// `Small` is selected, and `Large`'s member is not its.
+	b := (Small if WIDE else Large).make();
+	// A `typeid` constant is a value: it converts nothing.
+	c := (typeid_of(Small) if WIDE else typeid_of(Large))(1);
+	// A number is not a type argument.
+	d := size_of(Holder(1 if WIDE else 2));
+	fmt.println(a, b, c, d);
+}
+
+Holder :: struct($T: type) { value: T }

@@ -3067,6 +3067,21 @@ arguments, so a separate operator would add a keyword and precedence rule.
 The import also exposes a trust boundary: a bit pattern valid for the source
 need not represent a valid destination value.
 
+### A constant `type` expression names its type
+
+`Picked :: i32 if WIDE else i64;` made `Picked` a type, while the same
+conditional written where `Picked` was used did not: `(i32 if WIDE else i64)(7)`
+called a value of type `type`. Nothing a reader knows about constants predicts
+that a name is needed, so every constant `type` expression names its type, a
+field descriptor's `type` included, which is how a body converts to a
+reflected field's type. A `typeid_of` constant folds to the same kind of
+constant but has the type `typeid`, and stays a value.
+
+A declaration's type and a literal's type still take type syntax only. There
+`(` opens an anonymous record, so a parenthesized expression cannot also be
+read, and an unparenthesized `x: A if c else B = v` would make the reader find
+the `=` before knowing where the type ends.
+
 ### A `typeid_of` constant has no compile-time number
 
 [`type` and `typeid`](design.md#type-and-typeid) leaves a `typeid_of(T)`

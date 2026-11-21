@@ -235,11 +235,6 @@ evidence for the continuation at `ea622efe`; the
 [resolution](source-reviews/README.md#resolution) says what was fixed. These
 points remain:
 
-- **Type-valued conditionals in postfix position.** `(i32 if true else i64)(7)`
-  reports `L0320` and `(A if true else B).member` reports `L0363`, while
-  binding the conditional to a name first works. Decide whether every constant
-  `type` expression denotes a type before a call or selector.
-  [Expression checker review](source-reviews/check_expr.md#open-question)
 - **A distinct type's hidden `<`.** `Reverse :: distinct int` with an inherent
   `<` that is not `@(public)` orders by `int`'s built-in operators in an
   importing package, with no diagnostic, while its own package and every
