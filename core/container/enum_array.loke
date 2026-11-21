@@ -95,12 +95,8 @@ impl Enum_Array($E, $T) {
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, "{");
 		foreach (member, index in E.values().indexed()) {
-			// One argument per call: `format_to` puts a space between arguments,
-			// which is right for `println` and wrong inside a literal layout.
 			if (index > 0) { fmt.format_to(writer, ", "); }
-			fmt.format_to(writer, member);
-			fmt.format_to(writer, " = ");
-			fmt.format_to(writer, self.slots[index]);
+			fmt.concat_to(writer, member, " = ", self.slots[index]);
 		}
 		fmt.format_to(writer, "}");
 	}

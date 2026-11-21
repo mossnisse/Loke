@@ -241,12 +241,8 @@ impl Dynamic_Index_Set {
 		added are absent. A negative `cap` panics.
 	*/
 	resize :: proc(self: inout, cap: int) {
-		count := words_for_bits(cap);
-		// Clear the bits above the smaller capacity before growing, so the
-		// owner's clear-tail invariant holds for the new last word as well.
-		if (cap < self.capacity) { apply_range(self.words[mut :], self.capacity, cap, self.capacity, .Unset); }
-		self.words.resize(count);
-		self.capacity = cap;
+		self.words.resize(words_for_bits(cap));
+		self.retain_below(cap);
 	}
 
 	/**
@@ -255,12 +251,18 @@ impl Dynamic_Index_Set {
 		negative `cap` panics.
 	*/
 	try_resize :: proc(self: inout, cap: int) -> Status(Allocator_Error) {
-		// Only growing allocates, so it is done first: after it, `resize` only
-		// clears bits and sets the length to the one the storage already has.
-		count := words_for_bits(cap);
-		if (count > self.words.len()) { self.words.try_resize(count) or_return; }
-		self.resize(cap);
+		self.words.try_resize(words_for_bits(cap)) or_return;
+		self.retain_below(cap);
 		return .ok;
+	}
+
+	// Sets the capacity to `cap` once the words are resized for it. Resizing
+	// dropped whole words and zeroed new ones, and growing finds the old tail
+	// clear, so only a retained partial word can hold bits at or above `cap`.
+	@(private)
+	retain_below :: proc(self: inout, cap: int) {
+		if (cap % 64 != 0) { self.words[cap/64] &= member_mask(cap, cap/64); }
+		self.capacity = cap;
 	}
 
 	/// The set as a read-only view, borrowed from it.
@@ -443,16 +445,21 @@ impl Index_Iterator {
 
 	iter :: proc(self) -> Index_Iterator { return self; }
 
-	next :: proc(self: inout) -> Option(int) {
-		for (self.pending == 0) {
-			self.at += 1;
-			if (self.at >= self.words.len()) { return .none; }
-			self.pending = word_of(self.words, self.capacity, self.at);
-		}
-		bit := math.trailing_zeros(self.pending);
-		self.pending &= self.pending - 1;
-		return self.at*64 + bit;
+	next :: proc(self: inout) -> Option(int) { return next_index(self.words, self.capacity, inout self.at, inout self.pending); }
+}
+
+// The next index after the members of word `at` already yielded, whose rest is
+// `pending`, advancing both: the scan `Index_Iterator` and `Bit_Set_Iterator` share.
+@(private)
+next_index :: proc(words: []u64, cap: int, at: inout int, pending: inout u64) -> Option(int) {
+	for (pending == 0) {
+		at += 1;
+		if (at >= words.len()) { return .none; }
+		pending = word_of(words, cap, at);
 	}
+	bit := math.trailing_zeros(pending);
+	pending &= pending - 1;
+	return at*64 + bit;
 }
 
 // ============================================================== guts ==
@@ -617,10 +624,7 @@ combine :: proc(words: []mut u64, cap: int, other: Index_View, op: Combine_Op) {
 }
 
 @(private)
-iterate :: proc(words: []u64, cap: int) -> Index_Iterator {
-	if (words.len() == 0) { return {words, cap, 0, 0}; }
-	return {words, cap, 0, word_of(words, cap, 0)};
-}
+iterate :: proc(words: []u64, cap: int) -> Index_Iterator { return {words, cap, -1, 0}; }
 
 // Byte `at` of the serialized form: eight bits of one word, with the bits
 // past the capacity already dropped by `word_of`.
@@ -651,11 +655,9 @@ load :: proc(words: []mut u64, cap: int, bytes: []u8) -> bool {
 @(private)
 format_members :: proc(words: []u64, cap: int, writer: fmt.Writer) {
 	fmt.format_to(writer, "{");
-	written := 0;
-	foreach (index in iterate(words, cap)) {
-		if (written > 0) { fmt.format_to(writer, ", "); }
+	foreach (index, position in iterate(words, cap).indexed()) {
+		if (position > 0) { fmt.format_to(writer, ", "); }
 		fmt.format_to(writer, index);
-		written += 1;
 	}
 	fmt.format_to(writer, "}");
 }

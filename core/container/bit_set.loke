@@ -14,12 +14,11 @@
 package container;
 
 import "core:fmt";
-import "core:math";
 
 Bit_Set :: struct($E: type) {
-	// One 64-bit word per 64 members, so an enum of any size works without a
-	// documented ceiling to trip over later.
-	@(private) words: [(E.values().len() + 63)/64]u64,
+	// Member `i` is index `i` of an index set, which already holds any number of
+	// bits inline and supplies the word-at-a-time operations below.
+	@(private) bits: Index_Set(E.values().len()),
 }
 
 impl Bit_Set($E) {
@@ -33,46 +32,24 @@ impl Bit_Set($E) {
 	}
 
 	/// Every declared member.
-	all :: proc() -> Bit_Set(E) {
-		result: Bit_Set(E) = {};
-		foreach (at in 0 ..< E.values().len()) { result.words[at/64] |= bit(at); }
-		return result;
-	}
+	all :: proc() -> Bit_Set(E) { return {Index_Set(E.values().len()).all()}; }
 
 	// ----------------------------------------------------------- queries --
 
-	contains :: proc(self, member: E) -> bool { return self.has(position_of(member)); }
+	contains :: proc(self, member: E) -> bool { return self.bits.contains(position_of(member)); }
 
 	/// The number of members present, not the enum's size — `cap` is that.
-	len :: proc(self) -> int {
-		total := 0;
-		foreach (word in self.words) { total += math.count_ones(word); }
-		return total;
-	}
+	len :: proc(self) -> int { return self.bits.len(); }
 
 	cap :: proc(self) -> int { return E.values().len(); }
-	is_empty :: proc(self) -> bool { return self.len() == 0; }
+	is_empty :: proc(self) -> bool { return self.bits.is_empty(); }
 
 	// --------------------------------------------------------- mutation --
 
-	set :: proc(self: inout, member: E) {
-		at := position_of(member);
-		self.words[at/64] |= bit(at);
-	}
-
-	unset :: proc(self: inout, member: E) {
-		at := position_of(member);
-		self.words[at/64] &~= bit(at);
-	}
-
-	toggle :: proc(self: inout, member: E) {
-		at := position_of(member);
-		self.words[at/64] ~= bit(at);
-	}
-
-	clear :: proc(self: inout) {
-		foreach (i in 0 ..< self.words.len()) { self.words[i] = 0; }
-	}
+	set :: proc(self: inout, member: E) { self.bits.set(position_of(member)); }
+	unset :: proc(self: inout, member: E) { self.bits.unset(position_of(member)); }
+	toggle :: proc(self: inout, member: E) { self.bits.toggle(position_of(member)); }
+	clear :: proc(self: inout) { self.bits.clear(); }
 
 	// -------------------------------------------------------- operators --
 
@@ -80,82 +57,35 @@ impl Bit_Set($E) {
 		Union, intersection, difference, and symmetric difference, spelled with the
 		integer operators: `|`, `&`, `&~` and `~`. `==` compares two sets.
 	*/
-	// `Integral` already gives those operators exactly these meanings on the
-	// underlying words, so each of these is that operator applied word by word.
-	//
-	// `==` is not written here: `words` is a fixed array of `u64`, so the record's
-	// generated field-wise equality already compares exactly these bits, and the
-	// bits above the last member are invariantly clear in both operands.
-	union_with :: operator(|) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
-		result: Bit_Set(E) = {};
-		foreach (word, index in left.words.indexed()) {
-			result.words[index] = word | right.words[index];
-		}
-		return result;
-	}
-
-	intersect :: operator(&) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
-		result: Bit_Set(E) = {};
-		foreach (word, index in left.words.indexed()) {
-			result.words[index] = word & right.words[index];
-		}
-		return result;
-	}
-
-	difference :: operator(&~) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
-		result: Bit_Set(E) = {};
-		foreach (word, index in left.words.indexed()) {
-			result.words[index] = word &~ right.words[index];
-		}
-		return result;
-	}
-
-	symmetric_difference :: operator(~) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
-		result: Bit_Set(E) = {};
-		foreach (word, index in left.words.indexed()) {
-			result.words[index] = word ~ right.words[index];
-		}
-		return result;
-	}
+	// Each is the index set's operator. `==` is not written here: the record's
+	// generated field-wise equality is the index set's, which compares exactly
+	// the members' bits.
+	union_with :: operator(|) proc(left, right: Bit_Set(E)) -> Bit_Set(E) { return {left.bits | right.bits}; }
+	intersect :: operator(&) proc(left, right: Bit_Set(E)) -> Bit_Set(E) { return {left.bits & right.bits}; }
+	difference :: operator(&~) proc(left, right: Bit_Set(E)) -> Bit_Set(E) { return {left.bits &~ right.bits}; }
+	symmetric_difference :: operator(~) proc(left, right: Bit_Set(E)) -> Bit_Set(E) { return {left.bits ~ right.bits}; }
 
 	/// Every member `self` does not hold.
-	// Bits above the last member stay clear, so a complement never invents a
-	// position no member owns.
-	complement :: operator(~) proc(self: Bit_Set(E)) -> Bit_Set(E) {
-		return Bit_Set(E).all() &~ self;
-	}
+	complement :: operator(~) proc(self: Bit_Set(E)) -> Bit_Set(E) { return {~self.bits}; }
 
-	is_subset_of :: proc(self, other: Bit_Set(E)) -> bool {
-		return (self &~ other).is_empty();
-	}
+	is_subset_of :: proc(self, other: Bit_Set(E)) -> bool { return self.bits.is_subset_of(other.bits.view()); }
 
 	// -------------------------------------------------------- iteration --
 
 	Element  :: E;
 
-	iter :: proc(self) -> Bit_Set_Iterator(E) { return {self, 0}; }
+	iter :: proc(self) -> Bit_Set_Iterator(E) { return {self.bits, -1, 0}; }
 
 	// --------------------------------------------------------- printing --
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, "{");
-		written := 0;
-		foreach (member, at in E.values().indexed()) {
-			if (!self.has(at)) { continue; }
-			if (written > 0) { fmt.format_to(writer, ", "); }
+		foreach (member, index in self.iter().indexed()) {
+			if (index > 0) { fmt.format_to(writer, ", "); }
 			fmt.format_to(writer, member);
-			written += 1;
 		}
 		fmt.format_to(writer, "}");
 	}
-
-	// ------------------------------------------------------------- guts --
-
-	// Whether the member at declaration position `at` is held. Callers that
-	// already know the position use this rather than `contains`, which would
-	// search for it again.
-	@(private)
-	has :: proc(self, at: int) -> bool { return self.words[at/64] & bit(at) != 0; }
 }
 
 /**
@@ -165,8 +95,9 @@ impl Bit_Set($E) {
 // A set is one `u64` per 64 members, so for every enum worth writing the copy
 // is no larger than the slice header a borrow would need.
 Bit_Set_Iterator :: struct($E: type) {
-	@(private) held: Bit_Set(E),
-	@(private) at:   int,
+	@(private) held:    Index_Set(E.values().len()),
+	@(private) at:      int,   // the word `pending` came from, as for `Index_Iterator`
+	@(private) pending: u64,   // that word's members not yet yielded
 }
 
 impl Bit_Set_Iterator($E) {
@@ -176,12 +107,10 @@ impl Bit_Set_Iterator($E) {
 
 	next :: proc(self: inout) -> Option(E) {
 		members :: E.values();
-		for (self.at < members.len()) {
-			at := self.at;
-			self.at += 1;
-			if (self.held.has(at)) { return members[at]; }
+		switch (next_index(self.held.words[:], members.len(), inout self.at, inout self.pending)) {
+		case .some(at): return members[at];
+		case .none:     return .none;
 		}
-		return .none;
 	}
 }
 
@@ -197,7 +126,3 @@ position_of :: proc(member: $E) -> int {
 	// defensive check for invalid representations supplied across unsafe boundaries.
 	panic("invalid enum representation");
 }
-
-// Position `at`'s bit within its word.
-@(private)
-bit :: proc(at: int) -> u64 { return u64(1) << uint(at % 64); }

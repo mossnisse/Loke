@@ -23,6 +23,7 @@
 package container;
 
 import "core:fmt";
+import "core:slice";
 import "core:unsafe";
 
 /// What a `try_` operation reports when the array is full.
@@ -41,12 +42,7 @@ impl Capacity_Error {
 	capacity_of :: proc(self) -> int { return self.capacity; }
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		// One argument per call, spacing written out: `format_to` puts a space
-		// between its own arguments, which is right for `println` and wrong inside
-		// a sentence.
-		fmt.format_to(writer, self.requested);
-		fmt.format_to(writer, " elements exceed capacity ");
-		fmt.format_to(writer, self.capacity);
+		fmt.concat_to(writer, self.requested, " elements exceed capacity ", self.capacity);
 	}
 }
 
@@ -205,8 +201,7 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		self.put(value.clone());
-		self.move_last_to(index);
+		self.put_at(index, value.clone());
 		return .ok;
 	}
 
@@ -234,8 +229,7 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		self.put(move(value));
-		self.move_last_to(index);
+		self.put_at(index, move(value));
 		return .ok;
 	}
 
@@ -251,8 +245,7 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { panic("Small_Array is full"); }
-		self.put(move(value));
-		self.move_last_to(index);
+		self.put_at(index, move(value));
 	}
 
 	/**
@@ -319,11 +312,7 @@ impl Small_Array($T, $N) {
 
 	/// Equal lengths and equal elements, in order.
 	equal :: operator(==) proc(left, right: Small_Array(T, N)) -> bool where Equatable(T) {
-		if (left.count != right.count) { return false; }
-		foreach (i in 0 ..< left.count) {
-			if (left.view()[i] != right.view()[i]) { return false; }
-		}
-		return true;
+		return slice.equal(left.view(), right.view());
 	}
 
 	/// Prints as an array, in order.
@@ -372,15 +361,20 @@ impl Small_Array($T, $N) {
 		for (self.count > 0) { _ = self.pop(); }
 	}
 
-	// The appended last element moves down to `index`. Every slot is live before
-	// the first swap, so the operation never reads raw capacity as a value.
+	// Writes `value` at `index`, which the caller has checked is at most the
+	// length, with room behind the last element, and then lengthens. Each later
+	// element moves up once into the slot behind it, last first, as `remove`
+	// closes a gap. Moves cannot panic, so no unwind sees the gap they open.
 	@(private)
-	move_last_to :: proc(self: inout, index: int) {
-		at := self.count - 1;
+	put_at :: proc(self: inout, index: int, @(escape=stored) value: move T) {
+		slots := unsafe.storage(&mut self.items);
+		at := self.count;
 		for (at > index) {
-			self.slice().swap(at, at - 1);
+			unsafe.write(slots[at], unsafe.take(slots[at - 1]));
 			at -= 1;
 		}
+		unsafe.write(slots[index], move(value));
+		self.count += 1;
 	}
 
 	@(private)

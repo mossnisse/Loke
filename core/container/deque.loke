@@ -599,12 +599,17 @@ impl Deque($T) {
 	// take the elements back.
 	@(private)
 	relocate :: proc(self: inout, @(escape=stored) ring: move [dynamic]T, head: int) -> [dynamic]T {
-		capacity := ring.cap();
-		foreach (i in 0 ..< self.count) {
-			at := self.wrap(i);
-			to := head + i;
-			if (to >= capacity) { to -= capacity; }
-			unsafe.write(Deque(T).ring_slots(inout ring)[to], unsafe.take(self.slots_mut()[at]));
+		at := self.head;
+		to := head;
+		count := self.count;
+		from := self.slots_mut();
+		into := Deque(T).ring_slots(inout ring);
+		foreach (_ in 0 ..< count) {
+			unsafe.write(into[to], unsafe.take(from[at]));
+			at += 1;
+			if (at == from.len()) { at = 0; }
+			to += 1;
+			if (to == into.len()) { to = 0; }
 		}
 		self.head = head;
 		return exchange(inout self.storage, move(ring));
