@@ -74,8 +74,6 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_strings_allocate(k, v, ident)
 	case .Allocation_Failed:
 		check_allocation_failed(k, v, ident)
-	case .Slice_Sort_By:
-		check_slice_sort_by(k, v, ident)
 	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		check_atomic_builtin(k, v, ident, sym.builtin)

@@ -1,7 +1,7 @@
 // standard-library.md "Partitioning and selection": selection with the
 // median-of-medians fallback from the first round. Ordinary inputs reach the
 // fallback only after four bad rounds, and seldom on a range with many ties, so
-// tests/run/lib_slice_select.loke cannot count on its tie-gathering pass or on
+// tests/run/lib_slice_select.loke cannot count on its three-way partition or on
 // its stop inside the equivalent block. These call the private `select_in`
 // with `SELECT_BAD_ROUNDS` spent already; run them with `lokec core/slice -test`.
 @(public)
@@ -16,8 +16,9 @@ next_test_word :: proc(state: inout u64) -> u64 {
 	return state;
 }
 
-// Fills `values` with keys below 8 in one of four shapes: uniform over
-// `alphabet` keys, mostly one key, ascending runs, or descending runs.
+// Fills `values` with keys below `alphabet` in one of four shapes: uniform,
+// mostly one key, ascending runs, or descending runs. Selection passes at most
+// 8, the keys its checks count.
 @(private)
 fill_duplicates :: proc(values: []mut int, shape: int, alphabet: int, state: inout u64) {
 	count := values.len();
@@ -66,7 +67,7 @@ forced_fallback_selects_among_duplicates :: proc() {
 	work := [96]int{};
 	foreach (shape in 0 ..< 4) {
 		foreach (alphabet in [4]int{2, 3, 5, 8}) {
-			foreach (count in SELECT_SMALL + 1 ..< 97) {
+			foreach (count in SMALL_RANGE + 1 ..< 97) {
 				seed := state;
 				foreach (n in 0 ..< count) {
 					state = seed;
@@ -78,8 +79,8 @@ forced_fallback_selects_among_duplicates :: proc() {
 	}
 }
 
-// A single key: every round's kept side is all ties, so the gathering pass
-// finds the whole block equivalent and every round stops at once.
+// A single key: the three-way partition finds the whole range equivalent, so
+// every selection stops in its first round.
 @(test)
 forced_fallback_selects_among_equal_keys :: proc() {
 	work := [64]int{};

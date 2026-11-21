@@ -447,58 +447,21 @@ existing parameter slot emits 73. The second path would help every aggregate
 [Reinterpretation lowering](../src/emit_llvm_expr.odin) ·
 [SIMD runtime and compile-time coverage](../tests/run/lib_simd.loke)
 
-## Slice library audit follow-ups
+## Sorting through the runtime
 
-- **Move `sort_by` into Loke.** Build introsort from selection's pivot,
-  partition, and insertion-sort helpers, with `make_heap` and `pop_heap` as
-  the depth fallback. Keep the small `Ordering` adapter to pass the comparator
-  by reference. The dedicated checker, LLVM thunk, and stateful C entry point
-  can go, saving about 120 implementation lines after adding the Loke loop.
-  The prototype passed the slice, heap, priority-queue, capture, local-impl,
-  and large-record cases. The optimized benchmark executable grew by 1.5 KiB
-  for two comparator types. Check code size across more instantiations and
-  unoptimized performance for large elements. The emitted IR for the large
-  record case had more 4 KiB temporaries and copies.
-  [Slice sort](../core/slice/slice.loke) ·
-  [Selection helpers](../core/slice/select.loke) ·
-  [Checker](../src/container.odin) ·
-  [LLVM thunk](../src/emit_llvm_sequence.odin) ·
-  [Runtime sort](../runtime/container.c)
-- **Reuse `partition` in the median-of-medians fallback.** Split off the
-  pivot with `split_at_mut(1)`, partition the remainder into strictly earlier
-  elements, then partition the tail into ties and strictly later elements.
-  Swap the pivot into the tie block, then narrow to a strict side or finish.
-  The prototype used `Ordering` in the predicates so private caller
-  comparators still worked. It removed 20 lines and passed the forced
-  fallback, adversarial, and move-only tests, plus a compile-time fallback
-  probe. The fast path keeps its two-ended partition. In the benchmark,
-  forcing the fallback took 38.7 to 37.6 ms for scattered keys and 23.3 to
-  23.9 ms with eight distinct keys.
-  [Selection and partition](../core/slice/select.loke) ·
-  [Forced fallback tests](../core/slice/select_test.loke) ·
-  [Selection contract](standard-library.md#partitioning-and-selection)
-- **Use existing operations in the small helpers.** Have `binary_search`
-  call `partition_point` with a borrowed key, then check equality at the
-  insertion index. Compare `index_of` directly with `.none` in `contains`,
-  use `.reversed()` over the index range in `last_index_of`, use a half-length
-  loop in `reverse`, and assign through `foreach (&mut element in values)` in
-  `fill`. Together these cut 16 lines in a prototype that passed `lib_slice`,
-  `lib_sort_member`, and `eval_slice_rearrange`.
-  [Slice helpers](../core/slice/slice.loke)
-- **Scan once for the first or last rank.** Share the index scan with `min`
-  and `max`, and swap the winner into place at the end. For these ranks the
-  prototype does exactly `n - 1` comparisons and at most one swap, with
-  about 12 lines added overall. It passed `lib_slice`, `lib_slice_select`,
-  and `eval_slice_rearrange`.
-  [Selection entry point](../core/slice/select.loke) ·
-  [Minimum and maximum](../core/slice/slice.loke)
-
-The Windows x86-64 timing probe used `-opt=speed`. Each result is the median
-of five runs, timing 65 operations on 32,768 elements per run with input
-preparation excluded. With scattered keys, `sort_by` took 215 to 108 ms for
-`int` and 222 to 122 ms for a 32-byte record. Selecting the first rank took
-14.1 to 1.7 ms and selecting the last took 13.0 to 1.7 ms. Checksums matched
-for every timed case.
+Should `values.sort()` and `values.reverse_sort()` lower to the Loke introsort
+that `slice.sort_by` now is, instead of the runtime's C introsort? Through the
+runtime, each comparison is an indirect call to a generated thunk. On
+2026-11-21 at `-opt=speed`, 65 sorts of 32,768 scattered `int`s took 207 ms with
+`slice.sort` and 106 ms with `slice.sort_by(values, slice.Ascending(int){})`,
+and for a 32-byte record 212 and 120 ms. The member also sorts a `[dynamic]T`
+and has its own compile-time path, so moving it means calling a library
+generic from compiler-contributed code, or making `slice.sort` stop forwarding
+to the member, so that two spellings use different implementations.
+[Slice sort](../core/slice/slice.loke) ·
+[Runtime sort](../runtime/container.c) ·
+[Sorting slices](standard-library.md#sorting-slices) ·
+[Rationale](comments.md#standard-library-api-choices)
 
 ## Sharing the endian wrappers
 

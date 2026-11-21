@@ -4109,15 +4109,32 @@ boundaries and API shapes follow a few common choices:
   in the same place reports. The operator is `contains` respelled, so the
   two can be swapped without changing what a program does.
 
-- **[Selection](standard-library.md#partitioning-and-selection) is plain Loke, not
-  a runtime routine.** `sort_by` reaches a C introsort through a compiler bridge;
-  a selection there would need a second intrinsic and bridge. Generic Loke instead
-  gets the comparator inlined into each instance and needs no compiler change,
-  and the bounds checks it keeps proved cheap. A measurement on 2026-11-06, at
+- **[Selection](standard-library.md#partitioning-and-selection) and
+  [`sort_by`](standard-library.md#sorting-slices) are plain Loke, not runtime
+  routines.** Generic Loke gets the comparator inlined into each instance and
+  needs no compiler bridge, and the bounds checks it keeps proved cheap. The two
+  share the pivot sample, Hoare partition, and insertion sort, and `sort_by`
+  falls back to `make_heap` and `pop_heap`. A measurement on 2026-11-06, at
   `-opt=speed`, best of several runs on random keys, put `select_nth_by` at the
   middle index against `sort_by` followed by the same read: 3.6 µs and 80 µs at
   10³ `int`s, 0.63 ms and 13.3 ms at 10⁵, and 6.7 ms and 162 ms at 10⁶; for a
   32-byte record, 4.0 µs and 88 µs, 0.77 ms and 14.9 ms, and 9.7 ms and 184 ms.
+  `sort_by` was then the runtime's C introsort, reached through a call-scoped
+  thunk per comparison. Written in Loke, on 2026-11-21 at `-opt=speed`, 65 sorts
+  of 32,768 scattered keys took 144 ms rather than 254 for `int` and 119 ms
+  rather than 290 for a 32-byte record, and 8 sorts of 2,048 records of 4,112
+  bytes took 20 ms rather than 77; at `-opt=none` they took 365, 480, and 62 ms
+  rather than 640, 860, and 137. A plain procedure is one comparator type per
+  signature, so every `sort_by` and selection given one shares an instance, and
+  LLVM may stop inlining the procedure into a shared helper: in that benchmark a
+  middle selection rose from 15 to 20 ms once `sort_by` used the same type, and
+  stayed at 15 ms with a record comparator. `sort` and `reverse_sort` still reach
+  the runtime introsort through the contributed member that also sorts a
+  `[dynamic]T`.
+- **The first and last ranks are a minimum and a maximum.** Selecting either
+  scans once, as `min` and `max` do, and swaps the winner into place: `n - 1`
+  comparisons and one swap, where introselect partitions the whole range at
+  least once. Rust's `select_nth_unstable` does the same.
 - **Selection falls back to the median of medians, not to heapsort.** libstdc++'s
   `nth_element` falls back to heapsort past a depth limit, which bounds the worst
   case at O(n log n). Introselect with a median-of-medians fallback, as Rust's
@@ -4131,8 +4148,9 @@ boundaries and API shapes follow a few common choices:
   holds up to about 0.85: its scans pass only strictly smaller or larger
   elements, and each swap adds one element to both sides. So every fallback
   round also gathers the elements equivalent to the pivot beside it, and keeps
-  only what is strictly smaller or larger. Gathering only in a round that kept
-  more than ¾ would save one comparison per kept element in a rare round, but
+  only what is strictly smaller or larger, by two `partition` passes: what
+  comes strictly before the pivot, then the ties among the rest. Doing this only
+  in a round that kept more than ¾ would save comparisons in a rare round, but
   then no test input reached the pass with a valid comparator, not even
   McIlroy's adversary. `core/slice/select_test.loke` forces the fallback from
   the first round on duplicate-heavy inputs.

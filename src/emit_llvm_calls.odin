@@ -65,7 +65,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		return emit_text_operation(e, v, as_type)
 	case Call_Procedure:
 		return emit_direct_call(e, v)
-	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Sort_By, Call_Simd_Reduce:
+	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Simd_Reduce:
 	case nil, Call_Compile_Time:
 		backend_fail(e, "an unchecked or compile-time call reached emission")
 		return "0"
@@ -126,9 +126,6 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		return emit_fmt_builtin(e, v, kind)
 	case .Strings_Allocate:
 		return emit_strings_allocate(e, v, as_type)
-	case .Slice_Sort_By:
-		emit_slice_sort_by(e, v)
-		return "0"
 	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		return emit_atomic_builtin(e, v, kind, as_type)
@@ -238,7 +235,7 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: 
 @(private)
 call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 	#partial switch _ in v.operation {
-	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Sort_By, Call_Simd_Reduce:
+	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Simd_Reduce:
 		sym := symbol_of(e.c, v.resolution.symbol)
 		return sym != nil && sym.kind == .Builtin ? sym.builtin : Builtin_Kind.None
 	case:

@@ -1,8 +1,10 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:slice";
 
 // A sort on a compile-time path. The evaluator performs the
 // operation the backend writes, from the same `container_op`, so a constant and
-// a run-time call agree.
+// a run-time call agree. `slice.sort_by` is ordinary Loke, so it is evaluated
+// like any other procedure: past its insertion-sort length, with a record
+// comparator and with a procedure.
 
 smallest :: proc() -> int {
 	xs: [dynamic]int = {};
@@ -25,12 +27,29 @@ middle :: proc() -> int {
 	return xs[2];
 }
 
+Descending_Digits :: struct { base: int }
+
+impl Descending_Digits {
+	call :: proc(self, left, right: int) -> bool { return right % self.base < left % self.base; }
+}
+
+// The keys 0 to 39 shuffled; sorted descending by last digit, then read back.
+by_comparator :: proc() -> int {
+	xs := [40]int{};
+	foreach (i in 0 ..< 40) { xs[i] = (i * 17) % 40; }
+	slice.sort_by(xs[mut :], Descending_Digits{10});
+	slice.sort_by(xs[mut 4:36], proc(left, right: int) -> bool { return left < right; });
+	return xs[0] % 10 * 1000 + xs[4] * 10 + xs[39] % 10;
+}
+
 FIRST  :: smallest();
 LAST   :: largest();
 MIDDLE :: middle();
+SORTED_BY :: by_comparator();
 
 main :: proc() {
 	fmt.println(FIRST, LAST, MIDDLE);
 	fmt.println(smallest(), largest(), middle());
 	fmt.println(FIRST == smallest(), LAST == largest(), MIDDLE == middle());
+	fmt.println(SORTED_BY, SORTED_BY == by_comparator());
 }

@@ -106,6 +106,17 @@ checklist.
 
 ### Changed
 
+- [`slice.sort_by`](docs/standard-library.md#sorting-slices) is an introsort written in Loke,
+  sharing selection's pivot and partition and falling back to the heap procedures, rather than
+  a runtime routine reached through a compiler bridge. The comparator is called directly, so
+  at `-opt=speed` 65 sorts of 32,768 scattered `int`s take 144 ms, from 254, and of 32-byte
+  records 119 ms, from 290. `sort_by` now also runs during
+  [compile-time evaluation](docs/design.md#compile-time-procedure-evaluation), where it was
+  `L0341`.
+- [`slice.select_nth_by`](docs/standard-library.md#partitioning-and-selection) and
+  `select_nth` find the first or last rank in one scan of `n - 1` comparisons and one swap, as
+  `min` and `max` do. At `-opt=speed`, 65 selections of either end of 32,768 `int`s take 1.5 ms,
+  from 12.5.
 - [`simd.reduce_add`](docs/standard-library.md#coresimd) over `u8` or `u16` lanes adds them at
   twice their width and checks for overflow once, on the total, rather than lane by lane; it
   panics for the same vectors as before. `simd.any` and `simd.all` fold the mask's lanes as bits.

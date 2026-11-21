@@ -74,8 +74,6 @@ call_effect :: proc(c: ^Compiler, v: ^Expr_Call) -> (Effect_Call, bool) {
 		return target, ok
 	}
 	#partial switch op in v.operation {
-	case Call_Sort_By:
-		return Effect_Call{callee = op.comparator}, op.comparator != INVALID_SYMBOL
 	case Call_Dyn_Slot:
 		sel, is_selector := v.callee.(^Expr_Selector)
 		if !is_selector || sel.operand == nil {

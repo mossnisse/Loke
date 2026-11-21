@@ -37,9 +37,9 @@ impl Field_Order {
 by_rank :: proc(left, right: Card) -> bool { return left.rank < right.rank; }
 
 // A comparator that is not a strict weak ordering. Nothing promises the result
-// is sorted, but the runtime introsort must still stay inside the slice and
-// finish: `sort_partition`'s scan away from the pivot is bounded by `low`
-// precisely so arbitrary user code cannot walk it off the front.
+// is sorted, but the introsort must still stay inside the slice and finish:
+// `partition_at_low`'s scan away from the pivot is bounded by `low` precisely
+// so arbitrary user code cannot walk it off the front.
 Always_Before :: struct { }
 
 impl Always_Before {
@@ -121,8 +121,9 @@ main :: proc() {
 	slice.sort_by(cards, proc(left, right: Card) -> bool { return right.tag < left.tag; });
 	fmt.println(cards[0].tag, cards[1].tag, cards[2].tag);
 
-	// Past `LOKE_RT_SORT_SMALL`, so the quicksort partition runs rather than the
-	// insertion tail. A broken comparator may permute these however it likes; it
+	// Past `SMALL_RANGE`, so the quicksort partition runs rather than the
+	// insertion tail, and every round keeps all but the pivot, so the heapsort
+	// fallback finishes it. A broken comparator may permute these however it likes; it
 	// may not lose, duplicate, or reach past one of them.
 	junk: [dynamic]int = {};
 	i := 0;

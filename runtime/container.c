@@ -1197,10 +1197,10 @@ int32_t loke_rt_v1_string_to_runes(
 
 /* One introsort over an element size and a generated `less` thunk, which is the
  * same split the operation table already uses: C owns the byte mechanics, and
- * what one concrete Loke element compares like arrives as a thunk. A
- * `sort_by` thunk also receives its call-scoped comparator state.
+ * what one concrete Loke element compares like arrives as a thunk.
+ * `core:slice.sort_by` is a Loke introsort of its own, over a comparator value.
  *
- * `descending` inverts the stateless comparison rather than reversing the
+ * `descending` inverts the comparison rather than reversing the
  * finished array: the two differ for equal-comparing elements, and no order
  * here is stable, so one pass is the whole operation.
  *
@@ -1213,8 +1213,6 @@ typedef struct loke_rt_sort_v1 {
 	char *base;
 	uint64_t size;
 	loke_rt_less_v1 less;
-	loke_rt_less_with_state_v1 less_with_state;
-	const void *state;
 	int32_t descending;
 } loke_rt_sort_v1;
 
@@ -1223,9 +1221,6 @@ static char *sort_at(const loke_rt_sort_v1 *s, int64_t index) {
 }
 
 static int32_t sort_before(const loke_rt_sort_v1 *s, const void *a, const void *b) {
-	if (s->less_with_state != 0) {
-		return s->less_with_state(s->state, a, b);
-	}
 	return s->descending ? s->less(b, a) : s->less(a, b);
 }
 
@@ -1316,9 +1311,9 @@ static void sort_choose_pivot(const loke_rt_sort_v1 *s, int64_t low, int64_t hig
  *
  * Both scans are also bounded by the range itself, not only by the comparison.
  * A well-behaved `less` stops each one on its own - neither `x < x` nor a
- * strict weak ordering's pivot can pass - but `sort_by` hands this loop
- * arbitrary user code, and a comparator that answers "before" to everything
- * would otherwise walk `j` off the front of the slice. */
+ * strict weak ordering's pivot can pass - but an element's `<` is user code,
+ * and one that answers "before" to everything would otherwise walk `j` off the
+ * front of the slice. */
 static int64_t sort_partition(const loke_rt_sort_v1 *s, int64_t low, int64_t high) {
 	int64_t i = low;
 	int64_t j = high;
@@ -1381,25 +1376,7 @@ void loke_rt_v1_sort(
 	s.base = (char *)data;
 	s.size = elem_size;
 	s.less = less;
-	s.less_with_state = 0;
-	s.state = 0;
 	s.descending = descending;
 	/* `sort_all` uses 2*floor(log2(count)), the standard introsort limit. */
-	sort_all(&s, count);
-}
-
-void loke_rt_v1_sort_by(
-	void *data, int64_t count, uint64_t elem_size, const void *state,
-	loke_rt_less_with_state_v1 less) {
-	loke_rt_sort_v1 s;
-	if (count < 2 || elem_size == 0 || less == 0) {
-		return;
-	}
-	s.base = (char *)data;
-	s.size = elem_size;
-	s.less = 0;
-	s.less_with_state = less;
-	s.state = state;
-	s.descending = 0;
 	sort_all(&s, count);
 }

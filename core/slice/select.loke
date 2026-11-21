@@ -82,7 +82,15 @@ partition_point :: proc(values: []$T, keep: $P) -> int where Callable(P, proc(va
 select_nth_by :: proc(values: []mut $T, n: int, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	count := values.len();
 	if (n < 0 || n >= count) { panic("selection index is out of range"); }
-	select_in(values, 0, count, n, less, 0);
+	// The first and last ranks are a minimum and a maximum: one scan of
+	// `count - 1` comparisons and one swap.
+	if (n == 0) {
+		values.swap(0, least_index(values, less));
+	} else if (n == count - 1) {
+		values.swap(n, least_index(values, Ordering(T, C){&less, true}));
+	} else {
+		select_in(values, 0, count, n, less, 0);
+	}
 }
 
 /**
@@ -94,9 +102,9 @@ select_nth :: proc(values: []mut $T, n: int) where Ordered(T) {
 	select_nth_by(values, n, Ascending(T){});
 }
 
-// A range this short is finished by insertion sort, as `LOKE_RT_SORT_SMALL` in
-// runtime/container.c finishes the sort.
-@(private) SELECT_SMALL :: 16;
+// A range this short is finished by insertion sort, in selection and `sort_by`
+// alike, as `LOKE_RT_SORT_SMALL` in runtime/container.c finishes `sort`.
+@(private) SMALL_RANGE :: 16;
 
 // From this length the pivot is Tukey's ninther rather than a median of three.
 @(private) SELECT_NINTHER :: 128;
@@ -121,74 +129,55 @@ select_nth :: proc(values: []mut $T, n: int) where Ordered(T) {
 // At most 3/4 of a range is strictly smaller than its median of medians,
 // reached at 24 elements and nearer 7/10 for long ranges, and no more is
 // strictly larger. Hoare's partition can still put every element equivalent to
-// the pivot on the kept side. So every fallback round gathers that equivalent
-// block beside the pivot and keeps only what is strictly smaller or strictly
-// larger, or stops if `n` is in the block. Each fallback round then keeps at
-// most 3/4, and 1/5 + 3/4 < 1.
+// the pivot on the kept side. So every fallback round partitions three ways and
+// keeps only what is strictly smaller or strictly larger, or stops if `n` is
+// among the equivalent elements. Each fallback round then keeps at most 3/4,
+// and 1/5 + 3/4 < 1.
 @(private)
 select_in :: proc(values: []mut $T, low_in: int, high_in: int, n: int, less: $C, bad_in: int)
 	where Callable(C, proc(left, right: T) -> bool) {
 	low := low_in;
 	high := high_in;
 	bad := bad_in;
-	for (high - low > SELECT_SMALL) {
-		width := high - low;
-		fallback := bad >= SELECT_BAD_ROUNDS;
-		if (fallback) {
+	for (high - low > SMALL_RANGE) {
+		if (bad >= SELECT_BAD_ROUNDS) {
 			pivot_median_of_medians(values, low, high, less);
+			first, last := partition_three_way(values, low, high, less);
+			if (n < first) {
+				high = first;
+			} else if (n >= last) {
+				low = last;
+			} else {
+				return;
+			}
 		} else {
+			width := high - low;
 			pivot_sample(values, low, high, less);
+			p := partition_at_low(values, low, high, less);
+			if (p == n) { return; }
+			if (n < p) { high = p; } else { low = p + 1; }
+			if ((high - low) * 8 > width * 7) { bad += 1; }
 		}
-		p := partition_at_low(values, low, high, less);
-		if (p == n) { return; }
-		if (n < p) {
-			high = p;
-			if (fallback) {
-				high = gather_before(values, low, p, less);
-				if (n >= high) { return; }
-			}
-		} else {
-			low = p + 1;
-			if (fallback) {
-				low = gather_equivalent(values, p, high, less);
-				if (n < low) { return; }
-			}
-		}
-		if (!fallback && (high - low) * 8 > width * 7) { bad += 1; }
 	}
 	insertion_sort_range(values, low, high, less);
 }
 
-// Moves what comes strictly before the pivot at `p` to the front of
-// `values[low:p]`, where nothing comes after it, and returns where the block
-// equivalent to it begins.
+// Partitions `values[low:high]` around the pivot at `low` into what comes
+// strictly before it, the block equivalent to it, pivot first, and what comes
+// strictly after it, and returns the block's bounds.
 @(private)
-gather_before :: proc(values: []mut $T, low: int, p: int, less: $C) -> int
+partition_three_way :: proc(values: []mut $T, low: int, high: int, less: $C) -> (first: int, last: int)
 	where Callable(C, proc(left, right: T) -> bool) {
-	end := low;
-	foreach (i in low ..< p) {
-		if (less(values[i], values[p])) {
-			values.swap(end, i);
-			end += 1;
-		}
-	}
-	return end;
-}
-
-// Moves what is equivalent to the pivot at `p` to the front of
-// `values[p + 1:high]`, where nothing comes before it, and returns where what
-// comes strictly after it begins.
-@(private)
-gather_equivalent :: proc(values: []mut $T, p: int, high: int, less: $C) -> int
-	where Callable(C, proc(left, right: T) -> bool) {
-	end := p + 1;
-	foreach (i in p + 1 ..< high) {
-		if (!less(values[p], values[i])) {
-			values.swap(end, i);
-			end += 1;
-		}
-	}
-	return end;
+	ordering := Ordering(T, C){&less, false};
+	pivot, rest := values[mut low:high].split_at_mut(1);
+	before := partition(rest, proc(value: T) -> bool capture(&ordering, &pivot) {
+		return ordering(value, pivot[0]);
+	});
+	ties := before + partition(rest[mut before:], proc(value: T) -> bool capture(&ordering, &pivot) {
+		return !ordering(pivot[0], value);
+	});
+	values.swap(low, low + before);
+	return {first = low + before, last = low + 1 + ties};
 }
 
 // Insertion sort by swaps: the element being placed moves down one slot at a

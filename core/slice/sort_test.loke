@@ -1,0 +1,39 @@
+// standard-library.md "Sorting slices": `sort_by`'s introsort against the
+// runtime's `sort`, on the shapes `fill_duplicates` makes. Ordinary inputs reach
+// the heapsort fallback only after 2*floor(log2(n)) poor partitions, so these
+// also call the private `sort_range` with no rounds left, or one; run them with
+// `lokec core/slice -test`.
+@(public)
+package slice;
+
+// Sorts `values` with `depth` partitioning rounds before heapsort, or through
+// `sort_by` for a negative `depth`, and checks it against `sort`.
+@(private)
+sorts_like_sort :: proc(values: []mut int, depth: int) -> bool {
+	count := values.len();
+	expected := [300]int{};
+	foreach (value, i in values.indexed()) { expected[i] = value; }
+	sort(expected[mut :count]);
+	if (depth < 0) {
+		sort_by(values, Ascending(int){});
+	} else {
+		sort_range(values, 0, count, Ascending(int){}, depth);
+	}
+	return equal(values, expected[:count]);
+}
+
+@(test)
+sort_by_agrees_with_sort :: proc() {
+	state: u64 = 0x2545F4914F6CDD1D;
+	work := [300]int{};
+	foreach (shape in 0 ..< 4) {
+		foreach (alphabet in [3]int{2, 8, 1000}) {
+			foreach (count in 0 ..< 300) {
+				foreach (depth in [3]int{-1, 0, 1}) {
+					fill_duplicates(work[mut :count], shape, alphabet, inout state);
+					assert(sorts_like_sort(work[mut :count], depth));
+				}
+			}
+		}
+	}
+}

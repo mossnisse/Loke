@@ -131,11 +131,6 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "allocate_string", .Strings_Allocate, public = false)
 		contribute_builtin(c, pkg, "allocation_failed", .Allocation_Failed, public = false)
 	case STD_SLICE:
-		// `slice.sort_by` owns the typed public surface; this is the package-private
-		// bridge giving the shared runtime introsort a call-scoped comparator
-		// address and a generated typed thunk. Ordinary Loke cannot express raw
-		// relocation of an element without invoking its copy/drop operations.
-		contribute_builtin(c, pkg, "sort_by_intrinsic", .Slice_Sort_By, public = false)
 		contribute_builtin(c, pkg, "allocation_failed", .Allocation_Failed, public = false)
 	case STD_STRINGS:
 		// Copies known-valid UTF-8 from a supplied allocator, reporting failure;

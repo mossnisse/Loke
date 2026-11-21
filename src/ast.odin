@@ -216,7 +216,6 @@ Call_Operation :: union {
 	Call_Union_As,
 	Call_Text_Conversion,
 	Call_Atomic,
-	Call_Sort_By,
 	Call_Simd_Reduce,
 	Call_Dyn_Conversion,
 	Call_Dyn_Slot,
@@ -250,7 +249,6 @@ Call_Atomic :: struct {
 	place: Expr,
 	store: ^Stmt_Assign,
 }
-Call_Sort_By :: struct { comparator: Symbol_Id }
 Call_Simd_Reduce :: struct { fold: Simd_Fold }
 // The witness the pointed-to type satisfies the interface with.
 Call_Dyn_Conversion :: struct { witness: ^Witness }

@@ -40,7 +40,6 @@ CONTAINER_DECLARATIONS := [?]Runtime_Declaration {
 	{"void", "loke_rt_v1_map_clear", "ptr, ptr", ""},
 	{"i32", "loke_rt_v1_map_shrink", "ptr, ptr, i64", ""},
 	{"void", "loke_rt_v1_sort", "ptr, i64, i64, ptr, i32", ""},
-	{"void", "loke_rt_v1_sort_by", "ptr, i64, i64, ptr, ptr", ""},
 }
 
 // The operation table for one concrete container type, made once along with

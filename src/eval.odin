@@ -1469,7 +1469,7 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: Eval_Value, success: b
 			return Eval_Value{kind = .Nil, type = v.type, target = field}, true
 		}
 		return field^, true
-	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Sort_By, Call_Simd_Reduce:
+	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Simd_Reduce:
 		callee := symbol_of(ev.k.c, v.resolution.symbol)
 		if callee != nil && callee.kind == .Builtin { return eval_builtin(ev, v, callee) }
 	case nil:

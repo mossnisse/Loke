@@ -18,8 +18,8 @@
 // standard-library.md "Partitioning and selection", and
 // standard-library.md "Slice queries and copies".
 //
-// The public surface is ordinary Loke over `[]T` and `[]mut T`. The one private
-// sorting bridge reaches the runtime's raw relocation machinery.
+// The public surface is ordinary Loke over `[]T` and `[]mut T`. Only `sort` and
+// `reverse_sort` reach the runtime, through the contributed `values.sort()`.
 @(public)
 package slice;
 
@@ -35,23 +35,70 @@ import "core:mem";
 */
 // standard-library.md "Sorting slices".
 //
-// The package-private intrinsic owns only the bridge to the shared
-// byte-relocating runtime introsort: it receives an ordering record's address
-// for this call and generates a typed adapter to its `call`. `Ordering` makes
-// that record of either kind of `less`, so the public operation and all
-// callback state remain ordinary Loke.
+// Introsort over selection's helpers: the pivot sample and Hoare partition of
+// select.loke, and insertion sort for a short range. Past 2*floor(log2(n))
+// rounds, the standard introsort limit, a range is heapsorted, so the worst
+// case is O(n log n). Every element moves by `swap`, as in selection.
 sort_by :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right: T) -> bool) {
-	ordering := Ordering(T, C){&less};
-	sort_by_intrinsic(values, &ordering);
+	depth := 0;
+	span := values.len();
+	for (span > 1) {
+		span /= 2;
+		depth += 2;
+	}
+	sort_range(values, 0, values.len(), less, depth);
 }
 
+// Sorts `values[low:high]`, recursing into the shorter side and looping on the
+// longer, so the stack stays logarithmic whatever the partitions are like.
 @(private)
-Ordering :: struct($T, $C: type) { less: ^C }
+sort_range :: proc(values: []mut $T, low_in: int, high_in: int, less: $C, depth_in: int)
+	where Callable(C, proc(left, right: T) -> bool) {
+	low := low_in;
+	high := high_in;
+	depth := depth_in;
+	for (high - low > SMALL_RANGE) {
+		if (depth == 0) {
+			heap_sort(values[mut low:high], less);
+			return;
+		}
+		depth -= 1;
+		pivot_sample(values, low, high, less);
+		p := partition_at_low(values, low, high, less);
+		if (p - low < high - p - 1) {
+			sort_range(values, low, p, less, depth);
+			low = p + 1;
+		} else {
+			sort_range(values, p + 1, high, less, depth);
+			high = p;
+		}
+	}
+	insertion_sort_range(values, low, high, less);
+}
 
-// The bound is repeated here because it is what grants `less(...)` the
-// caller's `call` method, which this package could not otherwise see.
+// A heap under the reversed order has the last element first, so each
+// `pop_heap` moves the largest remaining element to the end of what is left.
+@(private)
+heap_sort :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right: T) -> bool) {
+	reversed := Ordering(T, C){&less, true};
+	make_heap(values, reversed);
+	end := values.len();
+	for (end > 1) {
+		pop_heap(values[mut :end], reversed);
+		end -= 1;
+	}
+}
+
+// Calls a borrowed comparator, with its operands swapped if `reversed`. The
+// bound is repeated on `call` because it is what grants `less(...)` the caller's
+// `call` method inside a capture literal or another bounded procedure, where
+// this package could not otherwise see it.
+@(private)
+Ordering :: struct($T, $C: type) { less: ^C, reversed: bool }
+
 impl Ordering($T, $C) {
 	call :: proc(self, left, right: T) -> bool where Callable(C, proc(left, right: T) -> bool) {
+		if (self.reversed) { return self.less^(right, left); }
 		return self.less^(left, right);
 	}
 }
@@ -104,12 +151,7 @@ is_reverse_sorted :: proc(values: []$T) -> bool where Ordered(T) {
 */
 binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 	where Ordered(T) {
-	low := 0;
-	high := values.len();
-	for (low < high) {
-		middle := low + (high - low)/2;
-		if (values[middle] < wanted) { low = middle + 1; } else { high = middle; }
-	}
+	low := partition_point(values, proc(value: T) -> bool capture(&wanted) { return value < wanted; });
 	return {index = low, found = low < values.len() && values[low] == wanted};
 }
 
@@ -137,17 +179,12 @@ swap :: proc(values: []mut $T, left: int, right: int) {
 	move-only element for the same reason `swap` does.
 */
 reverse :: proc(values: []mut $T) {
-	low := 0;
-	high := values.len();
-	for (low + 1 < high) {
-		high -= 1;
-		swap(values, low, high);
-		low += 1;
-	}
+	last := values.len() - 1;
+	foreach (i in 0 ..< values.len() / 2) { swap(values, i, last - i); }
 }
 
 fill :: proc(values: []mut $T, @(escape=stored) value: T) {
-	foreach (i in 0 ..< values.len()) { values[i] = value; }
+	foreach (&mut element in values) { element = value; }
 }
 
 // ----------------------------------------------------------------- queries --
@@ -160,20 +197,14 @@ index_of :: proc(values: []$T, wanted: T) -> Option(int) where Equatable(T) {
 }
 
 last_index_of :: proc(values: []$T, wanted: T) -> Option(int) where Equatable(T) {
-	i := values.len();
-	for (i > 0) {
-		i -= 1;
+	foreach (i in (0 ..< values.len()).reversed()) {
 		if (values[i] == wanted) { return i; }
 	}
 	return .none;
 }
 
 contains :: proc(values: []$T, wanted: T) -> bool where Equatable(T) {
-	switch (index_of(values, wanted)) {
-	case .some: return true;
-	case .none: return false;
-	}
-	return false;
+	return index_of(values, wanted) != .none;
 }
 
 equal :: proc(left: []$T, right: []T) -> bool where Equatable(T) {
@@ -190,28 +221,31 @@ equal :: proc(left: []$T, right: []T) -> bool where Equatable(T) {
 	the result is copied.
 */
 // There is no minimum of nothing, and returning the zero value would be a
-// wrong answer rather than a missing one. The candidate changes only for an
-// element `<` it.
-//
-// The search keeps the winner's index rather than a copy of it, so the only
-// element copy is the one the result needs: a candidate whose copy hook
-// allocates is not cloned at every improvement.
+// wrong answer rather than a missing one.
 min :: proc(values: []$T) -> Option(T) where Ordered(T) {
 	if (values.len() == 0) { return .none; }
-	best := 0;
-	foreach (i in 1 ..< values.len()) {
-		if (values[i] < values[best]) { best = i; }
-	}
-	return values[best];
+	return values[least_index(values, Ascending(T){})];
 }
 
 max :: proc(values: []$T) -> Option(T) where Ordered(T) {
 	if (values.len() == 0) { return .none; }
+	return values[least_index(values, Descending(T){})];
+}
+
+// The index of the first least element of a non-empty slice under `less`: the
+// candidate changes only for an element `less` than it, in one comparison per
+// later element. Shared with selecting the first or last rank.
+//
+// The scan keeps the winner's index rather than a copy of it, so `min` and `max`
+// copy only the result: a candidate whose copy hook allocates is not cloned at
+// every improvement.
+@(private)
+least_index :: proc(values: []$T, less: $C) -> int where Callable(C, proc(left, right: T) -> bool) {
 	best := 0;
 	foreach (i in 1 ..< values.len()) {
-		if (values[best] < values[i]) { best = i; }
+		if (less(values[i], values[best])) { best = i; }
 	}
-	return values[best];
+	return best;
 }
 
 // --------------------------------------------------------------- ownership --

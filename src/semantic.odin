@@ -476,8 +476,6 @@ Builtin_Kind :: enum u8 {
 	Fmt_Stdout_Writer,
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
-	// `core:slice`'s typed comparator bridge to the shared runtime introsort.
-	Slice_Sort_By,
 	// Package-private to `core:strings` and to `core:fmt`, which can't import
 	// `core:strings` without pulling in the whole package.
 	Strings_Allocate,
