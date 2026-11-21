@@ -200,6 +200,9 @@ checklist.
 
 ### Fixed
 
+- `path.stem` removes the extension of a last element that begins like a drive
+  ([`core:path`](docs/standard-library.md#corepath)). `stem("dir\\C:.foo")` was `C:.foo`, though
+  `extension` of the same path was `.foo`; it is now `C:`.
 - A file-scope `when` waits for the names a capture literal's entries read in a procedure its
   condition calls ([`when` statement](docs/design.md#when-statement)). With
   `get := proc() -> int capture(n = LATER) { return n; };` in the called body and `LATER`

@@ -94,6 +94,10 @@ main :: proc() {
 	// `..` is the parent, not a file named `.` with the extension `.`.
 	fmt.println(path.extension("a\\..").len());
 	fmt.println(path.stem(".."));
+	// The extension is searched in the last element as it is: a name that begins
+	// like a drive is not read as a volume a second time.
+	fmt.println(path.stem("dir\\C:.foo"), path.extension("dir\\C:.foo"));
+	fmt.println(path.stem(".config"), path.stem("a.b\\c"), path.extension("a\\b."));
 
 	// Extended UNC roots include the server and share, not only the UNC marker.
 	// The same volume boundary keeps filesystem creation below the share.

@@ -80,13 +80,26 @@ volume_length :: proc(path: string_view) -> int {
 			if (bytes.len() == 7) { return 0; }
 			at = 8;
 		}
-	start := at;
-	for (; at < bytes.len() && !is_separator(bytes[at]); at += 1) {}
-	if (at == start || at >= bytes.len()) { return 0; }
-	at += 1;
-	start = at;
-	for (; at < bytes.len() && !is_separator(bytes[at]); at += 1) {}
-	return 0 if at == start else at;
+	server := next_separator(bytes, at);
+	if (server == at || server == bytes.len()) { return 0; }
+	share := next_separator(bytes, server + 1);
+	return 0 if share == server + 1 else share;
+}
+
+// The offset of the first separator at or after `at`, or the length.
+@(private)
+next_separator :: proc(bytes: []u8, at: int) -> int {
+	end := at;
+	for (; end < bytes.len() && !is_separator(bytes[end]); end += 1) {}
+	return end;
+}
+
+// Where the run of separators that ends at `end` starts, never below `floor`.
+@(private)
+before_separators :: proc(bytes: []u8, floor: int, end: int) -> int {
+	start := end;
+	for (; start > floor && is_separator(bytes[start - 1]); start -= 1) {}
+	return start;
 }
 
 @(private)
@@ -100,14 +113,8 @@ is_drive_letter :: proc(value: u8) -> bool {
 	`C:\` or a `\\server\share` -- has no last element at all.
 */
 base :: proc(path: string_view) -> string_view {
-	trimmed := without_trailing_separators(path);
-	bytes := trimmed.bytes();
-	// The floor is the volume rather than zero, which is the rule `directory`
-	// below already stops at. Scanning past it would answer `C:a` for `C:a`.
-	volume := volume_length(trimmed);
-	at := bytes.len();
-	for (; at > volume && !is_separator(bytes[at - 1]); at -= 1) {}
-	return trimmed[at:];
+	_, start, end := last_element(path);
+	return path[start:end];
 }
 
 /**
@@ -115,18 +122,29 @@ base :: proc(path: string_view) -> string_view {
 	root. A path with no separator at all has the directory `.`.
 */
 directory :: proc(path: string_view) -> string_view {
-	trimmed := without_trailing_separators(path);
-	bytes := trimmed.bytes();
-	volume := volume_length(trimmed);
-	at := bytes.len();
-	for (; at > volume && !is_separator(bytes[at - 1]); at -= 1) {}
-	if (at == volume) {
-		return "." if volume == 0 else trimmed[0:volume];
+	volume, start, _ := last_element(path);
+	if (start == volume) {
+		return "." if volume == 0 else path[0:volume];
 	}
 	// Drop every separator before the last element, keeping one only when it is
 	// the root itself: `a//b` is in `a`, and `C:\b` in `C:\`.
-	for (; at > volume + 1 && is_separator(bytes[at - 1]); at -= 1) {}
-	return trimmed[0:at];
+	return path[0:before_separators(path.bytes(), volume + 1, start)];
+}
+
+// The bounds `base` and `directory` share: the volume's end, and the last
+// element as `start:end`, which excludes trailing separators and is empty at a
+// root.
+@(private)
+last_element :: proc(path: string_view) -> (volume: int, start: int, end: int) {
+	bytes := path.bytes();
+	volume := volume_length(path);
+	// Never past the root: `C:\` and `\` keep their separator.
+	end := before_separators(bytes, volume + 1, bytes.len());
+	// The floor is the volume rather than zero: scanning past it would answer
+	// `C:a` for `C:a`.
+	start := end;
+	for (; start > volume && !is_separator(bytes[start - 1]); start -= 1) {}
+	return {volume, start, end};
 }
 
 /**
@@ -136,30 +154,22 @@ directory :: proc(path: string_view) -> string_view {
 */
 extension :: proc(path: string_view) -> string_view {
 	name := base(path);
-	if (name == "..") { return ""; }
-	bytes := name.bytes();
-	for (at := bytes.len(); at > 1; at -= 1) {
-		if (bytes[at - 1] == u8('.')) {
-			return name[at - 1:];
-		}
-	}
-	return "";
+	return name[extension_start(name):];
 }
 
 /// The last element without its extension.
 stem :: proc(path: string_view) -> string_view {
 	name := base(path);
-	return name[0:name.len() - extension(name).len()];
+	return name[0:extension_start(name)];
 }
 
+// Where the extension of an element starts, or its length. The element is
+// searched as it is, not passed through `base` again, which would read the
+// `C:` of a name such as `C:.foo` as a volume.
 @(private)
-without_trailing_separators :: proc(path: string_view) -> string_view {
-	volume := volume_length(path);
-	bytes := path.bytes();
-	end := bytes.len();
-	// Never past the root: `C:\` and `\` keep their separator.
-	for (; end > volume + 1 && is_separator(bytes[end - 1]); end -= 1) {}
-	return path[0:end];
+extension_start :: proc(name: string_view) -> int {
+	dot := strings.last_index(name, ".") or_else 0;
+	return name.len() if dot == 0 || name == ".." else dot;
 }
 
 /**
@@ -213,8 +223,7 @@ join :: proc(
 				builder.append(SEPARATOR);
 			}
 		}
-		end := text.len();
-		for (; end > 0 && is_separator(text.bytes()[end - 1]); end -= 1) {}
+		end := before_separators(text.bytes(), 0, text.len());
 		builder.append(text[0:end]);
 		held = text[end:];
 		after_drive = !started && part.len() == 2 && volume_length(part) == 2;
@@ -246,13 +255,18 @@ clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator())
 	if (strings.starts_with(path, "\\\\?\\")) {
 		return strings.copy(path, allocator);
 	}
+	bytes := path.bytes();
 	volume := volume_length(path);
-	rest := path[volume:];
-	rooted := rest.len() > 0 && is_separator(rest.bytes()[0]);
+	rooted := volume < bytes.len() && is_separator(bytes[volume]);
 
-	// The element stack, as offsets into `rest`: cleaning never invents text.
+	// The element stack, as views of `path`: cleaning never invents text. An
+	// empty element is the inside of a run of separators.
 	elements := make([dynamic]string_view, 0, 8, allocator);
-	foreach (element in split_elements(rest)) {
+	at := volume;
+	for (at < bytes.len()) {
+		end := next_separator(bytes, at);
+		element := path[at:end];
+		at = end + 1;
 		if (element.len() == 0 || element == ".") { continue; }
 		if (element == "..") {
 			if (elements.len() > 0 && elements[elements.len() - 1] != "..") {
@@ -278,38 +292,4 @@ clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator())
 	}
 	if (builder.len() == 0) { builder.append("."); }
 	return builder.finish();
-}
-
-// Elements between separators, in order. Empty elements are yielded and the
-// caller drops them, which is what collapses a run of separators.
-@(private)
-split_elements :: proc(path: string_view) -> Element_Iterator {
-	return Element_Iterator{path, false};
-}
-
-@(private)
-Element_Iterator :: struct {
-	rest: string_view,
-	done: bool,
-}
-
-impl Element_Iterator {
-	Element  :: string_view;
-	Iterator :: Element_Iterator;
-
-	iter :: proc(self) -> Element_Iterator { return self; }
-
-	next :: proc(self: inout Element_Iterator) -> Option(string_view) {
-		if (self.done) { return .none; }
-		bytes := self.rest.bytes();
-		at := 0;
-		for (; at < bytes.len() && !is_separator(bytes[at]); at += 1) {}
-		element := self.rest[0:at];
-		if (at == bytes.len()) {
-			self.done = true;
-			return .some(element) if element.len() > 0 else .none;
-		}
-		self.rest = self.rest[at + 1:];
-		return element;
-	}
 }
