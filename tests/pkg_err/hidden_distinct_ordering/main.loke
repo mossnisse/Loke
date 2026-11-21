@@ -1,0 +1,10 @@
+// design.md "Distinct types": a distinct type is ordered by its underlying
+// type, but a declared `<` takes precedence, and where it is hidden the
+// built-in order must not stand in for it: one type has one order.
+package main;
+
+import "./lib";
+
+main :: proc() {
+	_ = lib.Reverse(1) <= lib.Reverse(2);
+}

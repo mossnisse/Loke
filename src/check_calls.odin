@@ -1276,11 +1276,8 @@ bind_variadic_arguments :: proc(
 		// A spread whose elements a `..^T` pack lends is no `[]^T` to forward: its
 		// pack is built, as one spread among other operands is.
 		if _, lends := variadic_spread_type(k.c, expr_base(spread).type, info.parameters[pack]); lends {
-			v.variadic_elements = {}
-			v.variadic_spreads = make([]Expr, 1, k.c.semantic_allocator)
-			v.variadic_spreads[0] = spread
-			v.variadic_order = make([]bool, 1, k.c.semantic_allocator)
-			v.variadic_order[0] = true
+			v.variadic_pack = make([]Pack_Operand, 1, k.c.semantic_allocator)
+			v.variadic_pack[0] = {spread, true}
 			return ok && passed
 		}
 		bound[pack] = spread
@@ -1288,9 +1285,7 @@ bind_variadic_arguments :: proc(
 		return ok && passed
 	}
 
-	elements := make([dynamic]Expr, 0, len(rest), k.c.semantic_allocator)
-	spreads := make([dynamic]Expr, 0, len(rest), k.c.semantic_allocator)
-	order := make([dynamic]bool, 0, len(rest), k.c.semantic_allocator) // true = spread
+	operands := make([dynamic]Pack_Operand, 0, len(rest), k.c.semantic_allocator)
 	needs_element_clone := false
 	for arg in rest {
 		if arg.name.text != "" {
@@ -1300,8 +1295,7 @@ bind_variadic_arguments :: proc(
 		}
 		if arg.mode == .Spread {
 			spread, passed := check_spread_argument(k, arg, info.parameters[pack], prechecked)
-			append(&spreads, spread)
-			append(&order, true)
+			append(&operands, Pack_Operand{spread, true})
 			needs_element_clone = true
 			ok = ok && passed
 			continue
@@ -1312,8 +1306,7 @@ bind_variadic_arguments :: proc(
 			continue
 		}
 		value, passed := pass_variadic_element(k, arg.value, element, prechecked)
-		append(&elements, value)
-		append(&order, false)
+		append(&operands, Pack_Operand{value, false})
 		// Managed or not: a pack copies what it is given.
 		classify_copy_cost(k, value, element, .Variadic)
 		if expression_is_borrowed_place(value) && copied_type(value, element) != element {
@@ -1331,25 +1324,26 @@ bind_variadic_arguments :: proc(
 		if type_clone_disabled(k.c, element) {
 			// design.md "Container insertion": each borrowed element is reported
 			// where `move(...)` belongs; a spread has no `move` form.
-			for value in elements {
-				classify_copy(k, value, element, .Variadic)
-			}
-			for spread in spreads {
-				report_move_only_spread(k, spread, element)
+			for operand in operands {
+				if operand.spread {
+					report_move_only_spread(k, operand.value, element)
+				} else {
+					classify_copy(k, operand.value, element, .Variadic)
+				}
 			}
 			ok = false
 		} else {
 			contribute_lifecycle_members(k, element)
-			for spread in spreads {
-				expr_base(spread).copied_as = element
+			for operand in operands {
+				if operand.spread {
+					expr_base(operand.value).copied_as = element
+				}
 			}
 		}
 	}
 	v.is_variadic = true
 	v.variadic_slot = pack
-	v.variadic_elements = elements[:]
-	v.variadic_spreads = spreads[:]
-	v.variadic_order = order[:]
+	v.variadic_pack = operands[:]
 	v.bound = bound
 	return ok
 }

@@ -1588,11 +1588,13 @@ validate_shift_count :: proc(k: ^Checker, e: Expr, checked: Type_Id) -> bool {
 check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 	ordered := v.op != .Eq_Eq && v.op != .Not_Eq
 	both := []Type_Id{operand_type, operand_type}
-	if ordered && !type_is_ordered(k.c, operand_type) {
-		// Said in the message, not a note: an interface requirement keeps only
-		// the message.
+	if ordered {
 		// A hidden `<` would also have stood in for the others (design.md
-		// "Operator declarations").
+		// "Operator declarations"). It is an error even where the type is
+		// ordered without it, as a distinct type is by its underlying type's
+		// order: one type has one order, as it has one equality (design.md
+		// "Distinct types"). Said in the message, not a note: an interface
+		// requirement keeps only the message.
 		hidden := ""
 		if hidden_inherent_operator(k, operator_text(v.op), both) {
 			hidden = operator_text(v.op)
@@ -1605,11 +1607,13 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 				"`%s` does not order `%s` here: its inherent `%s` is not `@(public)`",
 				operator_text(v.op), type_name(k.c, operand_type), hidden,
 			)
-		} else {
-			errorf(k.c, v.op_span, "L0355", "`%s` does not order `%s`", operator_text(v.op), type_name(k.c, operand_type))
-			if blocker := record_order_blocker(k.c, operand_type); blocker != "" {
-				add_notef(k.c, v.op_span, "an anonymous record is ordered when every field is; %s", blocker)
-			}
+			return
+		}
+	}
+	if ordered && !type_is_ordered(k.c, operand_type) {
+		errorf(k.c, v.op_span, "L0355", "`%s` does not order `%s`", operator_text(v.op), type_name(k.c, operand_type))
+		if blocker := record_order_blocker(k.c, operand_type); blocker != "" {
+			add_notef(k.c, v.op_span, "an anonymous record is ordered when every field is; %s", blocker)
 		}
 		return
 	}

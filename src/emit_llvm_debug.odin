@@ -22,7 +22,7 @@ CLOSE_MARKER :: ";dbg.close"
 @(private = "file")
 WITNESS_MARKER :: ";dbg.witness "
 @(private = "file")
-STATIC_MARKER :: ";dbg.static "
+GLOBAL_MARKER :: ";dbg.global "
 
 @(private)
 debug_mark_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
@@ -65,12 +65,12 @@ debug_mark_witness :: proc(e: ^Emitter, index: int) {
 	}
 }
 
-// The global written next is the storage of `symbol_id`, a `static` or
-// `thread_local` local.
+// The global written next is the storage of `symbol_id`, a file-scope
+// variable or a `static` or `thread_local` local.
 @(private)
-debug_mark_static :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
+debug_mark_global :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	if e.c.debug_info {
-		fmt.sbprintfln(&e.b, "%s%d", STATIC_MARKER, u32(symbol_id))
+		fmt.sbprintfln(&e.b, "%s%d", GLOBAL_MARKER, u32(symbol_id))
 	}
 }
 
@@ -191,9 +191,9 @@ attach_debug_info :: proc(e: ^Emitter, module: string) -> string {
 		case strings.has_prefix(line, WITNESS_MARKER):
 			index, _ := strconv.parse_uint(line[len(WITNESS_MARKER):])
 			global = debug_witness(&d, int(index))
-		case strings.has_prefix(line, STATIC_MARKER):
-			id, _ := strconv.parse_uint(line[len(STATIC_MARKER):])
-			global = debug_static_local(&d, e, Symbol_Id(id))
+		case strings.has_prefix(line, GLOBAL_MARKER):
+			id, _ := strconv.parse_uint(line[len(GLOBAL_MARKER):])
+			global = debug_variable_global(&d, e, Symbol_Id(id))
 		case inside && strings.has_prefix(line, "  "):
 			write_with_dbg(&out, line, p.location)
 		case global >= 0:
@@ -318,24 +318,29 @@ debug_declare :: proc(d: ^Debug_Info, out: ^strings.Builder, p: ^Debug_Proc, mar
 	)
 }
 
-// A `static` or `thread_local` local, described as C describes a
+// A variable with static storage. A file-scope one is named as its package's
+// procedures are, `core:log.selected`, so another package's of the same name stays
+// apart. A `static` or `thread_local` local is described as C describes a
 // function-scope static: a global variable scoped to its procedure, which a
 // debugger lists with that procedure's locals. LLVM gives a `thread_local` one
 // the thread-relative location its storage has.
 @(private = "file")
-debug_static_local :: proc(d: ^Debug_Info, e: ^Emitter, symbol_id: Symbol_Id) -> int {
+debug_variable_global :: proc(d: ^Debug_Info, e: ^Emitter, symbol_id: Symbol_Id) -> int {
 	symbol := symbol_of(d.c, symbol_id)
-	owner := (^Expr_Proc)(symbol.def_scope.owner_proc).symbol
-	subprogram, found := d.early[owner]
-	if !found {
-		subprogram = debug_subprogram(d, symbol_of(d.c, owner), e.names[owner])
-		d.early[owner] = subprogram
+	scope, name := UNIT, symbol.exported ? symbol.link_name : debug_symbol_name(e.names[symbol_id])
+	if symbol.def_scope != nil && symbol.def_scope.owner_proc != nil {
+		owner := (^Expr_Proc)(symbol.def_scope.owner_proc).symbol
+		subprogram, found := d.early[owner]
+		if !found {
+			subprogram = debug_subprogram(d, symbol_of(d.c, owner), e.names[owner])
+			d.early[owner] = subprogram
+		}
+		scope, name = subprogram, identifier_text(d.c, symbol.name)
 	}
 	line, _ := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
 	variable := debug_node(
 		d, `distinct !DIGlobalVariable(name: "%s", scope: !%d, file: !%d, line: %d, type: !%d, isLocal: true, isDefinition: true)`,
-		llvm_escape(identifier_text(d.c, symbol.name)), subprogram, debug_file(d, symbol.span.file), line,
-		debug_type(d, symbol.type),
+		llvm_escape(name), scope, debug_file(d, symbol.span.file), line, debug_type(d, symbol.type),
 	)
 	return debug_global(d, variable)
 }
@@ -374,7 +379,7 @@ debug_file :: proc(d: ^Debug_Info, file: u32) -> int {
 debug_subprogram :: proc(d: ^Debug_Info, symbol: ^Symbol, llvm_name: string) -> int {
 	file := debug_file(d, symbol.span.file)
 	line, _ := line_col(&d.c.sources[symbol.span.file], symbol.span.lo)
-	name := symbol.exported ? symbol.link_name : debug_proc_name(llvm_name)
+	name := symbol.exported ? symbol.link_name : debug_symbol_name(llvm_name)
 	flags := d.c.opt_mode != .None ? "DISPFlagDefinition | DISPFlagOptimized" : "DISPFlagDefinition"
 	return debug_node(
 		d,
@@ -718,12 +723,12 @@ debug_dyn_natvis :: proc(d: ^Debug_Info) {
 	}
 }
 
-// The name a debugger shows, with `llvm_safe` undone: `@loke.p.core$3afmt.print`
-// is `core:fmt.print`.
+// The name a debugger shows for a procedure or file-scope variable, with
+// `llvm_safe` undone: `@loke.p.core$3afmt.print` is `core:fmt.print`.
 @(private = "file")
-debug_proc_name :: proc(llvm_name: string) -> string {
+debug_symbol_name :: proc(llvm_name: string) -> string {
 	name := strings.trim_prefix(llvm_name, "@")
-	name = strings.trim_prefix(name, "loke.p.")
+	name = strings.trim_prefix(strings.trim_prefix(name, "loke.p."), "loke.g.")
 	out := make([dynamic]u8, 0, len(name))
 	for i := 0; i < len(name); i += 1 {
 		if name[i] == '$' && i + 2 < len(name) {

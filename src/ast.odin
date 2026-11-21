@@ -109,9 +109,18 @@ Expr_Ident :: struct {
 	name:       string,
 	name_id:    Identifier_Id,
 	symbol:     Symbol_Id,
-	// The one place the value a `return` returns writes this name
+	// How often the value a `return` returns writes this name
 	// (`mark_returned_value`).
-	sole_in_return: bool,
+	return_uses: Return_Uses,
+}
+
+Return_Uses :: enum u8 {
+	// Not in a returned value, or written there more than once.
+	Many,
+	Once,
+	// Once, and also as the bare key of a literal whose type is not known
+	// before checking, which may be a field's name or a map key naming it.
+	Once_Or_Key,
 }
 
 // `a.b`, and the implicit-selector primary `.Member` when `operand` is nil.
@@ -282,15 +291,12 @@ Expr_Call :: struct {
 	// `@(require_results)`, still apply once the callee names the member.
 	group: Symbol_Id,
 	// `variadic_slot`, when `is_variadic`, is the packed parameter.
-	// `variadic_forwards` passes one spread slice through; otherwise elements and
-	// spreads are concatenated in `variadic_order` (true = next spread, false =
-	// next element).
+	// `variadic_forwards` passes one spread slice through, as its `bound`
+	// argument; otherwise the pack is built from `variadic_pack`.
 	is_variadic:       bool,
 	variadic_slot:     int,
 	variadic_forwards: bool,
-	variadic_elements: []Expr,
-	variadic_spreads:  []Expr,
-	variadic_order:    []bool,
+	variadic_pack:     []Pack_Operand,
 	// `show(..answer)` over a union: the switch it stands for, whose cases carry
 	// each variant's call as their `arm` (design.md "Union argument expansion").
 	// Every later pass reads this instead of the callee and arguments.
@@ -836,28 +842,23 @@ expr_has_error :: proc(e: Expr) -> bool {
 	return base != nil && base.has_error
 }
 
-// How far a walk of a built pack's operands has come: how many it has taken, in
-// all and of each kind.
-Call_Pack_Cursor :: struct {
-	taken, elements, spreads: int,
+// An operand of a variadic pack built from separate arguments, in written
+// order: an element, or a `..` spread whose elements it concatenates.
+Pack_Operand :: struct {
+	value:  Expr,
+	spread: bool,
 }
 
-// A call's next variadic pack operand in written order (`variadic_order`), and
-// whether it is a spread.
-call_pack_next :: proc(call: ^Expr_Call, cursor: ^Call_Pack_Cursor) -> (operand: Expr, spread: bool, more: bool) {
-	if cursor.taken >= len(call.variadic_order) {
-		return nil, false, false
+// How many of a built pack's operands are elements and how many spreads.
+pack_operand_counts :: proc(call: ^Expr_Call) -> (elements, spreads: int) {
+	for operand in call.variadic_pack {
+		if operand.spread {
+			spreads += 1
+		} else {
+			elements += 1
+		}
 	}
-	spread = call.variadic_order[cursor.taken]
-	cursor.taken += 1
-	if spread {
-		operand = call.variadic_spreads[cursor.spreads]
-		cursor.spreads += 1
-	} else {
-		operand = call.variadic_elements[cursor.elements]
-		cursor.elements += 1
-	}
-	return operand, spread, true
+	return
 }
 
 // `_` as a destination; its value is dropped.

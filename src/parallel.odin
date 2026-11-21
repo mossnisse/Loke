@@ -38,7 +38,7 @@ Spawn_Task :: struct {
 	kinds:  []Spawn_Field_Kind,
 	result: Symbol_Id, // INVALID_SYMBOL for a bare spawn
 	// A call with a variadic pack: its slot's field is a record holding each
-	// element and spread in `variadic_order`, with how each reaches the task.
+	// element and spread in `variadic_pack`, with how each reaches the task.
 	pack:   []Spawn_Field_Kind,
 	// The block runs on a pool, so a worker of it joining the block may run
 	// the task on the joining thread (design.md "Parallel blocks").
@@ -429,7 +429,7 @@ spawn_lay_out_arguments :: proc(k: ^Checker, task: ^Spawn_Task, proc_type: Type_
 	layout.field_names = make([dynamic]string, 0, len(call.bound) + spawn_header_fields(task) + 2, c.semantic_allocator)
 	layout.field_types = make([dynamic]Type_Id, 0, len(call.bound) + spawn_header_fields(task) + 2, c.semantic_allocator)
 	layout.stmts = make([dynamic]Stmt, 0, len(call.bound) + 2, c.semantic_allocator)
-	layout.args = make([dynamic]Argument, 0, len(call.bound) + len(call.variadic_order), c.semantic_allocator)
+	layout.args = make([dynamic]Argument, 0, len(call.bound) + len(call.variadic_pack), c.semantic_allocator)
 	spawn_add_field(layout, "run", TYPE_RAWPTR)
 	if task.pooled {
 		spawn_add_field(layout, "next", TYPE_RAWPTR)
@@ -527,15 +527,13 @@ spawn_run_literal :: proc(k: ^Checker, task: ^Spawn_Task, stmts: []Stmt) -> ^Exp
 spawn_pack_record :: proc(k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, pack: Type_Id, span: Span) -> Type_Id {
 	c := k.c
 	element := slice_element(c, pack)
-	task.pack = make([]Spawn_Field_Kind, len(call.variadic_order), c.semantic_allocator)
-	types := make([]Type_Id, len(call.variadic_order), c.semantic_allocator)
-	names := make([]string, len(call.variadic_order), c.semantic_allocator)
-	cursor: Call_Pack_Cursor
-	for operand, is_spread in call_pack_next(call, &cursor) {
-		index := cursor.taken - 1
+	task.pack = make([]Spawn_Field_Kind, len(call.variadic_pack), c.semantic_allocator)
+	types := make([]Type_Id, len(call.variadic_pack), c.semantic_allocator)
+	names := make([]string, len(call.variadic_pack), c.semantic_allocator)
+	for operand, index in call.variadic_pack {
 		names[index] = spawn_pack_field_name(c, index)
-		types[index] = is_spread ? spawn_spread_type(c, operand, pack) : element
-		task.pack[index] = !is_spread && type_is_managed(c, element) ? .Owned : .Copy
+		types[index] = operand.spread ? spawn_spread_type(c, operand.value, pack) : element
+		task.pack[index] = !operand.spread && type_is_managed(c, element) ? .Owned : .Copy
 	}
 	return synth_record(k, "spawn$pack", "spawn$pack$type", names, types, span)
 }
@@ -557,9 +555,9 @@ spawn_pack_field_name :: proc(c: ^Compiler, index: int) -> string {
 @(private = "file")
 spawn_repack :: proc(k: ^Checker, task: ^Spawn_Task, call: ^Expr_Call, field: Expr, layout: ^Spawn_Layout, span: Span) {
 	c := k.c
-	for is_spread, index in call.variadic_order {
+	for packed, index in call.variadic_pack {
 		operand := synth_selector(c, field, spawn_pack_field_name(c, index), span)
-		if is_spread {
+		if packed.spread {
 			append(&layout.args, Argument{span = span, mode = .Spread, value = operand})
 			continue
 		}

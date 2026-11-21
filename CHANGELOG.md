@@ -103,6 +103,20 @@ checklist.
       greater :: operator(>) proc(a, b: Reverse) -> bool { return int(a) > int(b); }
   }
   ```
+- A distinct type whose inherent `<` is not `@(public)` cannot be ordered in a package that does
+  not see that `<`: `<`, `<=`, `>`, and `>=` there are `L0355`
+  ([Distinct types](docs/design.md#distinct-types)). They compiled and ordered by the underlying
+  type's built-in operators, while the type's own package and every sort used the declared `<`,
+  as a hidden `==` is already refused rather than replaced. Upgrade by marking the `<`
+  `@(public)`, or by converting to the underlying type where its order is meant:
+  `int(a) < int(b)`.
+- [`endian.Little_Endian(T)` and `endian.Big_Endian(T)`](docs/standard-library.md#coreendian)
+  are aliases of a new public record, `endian.Endian(T, order)`, with `Order.Little` and
+  `Order.Big`. The two names still work as written and their members are unchanged, but they
+  name one type with its order as an argument: a diagnostic, `typeid`, or reflected name prints
+  `Endian(u32, Order.Big)`, not `Big_Endian(u32)`, and an `impl Big_Endian($T)` outside the package is `L0746`. Upgrade
+  such an `impl` to `impl endian.Endian($T, endian.Order.Big)`, and anything that matched the
+  printed name to the new spelling.
 - Converting a `^T` or `^mut T` to a C pointer to another element type is an unchecked
   operation ([C pointers](docs/design.md#c-pointers)). `([^]u64)(p)` for a `p: ^u8` compiled in
   a file that does not import `core:unsafe`, though it reads the pointee as a type it was not
@@ -124,6 +138,15 @@ checklist.
 
 ### Changed
 
+- `-g` describes file-scope variables, so a debugger shows each with its type. One is named as
+  its package's procedures are, `core:log.selected`, and a root package's by its own name
+  ([Common options](docs/compiler-guide.md#common-options)).
+- `unsafe.transmute` of an aggregate place, such as an array to a `Simd` vector, reads the place
+  where it is rather than copying it to the stack first.
+  [`simd.from_array` and `simd.to_array`](docs/standard-library.md#coresimd) are now such
+  transmutes, and as fast as the compiler intrinsic they replace.
+- A generic type applied to an enum constant is named by the member in diagnostics, `typeid`, and
+  reflected names: `Endian(u32, Order.Big)`, where it was `Endian(u32, 1)`.
 - UTF-8 validation reads a run of ASCII eight bytes at a time, in `string.from_utf8`,
   `string_view.from_utf8`, `unsafe.string_view`, and everything built on them. At `-opt=speed`,
   128 MiB of ASCII validates in 8 ms, from 64, and text with one two-byte character in 64 bytes
@@ -329,6 +352,15 @@ checklist.
   or `b[:]`, `seen := call_get(get, true); a.append(1);` compiled while `seen` was in use, as
   did `b.append(1)` after a direct call that stored `a[:]` or `b[:]` through an `out` pointer.
   Each is now `L0512`.
+- A `drop` hook that panics while an assignment drops its destination's old value, or a value
+  written to `_`, runs a pending `defer` or `errdefer` with what the statement moved before
+  ([defer statement](docs/design.md#defer-statement)). `defer fmt.println(items.len());` before
+  `g, items = Guard{2, move(items)}, {};` compiled, and the deferred statement read the moved
+  `items` when `g`'s old value panicked; it is now `L0500`.
+- A returned construction copies a local that a call's literal argument also names as a bare
+  map key ([Returned constructions](docs/design.md#returned-constructions)).
+  `return Pair{s, count({s = 1})};` moved `s` into the result and then reported `L0500` at the
+  key, since the names were counted before the literal's type was known.
 - A panic after a move in the same statement runs a pending `defer` or `errdefer` with the
   local moved ([defer statement](docs/design.md#defer-statement)).
   `errdefer fmt.println(item.value); eat(move(item), risky());` compiled, though `risky` runs

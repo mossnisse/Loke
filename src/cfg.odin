@@ -415,10 +415,34 @@ flow_emit :: proc(graph: ^Flow_Graph, event: Flow_Event) {
 // statement's unwind path with the local moved (`emit_unwind_branch`).
 @(private = "file")
 link_unwind_after_moves :: proc(graph: ^Flow_Graph, e: Expr) {
-	if graph.unwind_entry == NO_BLOCK || graph.current == NO_BLOCK || graph.kills == graph.unwind_kills ||
-	   !expr_may_panic_itself(graph.k.c, e) {
+	if moved_since_unwind_link(graph) && expr_may_panic_itself(graph.k.c, e) {
+		link_unwind(graph)
+	}
+}
+
+// So do an assignment's writes when they run a `drop` hook: each drops its
+// destination's old value first, and `_ =` drops the value itself.
+@(private = "file")
+link_unwind_before_writes :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
+	if s.op != .Assign || !moved_since_unwind_link(graph) {
 		return
 	}
+	for target, index in s.lhs {
+		dropped := is_discard(target) && index < len(s.rhs) ? expr_base(s.rhs[index]) : expr_base(target)
+		if dropped != nil && type_drop_runs_hook(graph.k.c, dropped.type) {
+			link_unwind(graph)
+			return
+		}
+	}
+}
+
+@(private = "file")
+moved_since_unwind_link :: proc(graph: ^Flow_Graph) -> bool {
+	return graph.unwind_entry != NO_BLOCK && graph.current != NO_BLOCK && graph.kills != graph.unwind_kills
+}
+
+@(private = "file")
+link_unwind :: proc(graph: ^Flow_Graph) {
 	graph.unwind_kills = graph.kills
 	from := graph.current
 	link(graph, from, graph.unwind_entry)
@@ -1351,6 +1375,7 @@ walk_flow_assign_lifecycle :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		}
 		walk_flow_expr(graph, target)
 	}
+	link_unwind_before_writes(graph, s)
 	// Then the writes, in order: a full assignment revives the variable.
 	for target, index in s.lhs {
 		if !revived[index] {
@@ -2189,12 +2214,11 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 // An unforwarded variadic pack's operands in written order.
 @(private = "file")
 walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call, stores: bool) {
-	cursor: Call_Pack_Cursor
-	for operand in call_pack_next(v, &cursor) {
+	for operand in v.variadic_pack {
 		if stores {
-			walk_flow_stored(graph, operand)
+			walk_flow_stored(graph, operand.value)
 		} else {
-			walk_flow_expr(graph, operand)
+			walk_flow_expr(graph, operand.value)
 		}
 	}
 }

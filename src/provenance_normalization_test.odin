@@ -740,10 +740,10 @@ main :: proc() {}`) { return }
 	statement, is_expr := body.body.stmts[0].(^Stmt_Expr)
 	if !testing.expect(t, is_expr && len(statement.exprs) == 1) { return }
 	call, is_call := statement.exprs[0].(^Expr_Call)
-	if !testing.expect(t, is_call && len(call.variadic_order) == 2) { return }
+	if !testing.expect(t, is_call && len(call.variadic_pack) == 2) { return }
 	form := prov_value(graph, prov_input_value(graph, call)).form.(Prov_Form_Call)
 	if !testing.expect(t, len(form.pack) == 2, "a call's value does not record its pack") { return }
-	testing.expect_value(t, form.pack[0], prov_input_value(graph, call.variadic_elements[0]))
+	testing.expect_value(t, form.pack[0], prov_input_value(graph, call.variadic_pack[0].value))
 	element, named := prov_value(graph, form.pack[1]).form.(Prov_Form_Symbol)
 	testing.expect(t, named && identifier_text(&p.c, symbol_of(&p.c, element.symbol).name) == "n", "a pack element is not its argument's value")
 	ret, returns := body.body.stmts[1].(^Stmt_Return)

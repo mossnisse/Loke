@@ -1780,7 +1780,10 @@ conversion hooks, interfaces, and formatting. Compared with its underlying type:
   values do. A comparison overload declared for the distinct type takes
   precedence, as for any user type, and so does a comparison that [falls
   back](#operator-declarations) to one: a distinct type that declares `<`
-  orders by it under all four operators.
+  orders by it under all four operators. A declared comparison is never
+  replaced by the inherited one: where a distinct type's inherent `<`, or the
+  ordering operator written, is not visible, ordering its values is an error,
+  as comparing a value is where its inherent `==` is not visible.
 - **Hashing** follows equality: a distinct type that declares neither `==` nor
   `hash` has its underlying type's `hash`, so it [keys a map](#maps) as that type
   does.

@@ -386,18 +386,17 @@ eval_count_argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (out: 
 // views (design.md "Variadic parameters").
 @(private = "file")
 eval_appended :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (out: []Eval_Value, success: bool) {
-	added := make([dynamic]Eval_Value, 0, len(v.variadic_elements), ev.alloc)
+	added := make([dynamic]Eval_Value, 0, len(v.variadic_pack), ev.alloc)
 	if v.variadic_forwards {
 		eval_append_spread(ev, &added, v.bound[v.variadic_slot]) or_return
 		return added[:], true
 	}
-	cursor: Call_Pack_Cursor
-	for operand, is_spread in call_pack_next(v, &cursor) {
-		if is_spread {
-			eval_append_spread(ev, &added, operand) or_return
+	for operand in v.variadic_pack {
+		if operand.spread {
+			eval_append_spread(ev, &added, operand.value) or_return
 			continue
 		}
-		copied := eval_copied(ev, operand) or_return
+		copied := eval_copied(ev, operand.value) or_return
 		append(&added, copied)
 	}
 	return added[:], true

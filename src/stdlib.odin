@@ -155,7 +155,6 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// as a loop. The reduction's fold is constant too, since it selects the
 		// instruction — `Fold` stays an ordinary enum in this package's own source,
 		// matched by member name rather than bound as a second identity.
-		contribute_builtin(c, pkg, "simd_cast", .Simd_Cast, public = false)
 		contribute_builtin(c, pkg, "simd_select", .Simd_Select, public = false)
 		contribute_builtin(c, pkg, "simd_reduce", .Simd_Reduce, public = false)
 	case STD_MATH:

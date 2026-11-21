@@ -882,10 +882,22 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 
 // `unsafe.transmute(T, value)`: the same bits read as a `T`. The checker has
 // settled equal size and trivial lifecycles, so only the LLVM spelling is left:
-// a register cast where one exists, a stack round trip otherwise.
+// a register cast where one exists, a load from the place itself where the
+// operand is one, a stack round trip otherwise.
 @(private)
 emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	source := expr_base(v.bound[0]).type
+	// An aggregate place is read where it is, at the alignment it has there,
+	// rather than copied into storage of its own and loaded back.
+	if reads_in_place(e.c, source, as_type) && expression_is_borrowed_place(v.bound[0]) &&
+	   !expression_converts_storage(v.bound[0]) {
+		address := emit_address(e, v.bound[0])
+		align, known := e.place_align[address]
+		if !known {
+			align = type_align(e.c, source)
+		}
+		return load(e, llvm_type(e, as_type), address, align < type_align(e.c, as_type) ? fmt.aprintf(", align %d", align) : "")
+	}
 	value := emit_expr(e, v.bound[0])
 	// A `bool` is `i1` in registers but a byte in memory, so it crosses as `i8`.
 	from := llvm_type(e, source)
@@ -929,6 +941,19 @@ reinterpret_bits :: proc(e: ^Emitter, source, target: Type_Id, from, to, value: 
 		return load(e, to, slot)
 	}
 	return out
+}
+
+// The pairs `reinterpret_bits` takes through storage: an aggregate on at least
+// one side, no pointer and no `bool`, whose register form is not its memory's,
+// and a result that is not a large value.
+@(private = "file")
+reads_in_place :: proc(c: ^Compiler, source, target: Type_Id) -> bool {
+	for type in ([2]Type_Id{source, target}) {
+		if pointer_shaped(c, type) || underlying_kind(c, type) == .Bool {
+			return false
+		}
+	}
+	return !(bitcastable(c, source) && bitcastable(c, target)) && type_size(c, target) <= LARGE_VALUE_BYTES
 }
 
 @(private = "file")

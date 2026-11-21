@@ -1570,6 +1570,15 @@ Comparisons cannot produce a value with the wrong dimension; arithmetic can.
 permit addition without also permitting meaningless multiplication. This costs
 some explicit declarations while keeping representation and meaning separate.
 
+Inheriting a comparison never replaces a declared one that is out of sight. A
+`Reverse :: distinct int` with a private reversing `<` used to order by `int`'s
+operators in an importing package, with no diagnostic, while its own package
+and every sort used the declared `<`: two orders for one type, chosen by where
+the comparison is written. A hidden `==` was already refused for the same
+reason, so the type has one equality wherever it is compared, and a hidden `<`
+now is too. The cost is a conversion, `int(a) < int(b)`, where an importer
+really wants the underlying order, which says so.
+
 An [unfixed constant](design.md#unfixed-constants) converts to a distinct type
 without a written conversion, and a typed value does not. What `distinct`
 guards against is a value of one meaning used as another, an `f64` of seconds
@@ -2646,6 +2655,15 @@ lanes. Reductions fold through the scalar checked operation so they agree with
 the loop they replace. This costs checks but preserves the numerical contract
 across optimization strategies.
 
+`simd.from_array` and `simd.to_array` are `unsafe.transmute`: a vector and its
+array have the same bytes in the same order, so a conversion between them is a
+reinterpretation, and a dedicated intrinsic would be a second one in the
+checker, the evaluator, and the backend. Two paths keep the transmute as cheap
+as the intrinsic was. The evaluator retypes a vector and its array without
+going through their bytes, and the backend reads an aggregate place in place,
+at the alignment it has there, instead of copying it into a slot first; the
+second helps every aggregate `transmute` of a place.
+
 ### Signed shifts stay bit operations
 
 Shifts build masks and pack representations. Bits shifted out are discarded,
@@ -3360,6 +3378,12 @@ boundaries and API shapes follow a few common choices:
   `.Little`. A run-time value is required anyway, since TIFF and ELF announce their
   order in the file. A mixed format calls `set_order`, or gives a subrecord its own,
   as an embedded TIFF does in a JPEG.
+- **The endian wrappers are one record under two aliases.** `Little_Endian(T)`
+  and `Big_Endian(T)` were two records with the same four members, written
+  twice. `Endian(T, order)` holds them once, and the two names stay the
+  spelling a field is written in. The price is that the record is public, and
+  that a diagnostic or reflected name spells the expansion,
+  `Endian(u32, Order.Big)`, since an alias has no identity of its own.
 - **`get` and `put`, with a type, rather than `get_u32_be`.** Thirteen types in two
   orders in two directions would be 52 members, for no gain over one checked generic.
   The names `read` and `write` are the `io` protocol's slots and are taken: taking
@@ -4478,6 +4502,28 @@ let the cost model choose again; nothing measured asks for it yet.
 Emitted IR would also reach the builds bitcode does not: `-opt=none`, which
 inlines nothing anyway, and an optimized build with `-runtime=<dir>` or without
 `lld-link`, which keeps the calls it had.
+
+### Two compiler cleanups that were not made
+
+A cleanup of 2026-11-08 left two proposals for a decision, and both were
+declined on 2026-11-21 after reading the code they would change.
+
+- **Semantic stores on one allocator.** `init_semantic_stores` points 91
+  containers of `Compiler` at the semantic arena one `make` at a time. Gathered
+  into one embedded record, a single `use_allocator` call would set them all.
+  But the fields sit with the others of their topic, generics, reflection,
+  provenance summaries, each group under the comment that explains it, and in
+  seven of those groups beside fields that are no container or are allocated
+  elsewhere. One record would sort the declaration by allocator rather than by
+  meaning, to save lines that also serve as the list of what the arena owns.
+- **One walk over public declarations.** `doc.odin`'s `api_refs` and
+  `private_names.odin`'s `walk` share the binding of parameters and `$` names,
+  through `bind_signature` and `bind_generic_params`, and little else. The
+  interface file follows every name, a parameter's default and an array's
+  length included, while the exposure check reads values only in a `where`
+  clause, asks what a generic application's parameters take, and tracks which
+  field or member it is in. A walker parameterized over all of that would be a
+  callback at nearly every case, longer than either walk.
 
 ### The evaluator's memory limit counts what it holds
 

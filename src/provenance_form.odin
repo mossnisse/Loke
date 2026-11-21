@@ -19,7 +19,7 @@ Prov_Form_Move :: struct { operand: Value_Id }
 Prov_Form_Error :: struct { operand: Value_Id, borrows: bool }
 // `arguments` are the values of its bound arguments, or of its written ones
 // for a call without bound arguments; `pack` those of a variadic pack built
-// from separate arguments, in `variadic_order`.
+// from separate arguments, in `variadic_pack`.
 Prov_Form_Call :: struct { call: ^Expr_Call, arguments, pack: []Value_Id }
 Prov_Form_Composite :: struct { elements: []Value_Id }
 Prov_Form :: union {
@@ -92,10 +92,9 @@ prov_argument_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> []Value_Id
 
 @(private = "file")
 prov_pack_values :: proc(graph: ^Flow_Graph, call: ^Expr_Call) -> []Value_Id {
-	values := make([]Value_Id, len(call.variadic_order), graph.alloc)
-	cursor: Call_Pack_Cursor
-	for operand in call_pack_next(call, &cursor) {
-		values[cursor.taken - 1] = prov_operand_value(graph, operand)
+	values := make([]Value_Id, len(call.variadic_pack), graph.alloc)
+	for operand, index in call.variadic_pack {
+		values[index] = prov_operand_value(graph, operand.value)
 	}
 	return values
 }

@@ -1,0 +1,11 @@
+// A generic type applied to an enum constant is named by the member, as the
+// argument is written, not by its value.
+package main;
+
+Order :: enum { Little, Big };
+
+Stored :: struct($T: type, $order: Order) { value: T }
+
+main :: proc() {
+	x: Stored(u32, Order.Big) = 3;
+}

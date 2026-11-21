@@ -207,6 +207,30 @@ main :: proc() {
 	}
 }
 
+// A file-scope variable is named as its package's procedures are, so that two
+// packages' variables of one name stay apart in a debugger.
+@(test)
+debug_file_scope_variables_are_named_globals :: proc(t: ^testing.T) {
+	p: Checked
+	check_for_emission(&p, `package main;
+count: int = 3;
+local_count: thread_local int = 4;
+main :: proc() { count += local_count; }
+`)
+	defer destroy_checked(&p)
+	c := &p.c
+	if !testing.expect(t, c.error_count == 0) { report(c); return }
+	c.debug_info = true
+	finalize_semantics(c)
+	module, emitted := emit_llvm_module(c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(c); return }
+	for global in ([2][2]string{{"count", "@loke.g.count = global i64 3, !dbg !"}, {"local_count", "@loke.g.local_count = thread_local global i64 4, !dbg !"}}) {
+		testing.expectf(t, strings.contains(module, global[1]), "`%s` has no debug attachment", global[0])
+		testing.expectf(t, strings.contains(module, fmt.tprintf(`!DIGlobalVariable(name: "%s", scope: !0, file: !`, global[0])),
+			"`%s` is not described as a global of the compile unit", global[0])
+	}
+}
+
 @(test)
 checked_call_operations_are_cleared_by_syntax_cloning :: proc(t: ^testing.T) {
 	p: Checked

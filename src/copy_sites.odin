@@ -78,14 +78,19 @@ transfer_returned_local :: proc(k: ^Checker, e: Expr) -> Expr {
 mark_returned_value :: proc(k: ^Checker, e: Expr, expected: Type_Id) {
 	mark_returned(e)
 	names := make([dynamic]^Expr_Ident, context.temp_allocator)
-	walk := Returned_Names{k, &names}
+	keys := make([dynamic]^Expr_Ident, context.temp_allocator)
+	walk := Returned_Names{k, &names, &keys}
 	collect_returned_names(&walk, e, expected)
 	counts := make(map[string]int, context.temp_allocator)
 	for name in names {
 		counts[name.name] += 1
 	}
+	key_names := make(map[string]bool, context.temp_allocator)
+	for key in keys {
+		key_names[key.name] = true
+	}
 	for name in names {
-		name.sole_in_return = counts[name.name] == 1
+		name.return_uses = counts[name.name] != 1 ? .Many : key_names[name.name] ? .Once_Or_Key : .Once
 	}
 }
 
@@ -93,13 +98,15 @@ mark_returned_value :: proc(k: ^Checker, e: Expr, expected: Type_Id) {
 Returned_Names :: struct {
 	k:     ^Checker,
 	names: ^[dynamic]^Expr_Ident,
+	// Bare keys of literals whose type is not known yet.
+	keys:  ^[dynamic]^Expr_Ident,
 }
 
 // `collect_local_names` ahead of checking. Whether a literal's bare key is a
 // field name or names a local depends on the literal's type, which checking has
 // not recorded yet, so it is found here as checking will find it: the written
-// type, or `expected` where the literal stands. Where neither is known, the
-// written rule (`key_names_field`) decides.
+// type, or `expected` where the literal stands. Where neither is known, as for
+// a call's argument, the key may be either, and goes to `keys`.
 @(private = "file")
 collect_returned_names :: proc(w: ^Returned_Names, e: Expr, expected: Type_Id) {
 	#partial switch v in e {
@@ -147,24 +154,25 @@ collect_returned_literal_names :: proc(w: ^Returned_Names, v: ^Expr_Composite, e
 		end_probe(c, probe)
 	}
 	info := underlying_info(c, type)
+	kind := info.kind if info != nil else .Invalid
 	for element, index in v.elements {
 		names_key := !key_names_field(v, element.key)
 		key_type, value_type := INVALID_TYPE, INVALID_TYPE
-		if info != nil {
-			#partial switch info.kind {
-			case .Struct:
-				names_key = false
-				value_type = literal_field_type(c, info, element.key, index)
-			case .Map:
-				names_key = true
-				key_type, value_type = info.key, info.element
-			case .Array, .Slice, .Dynamic_Array, .Simd:
-				names_key = true
-				value_type = info.element
-			}
+		#partial switch kind {
+		case .Struct:
+			names_key = false
+			value_type = literal_field_type(c, info, element.key, index)
+		case .Map:
+			names_key = true
+			key_type, value_type = info.key, info.element
+		case .Array, .Slice, .Dynamic_Array, .Simd:
+			names_key = true
+			value_type = info.element
 		}
 		if names_key {
 			collect_returned_names(w, element.key, key_type)
+		} else if kind == .Invalid {
+			append(w.keys, element.key.(^Expr_Ident))
 		}
 		collect_returned_names(w, element.value, value_type)
 	}
@@ -224,8 +232,20 @@ transfer_returned_operand :: proc(k: ^Checker, parent: ^Expr_Base, e: Expr, type
 // wrapped `return x;` stands for takes `x` as the written `.ok(x)` would.
 transfer_sole_returned_name :: proc(k: ^Checker, e: Expr, type: Type_Id) -> Expr {
 	ident, is_ident := e.(^Expr_Ident)
-	if !is_ident || !ident.sole_in_return || ident.type != type || conversion_source(&ident.base) != INVALID_TYPE {
+	if !is_ident || ident.type != type || conversion_source(&ident.base) != INVALID_TYPE {
 		return e
+	}
+	// A key that also names it makes a copy, unless there is no copy to make:
+	// then the move is right whatever the key turns out to be, as a second
+	// use of a move-only local is an error either way.
+	switch ident.return_uses {
+	case .Many:
+		return e
+	case .Once_Or_Key:
+		if !type_clone_disabled(k.c, type) {
+			return e
+		}
+	case .Once:
 	}
 	return transfer_returned_local(k, e)
 }

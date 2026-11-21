@@ -1,6 +1,6 @@
 /**
-	`Little_Endian(T)` and `Big_Endian(T)`: storage wrappers that fix a field's
-	byte order regardless of the target's.
+	`Endian(T, order)`, spelled `Little_Endian(T)` and `Big_Endian(T)`: storage
+	wrappers that fix a field's byte order regardless of the target's.
 
 	The wrapper is the *stored* form. Nothing arithmetic is defined on it: a
 	caller `store`s a host value into one and `load`s a host value back out, and
@@ -26,11 +26,15 @@ import "core:fmt";
 import "core:math";
 import "core:unsafe";
 
-Little_Endian :: struct($T: type) where Integral(T) {
-	// Little-endian bytes of the value, held in a `T` because that is the only
+/**
+	A value of `T` stored in byte order `order`, whatever the target's.
+	`Little_Endian(T)` and `Big_Endian(T)` name the two orders.
+*/
+Endian :: struct($T: type, $order: Order) where Integral(T) {
+	// The value's bytes in `order`, held in a `T` because that is the only
 	// storage of the right size and alignment the language offers. Reading it
-	// directly is meaningless on a big-endian target, which is what `@(private)`
-	// is here to prevent.
+	// directly is meaningless on a target of the other order, which is what
+	// `@(private)` is here to prevent.
 	//
 	// The default structural equality over this one field is already the right
 	// answer, so there is no `==` overload below: two wrappers hold equal values
@@ -38,17 +42,17 @@ Little_Endian :: struct($T: type) where Integral(T) {
 	@(private) stored: T,
 }
 
-impl Little_Endian($T) {
-	/// A host value in little-endian storage.
-	store :: proc(value: T) -> Little_Endian(T) {
-		return {host_to(value, Order.Little)};
+impl Endian($T, $order) {
+	/// A host value in `order`'s storage.
+	store :: proc(value: T) -> Endian(T, order) {
+		return {host_to(value, order)};
 	}
 
 	/// The host value back.
-	// On a little-endian target both directions are the identity, and `host_to`
+	// On a target of `order` both directions are the identity, and `host_to`
 	// folds them away rather than leaving a branch for the optimizer.
 	load :: proc(self) -> T {
-		return host_to(self.stored, Order.Little);
+		return host_to(self.stored, order);
 	}
 
 	/**
@@ -56,8 +60,8 @@ impl Little_Endian($T) {
 		stored one belongs at every assignment, which is the bug this type exists
 		to prevent. `Little_Endian(u32)(x)` is the written form.
 	*/
-	from_host :: hook(convert) proc(value: T) -> Little_Endian(T) {
-		return {host_to(value, Order.Little)};
+	from_host :: hook(convert) proc(value: T) -> Endian(T, order) {
+		return {host_to(value, order)};
 	}
 
 	/**
@@ -70,27 +74,11 @@ impl Little_Endian($T) {
 	}
 }
 
-Big_Endian :: struct($T: type) where Integral(T) {
-	@(private) stored: T,
-}
+/// `T` in little-endian storage.
+Little_Endian :: Endian($T, Order.Little);
 
-impl Big_Endian($T) {
-	store :: proc(value: T) -> Big_Endian(T) {
-		return {host_to(value, Order.Big)};
-	}
-
-	load :: proc(self) -> T {
-		return host_to(self.stored, Order.Big);
-	}
-
-	from_host :: hook(convert) proc(value: T) -> Big_Endian(T) {
-		return {host_to(value, Order.Big)};
-	}
-
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		fmt.format_to_with(writer, options, self.load());
-	}
-}
+/// `T` in big-endian storage.
+Big_Endian :: Endian($T, Order.Big);
 
 /// The two byte orders.
 // Named here rather than reused from `LOKE_ENDIAN` so this package's public

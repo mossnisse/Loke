@@ -3013,17 +3013,21 @@ Order :: enum { Little, Big }
 host_order() -> Order
 byte_swap(value: $T) -> T where Integral(T)
 
-Little_Endian :: struct($T: type) where Integral(T) { /* private */ }
-Big_Endian    :: struct($T: type) where Integral(T) { /* private */ }
+Endian :: struct($T: type, $order: Order) where Integral(T) { /* private */ }
+Little_Endian :: Endian($T, Order.Little);
+Big_Endian    :: Endian($T, Order.Big);
 
-impl Little_Endian($T) {   // Big_Endian likewise
-	store     :: proc(value: T) -> Little_Endian(T);
+impl Endian($T, $order) {
+	store     :: proc(value: T) -> Endian(T, order);
 	load      :: proc(self) -> T;
-	from_host :: hook(convert) proc(value: T) -> Little_Endian(T);
+	from_host :: hook(convert) proc(value: T) -> Endian(T, order);
 	format    :: proc(self, writer: fmt.Writer, options: fmt.Options);
 }
 ```
 
+`Little_Endian` and `Big_Endian` are [parametric
+aliases](design.md#parametric-aliases), so `Big_Endian(u32)` is
+`Endian(u32, Order.Big)`, and a diagnostic or reflected name spells it so.
 A wrapper has the size and alignment of `T` and defines no arithmetic. The
 conversion hook is explicit only, `Big_Endian(u32)(x)`, because an implicit one
 would let a host value land in a stored field unswapped. Equality compares the

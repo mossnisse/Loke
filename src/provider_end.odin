@@ -211,8 +211,10 @@ provider_container_moves :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 			mark_aliased_moves(graph, argument)
 		}
 	}
-	for argument in v.variadic_elements {
-		mark_aliased_moves(graph, argument)
+	for operand in v.variadic_pack {
+		if !operand.spread {
+			mark_aliased_moves(graph, operand.value)
+		}
 	}
 }
 
@@ -237,8 +239,10 @@ provider_container_end :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 				prov_merge_moved_providers(graph, root, prov_input_value(graph, argument), element)
 			}
 		}
-		for argument in v.variadic_elements {
-			prov_merge_moved_providers(graph, root, prov_input_value(graph, argument), element)
+		for operand in v.variadic_pack {
+			if !operand.spread {
+				prov_merge_moved_providers(graph, root, prov_input_value(graph, operand.value), element)
+			}
 		}
 	}
 }

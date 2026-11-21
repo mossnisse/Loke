@@ -29,12 +29,13 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	}
 	// A spread's elements are copied in, keeping the regions they are in.
 	if op == .Append && type_is_managed(c, info.element) {
-		spreads := v.variadic_spreads
 		if v.variadic_forwards {
-			spreads = v.bound[v.variadic_slot:][:1]
+			prov_store_spread_region(graph, prov_input_value(graph, receiver), prov_input_value(graph, v.bound[v.variadic_slot]))
 		}
-		for spread in spreads {
-			prov_store_spread_region(graph, prov_input_value(graph, receiver), prov_input_value(graph, spread))
+		for operand in v.variadic_pack {
+			if operand.spread {
+				prov_store_spread_region(graph, prov_input_value(graph, receiver), prov_input_value(graph, operand.value))
+			}
 		}
 	}
 	// The first argument the operation stores, or 0 when it stores none. A map
@@ -47,14 +48,16 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 		first = 2
 	}
 	map_op := op == .Map_Try_Insert || op == .Map_Find_Or_Insert
-	stored_values: []Expr
 	if op == .Append && v.is_variadic {
-		stored_values = v.variadic_elements
+		for operand in v.variadic_pack {
+			if !operand.spread {
+				prov_store_region(graph, prov_input_value(graph, receiver), prov_input_value(graph, operand.value), element = true)
+			}
+		}
 	} else if first > 0 {
-		stored_values = v.bound[min(first, len(v.bound)):]
-	}
-	for value in stored_values {
-		prov_store_region(graph, prov_input_value(graph, receiver), prov_input_value(graph, value), element = true)
+		for value in v.bound[min(first, len(v.bound)):] {
+			prov_store_region(graph, prov_input_value(graph, receiver), prov_input_value(graph, value), element = true)
+		}
 	}
 	if .Empties in effects {
 		if root, path, ok := prov_place_of(graph, receiver); ok {

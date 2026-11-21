@@ -5,15 +5,17 @@
 	that is lane-wise. What is left is everything that crosses lanes — a
 	reduction, a select, a conversion to or from an array.
 */
-// design.md "SIMD vectors". None of these can be written as a loop here,
-// because design.md makes a lane index constant, so each is one compiler
-// intrinsic with a Loke name.
+// design.md "SIMD vectors". None of the select and reductions can be written
+// as a loop here, because design.md makes a lane index constant, so each is one
+// compiler intrinsic with a Loke name. A conversion to or from an array is a
+// `transmute`: the same bytes in the same order.
 @(public)
 package simd;
 
+import "core:unsafe";
+
 // The compiler contributes, package-privately:
 //
-//   simd_cast    a vector to its array, or an array to its vector
 //   simd_select  lane-wise choice between two vectors
 //   simd_reduce  a vector folded to one scalar, by a constant `Fold`
 //
@@ -44,11 +46,11 @@ Fold :: enum u8 {
 // element and length. They are how vector data reaches ordinary code and how
 // ordinary code reaches a vector."
 from_array :: proc(values: [$N]$T) -> Simd(T, N) {
-	return simd_cast(values);
+	return unsafe.transmute(Simd(T, N), values);
 }
 
 to_array :: proc(vector: Simd($T, $N)) -> [N]T {
-	return simd_cast(vector);
+	return unsafe.transmute([N]T, vector);
 }
 
 /**

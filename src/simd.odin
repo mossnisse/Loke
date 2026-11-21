@@ -344,8 +344,6 @@ Simd_Fold :: enum {
 check_simd_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 	v.value_category = .Value
 	#partial switch kind {
-	case .Simd_Cast:
-		check_simd_cast(k, v)
 	case .Simd_Select:
 		check_simd_select(k, v)
 	case .Simd_Reduce:
@@ -361,16 +359,14 @@ check_simd_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 	}
 }
 
-// `from_array` and `to_array`, one built-in because the direction is the
-// operand's kind.
-@(private = "file")
-check_simd_cast :: proc(k: ^Checker, v: ^Expr_Call) {
-	operand := check_single_expr(k, v.args[0].value)
-	if operand == INVALID_TYPE {
-		return
+// Whether one of `a` and `b` is a vector and the other an array of its lanes:
+// the same elements in the same order, apart from alignment.
+vector_and_its_array :: proc(c: ^Compiler, a, b: Type_Id) -> bool {
+	x, y := underlying_info(c, a), underlying_info(c, b)
+	if x == nil || y == nil || x.element != y.element || x.count != y.count {
+		return false
 	}
-	info := type_of(k.c, operand)
-	v.type = info.kind == .Simd ? array_of(k.c, info.element, info.count) : simd_of(k.c, info.element, info.count)
+	return x.kind == .Simd && y.kind == .Array || x.kind == .Array && y.kind == .Simd
 }
 
 @(private = "file")

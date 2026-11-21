@@ -720,10 +720,9 @@ call_cross_thread_operands :: proc(c: ^Compiler, call: ^Expr_Call, allocator: me
 				append(&out, Cross_Thread_Operand{call.bound[index], underlying_kind(c, parameter) == .Proc})
 			}
 		} else if call_packs(call, index) && underlying_kind(c, slice_element(c, parameter)) == .Proc {
-			cursor: Call_Pack_Cursor
-			for operand, spread in call_pack_next(call, &cursor) {
-				if !spread {
-					append(&out, Cross_Thread_Operand{operand, true})
+			for operand in call.variadic_pack {
+				if !operand.spread {
+					append(&out, Cross_Thread_Operand{operand.value, true})
 				}
 			}
 		}

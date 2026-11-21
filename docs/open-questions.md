@@ -167,45 +167,8 @@ reproduction before a change.
   rule would remove the differences, but each is a precision choice that needs
   a probe program before it changes.
 
-## Compiler simplifications not yet made
-
-A behavior-preserving cleanup of the compiler, cut on 2026-11-08 and replayed
-onto `main` on 2026-11-15, found these and left them, because each changes a
-diagnostic, needs a decision, or reaches further than such a cleanup should.
-
-- **One way to report an unresolved type argument (P3).** `resolve_type_reporting`
-  in [check_types.odin](../src/check_types.odin) reports only when resolving
-  added no error, and `resolve_simd_application` ([simd.odin](../src/simd.odin))
-  uses it. `resolve_box_application` ([box.odin](../src/box.odin)),
-  `resolve_range_application` ([iterate.odin](../src/iterate.odin)) and the
-  `[?]T` element in `check_composite`
-  ([check_composite.odin](../src/check_composite.odin)) call
-  `report_unresolved_type` unconditionally after `resolve_type_syntax`.
-  Switching them would drop a second report where resolution already reported
-  one; decide with a review of the affected diagnostics corpus.
-- **Semantic stores on one allocator (P3).** `init_semantic_stores`
-  ([semantic.odin](../src/semantic.odin)) points about 90 containers at
-  `semantic_allocator` one `make` at a time, and they are spread through
-  `Compiler`. Gathered into one embedded (`using`) record, `use_allocator`
-  ([cfg.odin](../src/cfg.odin)) would set them in one call, though the few that
-  reserve a capacity would start empty. What `destroy_compilation` deletes one
-  by one, such as `parsed_files` and `diagnostics`, is not in the semantic
-  arena and stays out of that record.
-- **One reference walk over public declarations (P3).** `Ref_Walk`/`api_refs`
-  in [doc.odin](../src/doc.odin) and `Exposure`/`walk` in
-  [private_names.odin](../src/private_names.odin) both walk public declaration
-  syntax by written name and keep the `$` and parameter names in scope; they
-  already share `bind_signature` and `bind_generic_params`
-  ([ast.odin](../src/ast.odin)). A shared walker that lets each caller decide
-  what a reached name means, and where a value position stops the walk, would
-  remove the parallel traversal.
-
 ## Compiler source audit follow-ups (2026-11-18)
 
-- **Use one ordered representation for checked variadic arguments.** Carry the
-  spread flag with each expression so the checker, provenance and LLVM lowering
-  consume the same sequence. Preserve forwarding of a single slice and the
-  existing evaluation order.
 - **Shorten the lifetime of overload-ranking alias views.** Alias expansion used
   to compare candidates allocates transient ASTs in the compilation's semantic
   arena. Measure an alias-heavy workload before assigning those views to a
@@ -231,22 +194,10 @@ The divergences the audit led to that remain are in
 The per-file source reviews were removed from the repository; these points
 remain from them:
 
-- **A distinct type's hidden `<`.** `Reverse :: distinct int` with an inherent
-  `<` that is not `@(public)` orders by `int`'s built-in operators in an
-  importing package, with no diagnostic, while its own package and every
-  `sort` use the declared one. A hidden `==` is `L0355` there, since [one type
-  has one equality](design.md#maps); decide whether a hidden `<` is refused the
-  same way. A struct's is already `L0355`, having no built-in order to fall to.
 - **Exact unfixed decimals.** Folding them exactly needs rationals for `/`, a
   second representation through every consumer of `.float`, and a limit for
   literals such as `1e-99999999999`. The spec does not yet say how precise
   unfixed float arithmetic is. [Known gap](known-gaps.md#unfixed-decimal-literals-round-before-constant-folding)
-- **Unreproduced hypotheses.** A drop hook that panics while an assignment
-  drops its destination's old value may not count as a panic after a move made
-  earlier in that statement. A cycle through two generic records, the inner one
-  reached while the outer resolves, may leave the inner instance cached as
-  successful. A literal whose type is known only after checking, such as an
-  untyped argument, still counts return-name uses by the syntactic key rule.
 - **Measure first.** Batching later-read queries per block in `cfg.odin`,
   ranges per binding for callback arguments, stopping carrier-shape sibling
   walks after overflow, keyed precision for slices reached through a carrier,
@@ -267,11 +218,6 @@ remain from them:
   that.
 - **Container emission.** Measure miss-heavy `find_or_insert` before
   changing the runtime ABI to reuse a probe across a user copy hook.
-- **Debug records for file-scope variables.** `-g` describes `static` and
-  `thread_local` locals as globals scoped to their procedures, but a
-  file-scope variable still has no `DIGlobalVariable`, so a debugger finds it
-  only by its link symbol, without a type. Describing one needs a name that
-  stays apart from another package's variable of the same name.
 
 ## Literal elements that lend a temporary to a call
 
@@ -365,26 +311,6 @@ design questions stay open until a caller or a measurement settles them:
   `validate_unique_keys` waits for a protocol that requires globally unique
   keys.
 
-## Sharing the SIMD array casts
-
-Should `simd.from_array` and `simd.to_array` call `unsafe.transmute` instead of
-the dedicated `simd_cast` intrinsic? Deleting the intrinsic removes about 35
-lines from the checker, evaluator, and backend, and a substitution passed
-`lib_simd` at `-opt=none` and `-opt=speed`, plus separate round trips for
-masks, 64-byte vectors, and distinct float lanes carrying a NaN payload and
-negative zero. Two costs offset most of that saving. The evaluator's
-`transmute` serializes a value through its bytes, so it needs its own
-copy-and-retype path for a vector and its array. The backend's aggregate
-`transmute` stores the value to a new slot, so it needs to load a place in
-place, at that place's effective alignment, to keep the cast as short as it is.
-For `from_array([16]bool)` on baseline x86-64 at `-O0`, the current wrapper
-emits 77 instructions, direct `transmute` emits 107, and loading from the
-existing parameter slot emits 73. The second path would help every aggregate
-`transmute`, which is the better reason to write it.
-[Cast wrappers](../core/simd/simd.loke) ·
-[Reinterpretation lowering](../src/emit_llvm_expr.odin) ·
-[SIMD runtime and compile-time coverage](../tests/run/lib_simd.loke)
-
 ## Sorting through the runtime
 
 Should `values.sort()` and `values.reverse_sort()` lower to the Loke introsort
@@ -400,15 +326,6 @@ to the member, so that two spellings use different implementations.
 [Runtime sort](../runtime/container.c) ·
 [Sorting slices](standard-library.md#sorting-slices) ·
 [Rationale](comments.md#standard-library-api-choices)
-
-## Sharing the endian wrappers
-
-Should `Little_Endian(T)` and `Big_Endian(T)` become aliases for
-`Endian(T, Order.Little)` and `Endian(T, Order.Big)`, sharing one `impl`? A
-prototype cut 19 lines and passed the wrapper tests, but it exposes the new
-record and changes reflected type names, so it waits for a breaking release
-that wants those changes. [Wrappers](standard-library.md#coreendian) ·
-[Parametric aliases](design.md#parametric-aliases)
 
 ## Package and import versioning
 

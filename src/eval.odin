@@ -1937,7 +1937,7 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Ev
 	case .Math_Wrap ..= .Math_Checked_Next_Power_Of_Two:
 		return eval_math_builtin(ev, v, symbol)
 
-	case .Simd_Cast, .Simd_Select, .Simd_Reduce:
+	case .Simd_Select, .Simd_Reduce:
 		return eval_simd_builtin(ev, v, symbol)
 	}
 	return {}, eval_fail(ev, v.span, "L0341", "`%s` has no compile-time meaning", identifier_text(ev.k.c, symbol.name))
@@ -1968,10 +1968,17 @@ eval_unsafe_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (
 		return eval_void(), true
 	}
 
-	// `.Unsafe_Transmute`: the checker's fold, for an operand that is a local.
+	// `.Unsafe_Transmute`. A vector and its array have the same lanes in the same
+	// order (standard-library.md "`core:simd`"), so the value is only retyped.
+	source := expr_base(v.bound[0]).type
+	if vector_and_its_array(ev.k.c, source, v.type) {
+		out = eval_copied(ev, v.bound[0]) or_return
+		out.type = v.type
+		return out, true
+	}
+	// Otherwise the checker's fold, for an operand that is a local.
 	operand := eval_expr(ev, v.bound[0]) or_return
 	frozen := freeze(ev, operand, ev.alloc) or_return
-	source := expr_base(v.bound[0]).type
 	result, status := transmute_const(ev.k.c, frozen, source, v.type, ev.alloc)
 	defer {
 		eval_release_tables(ev, frozen)
@@ -2083,13 +2090,6 @@ eval_math_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 @(private = "file")
 eval_simd_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
 	#partial switch symbol.builtin {
-	// standard-library.md "`core:simd`": a vector and its array have the same lanes in the
-	// same order, so the conversion only retypes them.
-	case .Simd_Cast:
-		out = eval_copied(ev, v.bound[0]) or_return
-		out.type = v.type
-		return out, true
-
 	case .Simd_Select:
 		operands: [3]Eval_Value
 		eval_operands(ev, v.bound, operands[:]) or_return

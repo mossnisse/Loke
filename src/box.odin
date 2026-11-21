@@ -64,9 +64,8 @@ resolve_box_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
 		errorf(k.c, v.span, "L0713", "`Box` takes one element type, as in `Box(Node)`")
 		return INVALID_TYPE
 	}
-	element := resolve_type_syntax(k, v.args[0].value)
+	element := resolve_type_reporting(k, v.args[0].value)
 	if element == INVALID_TYPE {
-		report_unresolved_type(k, v.args[0].value)
 		return INVALID_TYPE
 	}
 	if type_is_compile_time_only(k.c, element) {

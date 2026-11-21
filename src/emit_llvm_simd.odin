@@ -125,17 +125,6 @@ simd_call_reduce :: proc(e: ^Emitter, name, lane: string, count: int, value, sta
 
 // ------------------------------------------------------- `core:simd` --
 
-// `from_array`/`to_array`: the same bytes, stored and reloaded through the
-// vector's over-aligned storage.
-emit_simd_cast :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
-	source := expr_base(v.bound[0]).type
-	vector := type_is_simd(e.c, source) ? source : as_type
-	value := emit_expr(e, v.bound[0])
-	slot := alloca(e, llvm_type(e, vector))
-	store(e, source, value, slot)
-	return load_place(e, as_type, slot)
-}
-
 emit_simd_select :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	info := underlying_info(e.c, as_type)
 	mask := emit_expr(e, v.bound[0])

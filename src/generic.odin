@@ -1136,7 +1136,19 @@ generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gen
 
 // Human-readable arguments are separate from cache and backend identity.
 generic_argument_text :: proc(c: ^Compiler, arg: Generic_Arg) -> string {
-	return arg.is_type ? type_name(c, arg.type) : generic_value_text(c, arg.value)
+	if arg.is_type {
+		return type_name(c, arg.type)
+	}
+	// An enum argument reads as it is written, `Order.Big` rather than `1`.
+	if info := underlying_info(c, arg.value_type); info != nil && info.kind == .Enum {
+		if member := symbol_of(c, enum_member_by_value(c, arg.value_type, arg.value)); member != nil {
+			return fmt.aprintf(
+				"%s.%s", type_name(c, arg.value_type), identifier_text(c, member.name),
+				allocator = c.semantic_allocator,
+			)
+		}
+	}
+	return generic_value_text(c, arg.value)
 }
 
 generic_value_text :: proc(c: ^Compiler, value: Const_Value, depth := 0) -> string {

@@ -466,7 +466,6 @@ Builtin_Kind :: enum u8 {
 	Math_Checked_Next_Power_Of_Two,
 	// design.md "SIMD vectors": what a constant lane index makes unwritable as a
 	// loop.
-	Simd_Cast,
 	Simd_Select,
 	Simd_Reduce,
 	// design.md "`type` and `typeid`": a `typeid` can be forged, so the lookup is

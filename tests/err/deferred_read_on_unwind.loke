@@ -65,4 +65,18 @@ moved_and_assigned_again :: proc() -> Status(Err) {
 	return .ok;
 }
 
+// An assignment drops its destination's old value after its operands, and a
+// `drop` hook may panic there with one of them already moved.
+@(move_only) Guard :: struct { id: int, items: [dynamic]int }
+impl Guard {
+	d :: hook(drop) proc(self: inout Guard) { if (self.id == 1) { panic("drop"); } }
+}
+
+moved_before_destination_drop :: proc() {
+	g := Guard{id = 1};
+	items: [dynamic]int = {};
+	defer fmt.println(items.len());
+	g, items = Guard{2, move(items)}, {};
+}
+
 main :: proc() {}

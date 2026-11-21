@@ -1,0 +1,9 @@
+@(public)
+package lib;
+
+// Orders largest first in this package and in every sort.
+Reverse :: distinct int;
+
+impl Reverse {
+	@(private) less :: operator(<) proc(a, b: Reverse) -> bool { return int(a) > int(b); }
+}

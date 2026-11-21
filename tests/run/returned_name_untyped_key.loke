@@ -1,0 +1,38 @@
+// design.md "Returned constructions": an operand transfers when the returned
+// value names it once. A bare key of a literal whose type is known only once
+// checked, as a call's argument is, may be a map key naming the local or a
+// field's name.
+package main;
+
+import "core:fmt";
+import "core:strings";
+
+Pair :: struct { s: string, n: int }
+
+count :: proc(m: map[string]int) -> int { return m.len(); }
+
+// The key names `s`, so `s` is copied into the result rather than moved.
+named_twice :: proc() -> Pair {
+	s := strings.repeat("ab", 3);
+	return Pair{s, count({s = 1})};
+}
+
+@(move_only) Handle :: struct { id: int }
+Options :: struct { h: int }
+Wrapped :: struct { h: Handle, n: int }
+
+width :: proc(o: Options) -> int { return o.h; }
+
+// The key is a field's name, and a move-only local has no copy to make, so it
+// is still moved into the result.
+named_once :: proc() -> Wrapped {
+	h := Handle{7};
+	return Wrapped{h, width({h = 2})};
+}
+
+main :: proc() {
+	p := named_twice();
+	fmt.println(p.s, p.n);
+	w := named_once();
+	fmt.println(w.h.id, w.n);
+}

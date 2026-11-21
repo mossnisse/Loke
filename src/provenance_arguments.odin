@@ -158,9 +158,9 @@ prov_call_argument :: proc(
 		// lies a load further down than of an element (`prov_argument_kept`).
 		element := slice_element(c, param_type)
 		operands: Prov_Pack_Operands
-		cursor: Call_Pack_Cursor
-		for operand, is_spread in call_pack_next(v, &cursor) {
-			type := is_spread ? prov_pack_spread_type(c, prov_type(graph, operand), param_type) : element
+		for packed in v.variadic_pack {
+			operand := packed.value
+			type := packed.spread ? prov_pack_spread_type(c, prov_type(graph, operand), param_type) : element
 			lent: []int
 			if reserving := prov_reserve_argument(graph, operand, type, false); reserving.form != .None {
 				// The pack's actual names what the operand lends, which is defined

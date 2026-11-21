@@ -2015,7 +2015,8 @@ the checkpoints. The provenance-normalization records in
   does not. Introduce a durable MIR only for a concrete consumer.
 - The compiler remains in Odin; [self-hosting](future-plans.md#self-hosting) is
   future work.
-- Debug information covers source procedures, statements, scopes, and locals;
+- Debug information covers source procedures, statements, scopes, locals, and
+  file-scope variables;
   compiler-contributed methods lack it. Natvis describes maps and erased values.
   See [compiler options](compiler-guide.md#common-options) for debug
   limitations.

@@ -252,8 +252,7 @@ emit_static_locals :: proc(e: ^Emitter) {
 		name := claim_name(e, fmt.aprintf("@loke.s.%d.%s", index, llvm_safe(identifier_text(e.c, sym.name))))
 		e.names[symbol_id] = name
 		position, _ := slice.linear_search(sym.decl.symbols, symbol_id)
-		debug_mark_static(e, symbol_id)
-		emit_var_global(e, name, sym, sym.decl, position)
+		emit_var_global(e, name, symbol_id, sym.decl, position)
 	}
 	if len(e.c.static_locals) > 0 {
 		fmt.sbprintln(&e.b, "")
@@ -367,14 +366,15 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		emit_var_global(e, symbol_name(e, symbol_id), sym, d, i)
+		emit_var_global(e, symbol_name(e, symbol_id), symbol_id, d, i)
 	}
 	fmt.sbprintln(&e.b, "")
 }
 
 // A static-duration variable, starting from its constant or its zero.
 @(private = "file")
-emit_var_global :: proc(e: ^Emitter, name: string, sym: ^Symbol, d: ^Decl, position: int) {
+emit_var_global :: proc(e: ^Emitter, name: string, symbol_id: Symbol_Id, d: ^Decl, position: int) {
+	sym := symbol_of(e.c, symbol_id)
 	value_type, value, align := llvm_type(e, sym.type), "", ""
 	if initial, constant := binding_initial_const(e.c, d, position); constant {
 		e.thread_local_initializer = sym.duration == .Thread_Local
@@ -390,6 +390,7 @@ emit_var_global :: proc(e: ^Emitter, name: string, sym: ^Symbol, d: ^Decl, posit
 		value = zero
 	}
 	qualifier := sym.duration == .Thread_Local ? "thread_local " : ""
+	debug_mark_global(e, symbol_id)
 	fmt.sbprintfln(&e.b, "%s = %sglobal %s %s%s", name, qualifier, value_type, value, align)
 }
 

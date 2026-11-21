@@ -13,3 +13,6 @@ a panic in this statement runs the deferred statement
 L0500
 @63:23
 a panic in this statement runs the deferred statement
+L0500
+@78:20
+a panic in this statement runs the deferred statement

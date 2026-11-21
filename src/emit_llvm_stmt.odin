@@ -235,11 +235,10 @@ emit_spawn_pack :: proc(
 ) {
 	element := slice_element(e.c, slice)
 	managed := emit_lifecycle(e, element).managed
-	cursor: Call_Pack_Cursor
-	for expr, is_spread in call_pack_next(call, &cursor) {
-		position := cursor.taken - 1
+	for operand, position in call.variadic_pack {
+		expr := operand.value
 		slot := spawn_field_address(e, pack, record, position)
-		if is_spread {
+		if operand.spread {
 			store(e, spawn_spread_type(e.c, expr, slice), emit_expr(e, expr), slot)
 			continue
 		}

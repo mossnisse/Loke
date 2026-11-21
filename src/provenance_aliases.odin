@@ -473,9 +473,9 @@ prov_call_written_aliases :: proc(graph: ^Flow_Graph, id: Value_Id) {
 		if call_packs(call, index) {
 			// Separate elements at the element type, then spreads at the pack's.
 			element := underlying_info(c, info.parameters[index]).element
-			for value, position in form.pack { if !call.variadic_order[position] { prov_forget_argument_aliases(graph, value, element, false, &seen) } }
+			for value, position in form.pack { if !call.variadic_pack[position].spread { prov_forget_argument_aliases(graph, value, element, false, &seen) } }
 			for value, position in form.pack {
-				if call.variadic_order[position] {
+				if call.variadic_pack[position].spread {
 					prov_forget_argument_aliases(graph, value, prov_pack_spread_type(c, prov_value(graph, value).type, info.parameters[index]), false, &seen)
 				}
 			}

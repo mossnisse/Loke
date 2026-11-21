@@ -129,8 +129,6 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		return emit_atomic_builtin(e, v, kind, as_type)
-	case .Simd_Cast:
-		return emit_simd_cast(e, v, as_type)
 	case .Simd_Select:
 		return emit_simd_select(e, v, as_type)
 	case .Simd_Reduce:
@@ -399,13 +397,13 @@ emit_variadic_pack :: proc(
 	if v.variadic_forwards {
 		return Variadic_Pack{value = emit_expr(e, v.bound[v.variadic_slot])}
 	}
-	if len(v.variadic_spreads) == 0 && len(v.variadic_elements) == 0 {
+	if len(v.variadic_pack) == 0 {
 		return Variadic_Pack{value = "zeroinitializer"}
 	}
 	element := slice_element(e.c, pack_type)
 	operands := emit_pack_operands(e, v, element, lend, provider, fallible)
 	buffer, cleanup := operands.staging, operands.cleanup
-	if len(v.variadic_spreads) == 0 {
+	if len(operands.spread_len) == 0 {
 		// Staging already has the pack's shape, so it is the pack.
 		release_held(e, cleanup)
 	} else {
@@ -441,11 +439,11 @@ emit_pack_operands :: proc(
 ) -> Pack_Operands {
 	element_llvm := llvm_type(e, element)
 	managed := emit_lifecycle(e, element).managed
-	static_count := len(v.variadic_elements)
+	static_count, spread_count := pack_operand_counts(v)
 	out := Pack_Operands {
 		owns        = make([]string, static_count),
-		spread_data = make([]string, len(v.variadic_spreads)),
-		spread_len  = make([]string, len(v.variadic_spreads)),
+		spread_data = make([]string, spread_count),
+		spread_len  = make([]string, spread_count),
 		total       = fmt.aprintf("%d", static_count),
 	}
 	if static_count > 0 {
@@ -463,9 +461,9 @@ emit_pack_operands :: proc(
 		append(&e.held, out.cleanup)
 	}
 	next_element, next_spread := 0, 0
-	for is_spread in v.variadic_order {
-		if is_spread {
-			expr := v.variadic_spreads[next_spread]
+	for operand in v.variadic_pack {
+		expr := operand.value
+		if operand.spread {
 			spread := emit_expr(e, expr)
 			storage := llvm_type(e, expr_base(expr).type)
 			out.spread_data[next_spread], out.spread_len[next_spread] = ptr_len_parts(e, storage, spread)
@@ -473,7 +471,6 @@ emit_pack_operands :: proc(
 			next_spread += 1
 			continue
 		}
-		expr := v.variadic_elements[next_element]
 		// Temporaries transfer into staging; borrowed owners are cloned, or lent.
 		borrowed := managed && expression_is_borrowed_place(expr)
 		out.owns[next_element] = borrowed && lend ? "false" : "true"
@@ -531,13 +528,13 @@ emit_spread_pack :: proc(
 	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 	next_element, next_spread := 0, 0
-	for is_spread in v.variadic_order {
+	for operand in v.variadic_pack {
 		position := load(e, "i64", cursor)
 		advance := "1"
-		if is_spread {
+		if operand.spread {
 			data := operands.spread_data[next_spread]
 			advance = operands.spread_len[next_spread]
-			lent, spread_lends := variadic_spread_type(e.c, expr_base(v.variadic_spreads[next_spread]).type, pack_type)
+			lent, spread_lends := variadic_spread_type(e.c, expr_base(operand.value).type, pack_type)
 			next_spread += 1
 			if spread_lends {
 				emit_pack_lend_spread(e, slice_element(e.c, lent), element, data, advance, buffer, position)

@@ -31,7 +31,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_reflection_builtin(k, v, ident, sym.builtin)
 	case .Make, .Try_Make:
 		check_make_builtin(k, v, sym.builtin == .Try_Make)
-	case .Simd_Cast, .Simd_Select, .Simd_Reduce:
+	case .Simd_Select, .Simd_Reduce:
 		check_simd_builtin(k, v, sym.builtin)
 	case .Unsafe_Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)

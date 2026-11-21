@@ -16,9 +16,8 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		}
 	} else if array, is_array := v.type_expr.(^Type_Array); is_array && array.length == nil {
 		// `[?]T` takes its length from the literal it types.
-		element := resolve_type_syntax(k, array.elem)
+		element := resolve_type_reporting(k, array.elem)
 		if element == INVALID_TYPE {
-			report_unresolved_type(k, array.elem)
 			return
 		}
 		length := len(v.elements)
@@ -34,10 +33,8 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		array.resolution.kind = .Type
 		target = array.denoted_type
 	} else if v.type_expr != nil {
-		target = resolve_type_syntax(k, v.type_expr)
+		target = resolve_type_reporting(k, v.type_expr)
 		if target == INVALID_TYPE {
-			// `resolve_type_syntax` is silent, so a written type reports here.
-			report_unresolved_type(k, v.type_expr)
 			return
 		}
 	}
