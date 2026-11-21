@@ -106,6 +106,8 @@ checklist.
 
 ### Changed
 
+- [`io.copy`](docs/standard-library.md#shared-io-contract) given a `buffer` no longer reserves
+  and zeroes its own 4 KiB fallback buffer as well.
 - [`Directory_Reader.next`](docs/standard-library.md#filesystem-operations) decodes each name
   into one reused buffer, through the new
   [`utf16.decode_into`](docs/standard-library.md#coreencodingutf16), rather than into a new

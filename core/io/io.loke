@@ -224,16 +224,21 @@ CHUNK :: 4096;
 read_exact :: proc(reader: inout $R, destination: []mut u8) -> Status(Error) where Reader(R) {
 	filled := 0;
 	for (; filled < destination.len(); ) {
-		switch (reader.read(destination[mut filled:])) {
-		case .ok(outcome):
-			if (outcome == 0) { return .err(make_error(.Unexpected_End, .Read)); }
-			filled += outcome;
-		case .err(outcome):
-			if (is(outcome, .End_Of_Input)) {
-				return .err(make_error(.Unexpected_End, .Read));
-			}
-			return .err(outcome);
-		}
+		count := read_or_end(inout reader, destination[mut filled:]) or_return;
+		if (count == 0) { return .err(make_error(.Unexpected_End, .Read)); }
+		filled += count;
+	}
+}
+
+// One `read`, with `End_Of_Input` answered as a zero count: the loops here then
+// have one stopping test, and each decides what the end means for it.
+@(private)
+read_or_end :: proc(reader: inout $R, destination: []mut u8) -> Result(int, Error) where Reader(R) {
+	switch (reader.read(destination)) {
+	case .ok(count): return count;
+	case .err(error):
+		if (is(error, .End_Of_Input)) { return 0; }
+		return .err(error);
 	}
 }
 
@@ -273,22 +278,12 @@ read_to_end :: proc(
 	collected := make([dynamic]u8, 0, 0, allocator);
 	chunk: [CHUNK]u8 = {};
 	for (;;) {
-		count := 0;
-		switch (reader.read(chunk[mut :])) {
-		case .ok(outcome): count = outcome;
-		case .err(outcome):
-			if (is(outcome, .End_Of_Input)) { return move(collected); }
-			return .err(outcome);
-		}
+		count := read_or_end(inout reader, chunk[mut :]) or_return;
 		if (count == 0) { return move(collected); }
 		if (limit > 0 && collected.len() + count > limit) {
 			return .err(make_error(.Limit_Exceeded, .Read_To_End));
 		}
-		switch (collected.try_append(..chunk[0:count])) {
-		case .ok:
-		case .err:
-			return .err(from_allocator_error(.Read_To_End));
-		}
+		collected.try_append(..chunk[0:count]) or_return from_allocator_error(.Read_To_End);
 	}
 }
 
@@ -304,17 +299,20 @@ read_to_end :: proc(
 copy :: proc(
 	destination: inout $W, source: inout $R, buffer: []mut u8 = {},
 ) -> Result(u64, Error) where Writer(W), Reader(R) {
+	if (buffer.len() > 0) { return copy_through(inout destination, inout source, buffer); }
+	// Declared only on this path, so a caller's buffer spares the frame-sized
+	// one and its zeroing.
 	own: [CHUNK]u8 = {};
-	window := buffer if buffer.len() > 0 else own[mut :];
+	return copy_through(inout destination, inout source, own[mut :]);
+}
+
+@(private)
+copy_through :: proc(
+	destination: inout $W, source: inout $R, window: []mut u8,
+) -> Result(u64, Error) where Writer(W), Reader(R) {
 	moved: u64 = 0;
 	for (;;) {
-		count := 0;
-		switch (source.read(window)) {
-		case .ok(outcome): count = outcome;
-		case .err(outcome):
-			if (is(outcome, .End_Of_Input)) { return moved; }
-			return .err(outcome);
-		}
+		count := read_or_end(inout source, window) or_return;
 		if (count == 0) { return moved; }
 		write_all(inout destination, window[0:count]) or_return;
 		moved += u64(count);
@@ -339,15 +337,7 @@ read_line :: proc(
 	collected := make([dynamic]u8, 0, 0, allocator);
 	one: [1]u8 = {};
 	for (;;) {
-		count := 0;
-		switch (reader.read(one[mut :])) {
-		case .ok(outcome): count = outcome;
-		case .err(outcome):
-			if (!is(outcome, .End_Of_Input)) {
-				return .err(outcome);
-			}
-			// The end leaves `count` at zero, read just below.
-		}
+		count := read_or_end(inout reader, one[mut :]) or_return;
 		if (count == 0) {
 			// Every byte before a newline is collected, so nothing collected means
 			// nothing read: the end of the stream rather than an empty last line.
@@ -365,26 +355,12 @@ read_line :: proc(
 			}
 			break;
 		}
-		switch (collected.try_append(one[0])) {
-		case .ok:
-		case .err:
-			return .err(from_allocator_error(.Read_Line));
-		}
+		collected.try_append(one[0]) or_return from_allocator_error(.Read_Line);
 		if (newline) { break; }
 	}
 	// The byte-to-text boundary: a line is only a `string` if it is valid UTF-8.
-	switch (string_view.from_utf8(collected[:])) {
-	case .some(view):
-		// A blank line and a failed copy are different answers, and only one of
-		// them is a line: this converts the allocator failure instead of standing
-		// in an empty string for it.
-		switch (strings.try_copy(view, allocator)) {
-		case .ok(text):  return text;
-		case .err: return .err(from_allocator_error(.Read_Line));
-		}
-	case .none:
-		return .err(make_error(.Invalid_Data, .Read_Line));
-	}
+	view := string_view.from_utf8(collected[:]) or_return make_error(.Invalid_Data, .Read_Line);
+	return strings.try_copy(view, allocator) or_return from_allocator_error(.Read_Line);
 }
 
 // ------------------------------------------------------------ byte buffer --
@@ -413,10 +389,8 @@ impl Buffer_Writer {
 	}
 
 	write :: proc(self: inout, source: []u8) -> Result(int, Error) {
-		switch (self.data.try_append(..source)) {
-		case .ok:  return source.len();
-		case .err: return .err(from_allocator_error(.Write));
-		}
+		self.data.try_append(..source) or_return from_allocator_error(.Write);
+		return source.len();
 	}
 
 	/**
@@ -463,9 +437,8 @@ impl Slice_Writer {
 		if (source.len() > self.space()) {
 			return .err(make_error(.Out_Of_Space, .Write));
 		}
-		foreach (i in 0 ..< source.len()) {
-			self.target[self.used + i] = source[i];
-		}
+		target := self.target[mut self.used:];
+		foreach (byte, i in source.indexed()) { target[i] = byte; }
 		self.used += source.len();
 		return source.len();
 	}
@@ -486,24 +459,21 @@ impl Slice_Writer {
 	return the latched error when formatting is done.
 */
 write_formatted :: proc(writer: inout $W, args: ..dyn fmt.Formattable) -> Status(Error) where Writer(W) {
-	latch := Latch{(dyn mut Writer)(&mut writer), .none};
+	latch := Latch{(dyn mut Writer)(&mut writer), .ok};
 	fmt.format_to((fmt.Writer)(&mut latch), ..args);
-	return latched(latch.error);
+	return latch.error;
 }
 
 write_formatted_line :: proc(writer: inout $W, args: ..dyn fmt.Formattable) -> Status(Error) where Writer(W) {
-	latch := Latch{(dyn mut Writer)(&mut writer), .none};
-	fmt.format_to((fmt.Writer)(&mut latch), ..args);
-	fmt.format_to((fmt.Writer)(&mut latch), "\n");
-	return latched(latch.error);
+	write_formatted(inout writer, ..args) or_return;
+	return write_string(inout writer, "\n");
 }
 
-// `Option(Error)` rather than `Result`, because a latch records *whether* a
-// failure happened rather than standing in for a value.
+// `error` is `.ok` until the first failure, and then that failure.
 @(private)
 Latch :: struct {
 	writer: dyn mut Writer,
-	error:  Option(Error),
+	error:  Status(Error),
 }
 
 impl Latch {
@@ -511,22 +481,9 @@ impl Latch {
 		// The first failure wins and every later write does nothing, so a
 		// half-formatted value cannot turn into a second, more confusing error.
 		switch (self.error) {
-		case .some: return;
-		case .none:
-		}
-		switch (write_all(inout self.writer, bytes)) {
+		case .err: return;
 		case .ok:
-		case .err(error): self.error = .some(error);
 		}
-	}
-}
-
-// The failure alone: taking the whole `Latch` would copy its `dyn mut Writer`
-// to read one scalar field beside it.
-@(private)
-latched :: proc(error: Option(Error)) -> Status(Error) {
-	switch (error) {
-	case .some(failure): return .err(failure);
-	case .none: return .ok;
+		self.error = write_all(inout self.writer, bytes);
 	}
 }
