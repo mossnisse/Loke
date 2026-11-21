@@ -16,6 +16,11 @@ WAITERS :: 8;
 gate: static sync.Once = {};
 value: static sync.Lazy(int) = {};
 
+// Fired by `slow` while every waiter is parked on `gate`. Nothing waits on it,
+// so it settles without a wake, and the waiters must still wake when `gate`
+// settles after it.
+aside: static sync.Once = {};
+
 arrived: static sync.Atomic(int) = {};
 runs: static sync.Atomic(int) = {};
 written: static sync.Atomic(int) = {};
@@ -26,9 +31,12 @@ wrong: static sync.Atomic(int) = {};
 slow :: proc() {
 	for (arrived.load() < WAITERS) {}
 	time.sleep(30 * time.MILLISECOND);
+	aside.do(count_run);
 	runs.add(1);
 	written.store(42, sync.Memory_Order.Relaxed);
 }
+
+count_run :: proc() { runs.add(1); }
 
 slow_value :: proc() -> int {
 	for (arrived.load() < 2 * WAITERS) {}
@@ -53,5 +61,5 @@ main :: proc() {
 			workers.append(thread.spawn(waiter));
 		}
 	} // dropping a worker joins it
-	fmt.println(runs.load(), wrong.load(), gate.is_done(), value.is_done());
+	fmt.println(runs.load(), wrong.load(), gate.is_done(), aside.is_done(), value.is_done());
 }

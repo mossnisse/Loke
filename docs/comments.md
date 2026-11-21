@@ -399,12 +399,16 @@ each. On an idle machine, with the spin it took a median 1.28 s of CPU time
 and 221 ms elapsed; with the wait it takes 0.17 s and 183 ms, about what one
 thread running the 32 setups alone takes (0.19 s and 179 ms). The short spin
 keeps an action that ends within a few loads from paying for a sleep and a
-wake, and settling pays one wake per `Once`, not per call.
+wake. A thread about to sleep marks the state parked, and settling wakes only
+a state so marked, so a `Once` nothing waited on settles with one exchange.
 
 Every `Once` in the process shares one kernel32 SRWLOCK and condition
-variable, so settling one wakes the waiters of every other, which recheck and
-sleep again. Waiting at all is rare, since it takes a second thread arriving
-during a slow action, and a wait of its own would cost more: a lock and a
+variable, so settling one that has a parked waiter wakes the waiters of every
+other, which recheck and sleep again. Without the mark every settle took the
+lock and woke them all: with seven threads parked on one `Once`, a first call
+on each of 100,000 others took about 64 ms, and takes 2.2 ms with it. Waiting
+at all is rare, since it takes a second thread arriving during a slow action,
+and a wait of its own would cost more: a lock and a
 condition variable in each `Once` would grow it from 4 bytes to 24, and an
 address wait on the state word (`WaitOnAddress`) lives in
 `synchronization.lib`, which every C host of an object build importing

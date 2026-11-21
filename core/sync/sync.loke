@@ -99,8 +99,6 @@ impl Atomic($T) {
 		write happened, and `observed` is what was there — the value replaced when
 		it swapped, and the value that stopped it when it did not.
 	*/
-	// Both orderings stay constants across this boundary, which is what the two
-	// `$` parameters are for.
 	compare_exchange :: proc(
 		self: ^, expected: T, @(escape=stored) desired: T,
 		$success: Memory_Order = Memory_Order.Sequentially_Consistent,
@@ -110,7 +108,6 @@ impl Atomic($T) {
 		case .some(found): return {observed = found, swapped = false};
 		case .none: return {observed = expected, swapped = true};
 		}
-		return {observed = expected, swapped = false};
 	}
 
 	/// The five read-modify-writes, each answering the *previous* value.
@@ -167,26 +164,24 @@ fence :: proc($order: Memory_Order = Memory_Order.Sequentially_Consistent) {
 	`static` storage, and behind the `^T` a `Shared(T)` hands out.
 */
 // design.md "Program entry and exit" names `Once` for this, and design.md
-// "Storage modifiers" gives static storage constant initialization. `do` fires
-// through a read-only `^` receiver, as every atomic operation does.
+// "Storage modifiers" gives static storage constant initialization.
 Once :: struct {
-	@(private) state: Atomic(u32),
+	@(private) state: Atomic(Once_State),
 }
 
+// `Idle` is the zero value, which is what makes a zeroed `Once` unfired.
 @(private)
-ONCE_IDLE :: u32(0);
-
-@(private)
-ONCE_RUNNING :: u32(1);
-
-@(private)
-ONCE_DONE :: u32(2);
-
-// The action panicked. Unwinding still runs `defer`s and drops, and one that
-// reached this `Once` would otherwise wait forever on an action that will never
-// finish, turning a terminating panic into a hang.
-@(private)
-ONCE_POISONED :: u32(3);
+Once_State :: enum u32 {
+	Idle,
+	Running,
+	// Running, with a thread asleep on it or about to be: `settle` owes a wake.
+	Parked,
+	Done,
+	// The action panicked. Unwinding still runs `defer`s and drops, and one that
+	// reached this `Once` would otherwise wait forever on an action that will
+	// never finish, turning a terminating panic into a hang.
+	Poisoned,
+}
 
 impl Once {
 	/**
@@ -201,14 +196,16 @@ impl Once {
 		An action must not reach its own `once`: a re-entrant `do` waits for itself
 		and never returns, and nothing reports it.
 	*/
-	// The winner publishes with a release store and every other thread observes
-	// with an acquire load.
-	//
 	// The thread running the action is the one `claim` waits for. Detecting
 	// re-entry needs a thread identity, which the library does not expose, so it
 	// is a rule rather than a diagnostic.
 	do :: proc(self: ^Once, action: proc()) {
-		if (!self.claim()) { return; }
+		if (self.claim()) { self.fire(action); }
+	}
+
+	// Apart from `do`, so a call on a completed `Once` sets up no `defer`.
+	@(private)
+	fire :: proc(self: ^, action: proc()) {
 		// Runs on the way out whether `action` returned or panicked.
 		finished := false;
 		defer self.settle(finished);
@@ -221,7 +218,7 @@ impl Once {
 		only `true` is a durable answer.
 	*/
 	is_done :: proc(self: ^) -> bool {
-		return self.state.load(Memory_Order.Acquire) == ONCE_DONE;
+		return self.state.load(Memory_Order.Acquire) == .Done;
 	}
 
 	// Whether this caller won the right to run the action, which it must then
@@ -229,39 +226,45 @@ impl Once {
 	// panics if the winner panicked.
 	@(private)
 	claim :: proc(self: ^) -> bool {
-		if (self.state.load(Memory_Order.Acquire) == ONCE_DONE) { return false; }
-		observed, won := self.state.compare_exchange(
-			ONCE_IDLE, ONCE_RUNNING, Memory_Order.Acquire, Memory_Order.Acquire,
-		);
-		if (won) { return true; }
+		state := self.state.load(Memory_Order.Acquire);
+		if (state == .Done) { return false; }
+		if (state == .Idle) {
+			// The intrinsic answers what stopped the swap, and nothing when it
+			// swapped: this caller runs the action.
+			state = atomic_compare_exchange(
+				&self.state.value, Once_State.Idle, Once_State.Running,
+				Memory_Order.Acquire, Memory_Order.Acquire,
+			) or_else return true;
+		}
 		// Another thread is running it. A short spin catches an action that is
-		// about to finish, and after it the thread blocks until `settle` wakes
+		// about to finish, and after it the thread parks until `settle` wakes
 		// it, so a slow action costs its waiters no processor time. Every exit
 		// from the loop is an acquire load, whether it spun, woke, or woke
 		// spuriously or for another `Once`.
 		spins := 0;
-		for (; observed == ONCE_RUNNING; observed = self.state.load(Memory_Order.Acquire)) {
+		for (; state == .Running || state == .Parked; state = self.state.load(Memory_Order.Acquire)) {
 			if (spins < ONCE_SPINS) {
 				spins += 1;
 			} else {
-				wait_while_running(&self.state);
+				park(&self.state);
 			}
 		}
-		if (observed == ONCE_POISONED) { panic("a `Once` action panicked"); }
+		if (state == .Poisoned) { panic("a `Once` action panicked"); }
 		return false;
 	}
 
-	// The store comes first, so a waiter the wake misses is one that checks the
-	// state afterwards and does not sleep. It runs on unwinding too, which is how
-	// a waiter learns of a poisoning.
+	// Publishes with a release exchange, and wakes only when a waiter marked the
+	// state `Parked`, so a `Once` nothing waited on settles without the shared
+	// lock. It runs on unwinding too, which is how a waiter learns of a
+	// poisoning.
 	@(private)
 	settle :: proc(self: ^, finished: bool) {
-		self.state.store(ONCE_DONE if finished else ONCE_POISONED, Memory_Order.Release);
-		wake_waiters();
+		settled := Once_State.Done if finished else Once_State.Poisoned;
+		if (self.state.exchange(settled, Memory_Order.Release) == .Parked) { wake_parked(); }
 	}
 }
 
-// How many reloads a waiter spends before it blocks. A wait and a wake are each
+// How many reloads a waiter spends before it parks. A wait and a wake are each
 // a trip into the system; an action that ends within this many loads is cheaper
 // to watch than to sleep through.
 @(private)
@@ -290,31 +293,37 @@ foreign kernel32 {
 
 // One SRWLOCK and one CONDITION_VARIABLE for every `Once` in the process: each
 // is one pointer, ready at zero, so static storage needs no setup, and a `Once`
-// stays one word. The cost is that settling any `Once` wakes the waiters of
-// every other, which find their own still running and sleep again. Waiting at
-// all is rare: it takes a second thread arriving during a slow action.
+// stays one word. The cost is that settling a `Once` with a waiter wakes the
+// waiters of every other, which find their own still parked and sleep again.
+// Waiting at all is rare: it takes a second thread arriving during a slow
+// action.
 @(private) wait_lock: static Atomic(uintptr) = {};
 @(private) wait_wake: static Atomic(uintptr) = {};
 
-// The check and the sleep both happen under the lock, and the sleep releases it
-// atomically, so a `settle` between them is impossible: it waits for the lock
-// until this thread is asleep. Nothing here can panic, so the lock is always
-// released by this thread, which took it. A spurious wakeup only checks again.
+// Marks the state `Parked`, so `settle` knows to wake, and sleeps while it stays
+// so. The check and the sleep both happen under the lock, and the sleep
+// releases it atomically, so a wake between them is impossible: `wake_parked`
+// waits for the lock until this thread is asleep. Nothing here can panic, so
+// the lock is always released by this thread, which took it. A spurious wakeup
+// only checks again.
 @(private)
-wait_while_running :: proc(state: ^Atomic(u32)) {
+park :: proc(state: ^Atomic(Once_State)) {
+	observed, marked := state.compare_exchange(
+		Once_State.Running, Once_State.Parked, Memory_Order.Acquire, Memory_Order.Acquire,
+	);
+	if (!marked && observed != .Parked) { return; }
 	rt_lock(rawptr(&wait_lock.value));
-	for (state.load(Memory_Order.Acquire) == ONCE_RUNNING) {
+	for (state.load(Memory_Order.Acquire) == .Parked) {
 		_ = rt_sleep(rawptr(&wait_wake.value), rawptr(&wait_lock.value), INFINITE, 0);
 	}
 	rt_unlock(rawptr(&wait_lock.value));
 }
 
-// Called after the state's store. Taking and releasing the lock means a waiter
-// that saw "running" under it is already asleep, so the wake reaches it; one
-// that checks later sees the new state. The settling thread takes and releases
-// the lock with nothing between, on unwinding too.
+// Called after the state's exchange. Taking and releasing the lock means a
+// waiter that saw `Parked` under it is already asleep, so the wake reaches it;
+// one that checks later sees the new state.
 @(private)
-wake_waiters :: proc() {
+wake_parked :: proc() {
 	rt_lock(rawptr(&wait_lock.value));
 	rt_unlock(rawptr(&wait_lock.value));
 	rt_wake_all(rawptr(&wait_wake.value));
@@ -322,12 +331,12 @@ wake_waiters :: proc() {
 
 } else {
 
-// With no platform wait, a waiter spins on its reload.
+// With no platform wait, a waiter spins on its reload and never parks.
 @(private)
-wait_while_running :: proc(state: ^Atomic(u32)) {}
+park :: proc(state: ^Atomic(Once_State)) {}
 
 @(private)
-wake_waiters :: proc() {}
+wake_parked :: proc() {}
 
 }
 
@@ -395,7 +404,6 @@ impl Lazy($T) {
 	// `Lazy` lasts, so it is checked as an item a channel sends is.
 	@(private)
 	publish :: proc(self: ^, @(cross_thread, escape=static) value: move T) {
-		made: Option(T) = .some(move(value));
-		(^mut Option(T))(rawptr(&self.slot))^ = move(made);
+		(^mut Option(T))(rawptr(&self.slot))^ = .some(move(value));
 	}
 }

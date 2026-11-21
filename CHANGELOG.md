@@ -226,6 +226,12 @@ checklist.
   and no temporary heap buffer, and the runtime caches each [argument's](docs/standard-library.md#osargs)
   byte length at startup. At `-opt=speed`, 200,000 reads of a short environment variable take
   867 ms, from 1,641, and iterating a six-argument vector 700,000 times takes 320 ms, from 391.
+- [`sync.Once`](docs/standard-library.md#atomic-operations-and-once) is faster with no API
+  change. Finishing a `Once` or a `Lazy(T)` that no thread waited on no longer takes the
+  process-wide lock or wakes the threads waiting on every other one: at `-opt=speed`, a first
+  `do` on each of 100,000 takes 2.1 ms, from 2.8, and 2.2 ms, from 64, while seven threads wait
+  on another. A `do` on a completed `Once` sets up no `defer`, so 800,000 take 1.5 ms, from
+  3.2. It still needs no new link library.
 - [`process.spawn`](docs/standard-library.md#coreprocess) and the calls built on it make fewer
   scratch allocations: the program path, the command line, and each environment entry are
   encoded to UTF-16 without an intermediate UTF-8 copy, a `PATH` search reuses one candidate

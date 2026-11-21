@@ -775,6 +775,33 @@ a join is not one, since [structured
 concurrency](design.md#structured-concurrency) already answers it
 ([reasons](comments.md#tasks-that-borrow-joined-by-their-block)).
 
+## Open questions in `core:sync`
+
+**Waiting on each `Once` state word.** `WaitOnAddress` and `WakeByAddressAll`
+on the state word would replace the shared SRW lock, the condition variable,
+and the lock handshake around the wake, about 30 lines of
+[core/sync/sync.loke](../core/sync/sync.loke), and keep `Once` at four bytes.
+It would no longer be faster: a waiter marks the state before it sleeps, so a
+`Once` nothing waited on already settles without the lock, and a prototype of
+the address wait measured within 0.2 ms of that on 100,000 first calls, with
+and without threads parked on another `Once`. The cost is the one that
+[decided against it](comments.md#tasks-that-borrow-joined-by-their-block):
+every C host of an object build importing `core:sync` would add
+`synchronization.lib` to its link. It becomes free if an object build ever
+names its system libraries to the host's linker. Windows `INIT_ONCE` is not an
+alternative, since it needs a stable address and a Loke `Once` can move after
+it fires.
+
+**A completed `Lazy.get` sets up its `defer`.** `Once.do` keeps its `defer` in
+a private procedure, so a call on a completed `Once` pays for no unwinding
+frame, and 800,000 such calls take 1.5 ms, from 3.2. The same split in
+`Lazy.get` took 800,000 completed calls from 5.0 ms to 2.6, but the inner
+procedure is generic over `init`, and a rejected `init` was then reported
+against `core:sync` (``while instantiating `Lazy(T).fill` ``) with the caller's
+`get` nowhere in the diagnostic, so it was not made. It needs either an
+instantiation note that names the outermost call, or a frame pushed only on
+the path that reaches the `defer`.
+
 ## Lent storage whose owners cross threads
 
 A [channel](standard-library.md#channels)'s `send` checks its item as an
