@@ -150,6 +150,13 @@ checklist.
   million parses take 65 ms, from 112, for short integers and 162 ms, from 578, for ones of 16
   to 34 digits; 20,000 floats of 4,095 digits take 212 ms, from 244, and short floats as long as
   before.
+- [`core:strings`](docs/standard-library.md#corestrings) searches a one-byte needle or an ASCII
+  rune with `memchr`, converts ASCII case in place in one copy of the text, builds `repeat` by
+  doubling the written prefix, and trims trailing whitespace from the end instead of scanning the
+  whole text. Results are unchanged. At `-opt=speed`, 1,000 byte and rune searches through
+  240 kB take 7 ms, from 750; 100 `to_upper` calls on 240 kB of mixed UTF-8 take 25 ms, from
+  132; ten 5 MB repeats of one byte take 36 ms, from 99. `strings.Lines_Iterator` is 16 bytes,
+  from 24.
 - [`strings.index_byte`](docs/standard-library.md#corestrings) searches with the C runtime's
   `memchr`, and [`cstrings.from_string`](docs/standard-library.md#corecstrings) uses it to look
   for a zero byte. At `-opt=speed`, converting 1,800 strings of 384 KiB takes 330 ms, from 540,

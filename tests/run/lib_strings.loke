@@ -109,6 +109,38 @@ main :: proc() {
 	fmt.println(strings.to_lower("HEJ Å"));
 	fmt.println(strings.copy(text));
 
+	// The edges of the byte-level fast paths.
+	fmt.println(strings.repeat("abc", 7));
+	fmt.println(strings.repeat("x", 5) == "xxxxx");
+	fmt.println(strings.repeat("", 1 << 40).len());
+	fmt.println(strings.to_upper("@AZ[`az{ éß") == "@AZ[`AZ{ éß");
+	fmt.println(strings.to_lower("@AZ[`az{ É") == "@az[`az{ É");
+	fmt.println(strings.trim_right_space("ä 　 ") == "ä");
+	fmt.println(strings.trim_right_space("  ").len());
+	fmt.println(strings.trim_space(" ok\t") == "ok");
+	fmt.println(strings.trim("abc", "") == "abc");
+	fmt.println(strings.index("aäb", "b") or_else -1);
+	fmt.println(strings.index("ab", "abc") or_else -1);
+	fmt.println(strings.last_index("ab", "abc") or_else -1);
+	fmt.println(strings.index_rune("äöx", 'x') or_else -1);
+	fmt.println(strings.index_rune("abc", 'z') or_else -1);
+	fmt.println(strings.index_rune("abc", -1) or_else -1);
+	fmt.println(strings.contains("abc", "bc"));
+	lines_seen := 0;
+	foreach (line in strings.lines("a\n\nb\r")) {
+		lines_seen += 1;
+		fmt.println(line.len());
+	}
+	fmt.println(lines_seen);
+	foreach (part in strings.split("ab", "")) { fmt.println(part); }
+	foreach (part in strings.split("a,", ",")) { fmt.println(part.len()); }
+	widths: strings.String_Builder = {};
+	widths.append('A');
+	widths.append('ä');
+	widths.append('✓');
+	widths.append('😀');
+	fmt.println(widths.copy_string() == "Aä✓😀");
+
 	// The builder. Its zero value is usable and allocator-unbound.
 	builder: strings.String_Builder = {};
 	builder.append("hello");

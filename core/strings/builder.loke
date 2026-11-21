@@ -134,11 +134,7 @@ impl String_Builder {
 
 	/// A copy of what is written so far. The builder is not disturbed either way.
 	copy_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
-		// Failure follows the allocator's policy.
-		switch (self.try_copy_string(allocator)) {
-		case .ok(copied): return copied;
-		case .err(error): allocation_failed(error, allocator);
-		}
+		return copy(self.view(), allocator);
 	}
 
 	try_copy_string :: proc(
@@ -175,24 +171,18 @@ encode_rune :: proc(value: rune) -> (bytes: [4]u8, length: int) {
 	if (v < 0x80) {
 		return {bytes = [4]u8{u8(v), 0, 0, 0}, length = 1};
 	}
+	// The continuation bytes end the sequence, so each width shares the ones
+	// after its lead byte with the next width up.
+	last := u8(0x80 | (v & 0x3F));
 	if (v < 0x800) {
-		return {bytes = [4]u8{u8(0xC0 | (v >> 6)), u8(0x80 | (v & 0x3F)), 0, 0}, length = 2};
+		return {bytes = [4]u8{u8(0xC0 | (v >> 6)), last, 0, 0}, length = 2};
 	}
+	middle := u8(0x80 | ((v >> 6) & 0x3F));
 	if (v < 0x10000) {
-		return {
-			bytes = [4]u8{
-				u8(0xE0 | (v >> 12)), u8(0x80 | ((v >> 6) & 0x3F)), u8(0x80 | (v & 0x3F)), 0,
-			},
-			length = 3,
-		};
+		return {bytes = [4]u8{u8(0xE0 | (v >> 12)), middle, last, 0}, length = 3};
 	}
 	return {
-		bytes = [4]u8{
-			u8(0xF0 | (v >> 18)),
-			u8(0x80 | ((v >> 12) & 0x3F)),
-			u8(0x80 | ((v >> 6) & 0x3F)),
-			u8(0x80 | (v & 0x3F)),
-		},
+		bytes = [4]u8{u8(0xF0 | (v >> 18)), u8(0x80 | ((v >> 12) & 0x3F)), middle, last},
 		length = 4,
 	};
 }
