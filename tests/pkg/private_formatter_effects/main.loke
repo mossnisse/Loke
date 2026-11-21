@@ -1,8 +1,0 @@
-package main;
-
-import "./lib";
-
-main :: proc() {
-	lib.reports();
-	lib.prints();
-}

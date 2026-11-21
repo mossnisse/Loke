@@ -126,6 +126,9 @@ Container_Op :: enum u8 {
 	Map_Entries,
 	Map_Keys,
 	Map_Values,
+	// design.md "Dynamic arrays", "Maps": the provider the container allocates
+	// from, which an unbound one would bind.
+	Allocator,
 }
 
 // What a container operation does that its signature does not say, for provenance
@@ -202,6 +205,7 @@ CONTAINER_OP_EFFECTS := [Container_Op]bit_set[Container_Op_Effect] {
 	.Map_Entries        = {.Returns_View},
 	.Map_Keys           = {.Returns_View},
 	.Map_Values         = {.Returns_View},
+	.Allocator          = {},
 }
 
 // Whether a member is a `try_` spelling, read from its signature: it answers
@@ -258,7 +262,18 @@ ensure_dynamic_members :: proc(k: ^Checker, type: Type_Id, element: Type_Id) {
 	append(&members, container_member(k, type, "sort", .Sort, .Inout, nil, none))
 	append(&members, container_member(k, type, "reverse_sort", .Reverse_Sort, .Inout, nil, none))
 	append(&members, container_member(k, type, "swap", .Swap, .Inout, {TYPE_INT, TYPE_INT}, none))
+	append(&members, allocator_member(k, type))
 	add_members(k.c, type, members[:])
+}
+
+// design.md "Dynamic arrays", "Maps": `x.allocator()` is a handle on the provider
+// backing `x`, so it is in `x`'s region and borrows that provider's control block
+// (design.md "Allocator regions and region provenance").
+@(private = "file")
+allocator_member :: proc(k: ^Checker, type: Type_Id) -> Symbol_Id {
+	member := container_member(k, type, "allocator", .Allocator, .Borrow, nil, TYPE_ALLOCATOR)
+	set_synth_result_summary(k.c, member, 0, in_region = true)
+	return member
 }
 
 // standard-library.md "Sorting slices": only `[]mut T` has these members. The
@@ -348,6 +363,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, key, value: Type_Id) {
 		ensure_iteration_members(k, result)
 		append_lending_member(k, &members, type, view.name, view.op, .Borrow, nil, result)
 	}
+	append(&members, allocator_member(k, type))
 	add_members(k.c, type, members[:])
 }
 
@@ -425,45 +441,36 @@ append_fallible_members :: proc(
 
 // -------------------------------------------------------------- ordering --
 
-// How an element type answers `<`, so every package sorts it the same way.
-// Resolving one asks nothing about sorting, so unlike a map key's policy it
-// needs no guard against being asked again meanwhile.
-Order_Policy :: struct {
-	kind: Policy_Kind,
-	less: Symbol_Id,
-}
-
-// A delegated `<` has no body, so it is followed to what it forwards to.
+// How an element type answers `<`, so every package sorts it the same way: its
+// own, whatever its visibility, or the built-in one. Resolving one asks nothing
+// about sorting, so unlike a map key's policy it needs no guard against being
+// asked again meanwhile. What a sort calls is `core:slice`'s instance. A
+// delegated `<` has no body, so it is followed to what it forwards to.
 @(private = "file")
-resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Order_Policy, string) {
+resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Policy_Kind, string) {
 	callable, _ := inherent_self_operator(c, element, "<")
-	less, _ := operator_delegate_end(c, callable)
-	if less != INVALID_SYMBOL {
-		return Order_Policy{kind = .Inherent, less = less}, ""
+	if less, _ := operator_delegate_end(c, callable); less != INVALID_SYMBOL {
+		return .Inherent, ""
 	}
 	if type_is_ordered(c, element) {
-		return Order_Policy{kind = .Builtin}, ""
+		return .Builtin, ""
 	}
 	if blocker := record_order_blocker(c, element); blocker != "" {
-		return Order_Policy{}, fmt.tprintf("does not satisfy `Ordered`: %s", blocker)
+		return .Unresolved, fmt.tprintf("does not satisfy `Ordered`: %s", blocker)
 	}
-	return Order_Policy{}, "does not satisfy `Ordered`: it has no `<`"
+	return .Unresolved, "does not satisfy `Ordered`: it has no `<`"
 }
 
-resolved_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> Order_Policy {
-	return c.order_policies[element]
-}
-
-// The gate on `sort` and `reverse_sort`: it settles the element's `<`, which the
-// emitted sort reads.
+// The gate on `sort` and `reverse_sort`: it settles the element's `<`, and
+// reports an element that has none once, at its first sort.
 @(private = "file")
-require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) {
+require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) -> bool {
 	element := sequence_element(k.c, receiver)
-	#partial switch resolved_element_order_policy(k.c, element).kind {
+	#partial switch k.c.order_policies[element] {
 	case .Builtin, .Inherent:
-		return
+		return true
 	case .Rejected:
-		return // already reported, once, at this element
+		return false // already reported, once, at this element
 	}
 	// A distinct element inherits its underlying type's `<` (design.md "Distinct
 	// types").
@@ -471,16 +478,53 @@ require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) {
 	policy, reason := resolve_element_order_policy(k.c, element)
 	if reason == "" {
 		k.c.order_policies[element] = policy
-		return
+		return true
 	}
 	if committing(k.c) {
-		k.c.order_policies[element] = Order_Policy{kind = .Rejected}
+		k.c.order_policies[element] = .Rejected
 	}
 	errorf(
 		k.c, span, "L0651",
 		"`%s` cannot be sorted: its element `%s` %s",
 		type_name(k.c, receiver), type_name(k.c, element), reason,
 	)
+	return false
+}
+
+// standard-library.md "Sorting slices": `values.sort()` and `values.reverse_sort()`
+// are calls of `core:slice`'s `sort` and `reverse_sort` on the elements, one
+// instance per element type, which a use of the member requests. Import
+// discovery loaded the package for a file that names either member.
+@(private = "file")
+sort_template :: proc(c: ^Compiler, op: Container_Op) -> Symbol_Id {
+	return package_symbol_named(c, standard_package(c, STD_SLICE), op == .Reverse_Sort ? "reverse_sort" : "sort")
+}
+
+// Both procedures bind their element type as `$T`.
+@(private = "file")
+sort_bindings :: proc(c: ^Compiler, element: Type_Id) -> [1]Generic_Binding {
+	return {{name = intern_identifier(c, "T"), arg = {is_type = true, type = element}}}
+}
+
+@(private = "file")
+request_sort_instance :: proc(k: ^Checker, element: Type_Id, op: Container_Op, span: Span) {
+	template := generic_template_for(k, sort_template(k.c, op))
+	if template == nil || template.kind != .Procedure {
+		errorf(k.c, span, "L0329", "sorting calls `%s`, which no collection provides", STD_SLICE)
+		return
+	}
+	bindings := sort_bindings(k.c, element)
+	if instance, ok := instantiate_generic(k, template, bindings[:], nil, span, report = true); ok {
+		promote_generic_instance(k, instance, span)
+	}
+}
+
+// The checked instance a `sort` or `reverse_sort` member calls, or
+// INVALID_SYMBOL when no use of it requested one.
+sort_instance :: proc(c: ^Compiler, element: Type_Id, op: Container_Op) -> Symbol_Id {
+	bindings := sort_bindings(c, element)
+	instance, found := cached_instance(c, sort_template(c, op), bindings[:])
+	return instance.symbol if found && instance.body_checked else INVALID_SYMBOL
 }
 
 // ------------------------------------------------- operation requirements --
@@ -539,7 +583,9 @@ check_container_element :: proc(k: ^Checker, span: Span, chosen: ^Symbol, count:
 			)
 		}
 	case .Sort, .Reverse_Sort:
-		require_sort_order_policy(k, chosen.params[0], span)
+		if require_sort_order_policy(k, chosen.params[0], span) {
+			request_sort_instance(k, sequence_element(k.c, chosen.params[0]), chosen.container_op, span)
+		}
 	}
 }
 

@@ -23,7 +23,8 @@ synth_sequence_storage :: proc(e: ^Emitter, symbol: ^Symbol) -> (data: string, c
 	return
 }
 
-// `xs.sort()` and `s.sort()`: one call into `runtime/container.c`'s introsort.
+// `xs.sort()` and `s.sort()`: a call of `core:slice`'s `sort` or `reverse_sort`
+// on the elements (standard-library.md "Sorting slices").
 @(private)
 emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
@@ -32,23 +33,15 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	open_synth_function(e, symbol, name)
 
-	// Only a call settles an element's `<`, so an unsettled comparison means
-	// this contributed member is never called and its body can be empty.
-	#partial switch resolved_element_order_policy(e.c, element).kind {
-	case .Builtin, .Inherent:
-	case:
-		fmt.sbprintln(&e.b, "  ret void")
-		fmt.sbprintln(&e.b, "}")
-		return
+	// Only a use of the member requests the instance, so without one the member
+	// is never called and its body can be empty.
+	if sorter := sort_instance(e.c, element, symbol.container_op); sorter != INVALID_SYMBOL {
+		data, count := synth_sequence_storage(e, symbol)
+		values := slice_of(e.c, element, mutable = true)
+		slot := temporary_slot(e, values)
+		store(e, values, emit_ptr_len(e, llvm_type(e, values), data, count), slot)
+		fmt.sbprintfln(&e.b, "  call void %s(%s)", symbol_name(e, sorter), hook_argument(e, sorter, 0, values, slot))
 	}
-
-	data, count := synth_sequence_storage(e, symbol)
-
-	fmt.sbprintfln(
-		&e.b, "  call void @loke_rt_v1_sort(ptr %s, i64 %s, i64 %d, ptr %s, i32 %d)",
-		data, count, type_size(e.c, element), container_less_thunk(e, element),
-		symbol.container_op == .Reverse_Sort ? 1 : 0,
-	)
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 }

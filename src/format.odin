@@ -51,8 +51,8 @@ type_has_written_format :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return sym != nil && format_meets_slot(c, sym, type)
 }
 
-// A public type's private `format` meets no slot (design.md "Interface bodies"),
-// so the type prints by the generated default.
+// A public type's private `format` meets no slot (design.md "Interface bodies").
+// It is an error (L0572); until reported, the type prints by the generated default.
 format_meets_slot :: proc(c: ^Compiler, sym: ^Symbol, type: Type_Id) -> bool {
 	return sym.public || !type_is_exported(c, type)
 }
@@ -163,6 +163,14 @@ check_formatter :: proc(c: ^Compiler, type: Type_Id, reported: ^map[Span]bool) {
 		return
 	}
 	reported[sym.span] = true
+	if !format_meets_slot(c, sym, type) {
+		errorf(
+			c, sym.span, "L0572",
+			"`%s` is public, so its `format`, which erased printing calls, is `@(public)` too",
+			type_name(c, type),
+		)
+		return
+	}
 	errorf(
 		c, sym.span, "L0572",
 		"`format` on `%s` is what erased printing calls, so it is written `proc(self, w: fmt.Writer, o: fmt.Options)`",
@@ -225,12 +233,16 @@ dyn_views_printing :: proc(c: ^Compiler, element: Type_Id) -> bool {
 }
 
 // Whether `type` writes a `format` that cannot serve printing, which
-// `check_formatter` reports once at its declaration rather than at every print.
-// False until `core:fmt` is checked, which writes no wrong one.
+// `check_formatter` reports once at its declaration rather than at every print:
+// a private one on a public type, or one with the wrong signature. The latter is
+// false until `core:fmt` is checked, which writes no wrong one.
 format_misdeclared :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	sym := written_format_member(c, type)
 	if sym == nil {
 		return false
+	}
+	if !format_meets_slot(c, sym, type) {
+		return true
 	}
 	writer, has_writer := c.runtime_types["Writer"]
 	options, has_options := c.runtime_types["Options"]

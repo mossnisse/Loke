@@ -839,7 +839,6 @@ type_syntax_names_generic :: proc(k: ^Checker, scope: ^Scope, e: Expr) -> bool {
 	return type_syntax_any_name(e, &lookup, names_generic_binding)
 }
 
-@(private = "file")
 scope_in_instance :: proc(scope: ^Scope) -> bool {
 	for enclosing := scope; enclosing != nil; enclosing = enclosing.parent {
 		if enclosing.instance != nil {
@@ -1025,7 +1024,6 @@ instance_key :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Bind
 	return strings.to_string(b)
 }
 
-@(private = "file")
 cached_instance :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> (^Instance, bool) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 	return c.instances[instance_key(c, template, bindings, context.temp_allocator)]

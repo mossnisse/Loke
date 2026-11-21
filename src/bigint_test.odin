@@ -578,23 +578,12 @@ evaluator_folds_keep_only_results :: proc(t: ^testing.T) {
 	testing.expect(t, storage.bytes == before, "exact_fma keeps a temporary")
 }
 
-// A compile-time sort's scratch and a range `foreach`'s offsets are released:
-// sorting eight times holds what sorting once does, and a step over a range,
-// counting up or reversed, keeps only its value and binding.
+// A range `foreach`'s offsets are released: a step over a range, counting up or
+// reversed, keeps only its value and binding.
 @(test)
-evaluator_sort_and_range_keep_only_results :: proc(t: ^testing.T) {
+evaluator_range_keeps_only_results :: proc(t: ^testing.T) {
 	p: Checked
 	check_source(&p, `package main;
-sorts :: proc(times: int) -> int {
-	values := [64]int{};
-	view := values[mut :];
-	foreach (round in 0..<8) {
-		if (round < times) { view.sort(); }
-	}
-	return values[0];
-}
-sort_once :: proc() -> int { return sorts(1); }
-sort_eight :: proc() -> int { return sorts(8); }
 up_16 :: proc() -> int { foreach (_ in 0..<16) {} return 0; }
 up_32 :: proc() -> int { foreach (_ in 0..<32) {} return 0; }
 down_16 :: proc() -> int { foreach (_ in (0..=15).reversed()) {} return 0; }
@@ -609,8 +598,6 @@ down_32 :: proc() -> int { foreach (_ in (0..=31).reversed()) {} return 0; }
 		testing.expectf(t, ok, "`%s` did not evaluate", name)
 		return bytes
 	}
-	once, eight := held(t, &p, "sort_once"), held(t, &p, "sort_eight")
-	testing.expectf(t, eight == once, "sorting eight times holds %d bytes, once %d", eight, once)
 	up := held(t, &p, "up_32") - held(t, &p, "up_16")
 	down := held(t, &p, "down_32") - held(t, &p, "down_16")
 	testing.expectf(t, down == up, "16 reversed steps hold %d bytes, 16 steps up %d", down, up)

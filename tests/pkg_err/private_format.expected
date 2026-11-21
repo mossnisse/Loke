@@ -1,0 +1,9 @@
+L0572
+@17:2
+`Secret` is public, so its `format`, which erased printing calls, is `@(public)` too
+L0572
+@24:2
+`Generic(int)` is public, so its `format`
+L0572
+@32:2
+`Tag` is public, so its `format`

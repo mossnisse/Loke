@@ -1,0 +1,21 @@
+// design.md "Interface bodies": a root package's operators keep the package
+// default, but no importer can name `Pair`, so `lib`'s requirement and the
+// instance of `twice` reach its private `+`, as a slot would reach a private
+// method. tests/pkg_err/hidden_distinct_ordering keeps a public type's private
+// operator out.
+package main;
+
+import "core:fmt";
+import "./lib";
+
+Pair :: struct { a, b: int }
+
+impl Pair {
+	add :: operator(+) proc(l, r: Pair) -> Pair { return {l.a + r.a, l.b + r.b}; }
+}
+
+static_assert(lib.Adds(Pair));
+
+main :: proc() {
+	fmt.println(lib.twice(Pair{1, 2}).b);
+}

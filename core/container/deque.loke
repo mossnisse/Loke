@@ -43,12 +43,10 @@ import "core:slice";
 import "core:unsafe";
 
 Deque :: struct($T: type) {
+	// Its allocator is the deque's, which growth reads before it releases the ring.
 	@(private) storage: [dynamic]T,
 	@(private) head: int,
 	@(private) count: int,
-	// Growth allocates before it releases, and a dynamic array does not expose its
-	// own allocator. `{}` selects the default.
-	@(private) allocator: Allocator,
 }
 
 impl Deque($T) {
@@ -59,14 +57,14 @@ impl Deque($T) {
 		negative `capacity` panics.
 	*/
 	init :: proc(capacity: int = 0, allocator: Allocator = mem.default_allocator()) -> Deque(T) {
-		out := Deque(T){allocator = allocator};
+		out := Deque(T){storage = make([dynamic]T, 0, 0, allocator)};
 		out.reserve(capacity);
 		return out;
 	}
 
 	/// As `init`, but a failure to allocate is returned rather than handled by the allocator's failure policy.
 	try_init :: proc(capacity: int = 0, allocator: Allocator = mem.default_allocator()) -> Result(Deque(T), Allocator_Error) {
-		out := Deque(T){allocator = allocator};
+		out := Deque(T){storage = make([dynamic]T, 0, 0, allocator)};
 		out.try_reserve(capacity) or_return;
 		return .ok(move(out));
 	}
@@ -86,7 +84,7 @@ impl Deque($T) {
 	append_one_copied :: proc(self: inout, @(escape=stored) value: T) where is_copyable(T) {
 		wanted := self.count + 1;
 		self.grow(wanted);
-		item := value.clone(self.allocator);
+		item := value.clone(self.storage.allocator());
 		self.put_back(move(item));
 	}
 
@@ -94,7 +92,7 @@ impl Deque($T) {
 		wanted := self.count + values.len();
 		self.grow(wanted);
 		foreach (value in values) {
-			item := value.clone(self.allocator);
+			item := value.clone(self.storage.allocator());
 			self.put_back(move(item));
 		}
 	}
@@ -109,7 +107,7 @@ impl Deque($T) {
 	// was too, so growth waits until the copy has succeeded.
 	@(private)
 	try_append_one_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) {
-		item := value.try_clone(self.allocator) or_return;
+		item := value.try_clone(self.storage.allocator()) or_return;
 		wanted := self.count + 1;
 		self.try_grow(wanted) or_return;
 		self.put_back(move(item));
@@ -124,7 +122,7 @@ impl Deque($T) {
 	try_append_copied :: proc(self: inout, @(escape=stored) values: ..^T) -> Status(Allocator_Error) where is_copyable(T) {
 		wanted := self.count + values.len();
 		if (!self.must_grow(wanted)) { return self.try_put_back_clones(..values); }
-		ring := try_make([dynamic]T, 0, self.grown_capacity(wanted), self.allocator) or_return;
+		ring := try_make([dynamic]T, 0, self.grown_capacity(wanted), self.storage.allocator()) or_return;
 		head := self.head;
 		previous := self.relocate(move(ring), 0);
 		switch (self.try_put_back_clones(..values)) {
@@ -146,7 +144,7 @@ impl Deque($T) {
 	prepend_copied :: proc(self: inout, @(escape=stored) value: T) where is_copyable(T) {
 		wanted := self.count + 1;
 		self.grow(wanted);
-		item := value.clone(self.allocator);
+		item := value.clone(self.storage.allocator());
 		self.put_front(move(item));
 	}
 
@@ -158,7 +156,7 @@ impl Deque($T) {
 
 	// As `try_append_one_copied`, the copy comes before the growth.
 	try_prepend_copied :: proc(self: inout, @(escape=stored) value: T) -> Status(Allocator_Error) where is_copyable(T) {
-		item := value.try_clone(self.allocator) or_return;
+		item := value.try_clone(self.storage.allocator()) or_return;
 		wanted := self.count + 1;
 		self.try_grow(wanted) or_return;
 		self.put_front(move(item));
@@ -256,7 +254,7 @@ impl Deque($T) {
 	}
 
 	insert_copied :: proc(self: inout, index: int, @(escape=stored) value: T) where is_copyable(T) {
-		item := value.clone(self.allocator);
+		item := value.clone(self.storage.allocator());
 		self.insert_moved(index, move(item));
 	}
 
@@ -319,14 +317,14 @@ impl Deque($T) {
 	*/
 	reserve :: proc(self: inout, capacity: int) {
 		if (!self.must_grow(capacity)) { return; }
-		ring := make([dynamic]T, 0, capacity, self.allocator);
+		ring := make([dynamic]T, 0, capacity, self.storage.allocator());
 		_ = self.relocate(move(ring), 0);
 	}
 
 	/// As `reserve`, but a failure to allocate is returned and leaves the deque as it was.
 	try_reserve :: proc(self: inout, capacity: int) -> Status(Allocator_Error) {
 		if (!self.must_grow(capacity)) { return .ok; }
-		ring := try_make([dynamic]T, 0, capacity, self.allocator) or_return;
+		ring := try_make([dynamic]T, 0, capacity, self.storage.allocator()) or_return;
 		_ = self.relocate(move(ring), 0);
 		return .ok;
 	}
@@ -335,7 +333,7 @@ impl Deque($T) {
 	shrink :: proc(self: inout, minimum: int = 0) {
 		wanted := minimum if minimum > self.count else self.count;
 		if (wanted >= self.storage.cap()) { return; }
-		ring := make([dynamic]T, 0, wanted, self.allocator);
+		ring := make([dynamic]T, 0, wanted, self.storage.allocator());
 		_ = self.relocate(move(ring), 0);
 	}
 
@@ -343,7 +341,7 @@ impl Deque($T) {
 	try_shrink :: proc(self: inout, minimum: int = 0) -> Status(Allocator_Error) {
 		wanted := minimum if minimum > self.count else self.count;
 		if (wanted >= self.storage.cap()) { return .ok; }
-		ring := try_make([dynamic]T, 0, wanted, self.allocator) or_return;
+		ring := try_make([dynamic]T, 0, wanted, self.storage.allocator()) or_return;
 		_ = self.relocate(move(ring), 0);
 		return .ok;
 	}
@@ -466,7 +464,7 @@ impl Deque($T) {
 	// Clones in order into a new ring from the destination's allocator. What it has
 	// cloned so far is dropped with `out` if a later element fails.
 	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Deque(T), Allocator_Error) where is_copyable(T) {
-		out := Deque(T){allocator = allocator};
+		out := Deque(T){storage = make([dynamic]T, 0, 0, allocator)};
 		out.try_reserve(self.count) or_return;
 		foreach (i in 0 ..< self.count) {
 			item := self.slots()[self.wrap(i)].try_clone(allocator) or_return;
@@ -580,7 +578,7 @@ impl Deque($T) {
 	try_put_back_clones :: proc(self: inout, @(escape=stored) values: ..^T) -> Status(Allocator_Error) where is_copyable(T) {
 		added := 0;
 		foreach (value in values) {
-			switch (value^.try_clone(self.allocator)) {
+			switch (value^.try_clone(self.storage.allocator())) {
 			case .ok(item):
 				self.put_back(move(item));
 				added += 1;

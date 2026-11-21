@@ -1,0 +1,50 @@
+@(public)
+package lib;
+
+import "core:fmt";
+
+// standard-library.md "Printed forms": a public type's private methods meet no
+// slot (design.md "Interface bodies"), so its private `format` could never be what
+// printing calls, here or in an importer. It is refused rather than left to print
+// one way by name and another by `print`. A generic type's instances are public
+// with it, and a private type keeps its own `format`, as in
+// tests/pkg/private_formatter.
+
+Secret :: struct { id: int }
+
+impl Secret {
+	@(private)
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "secret"); }
+}
+
+Generic :: struct($T: type) { value: T }
+
+impl Generic($T) {
+	@(private)
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {}
+}
+
+Tag :: distinct string;
+
+impl Tag {
+	// Not the printing signature either; visibility is reported first.
+	@(private)
+	format :: proc(self) -> string { return "tag"; }
+}
+
+@(private)
+hidden :: struct {}
+
+impl hidden {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {}
+}
+
+Shown :: struct {}
+
+impl Shown {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {}
+}
+
+use :: proc() {
+	fmt.println(Generic(int){1}, hidden{}, Shown{});
+}

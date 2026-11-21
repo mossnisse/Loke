@@ -144,7 +144,7 @@ Compiler :: struct {
 	// must use these IDs rather than selecting members again.
 	map_key_policies:      map[Type_Id]Key_Policy,
 	// The `<` one `sort` uses, per element type (`src/container.odin`).
-	order_policies:        map[Type_Id]Order_Policy,
+	order_policies:        map[Type_Id]Policy_Kind,
 
 	// Compile-time reflection (`src/reflect.odin`, `src/typeid.odin`). The descriptor
 	// types are created on first use; `typeid` identity is symbolic during checking

@@ -87,7 +87,7 @@ static_package_graph :: proc(c: ^Compiler) -> bool {
 	return true
 }
 
-// Whether a file-scope `when` holds an `import` or a `parallel`.
+// Whether a file-scope `when` holds an `import` or an implied dependency.
 @(private)
 when_holds_dependency :: proc(file: ^File) -> bool {
 	for item in file.items {
@@ -95,8 +95,10 @@ when_holds_dependency :: proc(file: ^File) -> bool {
 		if !is_when {
 			continue
 		}
-		if parallel_within(file.parallels, v.span) {
-			return true
+		for offsets in file.implied {
+			if offsets_within(offsets, v.span) {
+				return true
+			}
 		}
 		for imported in file.imports {
 			if imported.span.lo >= v.span.lo && imported.span.lo < v.span.hi {
@@ -309,10 +311,12 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 	for index := 1; index < len(c.packages); index += 1 {
 		id := Package_Id(index)
 		for file in package_of(c, id).files[:] {
-			if !file.parallel_bound && selects_parallel(file) {
-				file.parallel_bound = true
-				changed = true
-				bind_parallel_edge(c, id)
+			for kind in Implied_Dependency {
+				if kind not_in file.implied_bound && selects_implied(file, kind) {
+					file.implied_bound += {kind}
+					changed = true
+					bind_implied_edge(c, id, IMPLIED_PACKAGES[kind])
+				}
 			}
 			for item in file.active_items {
 				imported, is_import := item.(^Item_Import)
@@ -378,13 +382,13 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 	})
 }
 
-// Whether a selected item holds a `parallel` keyword: an unselected `when`
+// Whether a selected item holds a use of `kind`'s package: an unselected `when`
 // branch is never checked, so it needs nothing. One in a body's own `when` is
 // counted, since a statement's branch is chosen while checking.
 @(private = "file")
-selects_parallel :: proc(file: ^File) -> bool {
+selects_implied :: proc(file: ^File, kind: Implied_Dependency) -> bool {
 	for item in file.active_items {
-		if parallel_within(file.parallels, item_span(item)) {
+		if offsets_within(file.implied[kind], item_span(item)) {
 			return true
 		}
 	}
@@ -392,8 +396,8 @@ selects_parallel :: proc(file: ^File) -> bool {
 }
 
 @(private = "file")
-parallel_within :: proc(parallels: []u32, span: Span) -> bool {
-	for offset in parallels {
+offsets_within :: proc(offsets: []u32, span: Span) -> bool {
+	for offset in offsets {
 		if offset >= span.lo && offset < span.hi {
 			return true
 		}
@@ -401,19 +405,20 @@ parallel_within :: proc(parallels: []u32, span: Span) -> bool {
 	return false
 }
 
-// compiler-architecture.md "Lowering parallel blocks": a `parallel` block's
-// hidden scope is `core:thread`'s, so the package is a dependency no source
-// names. The edge binds no alias. Where no collection provides it, the block
-// that needs it says so (`check_parallel`), and a block in a branch no check
-// reaches needs nothing.
+// A dependency no source names: a `parallel` block's hidden scope is
+// `core:thread`'s (compiler-architecture.md "Lowering parallel blocks"), and a
+// `sort` member is `core:slice`'s (standard-library.md "Sorting slices"). The
+// edge binds no alias, and the package's own uses need none. Where no collection
+// provides the package, the use that needs it says so, and a use in a branch no
+// check reaches needs nothing.
 @(private = "file")
-bind_parallel_edge :: proc(c: ^Compiler, id: Package_Id) {
-	dir, why := resolve_import_path(c, nil, STD_THREAD)
+bind_implied_edge :: proc(c: ^Compiler, id: Package_Id, key: string) {
+	dir, why := resolve_import_path(c, nil, key)
 	if why != .Ok || !os.is_dir(dir) {
 		return
 	}
-	target, loaded := load_package_dir(c, dir, STD_THREAD, NO_SPAN)
-	if !loaded {
+	target, loaded := load_package_dir(c, dir, key, NO_SPAN)
+	if !loaded || target == id {
 		return
 	}
 	append(&package_of(c, id).imports, Package_Import{target = target, span = NO_SPAN})

@@ -1231,6 +1231,14 @@ and its allocator. Each array records the allocator used for cleanup:
 - Copies use the destination allocator; `value.clone(allocator)` chooses one
   explicitly. See [Assignment statements](#assignment-statements).
 
+`x.allocator()` returns the allocator `x` records, or, while `x` is unbound,
+`mem.default_allocator()`, the one its first allocation would bind. Its receiver
+is immutable. Like the provider's own `allocator()`, the handle borrows that
+provider's control block and not `x`, which may change while the handle is in
+use. It is in `x`'s [region](#allocator-regions-and-region-provenance), so an
+owner built from it is backed as `x` is. A container that replaces its storage
+asks for it rather than keeping a copy.
+
 `via` applies only to declarations and neither introduces names nor changes
 cleanup. Procedures take allocators through ordinary parameters and defaults.
 Backing storage can be frame-local:
@@ -1347,6 +1355,8 @@ Along with `len` and `cap`, a dynamic array supports:
 - `x.remove_unordered(i)` removes and returns an element in O(1) by moving the
   last element into its location.
 - `x.remove(i)` removes and returns an element while preserving order.
+- `x.allocator()` returns the allocator the array allocates from (see [Dynamic
+  arrays](#dynamic-arrays)).
 
 How far `append`, `insert`, and `resize` grow the capacity is
 implementation-defined, and is geometric, so that adding elements one at a time
@@ -1689,6 +1699,8 @@ The built-in map supports these container operations:
 - `some_map.reserve(capacity)` reserves capacity for at least the requested
   number of entries.
 - `some_map.shrink()` removes excess capacity.
+- `some_map.allocator()` returns the map's allocator, as for a [dynamic
+  array](#dynamic-arrays).
 - `some_map.try_insert(key, elem)` inserts or updates the entry, returning the
   [allocation error](#allocation-failure) rather than following the policy. It
   is the recoverable call form of `m[key] = elem`.
@@ -4477,6 +4489,16 @@ conversion yields a value, so when `expr` denotes a place of a
 the requirement fails; a binding is never consumed, so nothing can be moved out
 of it instead. `-> inout T` is how a requirement asks for the place itself.
 
+An expression requirement is checked with the visibility of the package that
+applies the interface, where the bound is written. A type no importer can name,
+a private type or any type in a `package main`, also meets it with the operators
+its own package declared on it, as it meets a slot with its private methods (see
+the named slot form below). With a private `<` it meets `Ordered`, and with a
+private `+`, `Numeric`. The body of a generic instance reaches those operators
+too, since generic code meets such a type only through values its own package
+passed in. Its other private members keep the grant's narrow reach, described
+below. Neither reaches a public type's private operators, in any package.
+
 A binding `name: inout T` is a hypothetical exclusive mutable place: it may be
 read and may select an `inout` receiver, parameter, or indexing overload. A
 result `-> inout T` requires the expression to denote an assignable place of
@@ -4563,7 +4585,8 @@ package, and `Length` is applied to that `Unit`.
   package, its own included, and whether a type meets an interface does not
   depend on where it is asked. A member the compiler supplies, such as a
   default `format`, is the type's own behavior and meets a slot as a public
-  one does.
+  one does. A public type's private `format` is an error ([Printed
+  forms](standard-library.md#printed-forms)).
 - Slot names must be unique across the interface and everything it composes.
   Witness members are never overload groups.
 

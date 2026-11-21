@@ -1745,6 +1745,15 @@ Go reaches a similar place by qualifying an unexported method's name with its
 package, so no other package's interface can require it; Loke's slots match
 by name, so the type's visibility decides instead.
 
+A public type's private `format` was first allowed and printed by the generated
+default, so the type had two printed forms: the written method by name, in its own
+package, and the default through `print`. That left open whether an importer's
+lookup should reach the default, whether an unused private `format` should warn,
+and what a bound generic's direct call in the defining package should reach.
+[Printed forms](standard-library.md#printed-forms) refuses it instead: printing is
+the one thing a method named `format` is for, so the author makes it public or
+renames it, and the questions do not arise.
+
 ### A warning for private names in public declarations
 
 A public procedure that returns a private type compiles, and an importer can
@@ -1939,7 +1948,28 @@ ordinary lookup finds nothing. A bound on a record still does not carry into
 the record's methods ([Slots through a record's bound](open-questions.md#slots-through-a-records-bound)),
 so `core:math/dense`'s methods that name `T.Real` restate `linalg.Scalar(T)`.
 Operators and other expression requirements keep the applying package's
-visibility ([Visibility in slot and expression requirements](open-questions.md#visibility-in-slot-and-expression-requirements)).
+visibility, widened as a slot's is: a type no importer can name meets them with
+its private operators too
+([Interface bodies](design.md#interface-bodies)).
+
+### Requirements reach what slots reach
+
+A slot was met by a private method of a type no importer can name, but an
+expression requirement saw only what the applying package could, so a `package
+main` type met `Real`'s `sqrt` slot but not `Numeric`'s `+`, and not `Ordered`'s
+`<`, until its operators were marked `@(public)`. Every value of such a type comes
+from its own package, which is the slot rule's reason for trusting its private
+members, and it applies to an operator as much as to a method. The requirement,
+and the generic instance it admits, now reach those operators as a slot reaches
+methods, while ordinary code in another package still cannot use them. Named
+methods stay with slots and the bound's grant, which stays narrow: an operator is
+the type's one answer to its syntax, as a sort and a map key already used it
+whatever its visibility, while a private method is one of many the type keeps to
+itself. The other direction,
+narrowing slots to the applying package's visibility, would have made every
+`package main` type mark its methods public before generic code could use them.
+What settled it was lowering `values.sort()` to `slice.sort`: the member had
+always sorted by a private `<`, and `slice.sort`'s `Ordered` bound had to agree.
 
 ### Headless switch
 
@@ -4210,9 +4240,21 @@ boundaries and API shapes follow a few common choices:
   signature, so every `sort_by` and selection given one shares an instance, and
   LLVM may stop inlining the procedure into a shared helper: in that benchmark a
   middle selection rose from 15 to 20 ms once `sort_by` used the same type, and
-  stayed at 15 ms with a record comparator. `sort` and `reverse_sort` still reach
-  the runtime introsort through the contributed member that also sorts a
-  `[dynamic]T`.
+  stayed at 15 ms with a record comparator. The contributed `values.sort()` and
+  `values.reverse_sort()`, which also sort a `[dynamic]T`, then reached the runtime
+  introsort, an indirect call per comparison: 65 sorts of 32,768 scattered `int`s
+  took 207 ms with `slice.sort` and 106 ms with `slice.sort_by(values,
+  slice.Ascending(int){})`, and 212 and 120 ms for a 32-byte record. Since
+  2026-11-21 the members call `slice.sort` and `slice.reverse_sort`, which are
+  `sort_by` with `Ascending` and `Descending`, so the runtime has no sort and the
+  compile-time evaluator no merge sort of its own, which sorted stably where the
+  emitted program did not. Filling and sorting 32,768 scattered keys 65 times then
+  took 113 ms rather than 230 for `int`, and 129 ms rather than 224 for a 32-byte
+  record with its own `<`. The members load `core:slice` as a `parallel` block
+  loads `core:thread`. That required `slice.sort`'s `Ordered` bound to accept a
+  `package main` type's private `<`, as a slot would
+  ([Interface bodies](design.md#interface-bodies)), which the member had always
+  accepted.
 - **The first and last ranks are a minimum and a maximum.** Selecting either
   scans once, as `min` and `max` do, and swaps the winner into place: `n - 1`
   comparisons and one swap, where introselect partitions the whole range at

@@ -17,12 +17,12 @@ show :: proc(value: ^$T) where fmt.Formattable(T) {
 }
 
 main :: proc() {
-	static_assert(fmt.Formattable(lib.Secret));
 	lib.show_here();
-	s := lib.make_secret(2);
-	fmt.println(s);
-	view := (dyn fmt.Formattable)(&s);
+	shown := lib.Shown{};
+	view := (dyn fmt.Formattable)(&shown);
 	fmt.println(view);
-	show(&s);
-	fmt.println([?]lib.Secret{s}, lib.Shown{}, Local{});
+	show(&shown);
+	local := Local{};
+	show(&local);
+	fmt.println([?]lib.Shown{shown}, Local{});
 }

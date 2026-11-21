@@ -18,8 +18,9 @@
 // standard-library.md "Partitioning and selection", and
 // standard-library.md "Slice queries and copies".
 //
-// The public surface is ordinary Loke over `[]T` and `[]mut T`. Only `sort` and
-// `reverse_sort` reach the runtime, through the contributed `values.sort()`.
+// The public surface is ordinary Loke over `[]T` and `[]mut T`. `sort` and
+// `reverse_sort` are also what the contributed `values.sort()` and
+// `values.reverse_sort()` call.
 @(public)
 package slice;
 
@@ -109,19 +110,21 @@ impl Ordering($T, $C) {
 	NaN sorts to an unspecified permutation rather than trapping. The same as
 	`values.sort()`. The sort is not stable.
 */
-// This is standard-library.md's free spelling of the contributed `values.sort()` member,
-// and it forwards to it: one introsort in the runtime, reached by both, so the
-// two spellings cannot drift apart.
+// The contributed `values.sort()` member is a call of this procedure, at run
+// time and at compile time (standard-library.md "Sorting slices"), so the two
+// spellings are one introsort and cannot drift apart. The compiler binds its
+// one parameter by the name `T`.
 sort :: proc(values: []mut $T) where Ordered(T) {
-	values.sort();
+	sort_by(values, Ascending(T){});
 }
 
-/// Descending. The sort is not stable.
+/// Descending. The same as `values.reverse_sort()`. The sort is not stable.
 // Sorting with the comparison reversed, not sorting and then reversing: the
 // two differ for equal-comparing elements only, and neither order is stable,
-// so one pass is enough.
+// so one pass is enough. `values.reverse_sort()` is a call of it, as
+// `values.sort()` is of `sort`.
 reverse_sort :: proc(values: []mut $T) where Ordered(T) {
-	values.reverse_sort();
+	sort_by(values, Descending(T){});
 }
 
 /**
@@ -168,8 +171,7 @@ binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 // available without a copy, which an element type may not have at all.
 //
 // This is standard-library.md's free spelling of the contributed `values.swap()` member,
-// and it forwards to it exactly as `sort` does: one implementation, reached by
-// both spellings.
+// and it forwards to it: one implementation, reached by both spellings.
 swap :: proc(values: []mut $T, left: int, right: int) {
 	values.swap(left, right);
 }

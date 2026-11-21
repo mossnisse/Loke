@@ -116,12 +116,6 @@ validate_operation_policies :: proc(c: ^Compiler) -> bool {
 			return emission_contract_error(c, "a resolved map key operation has no checked procedure")
 		}
 	}
-	// A sort's `<`, already followed through any delegation.
-	for _, policy in c.order_policies {
-		if policy.kind == .Inherent && !emission_procedure_available(c, policy.less) {
-			return emission_contract_error(c, "a resolved ordering operation has no checked procedure")
-		}
-	}
 	return true
 }
 

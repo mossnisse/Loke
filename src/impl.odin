@@ -789,7 +789,24 @@ member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 	if standard_format_hidden(k.c, sym, lookup_package(k)) || !capture_field_visible(k, sym) {
 		return false
 	}
-	return sym.pkg == lookup_package(k) || sym.public
+	return sym.pkg == lookup_package(k) || sym.public || reached_generically(k, sym)
+}
+
+// design.md "Interface bodies": generic code meets a type no importer can name, a
+// private one or any in a `package main`, only through values that type's own
+// package handed it. So an expression requirement, and the body of an instance,
+// reach the operators that package declared on it, as a slot reaches its methods.
+@(private = "file")
+reached_generically :: proc(k: ^Checker, sym: ^Symbol) -> bool {
+	if sym.operator == "" || k.requiring == nil && !scope_in_instance(k.scope) {
+		return false
+	}
+	owner := type_of(k.c, sym.owner_type)
+	if owner == nil || type_is_exported(k.c, sym.owner_type) {
+		return false
+	}
+	declared := symbol_of(k.c, owner.instance_of != INVALID_SYMBOL ? owner.instance_of : owner.symbol)
+	return declared != nil && declared.pkg == sym.pkg
 }
 
 // Every field access path routes through here so they agree with reflection.

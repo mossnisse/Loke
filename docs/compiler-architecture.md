@@ -822,8 +822,16 @@ point of its own: its tasks run through `core:thread`, whose private
 `Task_Scope` the compiler names through a registered lifecycle operation, not
 by lookup from user code. A program with a selected block depends on
 `core:thread` without importing it, so discovery binds that package for any
-file whose selected items hold a `parallel` keyword (`File.parallels`), and a
+file whose selected items hold a `parallel` keyword (`File.implied`), and a
 block reports `L0329` where no collection provides it.
+
+The `sort` and `reverse_sort` members of `[dynamic]T` and `[]mut T` are the
+same kind of dependency: each is a call of `core:slice`'s `sort` or
+`reverse_sort` instance for the element type, which a use of the member
+requests (`request_sort_instance`), so discovery binds `core:slice` for a file
+that selects either name after a `.`. The emitted member calls the instance,
+and the evaluator runs it, so a sort orders equal elements alike at run time
+and at compile time.
 
 ```text
 @(move_only) Task_Scope :: struct          // private to core:thread

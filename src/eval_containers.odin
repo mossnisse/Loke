@@ -128,65 +128,6 @@ eval_splice :: proc(ev: ^Evaluator, self: ^Eval_Value, at, removed: int, inserte
 	return true
 }
 
-// The element's ordering: its own `<` when it has one (standard-library.md "Sorting
-// slices"), otherwise the built-in comparison.
-@(private = "file")
-eval_less :: proc(ev: ^Evaluator, span: Span, less: Symbol_Id, a, b: Eval_Value) -> (bool, bool) {
-	if less == INVALID_SYMBOL {
-		return eval_compare(ev, .Lt, a, b)
-	}
-	result, ok := eval_operator_call(ev, less, nil, span, []Eval_Value{a, b})
-	return result.boolean, ok
-}
-
-// A stable merge sort; each comparison costs a step.
-@(private = "file")
-eval_sort :: proc(ev: ^Evaluator, span: Span, elements: []Eval_Value, descending: bool, less: Symbol_Id) -> bool {
-	if len(elements) < 2 {
-		return true
-	}
-	scratch, err := make([]Eval_Value, len(elements), ev.alloc)
-	if err != nil {
-		return false
-	}
-	// The sorted run ends up in `elements`, so the scratch holds nothing after.
-	defer delete(scratch, ev.alloc)
-	from, to := elements, scratch
-	for width := 1; width < len(elements); width *= 2 {
-		for lo := 0; lo < len(elements); lo += 2 * width {
-			middle := min(lo + width, len(elements))
-			hi := min(lo + 2 * width, len(elements))
-			left, right, out := lo, middle, lo
-			for left < middle && right < hi {
-				if !eval_step(ev, span) {
-					return false
-				}
-				a, b := from[right], from[left]
-				// The right run's element goes first only when strictly before.
-				before, ok := eval_less(ev, span, less, descending ? b : a, descending ? a : b)
-				if !ok {
-					return false
-				}
-				if before {
-					to[out] = from[right]
-					right += 1
-				} else {
-					to[out] = from[left]
-					left += 1
-				}
-				out += 1
-			}
-			copy(to[out:], from[left:middle])
-			copy(to[out + middle - left:], from[right:hi])
-		}
-		from, to = to, from
-	}
-	if raw_data(from) != raw_data(elements) {
-		copy(elements, from)
-	}
-	return true
-}
-
 // A mutating operation needs a place; a read can take any value.
 @(private)
 eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: Eval_Value, success: bool) {
@@ -207,6 +148,11 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 	case .None:
 		return {}, eval_fail(ev, v.span, "L0405", "a container call has no operation")
 
+	case .Allocator:
+		// Compile-time storage is the evaluator's own, which the zero handle,
+		// the default provider's, stands for (design.md "Allocators").
+		return zero_value(ev, TYPE_ALLOCATOR)
+
 	case .Append:
 		added := eval_appended(ev, v) or_return
 		defer delete(added, ev.alloc)
@@ -221,11 +167,14 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if symbol.receiver != .Inout && underlying_kind(ev.k.c, self.type) != .Slice {
 			return {}, eval_fail(ev, v.span, "L0341", "this value cannot be sorted at compile time")
 		}
-		less := INVALID_SYMBOL
-		if policy := resolved_element_order_policy(ev.k.c, element); policy.kind == .Inherent {
-			less = policy.less
+		// The same `core:slice` procedure the emitted member calls, so a sort's
+		// order of equal elements is the same at compile time as at run time.
+		sorter := sort_instance(ev.k.c, element, symbol.container_op)
+		if sorter == INVALID_SYMBOL {
+			return {}, eval_fail(ev, v.span, "L0341", "this value cannot be sorted at compile time")
 		}
-		eval_sort(ev, v.span, self.elements, symbol.container_op == .Reverse_Sort, less) or_return
+		values := Eval_Value{kind = .Aggregate, type = slice_of(ev.k.c, element, mutable = true), elements = self.elements}
+		eval_invoke(ev, sorter, nil, v.span, []Eval_Value{values}) or_return
 		return eval_void(), true
 
 	case .Swap:

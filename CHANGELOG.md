@@ -117,6 +117,22 @@ checklist.
   `Endian(u32, Order.Big)`, not `Big_Endian(u32)`, and an `impl Big_Endian($T)` outside the package is `L0746`. Upgrade
   such an `impl` to `impl endian.Endian($T, endian.Order.Big)`, and anything that matched the
   printed name to the new spelling.
+- A public type's `format` must be `@(public)`: a private one is `L0572`
+  ([Printed forms](docs/standard-library.md#printed-forms)). It compiled, but met no slot, so
+  `print` used the generated form while a call by name in its package used the written method.
+  Upgrade by marking the method `@(public)`, or by renaming it if it was never meant for
+  printing:
+
+  ```
+  impl Card { format :: proc(self, w: fmt.Writer, o: fmt.Options) { ... } }               // before
+  impl Card { @(public) format :: proc(self, w: fmt.Writer, o: fmt.Options) { ... } }     // after
+  ```
+- `values.sort()` and `values.reverse_sort()` are calls of `slice.sort` and `slice.reverse_sort`
+  ([Sorting slices](docs/standard-library.md#sorting-slices)), so they need `core:slice` from a
+  collection, as a `parallel` block needs `core:thread`; without one they are `L0329`. A
+  compile-time sort no longer keeps equal elements in their input order: it orders them as the
+  same sort does at run time. Upgrade a constant that relied on the stable order by sorting
+  with a comparator that breaks ties, through `slice.sort_by`.
 - Converting a `^T` or `^mut T` to a C pointer to another element type is an unchecked
   operation ([C pointers](docs/design.md#c-pointers)). `([^]u64)(p)` for a `p: ^u8` compiled in
   a file that does not import `core:unsafe`, though it reads the pointee as a type it was not
@@ -136,8 +152,24 @@ checklist.
   if (text.len() != bytes.len()) { return .err(Error{.Invalid_Utf8, text.len()}); }
   ```
 
+- `x.allocator()` on a `[dynamic]T` or a map returns the allocator it allocates from, or the
+  default one an unbound container would bind ([Dynamic arrays](docs/design.md#dynamic-arrays)).
+  The handle borrows the provider's control block, as the provider's own `allocator()` does,
+  and is in `x`'s region, so a container that replaces its storage can build the new one from
+  it. `container.Deque` no longer keeps its own copy.
+
 ### Changed
 
+- `values.sort()`, `values.reverse_sort()`, `slice.sort`, and `slice.reverse_sort` are up to
+  twice as fast: each is `slice.sort_by` with the element's `<` called directly, where they
+  reached the runtime's C introsort through an indirect call per comparison. At `-opt=speed`,
+  filling and sorting 32,768 scattered `int`s 65 times takes 113 ms, from 230, and the same for
+  a 32-byte record with its own `<` 129 ms, from 224. The runtime no longer has a sort.
+- An expression requirement, such as `Ordered`'s `<` or `Numeric`'s `+`, is met by a private
+  operator of a type no importer can name, a private type or any in a `package main`, and the
+  generic instance it admits calls that operator ([Interface bodies](docs/design.md#interface-bodies)),
+  as a slot is already met by such a type's private method. `slice.sort` on a `package main`
+  type with an unmarked `<` was `L0444`.
 - `-g` describes file-scope variables, so a debugger shows each with its type. One is named as
   its package's procedures are, `core:log.selected`, and a root package's by its own name
   ([Common options](docs/compiler-guide.md#common-options)).

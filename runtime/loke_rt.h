@@ -382,21 +382,6 @@ int32_t loke_rt_v1_string_to_runes(
 	loke_rt_dynamic_v1 *out, const loke_rt_container_ops_v1 *ops,
 	const uint8_t *data, int64_t len, const loke_rt_allocator_v1 *a);
 
-/* Sorting. `less(a, b)` is 1 when `*a` orders before `*b`; the compiler
- * generates one per element type, exactly as it generates the clone and drop
- * thunks in the operation table. `descending` inverts the comparison - it does
- * not reverse the finished array - and the sort is not stable.
- *
- * `data` is the first element and `count` the number of them, so one entry
- * point serves both a `[dynamic]T` and a `[]mut T`. Nothing here allocates, and
- * the table is not involved: an element's size and comparison are everything a
- * sort needs. */
-typedef int32_t (*loke_rt_less_v1)(const void *a, const void *b);
-
-void loke_rt_v1_sort(
-	void *data, int64_t count, uint64_t elem_size,
-	loke_rt_less_v1 less, int32_t descending);
-
 /* Atomics at a width this target has no usable native lowering for
  * (`runtime/atomic.c`). Every operand travels by address, so one helper per
  * operation serves every 128-bit type. `order` is a `runtime.Memory_Order`

@@ -12,11 +12,11 @@ L0512
 
 L0512
 @64:2
-`counter` cannot be modified by `less` here
+`counter` cannot be modified by `sort(Ranked)` here
 
 L0512
 @70:2
-`counter` cannot be modified by `less` here
+`counter` cannot be modified by `reverse_sort(Ranked)` here
 
 L0512
 @77:2

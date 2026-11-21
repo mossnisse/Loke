@@ -1,9 +1,6 @@
-Secret{id = 1}
-Secret{id = 1}
-secret
+shown hidden
 hidden
-["a"] b
-Secret{id = 2}
-Secret{id = 2}
-Secret{id = 2}
-[Secret{id = 2}] shown local
+shown
+shown
+local
+[shown] local

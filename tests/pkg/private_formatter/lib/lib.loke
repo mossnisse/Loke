@@ -2,23 +2,10 @@ package lib;
 
 import "core:fmt";
 
-// design.md "Interface bodies": a public type's private `format` meets no slot,
-// here included, so standard-library.md "Printed forms" uses the generated
-// default for it in every package. A private type's own `format` still serves.
-
-@(public)
-Secret :: struct { @(public) id: int, code: int }
-
-impl Secret {
-	format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "secret"); }
-}
-
-@(public)
-Tag :: distinct string;
-
-impl Tag {
-	format :: proc(self, w: fmt.Writer, o: fmt.Options) { fmt.concat_to(w, "tag"); }
-}
+// standard-library.md "Printed forms": a public type's `format` is `@(public)`,
+// and printing uses it in every package. A private type's own `format` serves
+// too, since no importer can name the type; tests/err/private_format.loke
+// refuses a public type's private one.
 
 @(public)
 Shown :: struct {}
@@ -35,17 +22,9 @@ impl hidden {
 }
 
 @(public)
-make_secret :: proc(id: int) -> Secret { return Secret{id, 7}; }
-
-@(public)
 show_here :: proc() {
-	s := Secret{1, 7};
-	fmt.println(s);
-	view := (dyn fmt.Formattable)(&s);
+	fmt.println(Shown{}, hidden{});
+	value := hidden{};
+	view := (dyn fmt.Formattable)(&value);
 	fmt.println(view);
-	// Ordinary lookup still finds the private method.
-	s.format(fmt.stdout(), fmt.DEFAULT_OPTIONS);
-	fmt.println("");
-	fmt.println(hidden{});
-	fmt.println([?]Tag{"a"}, Tag("b"));
 }

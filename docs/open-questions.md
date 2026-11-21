@@ -250,28 +250,6 @@ and `[]u8{...}` take 40 `Large` slots for the by-value calls and 80 for the
 method calls. Whether they should reuse slots as the growable literals do is
 open with the summary. Found on 2026-11-12.
 
-## A public type's private `format`
-
-Such a type gets the generated default for the `Formattable` slot and prints by
-it in every package, its own included
-([Printed forms](standard-library.md#printed-forms),
-[Interface bodies](design.md#interface-bodies)). The specification leaves open:
-
-- **Ordinary lookup of the hidden default.** Lookup of `format` on such a type
-  finds only the written method: its package calls it, and an importer gets
-  `L0363` rather than the default that printing uses. The alternative is to let
-  an importer's lookup reach the default, as it does on a type without a written
-  `format`.
-- **A warning for an unused private `format`.** A public type's private `format`
-  is never what printing calls, which an author may not expect. A warning at the
-  declaration would say so, but would also fire for a method meant only for direct
-  calls in its package.
-- **A bound generic's direct call in the defining package.** There, a procedure
-  bound by `where fmt.Formattable(T)` that calls `value^.format(...)` finds the
-  private method by ordinary lookup, which comes before the bound, while printing
-  the same value uses the default. Whether a call through the bound should instead
-  reach the slot's method is part of the first question.
-
 ## JSON follow-ups
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) implements the
@@ -310,22 +288,6 @@ design questions stay open until a caller or a measurement settles them:
   pays only if repeated random access outweighs its build time and memory, and
   `validate_unique_keys` waits for a protocol that requires globally unique
   keys.
-
-## Sorting through the runtime
-
-Should `values.sort()` and `values.reverse_sort()` lower to the Loke introsort
-that `slice.sort_by` now is, instead of the runtime's C introsort? Through the
-runtime, each comparison is an indirect call to a generated thunk. On
-2026-11-21 at `-opt=speed`, 65 sorts of 32,768 scattered `int`s took 207 ms with
-`slice.sort` and 106 ms with `slice.sort_by(values, slice.Ascending(int){})`,
-and for a 32-byte record 212 and 120 ms. The member also sorts a `[dynamic]T`
-and has its own compile-time path, so moving it means calling a library
-generic from compiler-contributed code, or making `slice.sort` stop forwarding
-to the member, so that two spellings use different implementations.
-[Slice sort](../core/slice/slice.loke) ·
-[Runtime sort](../runtime/container.c) ·
-[Sorting slices](standard-library.md#sorting-slices) ·
-[Rationale](comments.md#standard-library-api-choices)
 
 ## Package and import versioning
 
@@ -1000,21 +962,6 @@ the compiler ([tests/pkg/real_interface](../tests/pkg/real_interface)) before
 These language questions came out of that work, and the libraries cannot
 settle them by themselves.
 
-### Visibility in slot and expression requirements
-
-A named slot is met by a private inherent method on any type no importer can
-name ([Interface bodies](design.md#interface-bodies)), while an
-expression requirement such as `(a, b: T) a + b -> T` is checked with the
-visibility of the package that applies the interface, where the bound is
-written, and so needs the operator to be visible there. A type in a
-`package main`, whose declarations are private by default, therefore meets
-`Real`'s `sqrt` slot but not `Numeric`'s `+` until its operators are marked
-`@(public)`. The diagnostic now names the cause. An associated constant
-requirement, `T.Real -> type`, falls back to the slot rule when the applying
-package sees no such member ([Interface bodies](design.md#interface-bodies));
-whether the other expression requirements should agree with slots, and in
-which direction, is open.
-
 ### Disjoint strided mutable views
 
 [`core:math/dense`](standard-library.md#coremathdense) gives
@@ -1308,16 +1255,6 @@ Count declarations, propagation and dispatch sites, and lines; check that
 error context survives; and compare the diagnostics after adding, renaming,
 and removing a variant or a label. Document an idiom in a tutorial only after
 it has been compared this way.
-
-## Growable container follow-ups
-
-Questions left by [`Priority_Queue` and `Deque`](standard-library.md#priority-queues),
-none of which they wait on.
-
-- **A dynamic array's allocator.** `x.allocator` is not a member, which is the only
-  reason `Deque` has its own field. An `x.allocator()` query would remove it, and
-  would help any library container that replaces its storage. Is the query worth
-  having for its own sake?
 
 ## Last-use transfer into a container, `box`, or `shared`
 

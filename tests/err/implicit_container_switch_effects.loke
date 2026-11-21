@@ -71,7 +71,7 @@ reverse_sorted :: proc(xs: inout [dynamic]Ranked) -> int {
 	return view^;
 }
 
-// The library's spelling forwards to the member.
+// The member is a call of the library's spelling, so the two report alike.
 library_sorted :: proc(xs: []mut Ranked) -> int {
 	view := &counter;
 	slice.sort(xs);

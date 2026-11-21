@@ -2,11 +2,10 @@ package sample;
 
 import "core:fmt";
 
-// design.md "Interface bodies", "Built-in procedures", "Global write effects":
-// only a `format` a slot can meet counts when printing. What a public type's private
-// `format` leaves out is in tests/pkg/private_formatter_effects. Each `format` here
-// that clears `data` is one printing may run, and a private method called by name
-// counts as a call.
+// design.md "Built-in procedures", "Global write effects": a `format` printing may
+// run counts when printing, including one a generated default reaches. Each
+// `format` here that clears `data` is one printing may run, and a private method
+// called by name counts as a call.
 
 data: [dynamic]int = {};
 
@@ -23,28 +22,13 @@ impl Own {
 }
 
 @(public)
-Hidden :: struct { n: int }
-impl Hidden {
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
-}
-
-@(public)
 Generic :: struct($T: type) { @(public) value: T }
-impl Generic($T) {
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
-}
 
 @(public)
 Holds_Own :: struct { @(public) shown: Shown }
-impl Holds_Own {
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
-}
 
 @(public)
 Holds_View :: struct { @(public) view: dyn fmt.Formattable }
-impl Holds_View {
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {}
-}
 
 a_public_format :: proc() {
 	data.append(7);

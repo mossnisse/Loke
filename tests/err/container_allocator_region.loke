@@ -1,0 +1,37 @@
+package main;
+
+import "core:mem";
+
+// design.md "Dynamic arrays": `x.allocator()` is in `x`'s region and borrows the
+// control block of the provider behind `x`, so neither the handle nor an owner
+// built from it outlives the provider (design.md "Allocator regions and region
+// provenance"). tests/run/container_allocator.loke changes `x` while a handle is
+// held.
+
+built_from_it :: proc() -> [dynamic]int {
+	buffer: [64]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[mut :]);
+	local: [dynamic]int via arena.allocator() = {};
+	return make([dynamic]int, 0, 1, local.allocator());
+}
+
+the_handle :: proc() -> Allocator {
+	buffer: [64]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[mut :]);
+	local: [dynamic]int via arena.allocator() = {};
+	return local.allocator();
+}
+
+after_the_provider :: proc() -> int {
+	a := mem.default_allocator();
+	{
+		buffer: [64]u8 = {};
+		arena := mem.Arena.from_buffer(buffer[mut :]);
+		local: [dynamic]int via arena.allocator() = {};
+		a = local.allocator();
+	}
+	more := make([dynamic]int, 0, 1, a);
+	return more.cap();
+}
+
+main :: proc() {}

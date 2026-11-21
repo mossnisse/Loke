@@ -124,6 +124,17 @@ Return_Uses :: enum u8 {
 }
 
 // `a.b`, and the implicit-selector primary `.Member` when `operand` is nil.
+// A package a file may depend on without importing it (`File.implied`).
+Implied_Dependency :: enum u8 {
+	Thread, // a `parallel` block's
+	Slice,  // `sort` and `reverse_sort` members'
+}
+
+IMPLIED_PACKAGES := [Implied_Dependency]string {
+	.Thread = STD_THREAD,
+	.Slice  = STD_SLICE,
+}
+
 Expr_Selector :: struct {
 	using base: Expr_Base,
 	operand:    Expr,
@@ -1449,12 +1460,13 @@ File :: struct {
 	// Every `import` the file writes, at file scope or in a `when` branch, in
 	// source order.
 	imports:        []^Item_Import,
-	// Where each `parallel` keyword is. A block's hidden scope is a
-	// `core:thread` type, so that package is a dependency of a file whose
-	// selected items hold one; `parallel_bound` once import discovery has
+	// Where each use of a package no import names is: a `parallel` keyword, whose
+	// hidden scope is a `core:thread` type, and a `sort` or `reverse_sort` member,
+	// which is `core:slice`'s procedure. That package is a dependency of a file
+	// whose selected items hold one; `implied_bound` once import discovery has
 	// added it.
-	parallels:      []u32,
-	parallel_bound: bool,
+	implied:        [Implied_Dependency][]u32,
+	implied_bound:  bit_set[Implied_Dependency],
 	// What `-migrate` rewrites. Nothing else reads these.
 	earlier_spellings: []Earlier_Spelling,
 	earlier_slices:    []Earlier_Slice,

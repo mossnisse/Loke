@@ -1,0 +1,65 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Dynamic arrays", "Maps": `x.allocator()` is the allocator `x`
+// records, or the default one an unbound container would bind, at run time and
+// at compile time.
+
+// Room for what an owner built from the handle may take, or a refusal.
+report :: proc(name: string_view, allocator: Allocator, count: int) {
+	switch (try_make([dynamic]int, 0, count, allocator)) {
+	case .ok(built):
+		fmt.println(name, "has room for", built.cap());
+	case .err(failure):
+		fmt.println(name, "refused", count);
+	}
+}
+
+// A container that replaces its storage builds the new one from the old's.
+regrow :: proc(values: inout [dynamic]int, capacity: int) {
+	grown := make([dynamic]int, 0, capacity, values.allocator());
+	foreach (value in values) { grown.append(value); }
+	values = move(grown);
+}
+
+// The handle borrows the provider, not the array, which may change meanwhile.
+while_held :: proc() -> int {
+	values: [dynamic]int = {};
+	handle := values.allocator();
+	values.append(1, 2, 3);
+	more := make([dynamic]int, 0, 4, handle);
+	more.append(..values[:]);
+	return more.len();
+}
+
+ZERO_HANDLE :: proc() -> bool {
+	values: [dynamic]int = {};
+	values.append(1);
+	return values.allocator() == Allocator{};
+}
+
+main :: proc() {
+	buffer: [256]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[mut :], policy = .Trap);
+	small: [dynamic]int via arena.allocator() = {};
+	small.append(1, 2);
+	report("arena array", small.allocator(), 4);
+	report("arena array", small.allocator(), 1000);
+
+	table: map[int]int via arena.allocator() = {};
+	report("arena map", table.allocator(), 1000);
+
+	unbound: [dynamic]int = {};
+	report("unbound array", unbound.allocator(), 1000);
+	none: map[int]int = {};
+	report("unbound map", none.allocator(), 1000);
+
+	regrow(inout small, 8);
+	fmt.println(small, small.cap());
+	report("regrown array", small.allocator(), 1000);
+
+	fmt.println(while_held());
+	static_assert(ZERO_HANDLE());
+}

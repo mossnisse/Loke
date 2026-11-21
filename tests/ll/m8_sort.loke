@@ -1,9 +1,10 @@
 package main; import "core:fmt"; import "core:slice";
 
-// The sort lowering: one runtime introsort reached with the
-// data pointer, the count, the element size, one generated comparison per
-// element type, and the descending flag. `slice.sort_by` is Loke, so it calls
-// its comparator's `call` directly and never reaches the runtime.
+// The sort lowering (standard-library.md "Sorting slices"): a `sort` or
+// `reverse_sort` member calls `core:slice`'s instance for the element type on a
+// slice of the elements, the same one `slice.sort` is, and that is `sort_by` with
+// `Ascending` or `Descending`, which call the element's `<` directly. Nothing
+// reaches a runtime sort.
 
 Card :: struct { rank: int, tag: int }
 

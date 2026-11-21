@@ -110,7 +110,9 @@ remember_incremental_inputs :: proc(s: ^Compilation_Session, input: string, docu
 @(private = "file")
 same_file_topology :: proc(a, b: ^File, a_text, b_text: string) -> bool {
 	if a.package_name != b.package_name || len(a.attributes) != len(b.attributes) || when_holds_dependency(b) { return false }
-	if (len(a.parallels) > 0) != (len(b.parallels) > 0) { return false }
+	for kind in Implied_Dependency {
+		if (len(a.implied[kind]) > 0) != (len(b.implied[kind]) > 0) { return false }
+	}
 	// File attributes include provider defaults, which discovery reads.
 	for attribute, index in a.attributes {
 		other := b.attributes[index].span
@@ -247,7 +249,7 @@ unbind_package :: proc(pkg: ^Package) {
 	clear(&pkg.imports)
 	for file in pkg.files {
 		for imported in file.imports { imported.bound = false }
-		file.parallel_bound = false
+		file.implied_bound = {}
 	}
 }
 

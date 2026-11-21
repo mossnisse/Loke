@@ -295,6 +295,10 @@ prov_region_name :: proc(graph: ^Flow_Graph, set: Region_Set) -> string {
 // named provider.
 @(private)
 prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id) -> (Region_Set, bool) {
+	// `x.allocator()`: the provider backing `x`.
+	if call_container_op(graph.k.c, v) == .Allocator && len(v.bound) > 0 {
+		return prov_result_region(graph, receiver), true
+	}
 	if call_provider_op(graph.k.c, v) != .Handle || len(v.bound) == 0 {
 		return Region_Set{}, false
 	}

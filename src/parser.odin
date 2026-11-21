@@ -49,7 +49,7 @@ Parser :: struct {
 	// expression reparse so nested ones are not parsed exponentially.
 	probed:         Probed_Literal,
 	imports:        [dynamic]^Item_Import,
-	parallels:      [dynamic]u32, // each `parallel` keyword's offset
+	implied:        [Implied_Dependency][dynamic]u32, // `File.implied`
 	earlier_spellings: [dynamic]Earlier_Spelling,
 	earlier_slices: [dynamic]Earlier_Slice,
 	// Just past the `[` of the slice parsed last, where `-migrate` writes `mut`.
@@ -79,16 +79,20 @@ parse :: proc(c: ^Compiler, file: u32, tokens: []Token, syntax_allocator := mem.
 		tokens    = tokens,
 		allocator = allocator,
 		imports   = make([dynamic]^Item_Import, 0, 0, allocator),
-		parallels = make([dynamic]u32, 0, 0, allocator),
 		earlier_spellings = make([dynamic]Earlier_Spelling, 0, 0, allocator),
 		earlier_slices = make([dynamic]Earlier_Slice, 0, 0, allocator),
 		accept_earlier_spellings = accept_earlier_spellings,
+	}
+	for &offsets in p.implied {
+		offsets = make([dynamic]u32, 0, 0, allocator)
 	}
 	tag_written_move_only(&p)
 	parse_package_clause(&p, &result)
 	result.items = parse_items(&p, stop_at_rbrace = false)
 	result.imports = p.imports[:]
-	result.parallels = p.parallels[:]
+	for &offsets, kind in p.implied {
+		result.implied[kind] = offsets[:]
+	}
 	result.earlier_spellings = p.earlier_spellings[:]
 	result.earlier_slices = p.earlier_slices[:]
 	return result
@@ -235,6 +239,11 @@ text_of :: proc(p: ^Parser, t: Token) -> string {
 @(private = "file")
 is_contextual :: proc(p: ^Parser, word: string) -> bool {
 	return at(p, .Ident) && text_of(p, current(p)) == word
+}
+
+@(private = "file")
+append_implied :: proc(p: ^Parser, kind: Implied_Dependency, offset: u32) {
+	append(&p.implied[kind], offset)
 }
 
 @(private = "file")
@@ -1977,7 +1986,7 @@ parse_parallel :: proc(p: ^Parser) -> Stmt {
 		}
 	}
 
-	append(&p.parallels, start.lo)
+	append_implied(p, .Thread, start.lo)
 	executor: Expr
 	if allow(p, .Lparen) {
 		executor = parse_expr(p)
@@ -2451,6 +2460,11 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 			s.operand = e
 			if ok {
 				s.name = name_of(p, name)
+				// standard-library.md "Sorting slices": possibly a container's or a
+				// slice's sort, which is `core:slice`'s.
+				if s.name.text == "sort" || s.name.text == "reverse_sort" {
+					append_implied(p, .Slice, name.lo)
+				}
 			}
 			s.has_error = !ok || expr_has_error(e)
 			e = s

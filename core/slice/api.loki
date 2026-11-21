@@ -124,7 +124,7 @@ sort_by :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right: 
 */
 sort :: proc(values: []mut $T) where Ordered(T) ---;
 
-// Descending. The sort is not stable.
+// Descending. The same as `values.reverse_sort()`. The sort is not stable.
 reverse_sort :: proc(values: []mut $T) where Ordered(T) ---;
 
 /*

@@ -501,7 +501,6 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		{"typeid", "typeid registry is incomplete"},
 		{"typeid_range", "no unique frozen typeid"},
 		{"map", "map key operation was not resolved"},
-		{"order", "ordering operation has no checked procedure"},
 		{"formatter", "formatter has no emitted witness"},
 		{"formatter_slots", "formatter has no emitted witness"},
 		{"instance", "generic body is missing from its package"},
@@ -534,8 +533,6 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		case "map":
 			map_type := map_of(&c, TYPE_INT, TYPE_INT)
 			type_of(&c, map_type).contributed += {.Container}
-		case "order":
-			c.order_policies[TYPE_INT] = Order_Policy{kind = .Inherent, less = Symbol_Id(len(c.symbols) + 1)}
 		case "formatter":
 			// Complete, but only an ordered witness is named and emitted as a table.
 			witness := new(Witness, c.semantic_allocator)

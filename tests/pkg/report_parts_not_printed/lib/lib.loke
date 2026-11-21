@@ -6,7 +6,7 @@ import "core:fmt";
 // the `format` methods its printed form calls (standard-library.md "Printed forms").
 // `Own.format` clears `data`, and each report holds a view of it, so counting that
 // call would report L0512. What does reach it is in
-// tests/err/private_formatter_effects.loke.
+// tests/err/format_effects.loke.
 
 data: [dynamic]int = {};
 

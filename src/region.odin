@@ -172,6 +172,12 @@ call_provider_op :: proc(c: ^Compiler, v: ^Expr_Call) -> Provider_Op {
 	return sym != nil ? sym.provider_op : .None
 }
 
+// The contributed container operation a call reaches, or `.None`.
+call_container_op :: proc(c: ^Compiler, v: ^Expr_Call) -> Container_Op {
+	sym := symbol_of(c, v.resolution.chosen_overload)
+	return sym != nil && sym.synth == .Container_Op ? sym.container_op : .None
+}
+
 // ---------------------------------------------------------- regions --
 
 // The regions an allocator value may name (design.md "Allocator regions and

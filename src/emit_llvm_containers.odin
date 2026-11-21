@@ -39,7 +39,6 @@ CONTAINER_DECLARATIONS := [?]Runtime_Declaration {
 	{"i32", "loke_rt_v1_map_remove", "ptr, ptr, ptr, ptr", ""},
 	{"void", "loke_rt_v1_map_clear", "ptr, ptr", ""},
 	{"i32", "loke_rt_v1_map_shrink", "ptr, ptr, i64", ""},
-	{"void", "loke_rt_v1_sort", "ptr, i64, i64, ptr, i32", ""},
 }
 
 // The operation table for one concrete container type, made once along with
@@ -92,30 +91,6 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id, relocating := false) ->
 emit_ret_flag :: proc(e: ^Emitter, flag: string) {
 	widened := emit_value(e, "zext i1 %s to i32", flag)
 	fmt.sbprintfln(&e.b, "  ret i32 %s", widened)
-}
-
-// One comparison per element type, using the `<` policy settled during checking.
-@(private)
-container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
-	return memo_thunk(
-		e, generated_name(e, fmt.aprintf("@loke.cless.%d", int(element))), element,
-		"i32", "ptr %a, ptr %b",
-		proc(e: ^Emitter, element: Type_Id) {
-			before := ""
-			if policy := resolved_element_order_policy(e.c, element); policy.kind == .Inherent {
-				before = temp(e)
-				fmt.sbprintfln(
-					&e.b, "  %s = call i1 %s(%s, %s)", before, symbol_name(e, policy.less),
-					hook_argument(e, policy.less, 0, element, "%a"), hook_argument(e, policy.less, 1, element, "%b"),
-				)
-			} else {
-				left := load_temporary(e, element, "%a")
-				right := load_temporary(e, element, "%b")
-				before = emit_compare(e, .Lt, element, left, right)
-			}
-			emit_ret_flag(e, before)
-		},
-	)
 }
 
 // NULL means the part is trivially destroyed, so the C loop is skipped.
@@ -407,6 +382,9 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	case .Split_At_Mut:
 		emit_synth_split(e, symbol, name)
 		return
+	case .Allocator:
+		emit_synth_allocator(e, symbol, name)
+		return
 	case .Chunks_Mut:
 		emit_synth_chunks(e, symbol, name)
 		return
@@ -529,7 +507,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 	case .Map_Shrink:
 		status = status_call(e, "map_shrink", ops)
 
-	case .None, .Sort, .Reverse_Sort, .Swap, .Split_At_Mut, .Chunks_Mut:
+	case .None, .Sort, .Reverse_Sort, .Swap, .Split_At_Mut, .Chunks_Mut, .Allocator:
 		backend_fail(e, "a contributed container member has no operation")
 		fmt.sbprintln(&e.b, "  ret void")
 	}
@@ -672,7 +650,7 @@ emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
 	cloned := "true"
 	if !moves && body.lifecycle.managed {
 		cloned = emit_try_clone_into(
-			e, element, staged, spill(e, element, "%arg2"), emit_map_allocator(e, "%arg0"),
+			e, element, staged, spill(e, element, "%arg2"), emit_container_allocator(e, "%arg0"),
 		)
 	} else if !moves {
 		store(e, element, "%arg2", staged)
@@ -711,7 +689,7 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 	if body.moves || !body.lifecycle.managed {
 		store(e, element, "%arg2", staged)
 	} else {
-		allocator := emit_map_allocator(e, "%arg0")
+		allocator := emit_container_allocator(e, "%arg0")
 		cloned = emit_try_clone_into(e, element, staged, spill(e, element, "%arg2"), allocator)
 	}
 	clone_ready, clone_failed := new_label(e, "mins.cloned"), new_label(e, "mins.clone_failed")
@@ -780,9 +758,19 @@ emit_borrowed_map :: proc(e: ^Emitter, operand: Expr) -> string {
 	return header
 }
 
-// The map's own provider, or the build-selected default when it is unbound.
+// design.md "Dynamic arrays", "Maps": `x.allocator()`, which reads the header only.
 @(private = "file")
-emit_map_allocator :: proc(e: ^Emitter, header: string) -> string {
+emit_synth_allocator :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	open_synth_function(e, symbol, name)
+	emit_ret(e, TYPE_ALLOCATOR, emit_container_allocator(e, receiver_header(e, symbol)))
+	fmt.sbprintln(&e.b, "}")
+}
+
+// The container's own provider, or the build-selected default when it is unbound.
+@(private = "file")
+emit_container_allocator :: proc(e: ^Emitter, header: string) -> string {
 	bound := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC))
 	unbound, allocator := is_null(e, bound), temp(e)
 	fmt.sbprintfln(

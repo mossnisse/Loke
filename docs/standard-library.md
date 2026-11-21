@@ -1579,7 +1579,11 @@ For ordinary member lookup, a visible local extension named `format` takes
 precedence over the generated default. Interface slot selection remains
 independent of the caller's extensions. An inherent `format` must match the
 slot, including the writer and options parameter modes; a generic method does
-not supply this concrete slot.
+not supply this concrete slot. A [public](design.md#exported-names) type's
+`format` must be `@(public)`: its private methods [meet no
+slot](design.md#interface-bodies), so a private one could never be what printing
+calls, and it is an error rather than a method that prints one way by name and
+another by `print`.
 
 ## `core:strings`
 
@@ -2458,6 +2462,10 @@ them: the sort is still a permutation of the slice, and still terminates.
 
 All three procedures accept `[]mut T`; passing a read-only `[]T` is a
 compile-time error, because a read-only slice has no mutable storage to sort.
+
+The `values.sort()` and `values.reverse_sort()` members of `[]mut T` and
+`[dynamic]T` are calls of `slice.sort` and `slice.reverse_sort` on the elements,
+at run time and at compile time alike, and need no import of `core:slice`.
 
 See [Calling a value](design.md#calling-a-value) and [Capture
 literals](design.md#capture-literals) for callable comparators.

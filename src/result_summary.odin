@@ -307,7 +307,7 @@ widen_summary_map_path :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) {
 // of a record result depends on `param` separately, as a body's summary would: the
 // halves of `split_at_mut` destructure into two reborrows rather than two reads of
 // one.
-set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: int, per_path := false) {
+set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: int, per_path := false, in_region := false) {
 	sym := symbol_of(c, declaration)
 	if sym == nil || sym.result == INVALID_TYPE || param >= len(sym.params) {
 		return
@@ -326,6 +326,14 @@ set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: in
 			region_add_param(&summary.region, param)
 		}
 		summary.region.default = true
+	} else if in_region {
+		// A handle on the provider backing the parameter, which borrows that
+		// provider's control block (`prov_container_handle_call`), not the parameter.
+		region_add_param(&summary.region, param)
+		summary.params[param] = false
+		for &content in summary.content {
+			content.dependencies.params[param] = false
+		}
 	}
 	c.result_summaries[declaration] = summary
 }

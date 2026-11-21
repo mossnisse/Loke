@@ -420,10 +420,10 @@ prov_implicit_call_effects :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		if .Stores_Key in effects {
 			prov_copy_effects(graph, container_key(c, subject), v.span)
 		}
+		// A sort is a call of `core:slice`'s, which compares with the element's `<`.
 		if .Compares_Elements in effects {
-			policy := resolved_element_order_policy(c, sequence_element(c, subject))
-			if policy.kind == .Inherent {
-				prov_effect_call(graph, Effect_Call{callee = policy.less}, v.span)
+			if sorter := sort_instance(c, sequence_element(c, subject), sym.container_op); sorter != INVALID_SYMBOL {
+				prov_effect_call(graph, Effect_Call{callee = sorter}, v.span)
 			}
 		}
 	}

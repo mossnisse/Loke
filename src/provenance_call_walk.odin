@@ -272,6 +272,28 @@ prov_handle_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	return prov_join(graph, loans, prov_borrow(graph, root, nil, false, v.span, "allocator handle"))
 }
 
+// design.md "Dynamic arrays": `x.allocator()` borrows the control block of the
+// provider backing `x`, as `arena.allocator()` borrows `arena`'s, and nothing of
+// `x`, which may change while the handle is held. Only a provider of this body can
+// end while the handle is live, so only a local region gets a root, whose region is
+// settled with the other handles' (`prov_handle_region`). Otherwise the handle holds
+// what `x` holds, as one read from a record's field does.
+@(private = "file")
+prov_container_handle_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+	held := walk_flow_expr(graph, v.bound[0])
+	receiver := prov_input_value(graph, v.bound[0])
+	region, _ := prov_handle_region(graph, v, receiver)
+	if region.locals == 0 {
+		return held
+	}
+	root := prov_new_root(graph, .Provider, v.span, "the allocator control block behind this container")
+	graph.roots[int(root)].region = region
+	if graph.effect_program != nil {
+		append(&graph.effect_program.root_regions, Prov_Root_Region{root, v, receiver})
+	}
+	return prov_join(graph, held, prov_borrow(graph, root, nil, false, v.span, "allocator handle"))
+}
+
 // A call that bound no arguments: `v.args` are all there is to walk.
 @(private = "file")
 prov_unbound_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call, callee: []int, spawned: bool) -> []int {
@@ -360,6 +382,9 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	}
 	if result, handled := prov_builtin_call(graph, v); handled {
 		return result
+	}
+	if call_container_op(c, v) == .Allocator && len(v.bound) > 0 {
+		return prov_container_handle_call(graph, v)
 	}
 	#partial switch call_provider_op(c, v) {
 	case .Handle:
