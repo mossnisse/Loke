@@ -31,7 +31,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Expr_Postfix, "op op_span operand failure", "borrows boxed failure_exit failure_maps"},
 		{Expr_Propagated_Error, "", "owner"},
 		{Expr_Unary, "op op_span mutable operand", ""},
-		{Expr_Binary, "op op_span lhs rhs", "negated"},
+		{Expr_Binary, "op op_span lhs rhs", "negated swapped"},
 		{Expr_Range, "op op_span lo hi", ""},
 		{Expr_Or_Else, "value fallback exit", "borrows fallback_clone"},
 		{Expr_Cond, "then cond otherwise", "then_clone else_clone"},
