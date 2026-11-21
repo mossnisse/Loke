@@ -6,8 +6,8 @@
  * scalar into bytes, and handing bytes to a stream.
  *
  * Keeping the scalars here rather than in generated LLVM is a size decision: a
- * base-N integer spelling is the same twenty lines whichever of the eleven
- * integer types asked for it.
+ * base-N integer spelling is the same code whichever of the eleven integer
+ * types asked for it.
  */
 #include "loke_rt.h"
 
@@ -48,12 +48,16 @@ static _locale_t try_c_numeric(int32_t *failure) {
 	return made;
 }
 
-/* The same, for printing, whose sink has no way to report a failure. */
+/* What printing does instead, since its sink has no way to report a failure. */
+static void no_c_numeric(void) {
+	loke_rt_v1_panic("cannot create the \"C\" numeric locale for float text");
+}
+
 static _locale_t c_numeric(void) {
 	int32_t failure = 0;
 	_locale_t made = try_c_numeric(&failure);
 	if (made == 0) {
-		loke_rt_v1_panic("cannot create the \"C\" numeric locale for float text");
+		no_c_numeric();
 	}
 	return made;
 }
@@ -109,74 +113,56 @@ static int64_t base_of(const loke_rt_options_v1 *o) {
 	return o->base;
 }
 
-/* Digits are produced least-significant first into a fixed buffer, then
- * reversed: 128 bits in base 2 is the widest case and fits in 128 digits.
- *
- * ponytail: one 128-bit spelling serves every width, so a 64-bit value pays for
- * a 128-bit divide per digit. Formatting is not a hot path; give `uint64_t` its
- * own copy of this loop if it ever becomes one. */
-static int64_t spell_unsigned128(
-	uint8_t *out, unsigned __int128 value, int64_t base, int uppercase) {
+/* `value`'s digits, written least-significant first backwards from `end`, so
+ * they land in order without a copy; answers where they start. 128 bits in base
+ * 2 is the widest case, at 128 digits. Once the rest fits 64 bits it is divided
+ * as a `uint64_t`, far cheaper than a 128-bit divide per digit. */
+static uint8_t *spell_digits(uint8_t *end, unsigned __int128 value, uint64_t base, int uppercase) {
 	const char *digits = uppercase ? "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	                               : "0123456789abcdefghijklmnopqrstuvwxyz";
-	uint8_t scratch[128];
-	int64_t used = 0;
-	do {
-		scratch[used++] = (uint8_t)digits[value % (unsigned __int128)base];
-		value /= (unsigned __int128)base;
-	} while (value != 0);
-	for (int64_t i = 0; i < used; i++) {
-		out[i] = scratch[used - 1 - i];
+	for (; value > UINT64_MAX; value /= base) {
+		*--end = (uint8_t)digits[value % base];
 	}
-	return used;
+	uint64_t rest = (uint64_t)value;
+	do {
+		*--end = (uint8_t)digits[rest % base];
+		rest /= base;
+	} while (rest != 0);
+	return end;
 }
 
-static int64_t spell_unsigned(uint8_t *out, uint64_t value, int64_t base, int uppercase) {
-	return spell_unsigned128(out, (unsigned __int128)value, base, uppercase);
+/* Every integer entry point: a magnitude, and whether a `-` goes before it. */
+static void fmt_integer(
+	const loke_rt_writer_v1 *w, unsigned __int128 magnitude, int negative, const loke_rt_options_v1 *o) {
+	uint8_t buffer[129];
+	uint8_t *end = buffer + sizeof(buffer);
+	uint8_t *start = spell_digits(end, magnitude, (uint64_t)base_of(o), o != 0 && o->uppercase != 0);
+	if (negative) {
+		*--start = '-';
+	}
+	loke_rt_v1_fmt_bytes(w, start, end - start);
 }
 
 void loke_rt_v1_fmt_u64(const loke_rt_writer_v1 *w, uint64_t value, const loke_rt_options_v1 *o) {
-	uint8_t buffer[64];
-	int64_t used = spell_unsigned(buffer, value, base_of(o), o != 0 && o->uppercase != 0);
-	loke_rt_v1_fmt_bytes(w, buffer, used);
+	fmt_integer(w, value, 0, o);
 }
 
+/* A negative value's magnitude is its unsigned negation, which, unlike negating
+ * the signed value, cannot overflow at the most negative one. */
 void loke_rt_v1_fmt_i64(const loke_rt_writer_v1 *w, int64_t value, const loke_rt_options_v1 *o) {
-	uint8_t buffer[66];
-	int64_t used = 0;
-	uint64_t magnitude;
-	if (value < 0) {
-		buffer[used++] = '-';
-		/* Negating the most negative value overflows; complementing does not. */
-		magnitude = (uint64_t)(-(value + 1)) + 1;
-	} else {
-		magnitude = (uint64_t)value;
-	}
-	used += spell_unsigned(buffer + used, magnitude, base_of(o), o != 0 && o->uppercase != 0);
-	loke_rt_v1_fmt_bytes(w, buffer, used);
+	fmt_integer(w, value < 0 ? 0 - (uint64_t)value : (uint64_t)value, value < 0, o);
 }
 
 void loke_rt_v1_fmt_u128(
 	const loke_rt_writer_v1 *w, uint64_t low, uint64_t high, const loke_rt_options_v1 *o) {
-	uint8_t buffer[128];
-	unsigned __int128 value = ((unsigned __int128)high << 64) | low;
-	int64_t used = spell_unsigned128(buffer, value, base_of(o), o != 0 && o->uppercase != 0);
-	loke_rt_v1_fmt_bytes(w, buffer, used);
+	fmt_integer(w, ((unsigned __int128)high << 64) | low, 0, o);
 }
 
 void loke_rt_v1_fmt_i128(
 	const loke_rt_writer_v1 *w, uint64_t low, uint64_t high, const loke_rt_options_v1 *o) {
-	uint8_t buffer[129];
-	int64_t used = 0;
 	unsigned __int128 bits = ((unsigned __int128)high << 64) | low;
-	unsigned __int128 magnitude = bits;
-	if ((high >> 63) != 0) {
-		buffer[used++] = '-';
-		magnitude = (~bits) + 1;
-	}
-	used += spell_unsigned128(
-		buffer + used, magnitude, base_of(o), o != 0 && o->uppercase != 0);
-	loke_rt_v1_fmt_bytes(w, buffer, used);
+	int negative = (high >> 63) != 0;
+	fmt_integer(w, negative ? 0 - bits : bits, negative, o);
 }
 
 /* `sci`, a `%.*e` spelling, one unit up in its last digit, so 9.99e+05 becomes
@@ -294,7 +280,7 @@ static int reads_back(const char *sci, double value, int bits, _locale_t locale)
  *
  * ponytail: up to 17 `snprintf`/`strtod` pairs per value rather than Ryu or
  * Grisu. Formatting is not a hot path; swap in one of those if it becomes one. */
-static int64_t spell_float(uint8_t *out, double value, int bits, _locale_t locale) {
+static int64_t spell_float(uint8_t *out, double value, int bits) {
 	if (isnan(value)) {
 		memcpy(out, "nan", 3);
 		return 3;
@@ -306,6 +292,11 @@ static int64_t spell_float(uint8_t *out, double value, int bits, _locale_t local
 		}
 		memcpy(out, "inf", 3);
 		return 3;
+	}
+	int32_t failure = 0;
+	_locale_t locale = try_c_numeric(&failure);
+	if (locale == 0) {
+		return -(int64_t)failure;
 	}
 	/* The longest spelling, `-2.2250738585072014e-308`, is 24 bytes; the
 	 * longest fixed one, `-0.00012345678901234567`, is 23. */
@@ -324,11 +315,13 @@ static int64_t spell_float(uint8_t *out, double value, int bits, _locale_t local
 	return spell_general((char *)out, sci);
 }
 
+/* NaN and the infinities need no locale, so printing them cannot panic. */
 static void fmt_float(const loke_rt_writer_v1 *w, double value, int bits) {
-	/* NaN and the infinities need no locale, so printing them cannot panic. */
-	_locale_t locale = isnan(value) || isinf(value) ? 0 : c_numeric();
 	uint8_t out[LOKE_RT_FLOAT_SPELLING_MAX];
-	int64_t used = spell_float(out, value, bits, locale);
+	int64_t used = spell_float(out, value, bits);
+	if (used < 0) {
+		no_c_numeric();
+	}
 	loke_rt_v1_fmt_bytes(w, out, used);
 }
 
@@ -336,15 +329,7 @@ static void fmt_float(const loke_rt_writer_v1 *w, double value, int bits) {
  * `LOKE_RT_FLOAT_SPELLING_MAX` of them, answering their count, or the negated
  * locale failure where printing panics. */
 int64_t loke_rt_v1_try_spell_f64(uint8_t *out, double value) {
-	_locale_t locale = 0;
-	if (!isnan(value) && !isinf(value)) {
-		int32_t failure = 0;
-		locale = try_c_numeric(&failure);
-		if (locale == 0) {
-			return -(int64_t)failure;
-		}
-	}
-	return spell_float(out, value, 64, locale);
+	return spell_float(out, value, 64);
 }
 
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value) {
@@ -385,18 +370,21 @@ void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value) {
 }
 
 /* design.md: a `rune` is a Unicode scalar value, so it prints as the character
- * it denotes rather than as its number. */
+ * it denotes rather than as its number. `loke_rt_encode_rune` rejects exactly
+ * what cannot be printed — a negative value, one past U+10FFFF, or a surrogate —
+ * so its 0 is where U+FFFD is printed instead. Answers the count in `out`. */
+static int64_t encode_printed_rune(uint8_t out[4], int32_t value) {
+	int64_t used = loke_rt_encode_rune(out, value);
+	if (used == 0) {
+		memcpy(out, "\xEF\xBF\xBD", 3);
+		return 3;
+	}
+	return used;
+}
+
 void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value) {
 	uint8_t buffer[4];
-	/* `loke_rt_encode_rune` rejects exactly what cannot be printed — a negative
-	 * value, one past U+10FFFF, or a surrogate — so its 0 is the replacement
-	 * case. */
-	int64_t used = loke_rt_encode_rune(buffer, value);
-	if (used == 0) {
-		loke_rt_v1_fmt_bytes(w, (const uint8_t *)"\xEF\xBF\xBD", 3); /* U+FFFD */
-		return;
-	}
-	loke_rt_v1_fmt_bytes(w, buffer, used);
+	loke_rt_v1_fmt_bytes(w, buffer, encode_printed_rune(buffer, value));
 }
 
 /* `bytes` as a literal would spell them, between `quote`s: a string or rune
@@ -441,12 +429,7 @@ void loke_rt_v1_fmt_quoted(const loke_rt_writer_v1 *w, const uint8_t *bytes, int
 
 void loke_rt_v1_fmt_quoted_rune(const loke_rt_writer_v1 *w, int32_t value) {
 	uint8_t buffer[4];
-	int64_t used = loke_rt_encode_rune(buffer, value);
-	if (used == 0) {
-		fmt_quoted(w, (const uint8_t *)"\xEF\xBF\xBD", 3, '\''); /* U+FFFD */
-		return;
-	}
-	fmt_quoted(w, buffer, used, '\'');
+	fmt_quoted(w, buffer, encode_printed_rune(buffer, value), '\'');
 }
 
 void loke_rt_v1_fmt_ptr(const loke_rt_writer_v1 *w, const void *value) {
@@ -455,8 +438,7 @@ void loke_rt_v1_fmt_ptr(const loke_rt_writer_v1 *w, const void *value) {
 		return;
 	}
 	uint8_t buffer[18];
-	buffer[0] = '0';
-	buffer[1] = 'x';
-	int64_t used = 2 + spell_unsigned(buffer + 2, (uint64_t)(uintptr_t)value, 16, 1);
-	loke_rt_v1_fmt_bytes(w, buffer, used);
+	uint8_t *start = spell_digits(buffer + sizeof(buffer), (uintptr_t)value, 16, 1) - 2;
+	memcpy(start, "0x", 2);
+	loke_rt_v1_fmt_bytes(w, start, buffer + sizeof(buffer) - start);
 }

@@ -107,6 +107,13 @@ main :: proc() {
 	fmt.format_to_with(out, fmt.Options{base = 16, uppercase = true}, i128(-255), u128(255));
 	fmt.println("");
 
+	// The most negative values, and 128-bit digits that finish in 64-bit division.
+	fmt.format_to_with(out, fmt.Options{base = 36, uppercase = false}, i64(-9223372036854775807 - 1),
+		i128(-170141183460469231731687303715884105727 - 1), u128(340282366920938463463374607431768211455));
+	fmt.println("");
+	fmt.format_to_with(out, fmt.Options{base = 2, uppercase = false}, u128(18446744073709551616));
+	fmt.println("");
+
 	// `to_string` formats into storage from the allocator it is handed. The
 	// arena is sized for the scratch buffer and the string both.
 	room: [4096]u8 = {};

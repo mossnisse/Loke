@@ -106,6 +106,11 @@ checklist.
 
 ### Changed
 
+- Printing an integer writes its digits straight into place and divides in 64 bits once the
+  value fits, and [padding](docs/standard-library.md#corefmt) writes its fill in runs of up to
+  32 bytes rather than a byte at a time, so a custom sink receives fewer, longer writes of the
+  same bytes. At `-opt=speed`, formatting six million 64-bit integers takes 0.72 s, from 1.71,
+  and padding 120,000 values to widths of 30 to 260 makes 0.76 million sink calls, from 16.4.
 - [`endian.load` and `endian.store`](docs/standard-library.md#fields-of-a-byte-slice) assemble
   a field in one unsigned word, swap it once for a big-endian field, and bit-cast it to or from
   the integer or float, and [`endian.byte_swap`](docs/standard-library.md#coreendian) unrolls

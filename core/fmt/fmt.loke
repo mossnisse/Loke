@@ -19,7 +19,6 @@ package fmt;
 	One byte sink. Any record with this `write` is one, so the same view serves a
 	stream, a buffer, and a counting sink; `(fmt.Writer)(&mut sink)` makes it.
 */
-@(public)
 Sink :: interface($Self: type) {
 	slot write: proc(self: inout Self, bytes: []u8);
 }
@@ -28,24 +27,20 @@ Sink :: interface($Self: type) {
 	The view a formatter writes through. It borrows the sink for the call, which
 	is as long as any formatter keeps it.
 */
-@(public)
 Writer :: dyn mut Sink;
 
 /// How a formatter spells a scalar. `base` is 2 to 36; anything else reads as 10.
-@(public)
 Options :: struct {
-	@(public) base:      int,
-	@(public) uppercase: bool,
+	base:      int,
+	uppercase: bool,
 }
 
-@(public)
 DEFAULT_OPTIONS :: Options{10, false};
 
 /**
 	One borrowed printed representation. Inherent methods customize it; the
 	compiler supplies defaults for other printable runtime types.
 */
-@(public)
 Formattable :: interface($Self: type) {
 	slot format: proc(self: ^, writer: Writer, options: Options);
 }
@@ -63,24 +58,20 @@ Format_View :: dyn Formattable;
 // A `..dyn Formattable` pack views each argument where it is written
 // (design.md "Variadic parameters"), so formatting one is a slot call.
 
-@(public)
 print :: proc(args: ..dyn Formattable) {
 	emit(stdout_writer(), DEFAULT_OPTIONS, ..args);
 }
 
-@(public)
 println :: proc(args: ..dyn Formattable) {
 	w := stdout_writer();
 	emit(w, DEFAULT_OPTIONS, ..args);
 	write_bytes(w, "\n");
 }
 
-@(public)
 eprint :: proc(args: ..dyn Formattable) {
 	emit(stderr_writer(), DEFAULT_OPTIONS, ..args);
 }
 
-@(public)
 eprintln :: proc(args: ..dyn Formattable) {
 	w := stderr_writer();
 	emit(w, DEFAULT_OPTIONS, ..args);
@@ -93,10 +84,8 @@ eprintln :: proc(args: ..dyn Formattable) {
 */
 // The intrinsics behind them are package-private — nothing outside this
 // package should reach the dispatch table.
-@(public)
 stdout :: proc() -> Writer { return stdout_writer(); }
 
-@(public)
 stderr :: proc() -> Writer { return stderr_writer(); }
 
 /**
@@ -104,7 +93,6 @@ stderr :: proc() -> Writer { return stderr_writer(); }
 	`0 A`.
 */
 // As design.md's own examples separate them.
-@(public)
 format_to :: proc(w: Writer, args: ..dyn Formattable) {
 	emit(w, DEFAULT_OPTIONS, ..args);
 }
@@ -113,7 +101,6 @@ format_to :: proc(w: Writer, args: ..dyn Formattable) {
 	The arguments back to back, with nothing between: what a `format` method
 	uses to write `(3, 4)`, and anything else whose punctuation is its own.
 */
-@(public)
 concat_to :: proc(w: Writer, args: ..dyn Formattable) {
 	foreach (a in args) {
 		a.format(w, DEFAULT_OPTIONS);
@@ -132,7 +119,6 @@ concat_to :: proc(w: Writer, args: ..dyn Formattable) {
 // The name differs rather than overloading `format_to`, because an `Options`
 // is itself a formattable value — so `format_to(w, options, x)` would be an
 // ambiguous call rather than an obvious one.
-@(public)
 format_to_with :: proc(w: Writer, options: Options, args: ..dyn Formattable) {
 	emit(w, options, ..args);
 }
@@ -150,10 +136,9 @@ format_to_with :: proc(w: Writer, options: Options, args: ..dyn Formattable) {
 // it can be omitted.
 //
 // That one `append` line is why this package does not import `core:strings`
-// for an `append_to` of its own. Almost every program imports `core:fmt`, an
-// imported package is emitted whole, and the measured cost of that import was
-// hello world's IR going from 397 lines to 4923.
-@(public)
+// for an `append_to` of its own, and why the copy below is not `strings.copy`:
+// almost every program imports `core:fmt`, and calling `strings.copy` here took
+// hello world's IR from 380 lines to 417 in November 2026.
 to_string :: proc(allocator: Allocator, args: ..dyn Formattable) -> string {
 	collector := Collector{make([dynamic]u8, 0, 64, allocator)};
 	emit((Writer)(&mut collector), DEFAULT_OPTIONS, ..args);
@@ -178,12 +163,8 @@ impl Collector {
 
 @(private)
 emit :: proc(w: Writer, options: Options, args: ..dyn Formattable) {
-	first := true;
-	foreach (a in args) {
-		if (!first) {
-			write_bytes(w, " ");
-		}
-		first = false;
+	foreach (a, i in args.indexed()) {
+		if (i > 0) { write_bytes(w, " "); }
 		a.format(w, options);
 	}
 }
@@ -195,12 +176,10 @@ emit :: proc(w: Writer, options: Options, args: ..dyn Formattable) {
 	ties to even: `fixed(3.14159, 2)` prints `3.14`. `digits` is 0 to 40; a value
 	outside reads as the nearer end. NaN and the infinities print as any float.
 */
-@(public)
 fixed :: proc(value: f64, digits: int) -> Fixed {
 	return Fixed{value, digits};
 }
 
-@(public)
 Fixed :: struct { @(private) value: f64, @(private) digits: int }
 
 impl Fixed {
@@ -214,13 +193,11 @@ impl Fixed {
 	that a column of them lines up on the right: `pad_left(42, 5)` prints `   42`.
 	A longer value prints whole. `width` counts runes, not display columns.
 */
-@(public)
 pad_left :: proc(value: $T, width: int) -> Padded(T) {
 	return Padded(T){value, width, .Left};
 }
 
 /// The same, padded on the right, for a column that lines up on the left.
-@(public)
 pad_right :: proc(value: $T, width: int) -> Padded(T) {
 	return Padded(T){value, width, .Right};
 }
@@ -231,12 +208,10 @@ pad_right :: proc(value: $T, width: int) -> Padded(T) {
 	leading `+` from a type's own `format` is a sign too. A `rune` is `Integral`
 	but prints as its character, so it is rejected; `int(r)` pads its code point.
 */
-@(public)
 zero_pad :: proc(value: $T, width: int) -> Padded(T) where Integral(T), T != rune {
 	return Padded(T){value, width, .Zero};
 }
 
-@(public)
 Padded :: struct($T: type) { @(private) value: T, @(private) width: int, @(private) fill: Fill }
 
 // Where `Padded` puts its fill: spaces before the value or after it, or zeros
@@ -248,24 +223,27 @@ impl Padded($T) {
 	format :: proc(self, writer: Writer, options: Options) {
 		// ponytail: the value is formatted twice, once to count it, rather than
 		// buffered; a `format` with side effects runs them twice.
+		value := (Format_View)(&self.value);
 		counter := Rune_Counter{};
-		emit((Writer)(&mut counter), options, self.value);
+		value.format((Writer)(&mut counter), options);
 		if (self.fill == .Right) {
-			emit(writer, options, self.value);
+			value.format(writer, options);
 		}
 		if (self.fill == .Zero) {
 			write_bytes(writer, counter.sign);
 		}
-		pad: string_view = " ";
-		if (self.fill == .Zero) { pad = "0"; }
-		for (i := counter.runes; i < self.width; i += 1) {
+		// One write per 32 runes of fill rather than one per rune.
+		pad: string_view = "                                ";
+		if (self.fill == .Zero) { pad = "00000000000000000000000000000000"; }
+		for (left := self.width - counter.runes; left > 0; left -= 32) {
+			if (left < 32) { pad = pad[:left]; }
 			write_bytes(writer, pad);
 		}
 		if (self.fill == .Left) {
-			emit(writer, options, self.value);
+			value.format(writer, options);
 		} else if (self.fill == .Zero) {
 			unsigned := Unsigned{writer, counter.sign != ""};
-			emit((Writer)(&mut unsigned), options, self.value);
+			value.format((Writer)(&mut unsigned), options);
 		}
 	}
 }
@@ -314,11 +292,9 @@ impl Unsigned {
 */
 // `core:strconv` has the same two answers for reading a float, as its own type
 // because neither package imports the other.
-@(public)
 Backend_Error :: enum { Out_Of_Memory, Unavailable }
 
 /// The most bytes `try_spell_f64` writes.
-@(public)
 FLOAT_SPELLING_MAX :: 32;
 
 /**
@@ -330,7 +306,6 @@ FLOAT_SPELLING_MAX :: 32;
 */
 // standard-library "`core:fmt`": the shared fallible primitive
 // `core:encoding/json` writes floats with.
-@(public)
 try_spell_f64 :: proc(
 	value: f64, destination: ^mut [FLOAT_SPELLING_MAX]u8,
 ) -> Result(int, Backend_Error) {
