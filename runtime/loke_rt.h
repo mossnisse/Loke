@@ -631,16 +631,15 @@ int32_t loke_rt_v1_cpu_dispatch(int32_t level);
 /* --------------------------------------------------- process arguments -- */
 
 /* design.md "Program entry and exit". The generated `wmain`
- * calls the initializer once, before the initial thread attaches; the three
- * getters are foreign-ABI-safe scalars that `core:os` reads as ordinary Loke
+ * calls the initializer once, before the initial thread attaches; the two
+ * foreign-ABI-safe getters are what `core:os` reads as ordinary Loke
  * source over a foreign block. An object build calls neither: its foreign host
  * owns startup, so `os.args` reports no arguments there. The initializer also
  * puts the C library's stdout and stderr in binary mode; a host decides that
  * for itself. */
 void loke_rt_v1_args_init(int32_t argc, const uint16_t **argv);
 int64_t loke_rt_v1_args_count(void);
-const char *loke_rt_v1_args_at(int64_t index);
-int64_t loke_rt_v1_args_len(int64_t index);
+const char *loke_rt_v1_args_get(int64_t index, int64_t *len);
 
 /* design.md "Test procedures": the generated test entry's choice of test, from
  * the first argument: -1 for every test, or the named test's index. An unknown

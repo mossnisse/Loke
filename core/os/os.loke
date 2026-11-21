@@ -20,10 +20,8 @@ import "core:unsafe";
 foreign loke_runtime {
 	@(link_name="loke_rt_v1_args_count")
 	rt_args_count :: proc "c" () -> int ---;
-	@(link_name="loke_rt_v1_args_at")
-	rt_args_at :: proc "c" (index: int) -> cstring_view ---;
-	@(link_name="loke_rt_v1_args_len")
-	rt_args_len :: proc "c" (index: int) -> int ---;
+	@(link_name="loke_rt_v1_args_get")
+	rt_args_get :: proc "c" (index: int, len: ^mut int) -> [^]u8 ---;
 	@(link_name="exit")
 	rt_exit :: proc "c" (status: i32) -> ! ---;
 }
@@ -57,15 +55,11 @@ impl Args {
 		The argument at `index`, copied into an owning `string`. An out-of-range
 		index panics.
 	*/
-	// design.md "string type conversions": the conversion validates UTF-8 and
-	// copies into owned storage. The runtime's bytes are already valid, so the
-	// `.none` case is unreachable. An out-of-range index panics, as every index
-	// does (standard-library.md "`os.Args`").
+	// design.md "String views": `.copy()` is the owning conversion. An
+	// out-of-range index panics, as every index does (standard-library.md
+	// "`os.Args`").
 	at :: operator([]) proc(self, index: int) -> string {
-		if (index < 0 || index >= rt_args_count()) {
-			panic("index out of range");
-		}
-		return string.from_utf8(rt_args_at(index)) or_else "";
+		return view_at(index).copy();
 	}
 
 	iter :: proc(self) -> Args_Iterator {
@@ -75,12 +69,11 @@ impl Args {
 
 impl Args_Iterator {
 	next :: proc(self: inout Args_Iterator) -> Option(string_view) {
-		if (self.next_index >= rt_args_count()) {
-			return .none;
-		}
-		index := self.next_index;
+		len := 0;
+		bytes := rt_args_get(self.next_index, &mut len);
+		if (bytes == nil) { return .none; }
 		self.next_index += 1;
-		return view_at(index);
+		return unsafe.string_view(bytes, len);
 	}
 }
 
@@ -88,15 +81,14 @@ impl Args_Iterator {
 	A borrow of one cached argument. The bytes live for the process, so the view
 	has no owner to outlive. An out-of-range index panics.
 */
-// The runtime already validated them as UTF-8, which is why the `.none` case
-// is unreachable.
+// The runtime already converted them to valid UTF-8, which is why the `.none`
+// case is unreachable here and in `Args_Iterator.next`.
 @(public)
 view_at :: proc(index: int) -> string_view {
-	if (index < 0 || index >= rt_args_count()) {
-		panic("index out of range");
-	}
-	bytes := unsafe.raw_data(rt_args_at(index));
-	return unsafe.string_view(bytes, rt_args_len(index)) or_else "";
+	len := 0;
+	bytes := rt_args_get(index, &mut len);
+	if (bytes == nil) { panic("index out of range"); }
+	return unsafe.string_view(bytes, len) or_else "";
 }
 
 /**

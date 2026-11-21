@@ -5,7 +5,7 @@
  * attaches — so `os.args` is a read of cached, already-valid UTF-8 rather than a
  * conversion at every use, and no Loke package needs an initializer to run.
  *
- * The three getters are deliberately foreign-ABI-safe scalars: `core:os` is
+ * The two getters are deliberately foreign-ABI-safe: `core:os` is
  * ordinary Loke source over a foreign block, with no compiler knowledge.
  */
 #include "loke_rt.h"
@@ -16,47 +16,37 @@
 #include <stdlib.h>
 #include <string.h>
 
+__declspec(dllimport) int WideCharToMultiByte(
+	unsigned code_page, unsigned long flags, const wchar_t *wide, int count,
+	char *bytes, int capacity, const char *default_char, int *used_default);
+
+#define CP_UTF8 65001u
+
+/* One converted argument: zero-terminated, with its byte length cached so a
+ * lookup never scans. */
+typedef struct {
+	char *bytes;
+	int64_t len;
+} arg_entry;
+
 static int32_t arg_count;
-static char **arg_values;
+static arg_entry *arg_values;
 
-/* One UTF-16 code unit sequence to UTF-8. Surrogate pairs combine; an unpaired
- * surrogate becomes U+FFFD, because a Loke `string` may not hold one and a
- * Windows argument vector is not guaranteed to be well-formed. */
-static char *to_utf8(const uint16_t *wide) {
-	uint64_t units = 0;
-	uint64_t bytes = 0;
-	uint64_t at = 0;
-	char *out;
-	uint64_t written = 0;
-
-	while (wide[units] != 0) {
-		units += 1;
-	}
-	/* Four bytes per code unit is the worst case and never underestimates: a
-	 * surrogate pair is two units producing four bytes. */
-	bytes = units * 4u + 1u;
-	out = (char *)malloc((size_t)bytes);
-	if (out == 0) {
+/* One zero-terminated UTF-16 argument to UTF-8. Without `WC_ERR_INVALID_CHARS`
+ * an unpaired surrogate becomes U+FFFD, which is what Loke needs: a `string`
+ * may not hold one, and a Windows argument vector is not guaranteed to be
+ * well-formed. A count of -1 converts the terminator too, so both answers
+ * include it. */
+static arg_entry to_utf8(const uint16_t *wide) {
+	arg_entry entry;
+	int size = WideCharToMultiByte(CP_UTF8, 0, (const wchar_t *)wide, -1, 0, 0, 0, 0);
+	entry.bytes = size > 0 ? (char *)malloc((size_t)size) : 0;
+	if (entry.bytes == 0 ||
+		WideCharToMultiByte(CP_UTF8, 0, (const wchar_t *)wide, -1, entry.bytes, size, 0, 0) != size) {
 		loke_rt_v1_abort("cannot convert the argument vector");
 	}
-
-	while (at < units) {
-		uint32_t code_point = wide[at];
-		at += 1;
-		if (code_point >= 0xD800u && code_point <= 0xDBFFu) {
-			if (at < units && wide[at] >= 0xDC00u && wide[at] <= 0xDFFFu) {
-				code_point = 0x10000u + ((code_point - 0xD800u) << 10) + (wide[at] - 0xDC00u);
-				at += 1;
-			} else {
-				code_point = 0xFFFDu; /* an unpaired high surrogate */
-			}
-		} else if (code_point >= 0xDC00u && code_point <= 0xDFFFu) {
-			code_point = 0xFFFDu; /* an unpaired low surrogate */
-		}
-		written += loke_rt_encode_rune((uint8_t *)(out + written), (int32_t)code_point);
-	}
-	out[written] = 0;
-	return out;
+	entry.len = size - 1;
+	return entry;
 }
 
 /* Called from the generated `wmain` before the initial thread attaches.
@@ -80,7 +70,7 @@ void loke_rt_v1_args_init(int32_t argc, const uint16_t **argv) {
 		argc = 0;
 	}
 	arg_count = argc;
-	arg_values = (char **)malloc((size_t)((argc == 0 ? 1 : argc)) * sizeof(char *));
+	arg_values = (arg_entry *)malloc((size_t)((argc == 0 ? 1 : argc)) * sizeof(arg_entry));
 	if (arg_values == 0) {
 		loke_rt_v1_abort("cannot convert the argument vector");
 	}
@@ -93,23 +83,15 @@ int64_t loke_rt_v1_args_count(void) {
 	return (int64_t)arg_count;
 }
 
-/* One zero-terminated UTF-8 argument, valid for the process lifetime. Out of
- * range yields the empty string rather than a fault: `core:os` bounds-checks
- * before it calls, so reaching this is a compiler bug, not a program one. */
-const char *loke_rt_v1_args_at(int64_t index) {
-	if (index < 0 || index >= (int64_t)arg_count) {
-		return "";
-	}
-	return arg_values[index];
-}
-
-/* The byte length of one argument, so `core:os` can build a `string_view` over
- * the cached bytes without a second scan on the Loke side. */
-int64_t loke_rt_v1_args_len(int64_t index) {
+/* One cached UTF-8 argument, valid for the process lifetime, with its byte
+ * length through `len`; null for an index out of range, which `core:os` turns
+ * into a panic or the end of iteration. */
+const char *loke_rt_v1_args_get(int64_t index, int64_t *len) {
 	if (index < 0 || index >= (int64_t)arg_count) {
 		return 0;
 	}
-	return (int64_t)strlen(arg_values[index]);
+	*len = arg_values[index].len;
+	return arg_values[index].bytes;
 }
 
 /* design.md "Test procedures": which test a test executable runs. With no
@@ -123,12 +105,12 @@ int64_t loke_rt_v1_test_select(const char *const *names, int64_t count) {
 	}
 	if (arg_count == 2) {
 		for (index = 0; index < count; index += 1) {
-			if (strcmp(arg_values[1], names[index]) == 0) {
+			if (strcmp(arg_values[1].bytes, names[index]) == 0) {
 				arg_count = 1;
 				return index;
 			}
 		}
-		fprintf(stderr, "loke: no test is named `%s`\n", arg_values[1]);
+		fprintf(stderr, "loke: no test is named `%s`\n", arg_values[1].bytes);
 	} else {
 		fputs("loke: a test executable takes at most one test name\n", stderr);
 	}

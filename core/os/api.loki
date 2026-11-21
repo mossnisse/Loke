@@ -64,6 +64,8 @@ view_at :: proc(index: int) -> string_view ---;
 */
 exit :: proc(status: i32) -> ! ---;
 
+when (LOKE_OS == .Windows) {
+
 /*
 	The value of `name`, or `.none` when it is not set at all. `Option` is what
 	separates a missing variable from one whose value is the empty string; the
@@ -96,3 +98,5 @@ set_working_directory :: proc(path: string_view) -> Status(io.Error) ---;
 executable_path :: proc(
 	allocator: Allocator = mem.default_allocator(),
 ) -> Result(string, io.Error) ---;
+
+}

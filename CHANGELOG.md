@@ -192,6 +192,11 @@ checklist.
   its `[Level] ` prefix, the message, and the newline, straight to the error stream rather
   than five through the formatter. At `-opt=speed`, 30,000 records to a redirected error
   stream take 0.25 s, from 0.41, with the same bytes.
+- [`os.get_environment`](docs/standard-library.md#coreos-additions), `os.working_directory`,
+  and `os.executable_path` read into a stack buffer first, so a short value needs no size query
+  and no temporary heap buffer, and the runtime caches each [argument's](docs/standard-library.md#osargs)
+  byte length at startup. At `-opt=speed`, 200,000 reads of a short environment variable take
+  867 ms, from 1,641, and iterating a six-argument vector 700,000 times takes 320 ms, from 391.
 
 ### Fixed
 
