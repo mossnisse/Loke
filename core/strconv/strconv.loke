@@ -46,14 +46,11 @@ Parse_Error :: enum {
 // Absence is the whole story here, so this one reports `Option` rather than an
 // error value.
 parse_bool :: proc(text: string_view) -> Option(bool) {
-	trimmed := trim_ascii_space(text);
-	if (trimmed == "true" || trimmed == "TRUE" || trimmed == "True" || trimmed == "1") {
-		return true;
+	switch (trim_ascii_space(text)) {
+	case "true", "True", "TRUE", "1":   return true;
+	case "false", "False", "FALSE", "0": return false;
+	case: return .none;
 	}
-	if (trimmed == "false" || trimmed == "FALSE" || trimmed == "False" || trimmed == "0") {
-		return false;
-	}
-	return .none;
 }
 
 /**
@@ -147,26 +144,103 @@ try_parse_f64 :: proc(
 	text: string_view,
 ) -> Result(f64, (parse: Parse_Error | backend: Backend_Error)) {
 	bytes := trim_ascii_space(text).bytes();
+	// `strtod` reads to a terminator, which a view does not have, and knows
+	// nothing of underscores. So the text is checked and respelled in one pass as
+	// `[-]0.DIGITSe[-]NNN`, with no underscores, no leading zeros, and at most
+	// `KEPT_DIGITS` significant digits, so that `strtod` reads any length of text
+	// out of a fixed buffer. A one stands in for the digits dropped past those
+	// when any of them is not zero. The zeroed buffer supplies the terminator.
+	spelled: [SPELLED]u8 = {};
 	at := 0;
-	if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) { at += 1; }
-	whole := digit_run(bytes, at);
-	fraction := whole;
-	if (whole < bytes.len() && bytes[whole] == u8('.')) { fraction = digit_run(bytes, whole + 1); }
-	if (whole == at && fraction <= whole + 1) { return .err(.parse(.Invalid_Syntax)); }
-	at = fraction;
+	used := 0;
+	if (skip_sign(bytes, inout at)) {
+		spelled[0] = u8('-');
+		used = 1;
+	}
+	spelled[used] = u8('0');
+	spelled[used + 1] = u8('.');
+	used += 2;
+	first := used;
+	// The value is 0.DIGITS times ten to `scale` plus the written exponent.
+	scale := 0;
+	significant := false;
+	dropped := false;
+	after_point := false;
+	// Either run around the point may be empty, but not both. An underscore
+	// may follow only a digit in its own run.
+	any_digit := false;
+	in_run := false;
+	for (; at < bytes.len(); at += 1) {
+		byte := bytes[at];
+		if (byte == u8('_') && in_run) { continue; }
+		if (byte == u8('.') && !after_point) {
+			after_point = true;
+			in_run = false;
+			continue;
+		}
+		if (!is_digit(byte)) { break; }
+		in_run = true;
+		any_digit = true;
+		if (!significant && byte == u8('0')) {
+			if (after_point) { scale -= 1; }
+			continue;
+		}
+		significant = true;
+		if (!after_point) { scale += 1; }
+		if (used - first < KEPT_DIGITS) {
+			spelled[used] = byte;
+			used += 1;
+		} else if (byte != u8('0')) {
+			dropped = true;
+		}
+	}
+	if (!any_digit) { return .err(.parse(.Invalid_Syntax)); }
+
+	// The written exponent saturates only past `ceiling`. `scale` is at most the
+	// text's length either way, so an exponent beyond that and the limit leaves
+	// the total beyond the limit, in its own direction, whatever `scale`
+	// cancels; one below it is read exactly. Both stay far from overflowing,
+	// since no text in memory is within a tenth of the largest `int`.
+	ceiling := bytes.len() + EXPONENT_LIMIT;
+	exponent := 0;
 	if (at < bytes.len() && (bytes[at] == u8('e') || bytes[at] == u8('E'))) {
 		at += 1;
-		if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) { at += 1; }
-		exponent := digit_run(bytes, at);
-		if (exponent == at) { return .err(.parse(.Invalid_Syntax)); }
-		at = exponent;
+		negative := skip_sign(bytes, inout at);
+		in_run = false;
+		for (; at < bytes.len(); at += 1) {
+			byte := bytes[at];
+			if (byte == u8('_') && in_run) { continue; }
+			if (!is_digit(byte)) { break; }
+			in_run = true;
+			if (exponent <= ceiling) { exponent = exponent * 10 + int(byte - u8('0')); }
+		}
+		if (!in_run) { return .err(.parse(.Invalid_Syntax)); }
+		if (negative) { exponent = -exponent; }
 	}
 	if (at != bytes.len()) { return .err(.parse(.Trailing_Data)); }
 
-	// `strtod` reads to a terminator, which a view does not have, and knows
-	// nothing of underscores.
-	spelled: [SPELLED]u8 = {};
-	normalize_float(bytes, &mut spelled);
+	if (!significant) {
+		// Every digit was zero, and `0.0` keeps the sign.
+		spelled[used] = u8('0');
+	} else {
+		if (dropped) {
+			spelled[used] = u8('1');
+			used += 1;
+		}
+		total := scale + exponent;
+		if (total > EXPONENT_LIMIT) { total = EXPONENT_LIMIT; }
+		if (total < -EXPONENT_LIMIT) { total = -EXPONENT_LIMIT; }
+		spelled[used] = u8('e');
+		used += 1;
+		if (total < 0) {
+			spelled[used] = u8('-');
+			used += 1;
+			total = -total;
+		}
+		spelled[used] = u8('0') + u8(total / 100);
+		spelled[used + 1] = u8('0') + u8(total / 10 % 10);
+		spelled[used + 2] = u8('0') + u8(total % 10);
+	}
 	value: f64 = 0;
 	switch (rt_try_parse_f64(unsafe.cstring_view(unsafe.raw_data(spelled[:])), &mut value)) {
 	case 0:
@@ -210,125 +284,22 @@ NUMERIC_UNAVAILABLE :: 3;
 @(private)
 KEPT_DIGITS :: 767;
 
-// Past this many powers of ten every kept mantissa overflows or underflows
-// whatever its digits, so the combined exponent saturates here.
+// The respelled mantissa is in [0.1, 1), so past ten to this power either way
+// every one overflows or underflows whatever its digits, and the combined
+// exponent saturates here, three digits at most.
 @(private)
-EXPONENT_LIMIT :: 100000;
+EXPONENT_LIMIT :: 400;
 
-// `-0.`, the kept digits, a sticky digit, `e-100000`, and the terminator.
+// `-0.`, the kept digits, a sticky digit, `e-400`, and the terminator.
 @(private)
-SPELLED :: 3 + KEPT_DIGITS + 1 + 8 + 1;
+SPELLED :: 3 + KEPT_DIGITS + 1 + 5 + 1;
 
-// The checked spelling in `bytes` as `[-]0.DIGITSe[-]N`, with no underscores,
-// no leading zeros, and at most `KEPT_DIGITS` significant digits, so that
-// `strtod` reads any length of text out of a fixed buffer. A one stands in for
-// the digits dropped past those when any of them is not zero.
+// Steps `at` past a leading `+` or `-`, answering whether it was a minus.
 @(private)
-normalize_float :: proc(bytes: []u8, spelled: ^mut [SPELLED]u8) {
-	used := 0;
-	at := 0;
-	if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) {
-		if (bytes[at] == u8('-')) {
-			spelled[used] = u8('-');
-			used += 1;
-		}
-		at += 1;
-	}
-	spelled[used] = u8('0');
-	spelled[used + 1] = u8('.');
-	used += 2;
-	first := used;
-	// The value is 0.DIGITS times ten to `scale` plus the written exponent.
-	scale := 0;
-	significant := false;
-	dropped := false;
-	after_point := false;
-	for (; at < bytes.len(); at += 1) {
-		byte := bytes[at];
-		if (byte == u8('_')) { continue; }
-		if (byte == u8('.')) {
-			after_point = true;
-			continue;
-		}
-		if (!is_digit(byte)) { break; }
-		if (!significant && byte == u8('0')) {
-			if (after_point) { scale -= 1; }
-			continue;
-		}
-		significant = true;
-		if (!after_point) { scale += 1; }
-		if (used - first < KEPT_DIGITS) {
-			spelled[used] = byte;
-			used += 1;
-		} else if (byte != u8('0')) {
-			dropped = true;
-		}
-	}
-	if (!significant) {
-		// Every digit was zero, and `0.0` keeps the sign.
-		spelled[used] = u8('0');
-		spelled[used + 1] = 0;
-		return;
-	}
-	if (dropped) {
-		spelled[used] = u8('1');
-		used += 1;
-	}
-	// The written exponent saturates only past `ceiling`. `scale` is at most the
-	// text's length either way, so an exponent beyond that and the limit leaves
-	// the total beyond the limit, in its own direction, whatever `scale`
-	// cancels; one below it is read exactly. Both stay far from overflowing,
-	// since no text in memory is within a tenth of the largest `int`.
-	ceiling := bytes.len() + EXPONENT_LIMIT;
-	exponent := 0;
-	negative := false;
-	if (at < bytes.len()) {
-		at += 1; // the `e`
-		if (bytes[at] == u8('+') || bytes[at] == u8('-')) {
-			negative = bytes[at] == u8('-');
-			at += 1;
-		}
-		for (; at < bytes.len(); at += 1) {
-			if (bytes[at] == u8('_')) { continue; }
-			if (exponent <= ceiling) {
-				exponent = exponent * 10 + int(bytes[at] - u8('0'));
-			}
-		}
-	}
-	if (negative) { exponent = -exponent; }
-	total := scale + exponent;
-	if (total > EXPONENT_LIMIT) { total = EXPONENT_LIMIT; }
-	if (total < -EXPONENT_LIMIT) { total = -EXPONENT_LIMIT; }
-	spelled[used] = u8('e');
-	used += 1;
-	if (total < 0) {
-		spelled[used] = u8('-');
-		used += 1;
-		total = -total;
-	}
-	digits: [8]u8 = {};
-	count := 0;
-	for (;;) {
-		digits[count] = u8('0') + u8(total % 10);
-		count += 1;
-		total /= 10;
-		if (total == 0) { break; }
-	}
-	for (; count > 0; count -= 1) {
-		spelled[used] = digits[count - 1];
-		used += 1;
-	}
-	spelled[used] = 0;
-}
-
-// The end of the digits starting at `start`: nothing unless the first is a
-// digit, and underscores only after one.
-@(private)
-digit_run :: proc(bytes: []u8, start: int) -> int {
-	if (start >= bytes.len() || !is_digit(bytes[start])) { return start; }
-	at := start + 1;
-	for (; at < bytes.len() && (is_digit(bytes[at]) || bytes[at] == u8('_')); at += 1) {}
-	return at;
+skip_sign :: proc(bytes: []u8, at: inout int) -> bool {
+	if (at >= bytes.len() || (bytes[at] != u8('+') && bytes[at] != u8('-'))) { return false; }
+	at += 1;
+	return bytes[at - 1] == u8('-');
 }
 
 @(private)
@@ -366,11 +337,7 @@ split_number :: proc(text: string_view, base: int) -> Result(Split, Parse_Error)
 	rest := trim_ascii_space(text);
 	bytes := rest.bytes();
 	at := 0;
-	sign := false;
-	if (bytes.len() > 0 && (bytes[at] == u8('+') || bytes[at] == u8('-'))) {
-		sign = bytes[at] == u8('-');
-		at += 1;
-	}
+	sign := skip_sign(bytes, inout at);
 	// Lower case only, as grammar.md "Literals" spells them.
 	selected := 10 if base == 0 else base;
 	prefixed := false;
@@ -398,25 +365,25 @@ split_number :: proc(text: string_view, base: int) -> Result(Split, Parse_Error)
 // required.
 @(private)
 accumulate :: proc(digits: string_view, radix: int, limit: u64) -> Result(u64, Parse_Error) {
-	bytes := digits.bytes();
-	value: u64 = 0;
 	scale := u64(radix);
-	seen := 0;
-	foreach (byte in bytes) {
+	// A value above `cutoff`, or at it with a digit above `last`, would pass
+	// `limit` once the digit is appended; no division is left in the loop.
+	cutoff := limit / scale;
+	last := int(limit % scale);
+	value: u64 = 0;
+	seen := false;
+	foreach (byte in digits.bytes()) {
 		if (byte == u8('_')) { continue; }
 		digit := digit_value(byte);
 		if (digit < 0 || digit >= radix) {
 			// Something followed a number, rather than the text not being one.
-			return .err(Parse_Error.Trailing_Data if seen > 0 else Parse_Error.Invalid_Syntax);
+			return .err(Parse_Error.Trailing_Data if seen else Parse_Error.Invalid_Syntax);
 		}
-		seen += 1;
-		// Both halves of the overflow test, before the value is committed.
-		if (value > (limit - u64(digit)) / scale) {
-			return .err(.Overflow);
-		}
+		seen = true;
+		if (value > cutoff || (value == cutoff && digit > last)) { return .err(.Overflow); }
 		value = value * scale + u64(digit);
 	}
-	if (seen == 0) { return .err(.Invalid_Syntax); }
+	if (!seen) { return .err(.Invalid_Syntax); }
 	return value;
 }
 

@@ -144,6 +144,12 @@ checklist.
   the integer or float, and [`endian.byte_swap`](docs/standard-library.md#coreendian) unrolls
   at compile time, so a default build has no loop or shift-count checks left in either. At
   `-opt=speed`, `bench/binary.loke` runs about 3% faster, with the same output.
+- [`core:strconv`](docs/standard-library.md#corestrconv)'s integer parsers check each digit
+  against a cutoff computed once per call rather than dividing for it, and `parse_f64` checks
+  and respells its text in one pass. Results and errors are unchanged. At `-opt=speed`, three
+  million parses take 65 ms, from 112, for short integers and 162 ms, from 578, for ones of 16
+  to 34 digits; 20,000 floats of 4,095 digits take 212 ms, from 244, and short floats as long as
+  before.
 - [`strings.index_byte`](docs/standard-library.md#corestrings) searches with the C runtime's
   `memchr`, and [`cstrings.from_string`](docs/standard-library.md#corecstrings) uses it to look
   for a zero byte. At `-opt=speed`, converting 1,800 strings of 384 KiB takes 330 ms, from 540,
