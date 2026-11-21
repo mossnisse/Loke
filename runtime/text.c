@@ -103,20 +103,38 @@ int64_t loke_rt_v1_rune_at(const uint8_t *data, int64_t len, int64_t offset, int
 	return need;
 }
 
-int32_t loke_rt_v1_utf8_valid(const uint8_t *data, int64_t len) {
-	if (len < 0) {
-		return 0;
-	}
+int64_t loke_rt_v1_utf8_prefix(const uint8_t *data, int64_t len) {
 	int64_t offset = 0;
 	while (offset < len) {
-		int32_t decoded;
-		int64_t used = loke_rt_v1_rune_at(data, len, offset, &decoded);
-		if (used == 0) {
-			return 0;
+		if (data[offset] >= 0x80) {
+			int32_t decoded;
+			int64_t used = loke_rt_v1_rune_at(data, len, offset, &decoded);
+			if (used == 0) {
+				break;
+			}
+			offset += used;
+			continue;
 		}
-		offset += used;
+		offset += 1;
+		/* A second ASCII byte starts a run: eight bytes at a time while none
+		 * has its high bit set, then the few before the byte that does. A lone
+		 * one, as a space between words that are not ASCII, is not worth the
+		 * attempt. */
+		if (offset < len && data[offset] < 0x80) {
+			uint64_t word;
+			while (offset + 8 <= len) {
+				memcpy(&word, data + offset, 8);
+				if ((word & 0x8080808080808080u) != 0) {
+					break;
+				}
+				offset += 8;
+			}
+			while (offset < len && data[offset] < 0x80) {
+				offset += 1;
+			}
+		}
 	}
-	return 1;
+	return offset;
 }
 
 int64_t loke_rt_v1_rune_count(const uint8_t *data, int64_t len) {
@@ -166,7 +184,7 @@ int64_t loke_rt_encode_rune(uint8_t *out, int32_t value) {
 int32_t loke_rt_v1_string_from_bytes(
 	loke_rt_string_v1 *out, const uint8_t *data, int64_t len, const loke_rt_allocator_v1 *a) {
 	publish_empty(out);
-	if (len < 0 || !loke_rt_v1_utf8_valid(data, len)) {
+	if (loke_rt_v1_utf8_prefix(data, len) != len) {
 		return 0;
 	}
 	if (len == 0) {

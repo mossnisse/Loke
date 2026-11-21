@@ -219,7 +219,9 @@ int32_t loke_rt_v1_string_from_runes(
 void loke_rt_v1_string_retain(uintptr_t owner_flags);
 void loke_rt_v1_string_release(uintptr_t owner_flags);
 
-int32_t loke_rt_v1_utf8_valid(const uint8_t *data, int64_t len);
+/* How many leading bytes are whole, valid UTF-8 sequences: `len` when all of
+ * them are, and otherwise the offset of the first sequence that is not. */
+int64_t loke_rt_v1_utf8_prefix(const uint8_t *data, int64_t len);
 int64_t loke_rt_v1_rune_count(const uint8_t *data, int64_t len);
 /* Decodes the scalar value beginning at `offset` and answers how many bytes it
  * used, which is what advances a rune loop's byte offset. */

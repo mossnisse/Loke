@@ -109,8 +109,31 @@ checklist.
   declared with, as `(^u64)(p)` does; it is now `L0706` there. `([^]u8)(p)` still needs no
   import. Upgrade by importing `core:unsafe` in the file that converts.
 
+### Added
+
+- `string_view.from_utf8_prefix(bytes)` borrows the longest prefix of a byte slice that is valid
+  UTF-8 ([string type conversions](docs/design.md#string-type-conversions)). It cannot fail, and
+  its length is the offset of the first invalid sequence, so a caller can report where bytes stop
+  being text, or keep a sequence cut off by the end of one piece of input for the next, without
+  a decoder of its own:
+
+  ```
+  text := string_view.from_utf8_prefix(bytes);
+  if (text.len() != bytes.len()) { return .err(Error{.Invalid_Utf8, text.len()}); }
+  ```
+
 ### Changed
 
+- UTF-8 validation reads a run of ASCII eight bytes at a time, in `string.from_utf8`,
+  `string_view.from_utf8`, `unsafe.string_view`, and everything built on them. At `-opt=speed`,
+  128 MiB of ASCII validates in 8 ms, from 64, and text with one two-byte character in 64 bytes
+  in 18 ms, from 65. Text that is all multi-byte sequences takes what it did, and words of
+  two-byte characters between spaces 3% longer.
+- [`json.parse`](docs/standard-library.md#coreencodingjson) finds the offset of invalid UTF-8 in
+  the pass that validates the input, where a failed validation decoded the input again, and
+  `Number.to_i64` and `Number.to_u64` no longer read a number's spelling for a point or an
+  exponent before converting it. At `-opt=speed`, parsing a 1.9 MB array of integers takes
+  5.7 ms, from 6.4, and converting its 200,000 numbers 7.0 ms, from 8.7.
 - A `spawn` in a [`parallel (&pool)`](docs/standard-library.md#pools) block queues its task
   frame itself rather than a node allocated for it, and a worker takes and finishes a task
   under one lock hold. At `-opt=speed`, 1,000 blocks of 128 tiny tasks take 31 ms, from 50,

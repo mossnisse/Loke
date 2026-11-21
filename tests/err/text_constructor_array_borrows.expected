@@ -13,3 +13,9 @@ L0512
 L0513
 @33:14
 this slice is used after this temporary has ended
+L0512
+@37:2
+`bytes` cannot be modified here: a read-only slice of it is still in use
+L0526
+@43:9
+this slice cannot be returned: `bytes` ends when this procedure returns

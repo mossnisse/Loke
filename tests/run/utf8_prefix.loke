@@ -1,0 +1,88 @@
+package main;
+
+import "core:fmt";
+
+// design.md "string type conversions": `string_view.from_utf8_prefix` borrows the
+// longest prefix that is valid UTF-8, so its length is the offset of the first
+// sequence that is not.
+
+prefix_len :: proc(bytes: []u8) -> int {
+	prefix := string_view.from_utf8_prefix(bytes);
+	// The two constructors agree on what is valid.
+	valid := string_view.from_utf8(bytes) != .none;
+	if (valid != (prefix.len() == bytes.len())) { panic("the constructors disagree"); }
+	return prefix.len();
+}
+
+// Every length up to `SPAN` with one bad byte at every offset: the validator
+// reads ASCII a word at a time, and the offset must not depend on where a word
+// starts or ends.
+SPAN :: 40;
+
+sweep_bad_byte :: proc() -> int {
+	buffer: [SPAN]u8 = {};
+	foreach (i in 0 ..< SPAN) { buffer[i] = u8('a') + u8(i % 26); }
+	wrong := 0;
+	foreach (length in 0 ..= SPAN) {
+		if (prefix_len(buffer[0:length]) != length) { wrong += 1; }
+		foreach (bad in 0 ..< length) {
+			kept := buffer[bad];
+			buffer[bad] = 0xFF;
+			if (prefix_len(buffer[0:length]) != bad) { wrong += 1; }
+			buffer[bad] = kept;
+		}
+	}
+	return wrong;
+}
+
+// A four-byte sequence at every offset is valid whole and invalid cut short,
+// which ends the prefix where the sequence starts.
+sweep_sequence :: proc() -> int {
+	buffer: [SPAN]u8 = {};
+	wrong := 0;
+	foreach (at in 0 ..= SPAN - 4) {
+		foreach (i in 0 ..< SPAN) { buffer[i] = u8('a'); }
+		buffer[at] = 0xF0;
+		buffer[at + 1] = 0x9F;
+		buffer[at + 2] = 0x98;
+		buffer[at + 3] = 0x80;
+		if (prefix_len(buffer[:]) != SPAN) { wrong += 1; }
+		foreach (cut in 1 ..< 4) {
+			if (prefix_len(buffer[0:at + cut]) != at) { wrong += 1; }
+		}
+	}
+	return wrong;
+}
+
+main :: proc() {
+	bytes := [4]u8{72, 105, 0xFF, 33};
+	static_assert(type_of(string_view.from_utf8_prefix(bytes[:])) == string_view);
+	// A fixed array reads as the slice, by position or by name.
+	fmt.println(string_view.from_utf8_prefix(bytes));
+	fmt.println(string_view.from_utf8_prefix(bytes = bytes[:]).len());
+	fmt.println(string_view.from_utf8_prefix(bytes[0:2]) == "Hi");
+
+	empty: []u8 = {};
+	fmt.println(prefix_len(empty), prefix_len([]u8{0xFF}), prefix_len([]u8{65}));
+
+	// Each way a sequence is not UTF-8, after two valid bytes.
+	fmt.println(prefix_len([]u8{65, 66, 0x80}));                   // a stray continuation byte
+	fmt.println(prefix_len([]u8{65, 66, 0xC0, 0xAF}));             // overlong, two bytes
+	fmt.println(prefix_len([]u8{65, 66, 0xE0, 0x80, 0x80}));       // overlong, three bytes
+	fmt.println(prefix_len([]u8{65, 66, 0xED, 0xA0, 0x80}));       // a surrogate
+	fmt.println(prefix_len([]u8{65, 66, 0xF4, 0x90, 0x80, 0x80})); // past U+10FFFF
+	fmt.println(prefix_len([]u8{65, 66, 0xF8, 0x88, 0x80, 0x80})); // no such lead byte
+	fmt.println(prefix_len([]u8{65, 66, 0xC3, 0x28}));             // a lead byte with no continuation
+	// The same bytes complete are text.
+	fmt.println(prefix_len([]u8{65, 66, 0xC3, 0xA9}), prefix_len([]u8{65, 66, 0xE2, 0x82, 0xAC}));
+
+	fmt.println(sweep_bad_byte(), sweep_sequence());
+
+	// Input in pieces: what follows the prefix waits for the next piece.
+	whole := "naïve café".bytes();
+	foreach (split in 0 ..= whole.len()) {
+		first := string_view.from_utf8_prefix(whole[0:split]);
+		fmt.print(first.len(), "");
+	}
+	fmt.println();
+}

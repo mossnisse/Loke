@@ -232,7 +232,7 @@ TEXT_DECLARATIONS := [?]Runtime_Declaration {
 	{"ptr", "loke_rt_v1_arena_allocator", "ptr", ""},
 	{"void", "loke_rt_v1_string_retain", "i64", ""},
 	{"void", "loke_rt_v1_string_release", "i64", ""},
-	{"i32", "loke_rt_v1_utf8_valid", "ptr, i64", ""},
+	{"i64", "loke_rt_v1_utf8_prefix", "ptr, i64", ""},
 	{"i64", "loke_rt_v1_rune_count", "ptr, i64", ""},
 	{"i64", "loke_rt_v1_rune_at", "ptr, i64, i64, ptr", ""},
 	{"i32", "loke_rt_v1_bytes_compare", "ptr, i64, ptr, i64", ""},

@@ -153,12 +153,17 @@ emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: s
 	return emit_option_value(e, option, icmp_zero(e, "i32", ok, equal = false), value)
 }
 
+// How many leading bytes are valid UTF-8: `length` when all of them are.
+@(private = "file")
+emit_utf8_prefix :: proc(e: ^Emitter, data, length: string) -> string {
+	return emit_value(e, "call i64 @loke_rt_v1_utf8_prefix(ptr %s, i64 %s)", data, length)
+}
+
 // `Option(string_view)` over bytes that are borrowed, not copied: `.some` only
 // when they are valid UTF-8.
 @(private)
 emit_checked_view :: proc(e: ^Emitter, option: Type_Id, data, length: string) -> string {
-	valid := emit_value(e, "call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", data, length)
-	ok := icmp_zero(e, "i32", valid, equal = false)
+	ok := emit_value(e, "icmp eq i64 %s, %s", emit_utf8_prefix(e, data, length), length)
 	kept_data := emit_value(e, "select i1 %s, ptr %s, ptr null", ok, data)
 	kept_len := emit_value(e, "select i1 %s, i64 %s, i64 0", ok, length)
 	view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
@@ -199,6 +204,11 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 		// A borrow of the slice's root, which `src/borrow.odin` keeps alive.
 		data, length := emit_slice_parts(e, v.bound[0])
 		return emit_checked_view(e, as_type, data, length)
+
+	case .Prefix_From_Bytes:
+		// The same borrow, of the bytes that are valid.
+		data, length := emit_slice_parts(e, v.bound[0])
+		return emit_ptr_len(e, STRING_VIEW_TYPE, data, emit_utf8_prefix(e, data, length))
 
 	case .C_View_From_Bytes:
 		// Also a borrow of the slice's root. C reads to the first zero, so a

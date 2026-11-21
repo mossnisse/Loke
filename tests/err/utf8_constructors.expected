@@ -43,3 +43,17 @@ L0561
 L0561
 @23:24
 `string.from_utf8` takes a `[]u8` or `cstring_view`, found `[2]rune`
+L0561
+@24:7
+`string_view.from_utf8_prefix` takes one argument, found 0
+L0561
+@25:36
+`string_view.from_utf8_prefix` takes a `[]u8`, found `cstring_view`
+L0561
+@26:36
+`string_view.from_utf8_prefix` takes one value argument named `bytes`
+L0408
+@27:7
+`string` has no member `from_utf8_prefix`
+L0428
+@28:27

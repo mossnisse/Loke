@@ -789,6 +789,20 @@ text := string.from_utf8(bytes) or_else "";
 `unsafe.string_view(pointer, length)` validates the same way; a negative
 `length` panics, as `pointer[0:length]` does.
 
+`string_view.from_utf8_prefix(bytes)` accepts a byte slice and returns a
+borrowed `string_view` of its longest prefix that is valid UTF-8, without
+copying. It cannot fail: the view is all of `bytes` when they are valid, and
+otherwise ends where the first invalid sequence starts, so its length is that
+sequence's offset. A sequence the slice ends inside is invalid, so the bytes
+after the prefix can wait for the rest of an input that arrives in pieces.
+
+```loke
+text := string_view.from_utf8_prefix(bytes);
+if (text.len() != bytes.len()) {
+	// `bytes[text.len()]` starts the first sequence that is not UTF-8.
+}
+```
+
 A view from a `string` is `[]u8` and cannot become `[]mut u8`, by the ordinary
 [capability rule](#capabilities-and-the-one-rule).
 
@@ -815,6 +829,7 @@ allocation.
 | string literal | `cstring_view` | borrow static storage | `c_text: cstring_view = src` |
 | `[]u8` | `Option(string)` | validate and copy | `string.from_utf8(src)` |
 | `[]u8` | `Option(string_view)` | validate and borrow | `string_view.from_utf8(src)` |
+| `[]u8` | `string_view` | borrow the valid prefix | `string_view.from_utf8_prefix(src)` |
 | `[]u8` | `Option(cstring_view)` | check the terminator and borrow | `cstring_view.from_bytes(src)` |
 | `[]u8` | `[^]u8` | unsafe borrow | `unsafe.raw_data(src)` |
 | `[]rune` | `Option(string)` | validate and copy | `string.from_runes(src)` |

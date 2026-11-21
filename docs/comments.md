@@ -2909,6 +2909,19 @@ returns `.some(1)`, but `strings.try_slice("é", 0, 1)` returns `.none`.
 Use `try_slice`, `floor_boundary`, or `ceil_boundary` for untrusted byte offsets;
 `prefix_runes` expresses a limit in scalar values. See [Boundaries](standard-library.md#boundaries).
 
+### The valid prefix is a view, not an offset
+
+`string_view.from_utf8(bytes)` answers only whether the bytes are text. A caller
+that reports where they stop being text, replaces a bad sequence, or decodes
+input that arrives in pieces needs how far validation got. Without it the caller
+writes a second decoder, which must agree with the runtime's on every overlong
+and surrogate encoding; `core:encoding/json` carried one for its error offset.
+
+`string_view.from_utf8_prefix(bytes)` returns the validated bytes themselves.
+An integer offset would leave the caller to validate `bytes[0:offset]` a second
+time to read them, and an error payload on `from_utf8` would be discarded by
+every caller that wants only the text.
+
 ### String ownership and concurrency
 
 Immutable strings can share storage, so reference counting is atomic. The cost is measured under [Thread-affine strings](open-questions.md#thread-affine-strings). The

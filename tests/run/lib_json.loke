@@ -139,6 +139,8 @@ utf8 :: proc() {
 	// A sequence cut off by the end of input.
 	show_bytes([]u8{u8('"'), 0xE2, 0x82});
 	show_bytes([]u8{u8('"'), 0xE2, 0x82, 0xAC, u8('"')});
+	// After more ASCII than the validator reads at a time.
+	show_bytes([]u8{u8('"'), 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 0xFF, u8('"')});
 }
 
 truncation :: proc() {

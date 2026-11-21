@@ -31,4 +31,14 @@ main :: proc() {
 	byte: u8 = 65;
 	temporary := string_view.from_utf8([2]u8{byte, 66}) or_else "";
 	fmt.println(temporary);
+
+	// The valid prefix borrows the same way.
+	prefix := string_view.from_utf8_prefix(bytes);
+	bytes.append(67);
+	fmt.println(prefix);
+}
+
+prefix_view :: proc() -> string_view {
+	bytes := [2]u8{65, 0xFF};
+	return string_view.from_utf8_prefix(bytes);
 }

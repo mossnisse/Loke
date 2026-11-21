@@ -21,4 +21,9 @@ main :: proc() {
 	n := string.from_runes(inout view);
 	o := string.from_runes(bytes);
 	p := string.from_utf8(runes);
+	q := string_view.from_utf8_prefix();
+	r := string_view.from_utf8_prefix(cview);
+	s := string_view.from_utf8_prefix(text = bytes[:]);
+	t := string.from_utf8_prefix(bytes[:]);
+	u: Option(string_view) = string_view.from_utf8_prefix(bytes[:]) or_else "";
 }

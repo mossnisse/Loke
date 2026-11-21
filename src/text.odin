@@ -23,12 +23,13 @@ type_is_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 // `text.op()`, `string.from_runes(...)`, `string.from_utf8(...)` /
-// `string_view.from_utf8(...)`, or `cstring_view.from_bytes(...)`. Returns true
-// when the selector named one, so the caller stops looking for an ordinary method.
+// `string_view.from_utf8(...)`, `string_view.from_utf8_prefix(...)`, or
+// `cstring_view.from_bytes(...)`. Returns true when the selector named one, so
+// the caller stops looking for an ordinary method.
 check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 	name := sel.name.text
 	op := text_op_named(name)
-	if op == .None && name != "from_utf8" && name != "from_runes" && name != "from_bytes" {
+	if op == .None && name != "from_utf8" && name != "from_utf8_prefix" && name != "from_runes" && name != "from_bytes" {
 		return false
 	}
 	operand := check_receiver(k, sel)
@@ -46,6 +47,8 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 		switch {
 		case name == "from_utf8" && (base.denoted_type == TYPE_STRING || base.denoted_type == TYPE_STRING_VIEW):
 			check_from_utf8(k, v, base.denoted_type)
+		case name == "from_utf8_prefix" && base.denoted_type == TYPE_STRING_VIEW:
+			check_from_utf8(k, v, base.denoted_type, prefix = true)
 		case name == "from_bytes" && base.denoted_type == TYPE_CSTRING_VIEW:
 			check_from_utf8(k, v, base.denoted_type)
 		case name == "from_runes" && base.denoted_type == TYPE_STRING:
@@ -125,7 +128,8 @@ text_op_named :: proc(name: string) -> Text_Op {
 }
 
 // design.md "string type conversions" and "Typed fallibility": the validating
-// constructors produce `Option(T)`, `.none` for invalid input. The one argument
+// constructors produce `Option(T)`, `.none` for invalid input, and the prefix
+// one a view, since some prefix is always valid. The one argument
 // is a value, by position or under `parameter`, and a `[dynamic]T` or `[N]T` reads
 // as the slice expected (design.md "Implicit type conversions"). Its type, or
 // INVALID_TYPE once reported.
@@ -153,7 +157,7 @@ bind_text_constructor :: proc(k: ^Checker, v: ^Expr_Call, op: Text_Conversion, t
 	v.resolution = Resolution{kind = .Builtin_Operator}
 	v.operation = Call_Text_Conversion{op = op}
 	v.bound = bound_exprs(k, v.args[0].value)
-	v.type = option_type(k, target, v.span)
+	v.type = op == .Prefix_From_Bytes ? target : option_type(k, target, v.span)
 }
 
 @(private = "file")
@@ -173,11 +177,12 @@ check_from_runes :: proc(k: ^Checker, v: ^Expr_Call) {
 }
 
 @(private = "file")
-check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
+check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, prefix := false) {
 	name, op := "string.from_utf8", Text_Conversion.String_From_Bytes
-	switch target {
-	case TYPE_STRING_VIEW:  name, op = "string_view.from_utf8", .View_From_Bytes
-	case TYPE_CSTRING_VIEW: name, op = "cstring_view.from_bytes", .C_View_From_Bytes
+	switch {
+	case prefix:                      name, op = "string_view.from_utf8_prefix", .Prefix_From_Bytes
+	case target == TYPE_STRING_VIEW:  name, op = "string_view.from_utf8", .View_From_Bytes
+	case target == TYPE_CSTRING_VIEW: name, op = "cstring_view.from_bytes", .C_View_From_Bytes
 	}
 	source := text_constructor_source(k, v, name, "bytes", TYPE_U8)
 	if source == INVALID_TYPE {

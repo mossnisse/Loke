@@ -372,19 +372,6 @@ design questions stay open until a caller or a measurement settles them:
   `validate_unique_keys` waits for a protocol that requires globally unique
   keys.
 
-## Encoding library audit follow-ups
-
-Two optimizations in `core/encoding` need prototypes. The runtime UTF-8
-validator could return the first invalid sequence's offset along with the
-validity result, which would let `json.parse` delete its second decoder and
-avoid rescanning the prefix on failure. A checked conversion would still have to lend from
-its byte input and report invalid UTF-8 ahead of JSON syntax errors. The
-number scanner could also record whether it saw a point or exponent, so
-`Number.to_i64` and `Number.to_u64` skip their extra spelling scan. Check
-that the flag fits in the node's spare bits and that carrying it in `Number`
-does not increase the view's size.
-[Runtime validator](../runtime/text.c) · [String conversions](design.md#string-type-conversions) · [JSON number conversions](../core/encoding/json/document.loke)
-
 ## Sharing the SIMD array casts
 
 Should `simd.from_array` and `simd.to_array` call `unsafe.transmute` instead of

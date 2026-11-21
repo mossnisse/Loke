@@ -194,10 +194,12 @@ Text_Op :: enum {
 	To_Runes,   // `st.to_runes()`, a `[dynamic]rune` by copy
 }
 
-// The named text constructors, which validate and return Option(T).
+// The named text constructors, which validate and return Option(T); the prefix
+// one returns the view itself.
 Text_Conversion :: enum {
 	String_From_Bytes,  // `string.from_utf8(bytes)` — validate and copy
 	View_From_Bytes,    // `string_view.from_utf8(bytes)` — validate and borrow
+	Prefix_From_Bytes,  // `string_view.from_utf8_prefix(bytes)`: borrow the valid prefix
 	String_From_C_View, // `string.from_utf8(cview)` — scan, validate, and copy
 	C_View_From_Bytes,  // `cstring_view.from_bytes(bytes)` — check the terminator and borrow
 	String_From_Runes,  // `string.from_runes(runes)` — validate and copy
