@@ -25,9 +25,9 @@ Spawn_Field_Kind :: enum u8 {
 // What checking a spawn records for later phases.
 Spawn_Task :: struct {
 	// The frame: a leading `rawptr` slot `Task_Scope.start` fills with `run`,
-	// one field per bound argument in parameter order, then the result's
-	// address when there is one, then the procedure value a call through one
-	// calls.
+	// for a pooled task the pool's queue link and the block's scope, one
+	// field per bound argument in parameter order, then the result's address
+	// when there is one, then the procedure value a call through one calls.
 	frame:  Type_Id,
 	run:    Symbol_Id,
 	// The callee is a value the frame holds, not a procedure `run` names.
@@ -49,17 +49,23 @@ Spawn_Task :: struct {
 	parent: Symbol_Id,
 }
 
+// The frame's header fields: `run`, then a pooled task's `next` and `scope`,
+// which `core:thread`'s `Pool_Frame` names.
+spawn_header_fields :: proc(task: ^Spawn_Task) -> int {
+	return task.pooled ? 3 : 1
+}
+
 // The frame field holding bound argument `index`, and the result's address.
-spawn_argument_field :: proc(index: int) -> int {
-	return index + 1
+spawn_argument_field :: proc(task: ^Spawn_Task, index: int) -> int {
+	return spawn_header_fields(task) + index
 }
 
 spawn_result_field :: proc(task: ^Spawn_Task) -> int {
-	return len(task.kinds) + 1
+	return spawn_argument_field(task, len(task.kinds))
 }
 
 spawn_callee_field :: proc(task: ^Spawn_Task) -> int {
-	return len(task.kinds) + (task.result != INVALID_SYMBOL ? 2 : 1)
+	return spawn_result_field(task) + (task.result != INVALID_SYMBOL ? 1 : 0)
 }
 
 // compiler-architecture.md "Lowering parallel blocks".
@@ -322,7 +328,7 @@ spawn_result_symbol :: proc(k: ^Checker, result: ^Expr_Ident, call: ^Expr_Call, 
 // The frame record and `run` procedure for one spawn, declared in a scope of
 // their own: `run` takes every argument out of the frame and makes the call.
 //
-//     spawn$type$frame :: struct { run: rawptr, arg0: ..., arg1: ..., result: ^mut R, callee: ... }
+//     spawn$type$frame :: struct { run: rawptr, [next: rawptr, scope: rawptr,] arg0: ..., arg1: ..., result: ^mut R, callee: ... }
 //     spawn$run :: proc(spawn$frame: ^mut spawn$type$frame) {
 //         spawn$owned$1 := unsafe.take(spawn$frame.arg1);
 //         unsafe.write(spawn$frame.result^, callee(spawn$frame.arg0^, move(spawn$owned$1)));
@@ -411,8 +417,8 @@ spawn_add_field :: proc(layout: ^Spawn_Layout, name: string, type: Type_Id) {
 	append(&layout.field_types, type)
 }
 
-// The leading `run` slot and each bound argument's field, with what `run` does
-// to pass that argument on.
+// The header fields and each bound argument's field, with what `run` does to
+// pass that argument on.
 @(private = "file")
 spawn_lay_out_arguments :: proc(k: ^Checker, task: ^Spawn_Task, proc_type: Type_Id, layout: ^Spawn_Layout) -> bool {
 	c := k.c
@@ -420,11 +426,15 @@ spawn_lay_out_arguments :: proc(k: ^Checker, task: ^Spawn_Task, proc_type: Type_
 	span := call.span
 	parameters := underlying_info(c, proc_type).parameters
 	task.kinds = make([]Spawn_Field_Kind, len(call.bound), c.semantic_allocator)
-	layout.field_names = make([dynamic]string, 0, len(call.bound) + 3, c.semantic_allocator)
-	layout.field_types = make([dynamic]Type_Id, 0, len(call.bound) + 3, c.semantic_allocator)
+	layout.field_names = make([dynamic]string, 0, len(call.bound) + spawn_header_fields(task) + 2, c.semantic_allocator)
+	layout.field_types = make([dynamic]Type_Id, 0, len(call.bound) + spawn_header_fields(task) + 2, c.semantic_allocator)
 	layout.stmts = make([dynamic]Stmt, 0, len(call.bound) + 2, c.semantic_allocator)
 	layout.args = make([dynamic]Argument, 0, len(call.bound) + len(call.variadic_order), c.semantic_allocator)
 	spawn_add_field(layout, "run", TYPE_RAWPTR)
+	if task.pooled {
+		spawn_add_field(layout, "next", TYPE_RAWPTR)
+		spawn_add_field(layout, "scope", TYPE_RAWPTR)
+	}
 	for argument, index in call.bound {
 		type := parameters[index]
 		mode := proc_parameter_mode(c, proc_type, index)

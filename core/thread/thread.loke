@@ -186,9 +186,8 @@ Task_Scope :: struct {
 	// The pool the block runs its tasks on, borrowed until the join; `.none`
 	// for a thread per task.
 	pool: Option(^Pool),
-	// The block's pooled tasks not yet finished, changed under the pool's lock.
-	// Atomic so the join reads it afresh after each wait.
-	pending: sync.Atomic(int),
+	// The block's pooled tasks not yet finished, guarded by the pool's lock.
+	pending: int,
 	// The scope whose task the block's thread runs, or nil: a pool worker
 	// joining this block may run its tasks and their descendants alone
 	// (standard-library.md "Pools"). Set once, before any task is queued, so
@@ -205,18 +204,16 @@ impl Task_Scope {
 
 	// Starts the task `frame` holds, on a new thread or on the pool. A frame
 	// leads with a slot for the procedure that runs it, which `thread_main`
-	// and a pool's `run_frame` call. The thread's place in the list, or the
-	// pool's queue node, is allocated first, so once the task is registered
-	// nothing here can fail; until then no thread has the frame, and a
-	// failure panics with it still the caller's (design.md "Failure to start
-	// a task").
+	// and a pool's `run_frame` call, and a pooled frame's header links it
+	// into the pool's queue. The thread's place in the list is allocated
+	// first, so once the task is registered nothing here can fail; until
+	// then no thread has the frame, and a failure panics with it still the
+	// caller's (design.md "Failure to start a task").
 	start :: proc(self: inout, run: proc(frame: rawptr), frame: rawptr) {
 		(^mut Start_Header)(frame)^.run = run;
-		switch (self.pool) {
-		case .some(pool):
+		if (case .some(pool) = self.pool) {
 			pool.submit(rawptr(&mut self), frame);
 			return;
-		case .none:
 		}
 		// `reserve` takes its capacity exactly, so the list doubles here rather
 		// than move for every thread.
@@ -232,16 +229,13 @@ impl Task_Scope {
 	}
 
 	// Joins every task: each one's writes, and a thread's `thread_local`
-	// drops, happen before the block is left. Dropping a `Thread` joins it. A
-	// pooled block waits until its tasks have finished; a worker of that pool
-	// runs the block's queued tasks meanwhile.
+	// drops, happen before the block is left. A pooled block waits here until
+	// its tasks have finished; a worker of that pool runs the block's queued
+	// tasks meanwhile. A bare block's threads join as `threads` drops, after
+	// this hook, since dropping a `Thread` joins it.
 	@(private)
 	join :: hook(drop) proc(self: inout) {
-		self.threads.clear();
-		switch (self.pool) {
-		case .some(pool): pool.wait_for(rawptr(&mut self));
-		case .none:
-		}
+		if (case .some(pool) = self.pool) { pool.wait_for(rawptr(&mut self)); }
 	}
 }
 

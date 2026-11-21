@@ -198,9 +198,9 @@ emit_spawn_arguments :: proc(
 		argument := call.bound[index]
 		type := callee_type.parameters[index]
 		enter_default_scope(e, &scope, index, argument)
-		field := spawn_field_address(e, task.frame, frame, spawn_argument_field(index))
+		field := spawn_field_address(e, task.frame, frame, spawn_argument_field(task, index))
 		if call_packs(call, index) {
-			pack := symbol_of(e.c, type_of(e.c, task.frame).fields[spawn_argument_field(index)]).type
+			pack := symbol_of(e.c, type_of(e.c, task.frame).fields[spawn_argument_field(task, index)]).type
 			emit_spawn_pack(e, task, call, type, pack, field, &owned)
 			continue
 		}

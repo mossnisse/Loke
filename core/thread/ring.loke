@@ -18,19 +18,18 @@ import "core:unsafe";
 	still queued. It is move-only and has no zero value.
 */
 @(move_only) Ring :: struct($T: type) {
-	// `size` slots, one more than the capacity: the spare slot tells a full
-	// ring from an empty one. Only queued slots hold an item (design.md
-	// "Uninitialized capacity"), so no slot needs `T`'s zero.
+	// One more slot than the capacity: the spare slot tells a full ring from
+	// an empty one. Only queued slots hold an item (design.md "Uninitialized
+	// capacity"), so no slot needs `T`'s zero.
 	@(private, required) slots: [dynamic]Uninit(T),
-	@(private) size: uint,
 	// Keeps the read-only fields above, and whatever precedes the ring, off the
 	// line `tail` is on.
 	@(private) pad_metadata: [CACHE_LINE_BYTES]u8,
 	// The next slot to write: stored by the sender only.
-	@(private) tail: sync.Atomic(uint),
+	@(private) tail: sync.Atomic(int),
 	@(private) pad_tail: [CACHE_LINE_BYTES]u8,
 	// The next slot to read: stored by the receiver only.
-	@(private) head: sync.Atomic(uint),
+	@(private) head: sync.Atomic(int),
 	@(private) pad_head: [CACHE_LINE_BYTES]u8,
 	// Every send reads `receiver_gone`, so the flags keep off `head`'s line.
 	@(private) sender_gone: sync.Atomic(bool),
@@ -52,16 +51,16 @@ MAX_INT :: 0x7FFF_FFFF_FFFF_FFFF;
 @(move_only, wakes_on_drop) Ring_Sender :: struct($T: type) {
 	@(private) ring: ^Ring(T),
 	// This side's index, and the receiver's as last read.
-	@(private) tail: uint,
-	@(private) head_seen: uint,
+	@(private) tail: int,
+	@(private) head_seen: int,
 }
 
 /// Receives from the ring it borrows. Move-only, and the only receiver.
 @(move_only, wakes_on_drop) Ring_Receiver :: struct($T: type) {
 	@(private) ring: ^Ring(T),
 	// This side's index, and the sender's as last read.
-	@(private) head: uint,
-	@(private) tail_seen: uint,
+	@(private) head: int,
+	@(private) tail_seen: int,
 }
 
 impl Ring($T) {
@@ -72,7 +71,7 @@ impl Ring($T) {
 	init :: proc(capacity: int) -> Ring(T) {
 		if (capacity < 1) { panic("thread.Ring capacity must be positive"); }
 		if (capacity == MAX_INT) { panic("thread.Ring capacity is too large"); }
-		ring := Ring(T){slots = {}, size = uint(capacity + 1)};
+		ring := Ring(T){slots = {}};
 		ring.slots.resize(capacity + 1);
 		return ring;
 	}
@@ -83,11 +82,12 @@ impl Ring($T) {
 		return {Ring_Sender(T){ring = self}, Ring_Receiver(T){ring = self}};
 	}
 
-	// The index after `index`, back to the first slot after the last.
+	// The index after `index`, back to the first slot after the last. An
+	// index is below `slots.len()`, so its successor cannot overflow.
 	@(private)
-	next :: proc(self: ^, index: uint) -> uint {
+	next :: proc(self: ^, index: int) -> int {
 		after := index + 1;
-		return 0 if after == self.size else after;
+		return 0 if after == self.slots.len() else after;
 	}
 
 	// Both endpoints are gone, and the joins that ended their borrows order
@@ -108,7 +108,7 @@ impl Ring($T) {
 		for (self.head.value != self.tail.value) {
 			at := self.head.value;
 			self.head.value = self.next(at);
-			dropped := unsafe.take(self.slots[int(at)]);
+			dropped := unsafe.take(self.slots[at]);
 		}
 	}
 }
@@ -118,8 +118,8 @@ impl Ring($T) {
 // carries no borrow shorter than the process, as `try_send`'s
 // `@(escape=static)` says.
 @(private)
-slot_at :: proc(ring: ^Ring($T), index: uint) -> ^mut Uninit(T) {
-	return (^mut Uninit(T))(rawptr(&ring.slots[int(index)]));
+slot_at :: proc(ring: ^Ring($T), index: int) -> ^mut Uninit(T) {
+	return (^mut Uninit(T))(rawptr(&ring.slots[index]));
 }
 
 impl Ring_Sender($T) {

@@ -846,7 +846,8 @@ hook(drop) on Task_Scope                // joins every started thread,
   until the join. `Spawn_Task.pooled` marks the spawns of such a block.
 - **Each spawn site.** Checking a spawn synthesizes a frame record and a run
   procedure, as `capture.odin` does for capture literals, and records them in
-  `Compiler.spawn_tasks`. The frame holds a leading slot for `run`, each bound
+  `Compiler.spawn_tasks`. The frame holds a leading slot for `run`, for a
+  pooled spawn the pool's queue link and the block's scope, each bound
   argument (copied, owned, or as an address; a place in a temporary is an owned
   copy, and a widened place is its widened form, copied, with the payload still
   lent), the result local's address, and,
@@ -879,9 +880,11 @@ hook(drop) on Task_Scope                // joins every started thread,
   `stdcall` entry attaches the thread and which runs the thread's
   `thread_local` drops before exit, so waiting for the thread orders its TLS destruction
   before the join returns.
-- **Pools.** `core:thread`'s `Pool` keeps a queue of nodes, each a frame and
-  its block's scope, under one SRWLOCK and condition variable. A scope counts
-  its unfinished tasks and records the scope whose task its thread was running
+- **Pools.** `core:thread`'s `Pool` keeps a queue of frames, linked through
+  their headers (`Pool_Frame`), under one SRWLOCK and condition variable, so
+  queuing a task allocates nothing. A worker reads the frame's scope before
+  running the task, which frees the frame. A scope counts its unfinished tasks
+  under the pool's lock and records the scope whose task its thread was running
   (the thread-local `running_in`), so a joining worker can tell its block's
   descendants. A worker runs a task through `loke_rt_v1_run_task`, a C
   trampoline in `runtime/panic.c`: an indirect call in Loke would make the

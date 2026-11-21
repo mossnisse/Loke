@@ -106,6 +106,10 @@ checklist.
 
 ### Changed
 
+- A `spawn` in a [`parallel (&pool)`](docs/standard-library.md#pools) block queues its task
+  frame itself rather than a node allocated for it, and a worker takes and finishes a task
+  under one lock hold. At `-opt=speed`, 1,000 blocks of 128 tiny tasks take 31 ms, from 50,
+  with one worker, and 89 ms, from 115, with four.
 - [`slice.sort_by`](docs/standard-library.md#sorting-slices) is an introsort written in Loke,
   sharing selection's pivot and partition and falling back to the heap procedures, rather than
   a runtime routine reached through a compiler bridge. The comparator is called directly, so

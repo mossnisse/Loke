@@ -26,16 +26,23 @@ Channel_State :: struct($T: type) {
 	slots: [dynamic]Option(T),
 	head: int,
 	count: int,
+	// Each side's live endpoints.
 	senders: int,
 	receivers: int,
 	split: bool,
-	sending_closed: bool,
-	receiving_closed: bool,
+	// `close` was called.
+	closing: bool,
 }
 
 impl Channel_State($T) {
+	// Whether a side with `endpoints` live endpoints has closed: at `close`,
+	// or when the last one drops, since none is left to fork another.
+	ended :: proc(self: ^, endpoints: int) -> bool {
+		return self.closing || (self.split && endpoints == 0);
+	}
+
 	closed :: proc(self: ^) -> bool {
-		return self.sending_closed || self.receiving_closed;
+		return self.ended(self.senders) || self.ended(self.receivers);
 	}
 
 	// A send can go on: it commits, or it fails because a side closed.
@@ -45,7 +52,7 @@ impl Channel_State($T) {
 
 	// A receive can go on: it takes an item, or the stream has ended.
 	can_receive :: proc(self: ^Channel_State(T)) -> bool {
-		return self.count > 0 || self.sending_closed;
+		return self.count > 0 || self.ended(self.senders);
 	}
 
 	push :: proc(self: inout, @(escape=stored) value: move T) {
@@ -132,9 +139,7 @@ impl Channel($T) {
 	*/
 	close :: proc(self: ^) {
 		state := self.state.lock();
-		closing := &mut state.get();
-		closing.sending_closed = true;
-		closing.receiving_closed = true;
+		state.get().closing = true;
 	}
 }
 
@@ -193,9 +198,7 @@ impl Sender($T) {
 	@(private)
 	release :: hook(drop) proc(self: inout) {
 		state := self.channel.state.lock();
-		leaving := &mut state.get();
-		leaving.senders -= 1;
-		if (leaving.senders == 0) { leaving.sending_closed = true; }
+		state.get().senders -= 1;
 	}
 }
 
@@ -235,7 +238,7 @@ impl Receiver($T) {
 			item := queue_of(&mut state.get()).pop() or_else return .empty;
 			return .item(move(item));
 		}
-		if (state.read().sending_closed) { return .closed; }
+		if (state.read().ended(state.read().senders)) { return .closed; }
 		return .empty;
 	}
 
@@ -252,9 +255,7 @@ impl Receiver($T) {
 	@(private)
 	release :: hook(drop) proc(self: inout) {
 		state := self.channel.state.lock();
-		leaving := &mut state.get();
-		leaving.receivers -= 1;
-		if (leaving.receivers == 0) { leaving.receiving_closed = true; }
+		state.get().receivers -= 1;
 	}
 }
 

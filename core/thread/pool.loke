@@ -31,18 +31,21 @@ Pool_State :: struct {
 	// A Windows SRWLOCK and a CONDITION_VARIABLE over it, as `Monitor`'s are.
 	word: sync.Atomic(uintptr),
 	wake: sync.Atomic(uintptr),
-	// The queue of `Pool_Node`s, oldest first; nil when empty.
+	// The queue of task frames, oldest first, linked through their
+	// `Pool_Frame` headers; nil when empty.
 	head: rawptr,
 	tail: rawptr,
 	stopping: bool,
 	workers: [dynamic]Thread,
 }
 
-// One queued task: its frame, and the `Task_Scope` of the block it belongs to.
+// The header the compiler gives a pooled task's frame (compiler-architecture.md
+// "Lowering parallel blocks"): `Start_Header`'s `run`, the queue link, and the
+// `Task_Scope` of the block the task belongs to.
 @(private)
-Pool_Node :: struct {
+Pool_Frame :: struct {
+	run: proc(frame: rawptr),
 	next: rawptr,
-	frame: rawptr,
 	scope: rawptr,
 }
 
@@ -72,16 +75,21 @@ impl Pool {
 	}
 
 	// Queues the task `frame` holds for the block whose scope is `scope`. The
-	// node is allocated before the task is registered, so a failure leaves
-	// the frame the caller's.
+	// frame's own header links it, so nothing here can fail.
 	@(private)
 	submit :: proc(self: ^, scope: rawptr, frame: rawptr) {
-		node := rawptr(unsafe.new(Pool_Node{frame = frame, scope = scope}));
-		owner := (^mut Task_Scope)(scope);
+		task := (^mut Pool_Frame)(frame);
+		task^.next = nil;
+		task^.scope = scope;
 		state := state_of(self);
 		rt_lock(rawptr(&state^.word.value));
-		push(state, node);
-		owner^.pending.store(owner^.pending.load() + 1);
+		if (state^.tail == nil) {
+			state^.head = frame;
+		} else {
+			(^mut Pool_Frame)(state^.tail)^.next = frame;
+		}
+		state^.tail = frame;
+		(^mut Task_Scope)(scope)^.pending += 1;
 		rt_unlock(rawptr(&state^.word.value));
 		rt_wake_all(rawptr(&state^.wake.value));
 	}
@@ -93,20 +101,12 @@ impl Pool {
 	@(private)
 	wait_for :: proc(self: ^, scope: rawptr) {
 		state := state_of(self);
-		owner := (^mut Task_Scope)(scope);
 		helps := worker_of == rawptr(state);
 		rt_lock(rawptr(&state^.word.value));
-		for (owner^.pending.load() > 0) {
-			if (helps) {
-				node := take(state, scope);
-				if (node != nil) {
-					rt_unlock(rawptr(&state^.word.value));
-					run_node(state, node);
-					rt_lock(rawptr(&state^.word.value));
-					continue;
-				}
+		for ((^Task_Scope)(scope)^.pending > 0) {
+			if (!helps || !run_next(state, scope)) {
+				rt_sleep(rawptr(&state^.wake.value), rawptr(&state^.word.value), INFINITE, 0);
 			}
-			rt_sleep(rawptr(&state^.wake.value), rawptr(&state^.word.value), INFINITE, 0);
 		}
 		rt_unlock(rawptr(&state^.word.value));
 	}
@@ -132,19 +132,8 @@ state_of :: proc(pool: ^Pool) -> ^mut Pool_State {
 	return (^mut Pool_State)(pool.state);
 }
 
-// Appends `node` to the queue; the lock is held.
-@(private)
-push :: proc(state: ^mut Pool_State, node: rawptr) {
-	if (state^.tail == nil) {
-		state^.head = node;
-	} else {
-		(^mut Pool_Node)(state^.tail)^.next = node;
-	}
-	state^.tail = node;
-}
-
-// Unlinks and answers the oldest queued node a thread may run, or nil: any
-// node for a worker looking for work (`within` nil), else one of the block
+// Unlinks and answers the oldest queued frame a thread may run, or nil: any
+// task for a worker looking for work (`within` nil), else one of the block
 // whose scope is `within` or of a block one of its tasks opened, at any depth.
 // The lock is held.
 @(private)
@@ -152,12 +141,12 @@ take :: proc(state: ^mut Pool_State, within: rawptr) -> rawptr {
 	previous: rawptr = nil;
 	current := state^.head;
 	for (current != nil) {
-		node := (^mut Pool_Node)(current);
+		node := (^mut Pool_Frame)(current);
 		if (within == nil || descends(node^.scope, within)) {
 			if (previous == nil) {
 				state^.head = node^.next;
 			} else {
-				(^mut Pool_Node)(previous)^.next = node^.next;
+				(^mut Pool_Frame)(previous)^.next = node^.next;
 			}
 			if (state^.tail == current) { state^.tail = previous; }
 			return current;
@@ -181,23 +170,30 @@ descends :: proc(scope: rawptr, ancestor: rawptr) -> bool {
 	return false;
 }
 
-// Runs a node taken from the queue, without the lock, then counts its task
-// finished, waking the block's joiner when it was the last.
+// Takes the task `take` answers for `within` and runs it without the lock,
+// then counts it finished; answers whether there was one. The lock is held on
+// entry and on return. When the block's last task finishes, the lock is
+// released while its joiner is woken, so the joiner can take it at once.
 @(private)
-run_node :: proc(state: ^mut Pool_State, node: rawptr) {
-	frame := (^Pool_Node)(node)^.frame;
-	scope := (^Pool_Node)(node)^.scope;
-	unsafe.free((^mut Pool_Node)(node));
+run_next :: proc(state: ^mut Pool_State, within: rawptr) -> bool {
+	frame := take(state, within);
+	if (frame == nil) { return false; }
+	// Read before the task runs, which frees its frame.
+	scope := (^Pool_Frame)(frame)^.scope;
+	rt_unlock(rawptr(&state^.word.value));
 	outer := running_in;
 	running_in = scope;
 	rt_run_task(run_frame, frame);
 	running_in = outer;
-	owner := (^mut Task_Scope)(scope);
 	rt_lock(rawptr(&state^.word.value));
-	left := owner^.pending.load() - 1;
-	owner^.pending.store(left);
-	rt_unlock(rawptr(&state^.word.value));
-	if (left == 0) { rt_wake_all(rawptr(&state^.wake.value)); }
+	owner := (^mut Task_Scope)(scope);
+	owner^.pending -= 1;
+	if (owner^.pending == 0) {
+		rt_unlock(rawptr(&state^.word.value));
+		rt_wake_all(rawptr(&state^.wake.value));
+		rt_lock(rawptr(&state^.word.value));
+	}
+	return true;
 }
 
 // What `rt_run_task` calls: the procedure the frame leads with.
@@ -207,22 +203,17 @@ run_frame :: proc "stdcall" (frame: rawptr) -> u32 {
 	return 0;
 }
 
-// A worker: runs queued tasks, oldest first, until the pool stops.
+// A worker: runs queued tasks, oldest first, until the pool stops. Every
+// block that used the pool has joined by then, so the queue is empty.
 @(private)
 pool_worker :: proc "stdcall" (raw: rawptr) -> u32 {
 	worker_of = raw;
 	state := (^mut Pool_State)(raw);
 	rt_lock(rawptr(&state^.word.value));
-	for (;;) {
-		node := take(state, nil);
-		if (node != nil) {
-			rt_unlock(rawptr(&state^.word.value));
-			run_node(state, node);
-			rt_lock(rawptr(&state^.word.value));
-			continue;
+	for (!state^.stopping) {
+		if (!run_next(state, nil)) {
+			rt_sleep(rawptr(&state^.wake.value), rawptr(&state^.word.value), INFINITE, 0);
 		}
-		if (state^.stopping) { break; }
-		rt_sleep(rawptr(&state^.wake.value), rawptr(&state^.word.value), INFINITE, 0);
 	}
 	rt_unlock(rawptr(&state^.word.value));
 	rt_detach();
