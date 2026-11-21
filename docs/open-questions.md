@@ -12,17 +12,6 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 2026-10-31, and the proposals from them not yet decided, are in
 [design-review-2026-10-31.md](design-review-2026-10-31.md).
 
-## The allocation switch in core:cstrings
-
-[`from_string`](../core/cstrings/cstrings.loke) handles a failed allocation
-with a `switch`, where `or_return .Out_Of_Memory` would save seven lines. The
-`switch` was kept because, with the byte-by-byte zero scan, the `or_return`
-build placed that loop's backward branch across a 32-byte boundary: 1,800
-valid 384 KiB inputs took 682 ms, from 558, at `-opt=speed` on Windows. The
-scan is now `strings.index_byte`, which calls `memchr`, and the two forms
-measured alike (about 345 ms, and 56 ms for 750,000 inputs of 24 bytes).
-Whether to take the shorter form is open (2026-11-21).
-
 ## What the region and overload matrices left open
 
 The [region matrix](../tests/region_matrix_test.odin) and the [overload
