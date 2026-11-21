@@ -183,6 +183,10 @@ checklist.
   analyzed the procedure once more for them. The language server opens `bench/workspace` in
   336 ms, from 393. A program with a `parallel` statement is checked as before, and no
   diagnostic changes.
+- The [standard logger](docs/standard-library.md#corelog) writes each record as three pieces,
+  its `[Level] ` prefix, the message, and the newline, straight to the error stream rather
+  than five through the formatter. At `-opt=speed`, 30,000 records to a redirected error
+  stream take 0.25 s, from 0.41, with the same bytes.
 
 ### Fixed
 

@@ -18,7 +18,6 @@ import "core:fmt";
 import "core:io";
 import "core:mem";
 import "core:thread";
-import "core:unsafe";
 
 // `Level` is contributed by the compiler rather than declared, so it and
 // `LOKE_LOG_LEVEL` are one type: a `when` over `LOKE_LOG_LEVEL <= .Info`
@@ -69,20 +68,19 @@ current :: proc() -> Logger {
 	the level in front of it. It is the fallback *and* an ordinary provider — a
 	build may select `log.standard_logger` explicitly to say so.
 */
-// The view is made from a read-only address. `Standard` has no fields, so no
-// write through the view reaches its storage, and the one thing its records
-// share, the error stream, is serialized by `standard_lines` instead. A
-// `&mut standard` would count as a write to a global every logging thread
-// shares (design.md "Global write effects"), and warn at each `thread.spawn` of
-// code that logs about a race that cannot happen.
 standard_logger :: proc() -> Logger {
-	return (Logger)((^mut Standard)(rawptr(&standard)));
+	return (Logger)(&mut standard);
 }
 
 @(private)
 Standard :: struct {}
 
-@(private)
+// Synchronized: `Standard` has no fields, so no write through a view reaches
+// this storage, and the one thing its records share, the error stream, is
+// serialized by `standard_lines`. Without the attribute, every logging thread's
+// `&mut standard` would count as a write to a shared global (design.md "Global
+// write effects") and warn at each `thread.spawn` of code that logs.
+@(private, synchronized)
 standard: static Standard = {};
 
 // Held for the whole of one standard record, so records from different threads
@@ -95,11 +93,9 @@ impl Standard {
 	write :: proc(self: inout, level: Level, message: string_view) {
 		lines := standard_lines.lock();
 		w := fmt.stderr();
-		fmt.format_to(w, "[");
-		fmt.format_to(w, level_name(level));
-		fmt.format_to(w, "] ");
-		fmt.format_to(w, message);
-		fmt.format_to(w, "\n");
+		w.write(level_prefix(level).bytes());
+		w.write(message.bytes());
+		w.write("\n".bytes());
 	}
 }
 
@@ -145,9 +141,8 @@ impl Writer_Sink($W) {
 	/// The `Sink` slot: one record, written whole or dropped and counted.
 	write :: proc(self: inout, level: Level, message: string_view) where io.Writer(W) {
 		held := self.lines.lock();
-		switch (put_line(inout self.writer, inout self.line, inout self.torn, level, message)) {
-		case .ok:
-		case .err: self.lost += 1;
+		if (!put_line(inout self.writer, inout self.line, inout self.torn, level, message)) {
+			self.lost += 1;
 		}
 	}
 
@@ -169,12 +164,15 @@ impl Writer_Sink($W) {
 
 // The whole line in memory first, so the writer sees one write per record: an
 // unbuffered file then makes one system call, and an append handle shared with
-// another process keeps the line together.
+// another process keeps the line together. False when the record is dropped.
 //
-// This is `io.write_all`'s loop, kept here because a failure must say whether
-// any byte went out, which `write_all`'s `Status` cannot: bytes left behind by a
+// This is `io.write_all`'s loop, kept here because a failure must say how many
+// bytes went out, which `write_all`'s `Status` cannot: bytes left behind by a
 // refused record make `torn`, and the next record ends that line first. A
-// failure that sent only that newline leaves the writer at a line start again.
+// failure that sent nothing leaves `torn` as it was, and one that sent only that
+// newline leaves the writer at a line start again. A zero count for a non-empty
+// slice breaks the `Writer` contract and is a refusal, as for `write_all`,
+// rather than a reason to spin.
 @(private)
 put_line :: proc(
 	writer: inout $W,
@@ -182,50 +180,36 @@ put_line :: proc(
 	torn: inout bool,
 	level: Level,
 	message: string_view,
-) -> Status(io.Error) where io.Writer(W) {
+) -> bool where io.Writer(W) {
 	line.clear();
-	lead := 0;
-	if (torn) {
-		io.write_string(inout line, "\n") or_return;
-		lead = 1;
-	}
-	io.write_string(inout line, "[") or_return;
-	io.write_string(inout line, level_name(level)) or_return;
-	io.write_string(inout line, "] ") or_return;
-	io.write_string(inout line, message) or_return;
-	io.write_string(inout line, "\n") or_return;
+	lead := 1 if torn else 0;
+	if (torn) { _ = io.write_string(inout line, "\n") or_else return false; }
+	_ = io.write_string(inout line, level_prefix(level)) or_else return false;
+	_ = io.write_string(inout line, message) or_else return false;
+	_ = io.write_string(inout line, "\n") or_else return false;
 
 	bytes := line.bytes();
 	written := 0;
 	for (; written < bytes.len(); ) {
-		switch (writer.write(bytes[written:])) {
-		case .ok(count):
-			// Zero for a non-empty slice breaks the `Writer` contract, and is
-			// refused as `write_all` refuses it, rather than spinning.
-			if (count == 0) {
-				if (written > 0) { torn = written > lead; }
-				return .err(io.make_error(.Broken_Pipe, .Write));
-			}
-			written += count;
-		case .err(error):
-			if (written > 0) { torn = written > lead; }
-			return .err(error);
-		}
+		count := writer.write(bytes[written:]) or_else 0;
+		if (count == 0) { break; }
+		written += count;
 	}
-	torn = false;
-	return .ok;
+	done := written == bytes.len();
+	if (written > 0) { torn = !done && written > lead; }
+	return done;
 }
 
-// The spelling `fmt` gives a `Level`, which both sinks print, without
-// formatting through a `fmt.Writer`.
+// The prefix both sinks print: the spelling `fmt` gives a `Level`, bracketed,
+// without formatting through a `fmt.Writer`.
 @(private)
-level_name :: proc(level: Level) -> string_view {
+level_prefix :: proc(level: Level) -> string_view {
 	switch (level) {
-	case .Debug:   return "Debug";
-	case .Info:    return "Info";
-	case .Warning: return "Warning";
-	case .Error:   return "Error";
-	case .Off:     return "Off";
+	case .Debug:   return "[Debug] ";
+	case .Info:    return "[Info] ";
+	case .Warning: return "[Warning] ";
+	case .Error:   return "[Error] ";
+	case .Off:     return "[Off] ";
 	}
 }
 
