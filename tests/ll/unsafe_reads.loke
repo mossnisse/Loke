@@ -1,0 +1,58 @@
+// The `core:unsafe` built-ins read no more than they use: a `transmute` of a
+// place reads it where it is, `forget(move(x))` reads nothing, and a header's
+// data pointer is extracted alone.
+package main;
+
+import "core:unsafe";
+
+// Sizes nothing else in the module has, both over the large-value limit.
+Quads :: [1025]u64;
+Words :: [2050]u32;
+
+QUADS: Quads;
+
+// One copy, from the place to the new local, with no snapshot between.
+fresh :: proc() -> u32 {
+	words := unsafe.transmute(Words, QUADS);
+	return words[2049];
+}
+
+// An assignment may run code between the read and the write, so the bytes are
+// captured once, in storage aligned for the destination.
+assigned :: proc(into: ^mut Words) {
+	into^ = unsafe.transmute(Words, QUADS);
+}
+
+// The moved variable is cleared, and its value is not read to be discarded.
+forgotten :: proc() {
+	held: [600]u64 = {};
+	held[3] = 4;
+	unsafe.forget(move(held));
+}
+
+// Two register types of one size are one cast, whatever their kinds.
+identified :: proc(x: f64) -> typeid {
+	return unsafe.transmute(typeid, -x);
+}
+
+first_byte :: proc(bytes: []u8) -> [^]u8 { return unsafe.raw_data(bytes); }
+first_unit :: proc(text: string_view) -> [^]u8 { return unsafe.raw_data(text); }
+
+// The payload is written only where the view is present, so the pointer and
+// length need no clearing of their own.
+viewed :: proc(pointer: [^]u8, length: int) -> bool {
+	switch (unsafe.string_view(pointer, length)) {
+	case .some(_): return true;
+	case .none: return false;
+	}
+}
+
+main :: proc() {
+	words: Words = {};
+	assigned(&mut words);
+	forgotten();
+	text: string_view = "text";
+	bytes := [2]u8{104, 105};
+	assert(fresh() == words[0] && identified(1.0) != typeid{});
+	assert(first_byte(bytes[:]) != first_unit(text) && viewed(unsafe.raw_data(bytes[:]), 2));
+}

@@ -882,32 +882,52 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 
 // `unsafe.transmute(T, value)`: the same bits read as a `T`. The checker has
 // settled equal size and trivial lifecycles, so only the LLVM spelling is left:
-// a register cast where one exists, a load from the place itself where the
-// operand is one, a stack round trip otherwise.
+// a register cast where the two lowered types have one, and a read of the
+// operand's storage otherwise, where it already is when the operand is a place.
 @(private)
 emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
-	source := expr_base(v.bound[0]).type
-	// An aggregate place is read where it is, at the alignment it has there,
-	// rather than copied into storage of its own and loaded back.
-	if reads_in_place(e.c, source, as_type) && expression_is_borrowed_place(v.bound[0]) &&
-	   !expression_converts_storage(v.bound[0]) {
-		address := emit_address(e, v.bound[0])
+	operand := v.bound[0]
+	source := expr_base(operand).type
+	place := transmuted_place(operand)
+	if is_large_value(e, as_type) {
+		// Both sides are addresses; the copy is aligned for `as_type`.
+		from := place ? emit_address(e, operand) : emit_expr(e, operand)
+		slot := temporary_slot(e, as_type)
+		copy_bytes(e, slot, from, type_size(e.c, as_type))
+		return slot
+	}
+	// A `bool` is `i1` in registers but a byte in memory, so it crosses as `i8`.
+	from_bool, to_bool := underlying_kind(e.c, source) == .Bool, underlying_kind(e.c, as_type) == .Bool
+	from := from_bool ? "i8" : llvm_type(e, source)
+	to := to_bool ? "i8" : llvm_type(e, as_type)
+	convert := register_cast(from, to)
+	result: string
+	if convert == "" && place {
+		// Read where it is, at the alignment it has there, rather than copied
+		// into storage of its own and loaded back.
+		address := emit_address(e, operand)
 		align, known := e.place_align[address]
 		if !known {
 			align = type_align(e.c, source)
 		}
-		return load(e, llvm_type(e, as_type), address, align < type_align(e.c, as_type) ? fmt.aprintf(", align %d", align) : "")
+		result = load(e, to, address, align < type_align(e.c, as_type) ? fmt.aprintf(", align %d", align) : "")
+	} else {
+		value := emit_expr(e, operand)
+		if from_bool {
+			value = emit_value(e, "zext i1 %s to i8", value)
+		}
+		switch {
+		case from == to:
+			result = value
+		case convert != "":
+			result = emit_value(e, "%s %s %s to %s", convert, from, value, to)
+		case:
+			// Through equally sized storage aligned for the stricter side.
+			slot := alloca(e, type_align(e.c, as_type) > type_align(e.c, source) ? to : from)
+			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", from, value, slot)
+			result = load(e, to, slot)
+		}
 	}
-	value := emit_expr(e, v.bound[0])
-	// A `bool` is `i1` in registers but a byte in memory, so it crosses as `i8`.
-	from := llvm_type(e, source)
-	if underlying_kind(e.c, source) == .Bool {
-		widened := emit_value(e, "zext i1 %s to i8", value)
-		value, from = widened, "i8"
-	}
-	to_bool := underlying_kind(e.c, as_type) == .Bool
-	to := to_bool ? "i8" : llvm_type(e, as_type)
-	result := reinterpret_bits(e, source, as_type, from, to, value)
 	if to_bool {
 		// Bit 0 is the `bool`; a valid pattern is the caller's obligation
 		// (design.md "Invalid representations").
@@ -916,63 +936,45 @@ emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	return result
 }
 
+// Whether a `transmute` reads `operand` where it is: a place it does not
+// convert on the way.
 @(private = "file")
-reinterpret_bits :: proc(e: ^Emitter, source, target: Type_Id, from, to, value: string) -> string {
-	if from == to {
+transmuted_place :: proc(operand: Expr) -> bool {
+	return expression_is_borrowed_place(operand) && !expression_converts_storage(operand)
+}
+
+// The place `value` is read from when it is nothing but a read of one, through
+// a `transmute` or not, and nil otherwise. A large destination that nothing
+// else names, and that nothing runs before, copies the bytes from there instead
+// of from a snapshot of them.
+@(private)
+large_value_place :: proc(e: ^Emitter, value: Expr) -> Expr {
+	if expression_is_borrowed_place(value) {
 		return value
 	}
-	out := temp(e)
+	// A folded call keeps no operand.
+	call, called := value.(^Expr_Call)
+	if called && !base_is_const(&call.base) && !expression_converts_storage(value) &&
+	   call_builtin_kind(e, call) == .Unsafe_Transmute && transmuted_place(call.bound[0]) {
+		return call.bound[0]
+	}
+	return nil
+}
+
+// The instruction that reinterprets a register of the LLVM type `from` as the
+// equally sized `to`. There is none for an aggregate, nor between a pointer and
+// anything but an integer, and those bits cross through storage.
+@(private = "file")
+register_cast :: proc(from, to: string) -> string {
 	switch {
-	case pointer_shaped(e.c, source) && to[0] == 'i':
-		fmt.sbprintfln(&e.b, "  %s = ptrtoint %s %s to %s", out, from, value, to)
-	case pointer_shaped(e.c, target) && from[0] == 'i':
-		fmt.sbprintfln(&e.b, "  %s = inttoptr %s %s to %s", out, from, value, to)
-	case is_large_value(e, target):
-		// Both sides are addresses; the copy is aligned for `target`.
-		slot := temporary_slot(e, target)
-		copy_bytes(e, slot, value, type_size(e.c, target))
-		return slot
-	case bitcastable(e.c, source) && bitcastable(e.c, target):
-		fmt.sbprintfln(&e.b, "  %s = bitcast %s %s to %s", out, from, value, to)
-	case:
-		// An aggregate: through equally sized storage aligned for the stricter side.
-		slot := alloca(e, type_align(e.c, target) > type_align(e.c, source) ? to : from)
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", from, value, slot)
-		return load(e, to, slot)
+	case is_llvm_aggregate(from) || is_llvm_aggregate(to):
+		return ""
+	case from == "ptr":
+		return to[0] == 'i' ? "ptrtoint" : ""
+	case to == "ptr":
+		return from[0] == 'i' ? "inttoptr" : ""
 	}
-	return out
-}
-
-// The pairs `reinterpret_bits` takes through storage: an aggregate on at least
-// one side, no pointer and no `bool`, whose register form is not its memory's,
-// and a result that is not a large value.
-@(private = "file")
-reads_in_place :: proc(c: ^Compiler, source, target: Type_Id) -> bool {
-	for type in ([2]Type_Id{source, target}) {
-		if pointer_shaped(c, type) || underlying_kind(c, type) == .Bool {
-			return false
-		}
-	}
-	return !(bitcastable(c, source) && bitcastable(c, target)) && type_size(c, target) <= LARGE_VALUE_BYTES
-}
-
-@(private = "file")
-pointer_shaped :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	#partial switch underlying_kind(c, type) {
-	case .Raw_Pointer, .C_Pointer, .Proc:
-		return true
-	}
-	return false
-}
-
-// First-class, non-aggregate, non-pointer types, which `bitcast` accepts.
-@(private = "file")
-bitcastable :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	#partial switch underlying_kind(c, type) {
-	case .Bool, .Int, .Float, .Rune, .Enum, .Simd:
-		return true
-	}
-	return false
+	return "bitcast"
 }
 
 // `unsafe.raw_data`, `unsafe.cstring_view` and `unsafe.string_view`; the last
@@ -980,19 +982,15 @@ bitcastable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 @(private)
 emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {
 	out := "null"
-	operand_kind := underlying_kind(e.c, expr_base(v.bound[0]).type)
+	operand_type := expr_base(v.bound[0]).type
 	#partial switch kind {
 	case .Unsafe_Raw_Data:
-		#partial switch operand_kind {
-		case .Slice:
-			data, _ := emit_slice_parts(e, v.bound[0])
-			out = data
-		case .String, .String_View:
-			data, _ := emit_text_parts(e, v.bound[0])
-			out = data
-		case .Dynamic_Array:
-			// The current allocation's first element; nothing keeps it current.
-			out = extract(e, CONTAINER_TYPE, emit_borrowed_operand(e, v.bound[0]), CONTAINER_STORAGE)
+		#partial switch underlying_kind(e.c, operand_type) {
+		case .Slice, .String, .String_View, .Dynamic_Array:
+			// Each header's first field. A dynamic array's is its current
+			// allocation, which nothing keeps current.
+			#assert(SLICE_DATA == 0 && STRING_DATA == 0 && VIEW_DATA == 0 && CONTAINER_STORAGE == 0)
+			out = extract(e, llvm_type(e, operand_type), emit_borrowed_operand(e, v.bound[0]), 0)
 		case:
 			// A pointer to a fixed array, or a `cstring_view`, is already the address.
 			out = emit_expr(e, v.bound[0])
@@ -1000,7 +998,7 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 
 	case .Unsafe_C_String_View:
 		out = emit_expr(e, v.bound[0])
-		guard_null_reference(e, out, expr_base(v.bound[0]).type, TYPE_CSTRING_VIEW)
+		guard_null_reference(e, out, operand_type, TYPE_CSTRING_VIEW)
 
 	case .Unsafe_String_View:
 		// design.md "string type conversions": a negative length is a bounds

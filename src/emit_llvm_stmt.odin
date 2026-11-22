@@ -271,9 +271,9 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 			continue
 		}
 		clones := i < len(d.value_clones) && d.value_clones[i]
-		if is_large_value(e, sym.type) && !clones && expression_is_borrowed_place(d.values[i]) {
+		if place := large_value_place(e, d.values[i]); place != nil && !clones && is_large_value(e, sym.type) {
 			// Nothing runs between reading the place and writing the new local.
-			copy_bytes(e, slot, emit_address(e, d.values[i]), type_size(e.c, sym.type))
+			copy_bytes(e, slot, emit_address(e, place), type_size(e.c, sym.type))
 		} else {
 			value := emit_copied_expr(e, d.values[i], sym.type, clones, destination = symbol_id)
 			store(e, sym.type, value, slot)

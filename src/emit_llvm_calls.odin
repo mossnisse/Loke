@@ -116,8 +116,14 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		// The checker bound the borrow it stands for.
 		return emit_expr(e, v.bound[0])
 	case .Unsafe_Forget:
-		// Skips the drop an owned temporary would get; `emit_move` still kills a
-		// `move(place)` source.
+		// Skips the drop an owned temporary would get. A moved variable is only
+		// killed, as `emit_move` kills it: nothing takes the value, so it is not read.
+		if moved, is_move := v.bound[0].(^Expr_Move); is_move {
+			if ident, named := moved.value.(^Expr_Ident); named {
+				kill_place(e, ident.symbol)
+				return "0"
+			}
+		}
 		emit_expr(e, v.bound[0])
 		return "0"
 	case .Type_Info_Of:

@@ -164,10 +164,7 @@ emit_utf8_prefix :: proc(e: ^Emitter, data, length: string) -> string {
 @(private)
 emit_checked_view :: proc(e: ^Emitter, option: Type_Id, data, length: string) -> string {
 	ok := emit_value(e, "icmp eq i64 %s, %s", emit_utf8_prefix(e, data, length), length)
-	kept_data := emit_value(e, "select i1 %s, ptr %s, ptr null", ok, data)
-	kept_len := emit_value(e, "select i1 %s, i64 %s, i64 0", ok, length)
-	view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
-	return emit_option_value(e, option, ok, view)
+	return emit_option_value(e, option, ok, emit_ptr_len(e, STRING_VIEW_TYPE, data, length))
 }
 
 // `strings.allocate_string(text, allocator)`: `.copy()` into the caller's

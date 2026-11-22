@@ -174,6 +174,11 @@ checklist.
 - A borrow of a call's large result, such as the receiver in `large(i).first()`, uses the slot
   the call wrote it into. The result was copied into a second temporary first, so each such
   call of a 5000-byte record copied 5000 bytes and kept two slots in the frame.
+- [`unsafe.transmute`](docs/design.md#unsafetransmute) of a place larger than 4096 bytes copies
+  it once into a new local and twice into an assigned place, from three times, and
+  `unsafe.forget(move(x))` no longer copies `x` before clearing it. A cast between two register
+  types is one instruction whatever their kinds, so `unsafe.transmute(typeid, x)` of an `f64`
+  no longer goes through the stack.
 - Generated code with thousands of integers checks faster. A `switch` over 40,000 constants at
   or above 2^63, as half of all 64-bit hashes are, takes 0.6 s in the front end, from 8.2: a
   repeated case past `i64` was found by comparing with every earlier one. An enum of 40,000

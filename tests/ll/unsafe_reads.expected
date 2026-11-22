@@ -1,0 +1,9 @@
+call void @llvm.memcpy.p0.p0.i64(ptr %words.*, ptr @loke.g.QUADS, i64 8200, i1 false)
+call void @llvm.memcpy.p0.p0.i64(ptr %t*, ptr @loke.g.QUADS, i64 8200, i1 false)
+not alloca [1025 x i64]
+not %t* = alloca [600 x i64]
+bitcast double %t* to i64
+extractvalue %loke.string_view %t*, 0
+not extractvalue %loke.string_view %t*, 1
+not extractvalue %struct.anon.* %t*, 1
+not select i1

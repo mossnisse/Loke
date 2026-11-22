@@ -135,4 +135,13 @@ main :: proc() {
 	quads[1023] = 0x0000000300000002;
 	words := unsafe.transmute([2048]u32, quads);
 	fmt.println(words[0], words[1], words[2046], words[2047]);
+	// The new local is copied from the place itself, so it holds what the place
+	// held then; an assignment and a temporary operand go through storage.
+	quads[0] = 9;
+	fmt.println(words[0]);
+	words = unsafe.transmute([2048]u32, quads);
+	fmt.println(words[0], unsafe.transmute([1024]u64, unsafe.transmute([2048]u32, quads))[1023] == quads[1023]);
+
+	// A `typeid` is a register like any integer, so a float reaches it in one cast.
+	fmt.println(unsafe.transmute(u64, unsafe.transmute(typeid, -double)), unsafe.transmute(f64, unsafe.transmute(typeid, double)));
 }

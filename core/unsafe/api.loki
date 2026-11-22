@@ -3,13 +3,12 @@
 /*
 	The explicit trust boundary.
 
-	Every member is a compiler built-in, each one a promise the compiler cannot
-	check: `raw_data`, `string_view` and `cstring_view` discard or manufacture
-	provenance, `transmute` reinterprets bits, `forget` suppresses cleanup, `new`
-	and `try_new` allocate storage nothing owns, `free` releases storage nothing
-	traced, `write` and `take` move a value into and out of storage that holds
-	none, and `storage` lends the storage of an `Uninit(T)`. Importing this package is also what permits the unchecked pointer
-	conversions and C-pointer indexing and slicing in the importing file.
+	Every member is a compiler built-in, and each is a promise the compiler
+	cannot check. Importing this package is also what permits, in the importing
+	file and no other, the unchecked operations that are syntax: an explicit
+	conversion to `^T`, `^mut T`, or a C pointer from `rawptr`, from a C pointer,
+	or from a pointer to a different pointee; indexing or slicing a C pointer;
+	and leaving a variable uninitialized with `x: T = ---`.
 */
 package unsafe;
 
@@ -128,13 +127,13 @@ storage :: proc(pointer: ^Uninit($T)) -> ^T ---;
 
 	Everything else is the caller's obligation. Producing a valid destination
 	representation is not checked at runtime; a *constant* pattern that is not
-	a value of the destination type at all, such as a `bool` outside `{0, 1}`,
-	an enum with no such member, or a `rune` outside the scalar range, is a
-	compile error instead, since there is no caller left to hold responsible. A
-	constant operand folds, which is how a package builds an infinity or a NaN:
-	neither has a literal spelling. At compile time the storage is read byte by
-	byte, so arrays and structs fold as well, except where the result would read
-	padding. A union and an `Uninit(T)` have no compile-time meaning.
+	a value of the destination type at all, such as a `bool` outside `{0, 1}` or
+	an enum with no such member, is a compile error instead, since there is no
+	caller left to hold responsible. Every 32-bit pattern is a `rune`. A constant
+	operand folds, which is how a package builds an infinity or a NaN: neither
+	has a literal spelling. At compile time the storage is read byte by byte, so
+	arrays and structs fold as well, except where the result would read padding.
+	A union and an `Uninit(T)` have no compile-time meaning.
 
 	Pointer destinations are `rawptr` and C pointers only, and the result is
 	unchecked: dereferencing it is valid only when the bits already describe
