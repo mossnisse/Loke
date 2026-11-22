@@ -320,7 +320,7 @@ Sum_Of_Squares :: struct($T: type) where linalg.Real(T) {
 impl Sum_Of_Squares($T) {
 	init :: proc() -> Sum_Of_Squares(T) { return {T(0), T(1), T(0), false, false}; }
 
-	add :: proc(self: inout, value: T) where linalg.Real(T) {
+	add :: proc(self: inout, value: T) {
 		x := value.abs();
 		if (!(x == x)) {
 			self.nan = true;
@@ -346,7 +346,7 @@ impl Sum_Of_Squares($T) {
 	}
 
 	// A real element whole, a complex one as its two parts.
-	add_parts :: proc(self: inout, z: $S) where linalg.Real(T), linalg.Scalar(S), S.Real == T {
+	add_parts :: proc(self: inout, z: $S) where linalg.Scalar(S), S.Real == T {
 		when (S == T) {
 			self.add(z);
 		} else {
@@ -355,7 +355,7 @@ impl Sum_Of_Squares($T) {
 		}
 	}
 
-	root :: proc(self) -> T where linalg.Real(T) {
+	root :: proc(self) -> T {
 		if (self.nan || self.infinite) { return self.special; }
 		return self.scale*self.sum.sqrt();
 	}

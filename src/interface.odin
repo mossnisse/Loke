@@ -1276,22 +1276,68 @@ granting_bounds :: proc(k: ^Checker) -> []Expr {
 		return k.bounds
 	}
 	literal := k.proc_literal
-	if literal == nil || len(literal.where_clauses) == 0 {
+	if literal == nil || len(literal.where_clauses) == 0 || !in_own_body(k) {
 		return nil
 	}
+	return literal.where_clauses
+}
+
+// Whether the code being checked is in the scopes of `k.proc_literal`'s body.
+@(private = "file")
+in_own_body :: proc(k: ^Checker) -> bool {
 	for scope := k.scope; scope != nil; scope = scope.parent {
-		if scope.owner_proc == rawptr(literal) {
-			return literal.where_clauses
+		if scope.owner_proc == rawptr(k.proc_literal) {
+			return true
 		}
 	}
-	return nil
+	return false
+}
+
+// design.md "Interface bodies": moves to where the bounds of the generic record
+// whose `impl` member is being checked were written, under their grant, which
+// the member has too: no instance exists that failed them. The caller restores
+// `k.location`. A record's own location has no subject, so what is read there
+// does not come back here.
+@(private = "file")
+enter_subject_bounds :: proc(k: ^Checker) -> (saved: Checker_Location, entered: bool) {
+	if !k.bounds_set && (k.proc_literal == nil || !in_own_body(k)) {
+		return
+	}
+	info := type_of(k.c, k.body.subject)
+	if info == nil || info.instance_of == INVALID_SYMBOL {
+		return
+	}
+	symbol := symbol_of(k.c, info.symbol)
+	template := k.c.generic_templates[info.instance_of]
+	if symbol == nil || symbol.decl == nil || symbol.def_scope == nil || template == nil || len(symbol.decl.values) == 0 {
+		return
+	}
+	record, is_record := symbol.decl.values[0].(^Type_Record)
+	if !is_record || len(record.where_clauses) == 0 {
+		return
+	}
+	saved = enter_instance(k, template, symbol.def_scope)
+	k.body.bounds, k.body.bounds_set = record.where_clauses, true
+	return saved, true
 }
 
 // design.md "Interface bodies": a bare `where I(T)` bound grants the slots of
 // `I` and of the applications it composes, each on its own subject, under the
 // interface's visibility, which ordinary lookup in the body would reject.
-// Clearing the bounds guards recursion.
 required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+	if found := bound_slot_candidates(k, type, name); len(found) > 0 {
+		return found
+	}
+	if saved, entered := enter_subject_bounds(k); entered {
+		defer k.location = saved
+		return bound_slot_candidates(k, type, name)
+	}
+	return nil
+}
+
+// The slot `granting_bounds` grants here. Clearing the bounds guards recursion.
+@(private = "file")
+bound_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
 	bounds := granting_bounds(k)
 	if len(bounds) == 0 {
 		return nil
@@ -1351,6 +1397,19 @@ required_associated_constant :: proc(k: ^Checker, type: Type_Id, name: Identifie
 			return found
 		}
 	}
+	if found := bound_associated_constant(k, type, name); found != INVALID_SYMBOL {
+		return found
+	}
+	if saved, entered := enter_subject_bounds(k); entered {
+		defer k.location = saved
+		return bound_associated_constant(k, type, name)
+	}
+	return INVALID_SYMBOL
+}
+
+// The associated constant `granting_bounds` grants here.
+@(private = "file")
+bound_associated_constant :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	for clause in granting_bounds(k) {
 		call, info := interface_call_of(k, clause)
 		if info == nil || interface_is_callable(k.c, info) || !interface_names_constant(k, info, name) {

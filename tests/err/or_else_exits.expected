@@ -19,3 +19,9 @@ this procedure can end without returning a value
 L0310
 @34:24
 this constant is not a value of `int`
+L0313
+@41:2
+this expression statement has no effect
+L0313
+@42:2
+this expression statement has no effect

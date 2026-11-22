@@ -169,11 +169,6 @@ reproduction before a change.
 
 ## Compiler source audit follow-ups (2026-11-18)
 
-- **Index an enum's members by name.** `field_named` scans the member list, so
-  a switch that names every member of a generated enum is quadratic: 40,000
-  members and as many `.Member` cases take 2.4 s in the front end, where the
-  enum alone takes 0.9 s, and 10,000 take 0.36 s (2026-11-22). Measure an
-  index by name against the memory it adds to every enum and record.
 - **Measure the borrow solver's allocation and rescanning hypotheses.** The
   audit lists changes it could not justify without a workload: skipping the
   loaded-below rows of a body with no cursor anchor, caching `at_once_reaches`
@@ -207,61 +202,23 @@ remain from them:
 
 ## LLVM source review follow-ups
 
-- **Returning a large value.** `return out;` of a 5000-byte local copies it
-  into a temporary and then into the result, and `return Large{...}` zeroes
-  three slots and copies twice (read in the IR on 2026-11-22). Building the
-  value in the result's storage would remove the copies; measure a kernel
-  that returns large records first.
-- **Slot reuse in fixed-array and slice literals.** Only a `[dynamic]T` or map
-  literal ends an element's temporaries (`end_operand_temporaries` in
-  [emit_llvm_cleanup.odin](../src/emit_llvm_cleanup.odin)), so `[40]u8{...}`
-  and `[]u8{...}` of by-value calls `first_of(large(i))`, with a 5000-byte
-  `Large`, keep 40 `Large` slots in the frame where the growable literal keeps
-  1. Whether their elements should reuse slots the same way is open; an
-  element that [lends its temporary to a
-  call](comments.md#a-temporary-lent-to-a-call-keeps-its-slot) would keep its
-  slot in either.
+- **Returning a large value.** A result over 4096 bytes is written through a
+  hidden pointer, and three passes over it remain at `-opt=speed` (read in the
+  IR on 2026-11-22, Clang 22): the result slot is zeroed on entry, `return out;`
+  copies the local into it, and the caller's `x := f();` copies the call's
+  temporary into `x`. LLVM folds the second temporary of `return out;`, and
+  leaves `return Large{...}` no copy. It cannot remove the rest: each local's
+  address is published for the unwind, so none is provably unaliased. A
+  procedure returning a 5000-byte local through 100 levels of recursion takes
+  210 ns a call, 42 ms for 200,000, and the same procedure through an `inout`
+  parameter makes none of the three passes. Building the local in the
+  result's storage needs a rule for which local that is: every `return` names
+  it, and no `or_return` or other exit publishes into the slot while it is
+  live. Passing `x` as the callee's result needs the unwind never to read `x`
+  before the call returns. The two rules are what is open; until they are
+  settled a program has the fast form with an `inout` parameter.
 - **Container emission.** Measure miss-heavy `find_or_insert` before
   changing the runtime ABI to reuse a probe across a user copy hook.
-
-## JSON follow-ups
-
-[`core:encoding/json`](standard-library.md#coreencodingjson) implements the
-fully validating document parser and streaming writer; its remaining work is in
-[Standard-library maturity](future-plans.md#standard-library-maturity). These
-design questions stay open until a caller or a measurement settles them:
-
-- **An event decoder.** When a caller needs one, it would share the scanner's
-  token recognition and grammar transitions over contiguous input, with
-  `next -> Result(Option(Event), Parse_Error)` and a `skip_value` that
-  validates what it skips, consumed through a
-  [fallible-source loop](standard-library.md#streaming-a-fallible-source). Borrowed
-  decoded text would last until the next step, and a successful decode would
-  require consuming the end or calling a `finish` that validates the rest: a
-  valid prefix alone is not a validated document.
-- **An on-demand cursor or a SIMD structural index.** Either may beat the scalar
-  scanner on large input, but their navigation and validation guarantees differ
-  ([simdjson's paper](https://arxiv.org/abs/1902.08318), [on-demand design
-  constraints](https://simdjson.org/api/3.0.0/md_doc_ondemand_design.html)).
-  Neither is established as better for 2 to 64 KiB state files, and either would
-  stay separate from fully validating document parsing.
-- **Avoiding repeated validation and copies.** `parse` validates UTF-8 and then
-  scans; a fused scanner would need a trusted validated-view operation and a
-  decision about keeping invalid UTF-8 ahead of every other error. `stringify`
-  validates and copies its finished bytes; a consuming bytes-to-string
-  conversion could avoid that, as retained owned bytes could avoid the copy in
-  an owning file load. Any such operation must preserve [borrow
-  provenance](design.md#procedure-result-contracts), allocator ownership, and
-  [string invariants](design.md#string-type); `unsafe.string_view` still
-  validates. Evaluate one only if profiling makes the cost material.
-- **Typed record codecs.** Reflection-based encoding and decoding need explicit
-  contracts for field names, missing versus null members, duplicates, numeric
-  ranges, and union mappings before an API is chosen. A mutable document,
-  automatic object indexes, and chunked input likewise wait for callers.
-- **Faster repeated access.** A direct child index or an explicit object index
-  pays only if repeated random access outweighs its build time and memory, and
-  `validate_unique_keys` waits for a protocol that requires globally unique
-  keys.
 
 ## Package and import versioning
 
@@ -306,91 +263,10 @@ choices are needed before extending it:
   releases. This decision belongs with dependency identity, before the
   versioned manifest syntax is fixed.
 
-## Using a package without reading its code (proposal, 2026-10-21)
+## Package documentation
 
-Hand-written documentation goes stale, because nothing checks it. The proposal:
-what a package tells its users is generated from its source, checked by the
-compiler, or run by the test runner, and prose is kept for intent, which goes
-stale slowest. [`///` doc comments](design.md#comments), the checked-in
-[interface file](compiler-guide.md#interface-files), and
-[`@(intrinsic)`](design.md#intrinsic) declarations are built. The rest is a
-proposal for review, not yet a plan of record: once accepted, its plan moves to
-[future-plans.md](future-plans.md) and the language rules to
-[design.md](design.md).
-
-### Proposed steps
-
-The compiler infers whether a result borrows an argument and from which
-allocator it comes (the [result
-contract](design.md#procedure-result-contracts)), and whether a call writes
-package state (the [write effect](design.md#global-write-effects)). Neither
-`-doc`, hover, nor the interface file shows them, so a reader opens the body to
-learn them.
-
-**1. Inferred facts are shown, one line each.** The interface file and hover
-add an `// inferred:` line to a public procedure for its result contract and
-its write effect, and say nothing when there is nothing to report:
-
-- ``result borrows `text` `` or ``result borrows `list.items` ``, from the
-  parameter paths the result contract records;
-- ``result is backed by `allocator` ``, from its region provenance;
-- `writes package state`, for the package's own globals, or
-  ``writes state of `core:log` ``, for another package's.
-
-A generic procedure's contract is per instantiation, and a declaration inside
-a `when` is checked for one target only, so neither gets the line. An inferred
-fact is not a compatibility promise: a release names a changed `inferred:`
-line of a bundled package as a possible break. A
-[written contract](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own), once
-it exists, would be shown in its place, without "inferred".
-
-**2. Examples are tests.** `@(example=split)` marks a
-[test procedure](design.md#test-procedures) that illustrates `split`, or
-`Type.member` for an `impl` member, of its own package. It follows every test
-rule, and in addition it may name only public declarations, because it shows
-what an importer can write. The interface file lists each example by name
-under its declaration (``// example: `split_on_commas` ``), and the HTML page
-shows its body. The gate builds each bundled package with `-test`, so an
-example that stops compiling or fails is caught.
-
-**3. Names in doc comments are checked.** A backticked span in a doc
-comment that is a name or dotted path, such as `split`, `Builder.len`, or
-`mem.Allocator`, must resolve, as rustdoc's intra-doc links must. It resolves
-in the documented declaration's package and imports, and also among its
-parameters and, for a type or `impl` member, the type's members. A span with
-any other character, such as `builder.len()` or `[dynamic]u8`, is prose and is
-not checked. An unresolved name is a warning in every check, so the editor
-shows it. This catches renames and removals, not wrong claims.
-
-**4. `-doc` writes HTML for people.** A browser is on every computer, and a
-Markdown page needs a renderer and has no links. `lokec <dir> -doc` writes
-`index.html` and one page per package of the project into `doc/`, or the
-directory `-o` names. Each page is self-contained, with inline CSS for light
-and dark themes and no scripts. Signatures are colored from the compiler's own
-tokens, which is exact where a TextMate grammar approximates, and every name in
-a signature or checked reference links to its declaration's anchor (`#split`,
-`#String_Builder.append`). Doc comments are rendered from a stated subset:
-paragraphs, inline code, `*emphasis*`, `**strong**`, `- ` lists, and indented
-code blocks. The HTML is generated, not checked in. Hover stays Markdown,
-which the protocol requires, and the editor's documentation command shows the
-interface file as a Loke document instead of a Markdown preview.
-
-### Not proposed
-
-- **A "may panic" mark.** Once checked arithmetic and indexing count, nearly
-  every procedure may panic, so the mark carries no information. A
-  precondition a caller must meet is written in the doc comment.
-- **Preconditions as code.** Checked clauses are a language feature, and
-  types already carry many preconditions. They wait for what remains in doc
-  comments after the steps above.
-- **Index and single-entry forms of `-doc`.** The interface file and grep
-  cover what an agent needs.
-- **A checked list of a package's main entry points.** The overview's checked
-  references cover it.
-
-The steps are in priority order, and each is usable without the next.
-
-### Still open
+The plan for [what a package tells its users](future-plans.md#package-documentation)
+generates it from source, checks it, or runs it. It leaves these open:
 
 - **Allocation.** Whether a call allocates at all is what a caller with an
   arena or a hot loop most wants to know, and the result contract does not
@@ -540,7 +416,7 @@ compiler-checked `Send` or `Sync` interfaces, additional atomic orderings, or a
 thread-affine owning type for code that wants non-atomic reference counts.
 
 The cost of keeping immutable `string` safe to copy and drop across threads is
-treated separately under [Thread-affine strings](#thread-affine-strings).
+treated separately under [Thread-affine strings](future-plans.md#thread-affine-strings).
 
 Two refinements of [Globals while tasks run](design.md#globals-while-tasks-run)
 are open, each a relaxation that would reject nothing accepted now:
@@ -565,23 +441,6 @@ when a variable it reads changes. Each needs a use of its own: borrowing across
 a join is not one, since [structured
 concurrency](design.md#structured-concurrency) already answers it
 ([reasons](comments.md#tasks-that-borrow-joined-by-their-block)).
-
-## Open questions in `core:sync`
-
-**Waiting on each `Once` state word.** `WaitOnAddress` and `WakeByAddressAll`
-on the state word would replace the shared SRW lock, the condition variable,
-and the lock handshake around the wake, about 30 lines of
-[core/sync/sync.loke](../core/sync/sync.loke), and keep `Once` at four bytes.
-It would no longer be faster: a waiter marks the state before it sleeps, so a
-`Once` nothing waited on already settles without the lock, and a prototype of
-the address wait measured within 0.2 ms of that on 100,000 first calls, with
-and without threads parked on another `Once`. The cost is the one that
-[decided against it](comments.md#tasks-that-borrow-joined-by-their-block):
-every C host of an object build importing `core:sync` would add
-`synchronization.lib` to its link. It becomes free if an object build ever
-names its system libraries to the host's linker. Windows `INIT_ONCE` is not an
-alternative, since it needs a stable address and a Loke `Once` can move after
-it fires.
 
 ## Lent storage whose owners cross threads
 
@@ -641,34 +500,6 @@ allocates from it.
 
 A second program that wants to lend a queue it sends from, or a helper that
 fans tasks out over storage it received, should decide between the first two.
-
-## Thread-affine strings
-
-`string` is an owning value whose copies share immutable backing storage, and
-a string may be dropped on any thread that received it, so the shared handle
-count is atomic: [`runtime/text.c`](../runtime/text.c) retains with a relaxed
-atomic add and
-releases with an acquire-release atomic subtract, each behind an out-of-line
-runtime call. Nothing turns a `string` copy into a move, since copying it
-cannot allocate, so this is the most frequent hidden cost in ordinary code.
-Measured on 2026-10-28 at `-opt=speed` on an Intel i5-9600K, one uncontended
-copy and drop of a heap-backed string costs about 12.5 ns regardless of
-length, of which about 4 ns is the two calls and the owner check (a literal or
-empty string pays only that) and about 8.5 ns is the two atomic operations; a
-24-byte struct copy costs under 0.3 ns, and an allocating copy of 16 bytes
-about 65-70 ns. Contended counts, where cache-line traffic dominates, have not
-been measured. Atomic accounting does not make an arbitrary allocator
-thread-safe; a string that crosses threads still asserts that its bound
-allocator may deallocate on the receiving thread.
-
-A thread-affine string with a non-atomic count would be a distinct type rather
-than a silent weakening of the guarantee, and would save at most the atomic
-part of the cost above. It is not needed now: Windows x64 is the only target,
-so copy-always for a target without atomics is not a live constraint, and no
-workload in the repository is bound by string copies. Revisit when a profile
-shows `string` retain and release on a hot path, when contended counts are
-measured, or when a freestanding target is added, since that decides whether
-`string` is usable unchanged there.
 
 ## What a file-scope `when` waits on
 
@@ -781,8 +612,6 @@ operations. Left out until a caller settles their contracts:
   lane. The result type is the question: a `Simd(int, N)` widens every lane
   past the operand's, and a `Simd(T, N)` is not an `int` as the scalar forms
   are. The checker refuses a vector today, so either choice can be added.
-- **Bit field extract and deposit** (`pext` and `pdep`), which exist only from
-  `x86-64-v3` and would need a portable fallback with the same result.
 
 ## Alias facts for the optimizer
 
@@ -968,76 +797,6 @@ whose ranges are known before the loop) does not reach a loop such as
 loop would, at the cost of a second copy of it. A descending index, `xs[last - i]`, is not vectorized
 with `-%` either, so its checks are not what holds it.
 
-### Slots through a record's bound
-
-`dense.Lu(T)` is declared `where linalg.Scalar(T)`, so no instance exists for
-an element type without `T.Real`. Even so, a method in `impl Lu($T)` cannot
-name `T.Real`, or call `x.abs()` on one, until the method restates
-`where linalg.Scalar(T)`: a bare bound grants *its own declaration* the slots
-and associated constants that satisfied it
-([where clauses](design.md#where-clauses)), and the record's own grant
-reaches only its fields. `core:math/linalg` restates `Real(T)` on each method
-that needs it, and `core:math/dense` restates `Scalar(T)`. Letting a record's
-bare bounds carry into its `impl` methods would remove the repetition; against
-it, a method's bounds are now all in its own signature, which is what [method
-exclusion](design.md#where-clauses) and the interface file show.
-
-## Open questions in `core:random`
-
-### More generators and distributions
-
-ChaCha would give a seedable cryptographic generator, and belongs with a
-`core:crypto`. A counter-based generator such as Philox would give random
-access into a stream. Floyd's sampling of indices from a range without
-materializing it needs a set. `f32` distributions would need their own
-ziggurat tables. The remaining candidates are listed in
-[Standard-library maturity](future-plans.md#standard-library-maturity).
-None is added until a caller needs it.
-
-### Longer seeds
-
-`from_seed` takes 64 bits, which is enough to name a run but not to reach
-every state; `from_state` takes all 256. A seed sequence in the style of numpy's
-`SeedSequence`, hashing seed material of any length into a state, would sit
-between them. Does a caller need it?
-
-## Open questions in `core:time`
-
-[`core:time`](standard-library.md#coretime) has clocks, durations, instants,
-the calendar, fixed offsets, the system's local zone, and ISO 8601 text; the
-reasons for its shape are in
-[Standard-library API choices](comments.md#standard-library-api-choices).
-Zones chosen by name are what is left.
-
-### Named time zones
-
-Converting in a zone chosen by name, such as `Europe/Stockholm` in 1950, needs
-the IANA time-zone database. Good C libraries exist for it. The hard part is
-the data, which changes several times a year, and a stale copy gives wrong
-local times without any error.
-
-| Route | Data and its updates | Cost |
-| --- | --- | --- |
-| ICU in Windows (`icu.dll`) | IANA data in the OS, kept current by Windows Update | A handful of `ucal_` calls, UTF-16 zone names. Windows 10 1903 and Server 2022 or later. Windows only. MSVC's `std::chrono` zones use it. |
-| IANA `tzcode`, public domain | TZif files: `/usr/share/zoneinfo` on Linux and macOS, none on Windows | Vendored C. Thread-safe through `tzalloc`, `localtime_rz`, and `mktime_z`. On Windows we would ship tzdata and follow its releases. |
-| A TZif reader in Loke (RFC 9636) | The same files as `tzcode` | A few hundred lines of Loke, and the same data problem on Windows |
-| Windows' own zones | The registry, kept current by Windows Update | Windows names (`W. Europe Standard Time`), not IANA's, and history only where Microsoft recorded it |
-
-The recommendation is to leave named zones out until a caller needs them. When
-one does, use the data each system already keeps current: ICU on Windows, the
-system's TZif files elsewhere. Never ship a copy of tzdata with the compiler.
-`Zone` then gains a named variant holding shared, immutable rules, so it stays
-copyable, and nothing already in the package changes.
-
-### Smaller open points
-
-- **Calendar durations.** `P1Y2M3D` has no type; `add_months` and its siblings
-  do the arithmetic. A `Period` type waits for a caller that stores or parses
-  one.
-- **The system zone's name.** Windows names its zones its own way, and the
-  IANA name needs CLDR's mapping, which ICU has, so a `Zone` has no name. A
-  caller that shows one, or records the zone beside a time, would need it.
-
 ## Open questions in `core:term`
 
 - **Buffer redirected lines across calls.** Redirected input goes through
@@ -1067,12 +826,6 @@ What the adopted error handling proposal left open:
 - **Binding the error in `errdefer`.** Zig's `errdefer |err|` names the error
   being returned. An `errdefer` reads locals today; binding needs a syntax and
   a rule for an error that has moved into the result.
-- **`or_else` as a statement.** `queue.try_append(x) or_else panic("full");`
-  is `L0313`, "this expression statement has no effect", though the call runs
-  and the fallback leaves: only a call and an `or_return` count as having an
-  effect. [design.md](design.md) does not say which expression statements
-  do. Should an `or_else` whose fallback diverges be one, over an operand that
-  is? Found on 2026-11-22.
 
 ## Anonymous unions and their follow-ups (2026-10-18)
 
@@ -1102,8 +855,6 @@ What [Parametric aliases](design.md#parametric-aliases) left open:
   alias's package and the `impl`'s at once, which generic `impl` installation
   resolves in one scope. Revisit when a program wants methods on a family
   written through an alias.
-- **Aliases in core.** `core:io` and others name `Result(T, Error)` in full;
-  whether each should declare a `Result($T)` of its own is a library question.
 
 ### Combining error sets
 

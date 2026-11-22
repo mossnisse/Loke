@@ -180,7 +180,7 @@ impl Symmetric_Eigen($T) {
 	size :: proc(self) -> int ---;
 
 	// The eigenvalues, ascending.
-	values :: proc(self: ^) -> []T.Real where linalg.Scalar(T) ---;
+	values :: proc(self: ^) -> []T.Real ---;
 
 	// The eigenvectors as the columns of an orthogonal, or unitary, matrix, column `i` for `values()[i]`.
 	vectors :: proc(self: ^) -> View(T) ---;
@@ -267,7 +267,7 @@ impl Lu($T) {
 		within the quotient. 0 when the estimate of `sigma |A^-1|_1` is not
 		finite.
 	*/
-	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real where linalg.Scalar(T) ---;
+	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real ---;
 }
 
 /*
@@ -607,7 +607,7 @@ impl Svd($T) {
 	u :: proc(self: ^) -> View(T) ---;
 
 	// The `k` singular values, descending.
-	singular_values :: proc(self: ^) -> []T.Real where linalg.Scalar(T) ---;
+	singular_values :: proc(self: ^) -> []T.Real ---;
 
 	// `V`, `n x k`, borrowed from the decomposition; `A = U S V^H`.
 	v :: proc(self: ^) -> View(T) ---;
@@ -617,7 +617,7 @@ impl Svd($T) {
 		largest. `relative` has no default, since the right one depends on
 		the data's accuracy; a negative or NaN one panics.
 	*/
-	rank :: proc(self, relative: T.Real) -> int where linalg.Scalar(T) ---;
+	rank :: proc(self, relative: T.Real) -> int ---;
 
 	/*
 		Overwrites the `n`-row `out` with the minimum-norm `x` that minimizes
@@ -629,10 +629,10 @@ impl Svd($T) {
 		singular value that is not zero. A negative or NaN `relative`, or a
 		shape mismatch, panics.
 	*/
-	solve_into :: proc(self, out: View_Mut(T), b: View(T), relative: T.Real) where linalg.Scalar(T) ---;
+	solve_into :: proc(self, out: View_Mut(T), b: View(T), relative: T.Real) ---;
 
 	// The minimum-norm least-squares solution of `solve_into`, `n` rows, allocated from `allocator`.
-	solve :: proc(self, b: View(T), relative: T.Real, allocator: Allocator = mem.default_allocator()) -> Matrix(T) where linalg.Scalar(T) ---;
+	solve :: proc(self, b: View(T), relative: T.Real, allocator: Allocator = mem.default_allocator()) -> Matrix(T) ---;
 }
 
 /*

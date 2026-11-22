@@ -1,0 +1,16 @@
+// A long member list is searched by name through an index (`field_named`),
+// which finds what a scan did: nothing for a name that is no member, and the
+// first of a repeated name.
+package main;
+
+Member :: enum { M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M3 }
+
+Wide :: struct { f0: int, f1: int, f2: int, f3: int, f4: int, f5: int, f6: int, f7: int, f8: int, f9: int, f10: int, f11: int, f12: int, f13: int, f14: int, f15: int, f16: int, f17: int, f18: int, f19: int, f20: int, f21: int, f22: int, f23: int, f24: int, f25: int, f26: int, f27: int, f28: int, f29: int, f30: int, f31: int, f32: int, f33: int, f34: int, f35: int, f36: int, f37: int, f38: int, f39: int, }
+
+main :: proc() {
+	a := Member.M40;
+	b: Member = .Missing;
+	wide := Wide{f40 = 1};
+	_ = wide.f41;
+	_ = a; _ = b;
+}

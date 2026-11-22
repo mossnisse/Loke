@@ -1416,8 +1416,8 @@ Preserve these lowering rules:
   avoiding LLVM first-class aggregates that can crash clang. Route Loke values
   through `load_place`, `store`, `temporary_slot`, `emit_call_result`,
   `emit_ret`, and `sret_param`; reuse temporary storage between full
-  expressions, and between a container literal's elements once the container
-  holds one that names none of its temporaries (`end_operand_temporaries`): its
+  expressions, and between a literal's parts once the container, array, or
+  record holds one that names none of its temporaries (`end_operand_temporaries`): its
   types hold no address, and no call it made was handed one
   (`note_lent_arguments`), which the callee may keep by `unsafe` means. A
   map entry's address and value wait in slots its literal's entries share

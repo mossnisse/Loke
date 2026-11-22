@@ -280,10 +280,13 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 	guards := make([]Deferred, len(v.elements))
 	for element, index in v.elements {
 		slot := element_address(e, backing, root, index)
+		operand := begin_operand_temporaries(e)
 		value := emit_copied_expr(e, element.value, info.element, index < len(v.element_clones) && v.element_clones[index])
 		store(e, info.element, value, slot)
+		end_operand_temporaries(e, operand, info.element)
 		guards[index] = hold_built_part(e, info.element, slot)
 	}
+	unwind_stop_reusing(e)
 	for guard in guards {
 		finish_temporary_drop(e, guard)
 	}
@@ -328,6 +331,10 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 			slot = v.field_indices[index]
 			element_type = symbol_of(e.c, info.fields[slot]).type
 		}
+		// A part stored as soon as it is evaluated leaves its large slots to the
+		// parts after it (`end_operand_temporaries`). A range's later slots still
+		// copy the value, so it keeps its own.
+		operand := begin_operand_temporaries(e)
 		value := emit_copied_expr(e, element.value, element_type, index < len(v.element_clones) && v.element_clones[index])
 		// A designated index range stores one evaluation in every slot; each
 		// slot after the first owns a copy.
@@ -343,6 +350,9 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 			field_address := gep_field(e, llvm_type(e, as_type), address, target)
 			record_field_align(e, as_type, address, field_address, element_type)
 			store(e, element_type, stored, field_address)
+			if end == slot + 1 {
+				end_operand_temporaries(e, operand, element_type)
+			}
 			if info.kind == .Struct {
 				append(&guards, hold_record_part(e, as_type, address, target))
 			} else {
@@ -350,6 +360,7 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 			}
 		}
 	}
+	unwind_stop_reusing(e)
 	for guard in guards {
 		finish_temporary_drop(e, guard)
 	}

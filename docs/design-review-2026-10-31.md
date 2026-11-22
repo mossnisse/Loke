@@ -299,7 +299,7 @@ the reason, so that it is not proposed again without an answer to it.
   ([Parameter semantics and ABI lowering](design.md#parameter-semantics-and-abi-lowering));
   and a shared copy and drop costs about 12.5 ns against 65 to 70 ns for an
   allocating 16-byte copy ([Thread-affine
-  strings](open-questions.md#thread-affine-strings)). A thread-affine string
+  strings](future-plans.md#thread-affine-strings)). A thread-affine string
   saves the atomic part of the cost without a semantic change.
 - *A drop hook implying move-only.* Adding a hook to a public type would turn
   copies in other packages into errors, while the declaration's author, who
@@ -466,9 +466,9 @@ whole-program inference as separate compilation develops.
 result-side language: the missing precision is a path, so that an escape level
 can be written for `list.items` and not for `list`. Whether that case occurs
 often enough to build is unshown. Inference stays the default, and the
-`// inferred:` lines that [Using a package without reading its
-code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21)
-proposes for `api.loki` should come first: they tell a reader what a call may
+`// inferred:` lines that [Package
+documentation](future-plans.md#package-documentation)
+plans for `api.loki` should come first: they tell a reader what a call may
 borrow and touch, effects included, without new syntax. None of this needs
 lifetime variables.
 

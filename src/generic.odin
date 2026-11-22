@@ -2800,10 +2800,11 @@ check_where_clauses :: proc(
 	k: ^Checker, clauses: []Expr, span: Span, what: string, report: bool,
 	report_malformed := false, false_bound: ^Expr = nil,
 ) -> bool {
-	// design.md "Interface bodies": each bound has the grant of the others.
-	outer_bounds, outer_set := k.body.bounds, k.body.bounds_set
-	k.body.bounds, k.body.bounds_set = clauses, true
-	defer k.body.bounds, k.body.bounds_set = outer_bounds, outer_set
+	// design.md "Interface bodies": each bound has the grant of the others, and a
+	// member's of its block's subject's.
+	outer_bounds, outer_set, outer_subject := k.body.bounds, k.body.bounds_set, k.body.subject
+	k.body.bounds, k.body.bounds_set, k.body.subject = clauses, true, k.impl_type
+	defer k.body.bounds, k.body.bounds_set, k.body.subject = outer_bounds, outer_set, outer_subject
 	for clause in clauses {
 		errors := k.c.error_count
 		probe: Probe

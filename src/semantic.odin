@@ -872,6 +872,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.procedure_instances = make(map[Symbol_Id]^Instance, c.semantic_allocator)
 	c.alias_expansions = make(map[string]Type_Id, c.semantic_allocator)
 	c.specificity = make(map[[2]Symbol_Id]i8, c.semantic_allocator)
+	c.field_names = make(map[Type_Id]map[Identifier_Id]Symbol_Id, c.semantic_allocator)
 	c.instantiation_stack = make([dynamic]Instantiation_Frame, 0, 8, c.semantic_allocator)
 	c.pending_impl_instances = make([dynamic]Pending_Impl, 0, 4, c.semantic_allocator)
 	c.pending_delegates = make(map[Type_Id][dynamic]Pending_Block, c.semantic_allocator)

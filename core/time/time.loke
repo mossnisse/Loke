@@ -8,7 +8,7 @@
 */
 // standard-library "`core:time`". The clock procedures ask the operating
 // system, and sit behind `when (LOKE_OS == .Windows)` at the end of this file.
-// Named time zones are deliberately absent; see open-questions.md "Named time
+// Named time zones are deliberately absent; see future-plans.md "Named time
 // zones".
 @(public)
 package time;

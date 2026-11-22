@@ -117,12 +117,35 @@ type_is_enum :: proc(c: ^Compiler, id: Type_Id) -> bool {
 
 // The field of a record, or the member of an enum, named `name`. Fields share
 // the namespace members are declared into, so `impl` blocks ask this too.
+// A record or enum of this many members is searched through an index by name,
+// built at its first lookup; a shorter one costs less to scan than to index, and
+// most are. A `switch` naming each of an enum's 40,000 members scanned them
+// 40,000 times.
+@(private = "file")
+INDEXED_FIELDS :: 32
+
 field_named :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
-	info := underlying_info(c, type)
+	underlying := type_underlying(c, type)
+	info := type_of(c, underlying)
 	if info == nil || name == INVALID_IDENTIFIER {
 		return INVALID_SYMBOL
 	}
-	return member_named(c, info.fields, name)
+	if len(info.fields) < INDEXED_FIELDS {
+		return member_named(c, info.fields, name)
+	}
+	// Members are assigned once and whole, so an index never goes stale.
+	index, built := &c.field_names[underlying]
+	if !built {
+		c.field_names[underlying] = make(map[Identifier_Id]Symbol_Id, len(info.fields), c.semantic_allocator)
+		index = &c.field_names[underlying]
+		for member in info.fields {
+			// The first of a repeated name, which is the one a scan finds.
+			if symbol := symbol_of(c, member); symbol != nil && symbol.name not_in index {
+				index[symbol.name] = member
+			}
+		}
+	}
+	return index[name] or_else INVALID_SYMBOL
 }
 
 type_is_box :: proc(c: ^Compiler, id: Type_Id) -> bool {

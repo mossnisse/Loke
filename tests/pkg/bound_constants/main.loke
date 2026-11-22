@@ -31,6 +31,19 @@ Reading :: struct($T: type) where shape.Measured(T) {
 	value: T.Unit,
 }
 
+// A member of the record's `impl` has that grant too, without restating the
+// bound: in its signature, its own bounds, and its body.
+impl Reading($E) {
+	unit :: proc(self) -> E.Unit { return self.value; }
+	// A local declaration's initializer is in the body too.
+	metres :: proc(self) -> f64 {
+		scale := E.SCALE;
+		length := self.value.metres();
+		return length*scale;
+	}
+	doubled :: proc(self) -> f64 where shape.Length(E.Unit) { return 2*self.value.metres(); }
+}
+
 // The application holds here too, though this package sees none of its members.
 static_assert(shape.Measured(widget.Rod));
 
@@ -41,4 +54,5 @@ main :: proc() {
 	fmt.println(same_unit(rod, 2.0));
 	reading := Reading(widget.Rod){value = 4.5};
 	fmt.println(reading.value);
+	fmt.println(reading.unit(), reading.metres(), reading.doubled());
 }

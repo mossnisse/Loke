@@ -127,8 +127,7 @@ handles.
 Current optional gaps, to add only when a caller establishes their contract:
 `core:bytes`, `core:unicode`,
 `core:encoding/base64`, and `core:testing`; in
-`core:time`, named time zones (see
-[Open questions in `core:time`](open-questions.md#open-questions-in-coretime));
+`core:time`, [named time zones](#named-time-zones);
 in `core:random`, `f32` distributions,
 sampling indices from a range without materializing it, and distributions such
 as the negative binomial, Cauchy, and Weibull; buffered streams,
@@ -140,8 +139,9 @@ mouse and resize events; `thread.try_spawn`, `try_lock`, and thread identity
 [Waiting on a condition, not a signal](comments.md#waiting-on-a-condition-not-a-signal)).
 Math gaps include hyperbolics,
 `cbrt`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
-the lane-wise and remaining integer bit operations (see
-[Integer bit operations not yet provided](open-questions.md#integer-bit-operations-not-yet-provided)).
+the lane-wise integer bit operations (see
+[Integer bit operations not yet provided](open-questions.md#integer-bit-operations-not-yet-provided))
+and [bit field extract and deposit](#bit-field-extract-and-deposit).
 `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
 [`core:math/linalg`](standard-library.md#coremathlinalg) has vectors,
@@ -231,8 +231,8 @@ NURBS, geodesy on the ellipsoid, and contact generation for a physics solver
 can likewise be built on it.
 
 [`core:encoding/json`](standard-library.md#coreencodingjson) still needs this
-evidence, in this order; its open design questions are in
-[JSON follow-ups](open-questions.md#json-follow-ups):
+evidence, in this order; the designs that wait for a caller are in
+[JSON designs](#json-designs):
 
 1. Run the [JSONTestSuite](https://github.com/nst/JSONTestSuite), pinned to a
    revision: accept its required-valid cases within the documented limits,
@@ -469,6 +469,90 @@ browse its public API, set a source breakpoint, inspect ordinary locals, and
 show Loke frames. Optimized-build limitations are documented and covered by
 target-specific tests where practical.
 
+## Package documentation
+
+**Alongside phases 1-5.** Hand-written documentation goes stale, because
+nothing checks it. What a package tells its users is therefore generated from
+its source, checked by the compiler, or run by the test runner, and prose is
+kept for intent, which goes stale slowest. [`///` doc comments](design.md#comments),
+the checked-in [interface file](compiler-guide.md#interface-files), and
+[`@(intrinsic)`](design.md#intrinsic) declarations are built. The steps below
+were accepted on 2026-11-22; each one's language rules move to
+[design.md](design.md) with its implementation, and what the plan does not
+decide is in [Package documentation](open-questions.md#package-documentation).
+
+### Steps
+
+The compiler infers whether a result borrows an argument and from which
+allocator it comes (the [result
+contract](design.md#procedure-result-contracts)), and whether a call writes
+package state (the [write effect](design.md#global-write-effects)). Neither
+`-doc`, hover, nor the interface file shows them, so a reader opens the body to
+learn them.
+
+**1. Inferred facts are shown, one line each.** The interface file and hover
+add an `// inferred:` line to a public procedure for its result contract and
+its write effect, and say nothing when there is nothing to report:
+
+- ``result borrows `text` `` or ``result borrows `list.items` ``, from the
+  parameter paths the result contract records;
+- ``result is backed by `allocator` ``, from its region provenance;
+- `writes package state`, for the package's own globals, or
+  ``writes state of `core:log` ``, for another package's.
+
+A generic procedure's contract is per instantiation, and a declaration inside
+a `when` is checked for one target only, so neither gets the line. An inferred
+fact is not a compatibility promise: a release names a changed `inferred:`
+line of a bundled package as a possible break. A
+[written contract](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own), once
+it exists, would be shown in its place, without "inferred".
+
+**2. Examples are tests.** `@(example=split)` marks a
+[test procedure](design.md#test-procedures) that illustrates `split`, or
+`Type.member` for an `impl` member, of its own package. It follows every test
+rule, and in addition it may name only public declarations, because it shows
+what an importer can write. The interface file lists each example by name
+under its declaration (``// example: `split_on_commas` ``), and the HTML page
+shows its body. The gate builds each bundled package with `-test`, so an
+example that stops compiling or fails is caught.
+
+**3. Names in doc comments are checked.** A backticked span in a doc
+comment that is a name or dotted path, such as `split`, `Builder.len`, or
+`mem.Allocator`, must resolve, as rustdoc's intra-doc links must. It resolves
+in the documented declaration's package and imports, and also among its
+parameters and, for a type or `impl` member, the type's members. A span with
+any other character, such as `builder.len()` or `[dynamic]u8`, is prose and is
+not checked. An unresolved name is a warning in every check, so the editor
+shows it. This catches renames and removals, not wrong claims.
+
+**4. `-doc` writes HTML for people.** A browser is on every computer, and a
+Markdown page needs a renderer and has no links. `lokec <dir> -doc` writes
+`index.html` and one page per package of the project into `doc/`, or the
+directory `-o` names. Each page is self-contained, with inline CSS for light
+and dark themes and no scripts. Signatures are colored from the compiler's own
+tokens, which is exact where a TextMate grammar approximates, and every name in
+a signature or checked reference links to its declaration's anchor (`#split`,
+`#String_Builder.append`). Doc comments are rendered from a stated subset:
+paragraphs, inline code, `*emphasis*`, `**strong**`, `- ` lists, and indented
+code blocks. The HTML is generated, not checked in. Hover stays Markdown,
+which the protocol requires, and the editor's documentation command shows the
+interface file as a Loke document instead of a Markdown preview.
+
+### Not planned
+
+- **A "may panic" mark.** Once checked arithmetic and indexing count, nearly
+  every procedure may panic, so the mark carries no information. A
+  precondition a caller must meet is written in the doc comment.
+- **Preconditions as code.** Checked clauses are a language feature, and
+  types already carry many preconditions. They wait for what remains in doc
+  comments after the steps.
+- **Index and single-entry forms of `-doc`.** The interface file and grep
+  cover what an agent needs.
+- **A checked list of a package's main entry points.** The overview's checked
+  references cover it.
+
+The steps are in priority order, and each is usable without the next.
+
 ## More platforms
 
 **Phase 5.** Preserve Windows x64 behavior while isolating target decisions,
@@ -590,6 +674,133 @@ the installed release works without the Odin implementation present.
 `move_only struct`, and `&mut a[lo:hi]` exist so that code written for 0.9 can be
 rewritten. Delete them, with `L0750`, `L0751`, and `L0752` left unused, after a
 later minor release.
+
+## Decided, waiting for a caller
+
+These were open questions whose answer is "not yet". Each says what would be
+built and which caller or measurement would start it; none is scheduled, and
+[Standard-library maturity](#standard-library-maturity) lists the smaller gaps
+of the same kind.
+
+### JSON designs
+
+[`core:encoding/json`](standard-library.md#coreencodingjson) implements the
+fully validating document parser and streaming writer; the evidence it still
+needs is in [Standard-library maturity](#standard-library-maturity). These
+designs wait for a caller or a measurement:
+
+- **An event decoder.** When a caller needs one, it would share the scanner's
+  token recognition and grammar transitions over contiguous input, with
+  `next -> Result(Option(Event), Parse_Error)` and a `skip_value` that
+  validates what it skips, consumed through a
+  [fallible-source loop](standard-library.md#streaming-a-fallible-source). Borrowed
+  decoded text would last until the next step, and a successful decode would
+  require consuming the end or calling a `finish` that validates the rest: a
+  valid prefix alone is not a validated document.
+- **An on-demand cursor or a SIMD structural index.** Either may beat the scalar
+  scanner on large input, but their navigation and validation guarantees differ
+  ([simdjson's paper](https://arxiv.org/abs/1902.08318), [on-demand design
+  constraints](https://simdjson.org/api/3.0.0/md_doc_ondemand_design.html)).
+  Neither is established as better for 2 to 64 KiB state files, and either would
+  stay separate from fully validating document parsing.
+- **Avoiding repeated validation and copies.** `parse` validates UTF-8 and then
+  scans; a fused scanner would need a trusted validated-view operation and a
+  decision about keeping invalid UTF-8 ahead of every other error. `stringify`
+  validates and copies its finished bytes; a consuming bytes-to-string
+  conversion could avoid that, as retained owned bytes could avoid the copy in
+  an owning file load. Any such operation must preserve [borrow
+  provenance](design.md#procedure-result-contracts), allocator ownership, and
+  [string invariants](design.md#string-type); `unsafe.string_view` still
+  validates. Evaluate one only if profiling makes the cost material.
+- **Typed record codecs.** Reflection-based encoding and decoding need explicit
+  contracts for field names, missing versus null members, duplicates, numeric
+  ranges, and union mappings before an API is chosen. A mutable document,
+  automatic object indexes, and chunked input likewise wait for callers.
+- **Faster repeated access.** A direct child index or an explicit object index
+  pays only if repeated random access outweighs its build time and memory, and
+  `validate_unique_keys` waits for a protocol that requires globally unique
+  keys.
+
+### Named time zones
+
+Converting in a zone chosen by name, such as `Europe/Stockholm` in 1950, needs
+the IANA time-zone database. Good C libraries exist for it. The hard part is
+the data, which changes several times a year, and a stale copy gives wrong
+local times without any error.
+
+| Route | Data and its updates | Cost |
+| --- | --- | --- |
+| ICU in Windows (`icu.dll`) | IANA data in the OS, kept current by Windows Update | A handful of `ucal_` calls, UTF-16 zone names. Windows 10 1903 and Server 2022 or later. Windows only. MSVC's `std::chrono` zones use it. |
+| IANA `tzcode`, public domain | TZif files: `/usr/share/zoneinfo` on Linux and macOS, none on Windows | Vendored C. Thread-safe through `tzalloc`, `localtime_rz`, and `mktime_z`. On Windows we would ship tzdata and follow its releases. |
+| A TZif reader in Loke (RFC 9636) | The same files as `tzcode` | A few hundred lines of Loke, and the same data problem on Windows |
+| Windows' own zones | The registry, kept current by Windows Update | Windows names (`W. Europe Standard Time`), not IANA's, and history only where Microsoft recorded it |
+
+The recommendation is to leave named zones out until a caller needs them. When
+one does, use the data each system already keeps current: ICU on Windows, the
+system's TZif files elsewhere. Never ship a copy of tzdata with the compiler.
+`Zone` then gains a named variant holding shared, immutable rules, so it stays
+copyable, and nothing already in the package changes.
+
+### Smaller points in `core:time`
+
+- **Calendar durations.** `P1Y2M3D` has no type; `add_months` and its siblings
+  do the arithmetic. A `Period` type waits for a caller that stores or parses
+  one.
+- **The system zone's name.** Windows names its zones its own way, and the
+  IANA name needs CLDR's mapping, which ICU has, so a `Zone` has no name. A
+  caller that shows one, or records the zone beside a time, would need it.
+
+### More random generators and distributions
+
+ChaCha would give a seedable cryptographic generator, and belongs with a
+`core:crypto`. A counter-based generator such as Philox would give random
+access into a stream. Floyd's sampling of indices from a range without
+materializing it needs a set. `f32` distributions would need their own
+ziggurat tables. The remaining candidates are listed in
+[Standard-library maturity](#standard-library-maturity).
+None is added until a caller needs it.
+
+### Longer seeds
+
+`from_seed` takes 64 bits, which is enough to name a run but not to reach
+every state; `from_state` takes all 256. A seed sequence in the style of numpy's
+`SeedSequence`, hashing seed material of any length into a state, would sit
+between them, for a caller that needs one.
+
+### Bit field extract and deposit
+
+`pext` and `pdep` exist only from `x86-64-v3`, so
+[`core:math`'s integer bit operations](standard-library.md#integer-bit-operations)
+would need a portable fallback with the same result. They wait for a caller
+that settles that contract.
+
+### Thread-affine strings
+
+`string` is an owning value whose copies share immutable backing storage, and
+a string may be dropped on any thread that received it, so the shared handle
+count is atomic: [`runtime/text.c`](../runtime/text.c) retains with a relaxed
+atomic add and
+releases with an acquire-release atomic subtract, each behind an out-of-line
+runtime call. Nothing turns a `string` copy into a move, since copying it
+cannot allocate, so this is the most frequent hidden cost in ordinary code.
+Measured on 2026-10-28 at `-opt=speed` on an Intel i5-9600K, one uncontended
+copy and drop of a heap-backed string costs about 12.5 ns regardless of
+length, of which about 4 ns is the two calls and the owner check (a literal or
+empty string pays only that) and about 8.5 ns is the two atomic operations; a
+24-byte struct copy costs under 0.3 ns, and an allocating copy of 16 bytes
+about 65-70 ns. Contended counts, where cache-line traffic dominates, have not
+been measured. Atomic accounting does not make an arbitrary allocator
+thread-safe; a string that crosses threads still asserts that its bound
+allocator may deallocate on the receiving thread.
+
+A thread-affine string with a non-atomic count would be a distinct type rather
+than a silent weakening of the guarantee, and would save at most the atomic
+part of the cost above. It is not needed now: Windows x64 is the only target,
+so copy-always for a target without atomics is not a live constraint, and no
+workload in the repository is bound by string copies. Revisit when a profile
+shows `string` retain and release on a hot path, when contended counts are
+measured, or when a freestanding target is added, since that decides whether
+`string` is usable unchanged there.
 
 ## Open language questions
 

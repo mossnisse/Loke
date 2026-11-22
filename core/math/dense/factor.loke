@@ -325,7 +325,7 @@ impl Lu($T) {
 		within the quotient. 0 when the estimate of `sigma |A^-1|_1` is not
 		finite.
 	*/
-	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real where linalg.Scalar(T) {
+	reciprocal_condition :: proc(self, allocator: Allocator = mem.default_allocator()) -> T.Real {
 		n := self.packed.row_count;
 		if (n == 0) { return T.Real(1); }
 		if (self.norm == T.Real(0)) { return T.Real(0); }
@@ -342,7 +342,7 @@ impl Lu($T) {
 	// `T`, which does not test for repeated signs. Each sum is in index order.
 	// Every right-hand side is multiplied by `sigma`, so the estimate is of
 	// `sigma |A^-1|_1`.
-	@(private) inverse_norm_estimate :: proc(self, sigma: T.Real, allocator: Allocator) -> T.Real where linalg.Scalar(T) {
+	@(private) inverse_norm_estimate :: proc(self, sigma: T.Real, allocator: Allocator) -> T.Real {
 		n := self.packed.row_count;
 		x := Matrix(T).filled(n, 1, times_real(sigma, T(1)/from_f64(T, f64(n))), allocator);
 		self.solve_into(x.view_mut());

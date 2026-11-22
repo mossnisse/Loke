@@ -10,3 +10,9 @@ L0363
 L0306
 @24:8
 unknown type `T.Unit`
+L0408
+@34:39
+`Rod` has no member `HIDDEN`
+L0363
+@37:9
+`Rod` has no field or member `unit_of`

@@ -25,10 +25,24 @@ disjunction :: proc(x: $T) -> f64 where shape.Measured(T) || shape.Length(T) {
 	return unit;
 }
 
+// A record's bounds reach the members of its `impl`, and only what met them
+// there; a procedure that only takes the record has no grant.
+Reading :: struct($T: type) where shape.Measured(T) {
+	value: T,
+}
+impl Reading($E) {
+	hidden :: proc(self) -> f64 { return E.HIDDEN; }
+}
+outside :: proc(reading: Reading($T)) -> f64 {
+	return reading.value.unit_of();
+}
+
 main :: proc() {
 	rod := widget.Rod{length = 1.5};
 	fmt.println(hidden_constant(rod));
 	fmt.println(hidden_slot(rod));
 	fmt.println(wrong_subject(rod));
 	fmt.println(disjunction(rod));
+	reading := Reading(widget.Rod){value = rod};
+	fmt.println(reading.hidden(), outside(reading));
 }

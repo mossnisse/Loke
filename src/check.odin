@@ -59,6 +59,11 @@ Body_Context :: struct {
 	// `where` clause, or a record's fields; set, they replace `proc_literal`'s.
 	bounds:            []Expr,
 	bounds_set:        bool,
+	// The subject of the `impl` block the signature, `where` clause, or body
+	// being checked is a member of, whose bare bounds grant it the same when it
+	// is a generic record's instance (`enter_subject_bounds`). `impl_type` cannot
+	// say: a local declaration in the body clears it for its whole statement.
+	subject:           Type_Id,
 	// The interface application whose requirements are being checked, which
 	// reach the associated constants it requires as a bound's body does.
 	requiring:         ^Interface_Info,
@@ -687,7 +692,7 @@ const_type_value :: proc(k: ^Checker, id: Symbol_Id, subject := INVALID_TYPE) ->
 // confined to that body's scopes (`granting_bounds`).
 @(private = "file")
 leave_grants :: proc(k: ^Checker) {
-	k.body.bounds, k.body.bounds_set = nil, false
+	k.body.bounds, k.body.bounds_set, k.body.subject = nil, false, INVALID_TYPE
 	k.body.requiring, k.body.requiring_args = nil, nil
 }
 
@@ -1217,10 +1222,11 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.kind = .Proc
 	symbol.type = TYPE_VOID
 	validate_param_attributes(k, literal.signature.params)
-	// design.md "Interface bodies": the signature has the grant of its own bounds.
-	outer_bounds, outer_set := k.body.bounds, k.body.bounds_set
-	k.body.bounds, k.body.bounds_set = literal.where_clauses, true
-	defer k.body.bounds, k.body.bounds_set = outer_bounds, outer_set
+	// design.md "Interface bodies": the signature has the grant of its own bounds,
+	// and of its block's subject's.
+	outer_bounds, outer_set, outer_subject := k.body.bounds, k.body.bounds_set, k.body.subject
+	k.body.bounds, k.body.bounds_set, k.body.subject = literal.where_clauses, true, k.impl_type
+	defer k.body.bounds, k.body.bounds_set, k.body.subject = outer_bounds, outer_set, outer_subject
 
 	reported := k.c.error_count
 	// `intern_proc_type` keeps its own copies; the symbol keeps these three.
@@ -2050,7 +2056,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 enter_procedure_body :: proc(k: ^Checker, literal: ^Expr_Proc, symbol: ^Symbol = nil) {
 	k.scope = new_scope(k.c, k.scope, .Procedure)
 	k.scope.owner_proc = literal
-	k.body = {proc_literal = literal}
+	k.body = {proc_literal = literal, subject = k.impl_type}
 	if symbol != nil {
 		k.body.result_type, k.body.result_inout = symbol.result, symbol.result_inout
 	}

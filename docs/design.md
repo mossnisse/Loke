@@ -160,6 +160,12 @@ An expression statement always needs a semicolon, including when it ends in a
 composite literal like `Point{1, 2}`: those braces are part of a value, not a
 block.
 
+An expression statement must do more than compute a value. It is a call, an
+[`or_return`](#or_return-operator), or an [`or_else`](#or_else-expression)
+whose fallback leaves or is a call that [never
+returns](#diverging-procedures). Any other expression written as a statement is
+an error; `_ = value;` evaluates one and discards it.
+
 A lone `;` is an empty statement, valid anywhere including file scope. A
 semicolon after a brace-bodied form is thus a separate empty statement:
 
@@ -4595,7 +4601,9 @@ A slot is both a static callable requirement and a potential
 grants the declaration it constrains the members that satisfied `I`, even ones
 the declaring package could not otherwise see. The grant covers the
 declaration's signature, its `where` clause, and its body, or a record's
-fields. It consists of:
+fields. A generic record's bare bounds also cover every member of an `impl`
+block whose subject is an instance of the record, in the member's signature,
+`where` clause, and body, since each instance met them. It consists of:
 
 - each slot of `I`, and of every application `I` composes, on that
   application's subject: `value.slot()` on a `T` reaches the implementation
@@ -7599,7 +7607,17 @@ A bound that is a plain interface application, not negated and not one side of
 `||`, is a **bare bound**. Besides filtering, it grants the declaration the
 slots and associated constants that satisfied it (see [Interface
 bodies](#interface-bodies)). A negated or disjunctive bound is only tested for
-truth.
+truth. A generic record's bare bounds grant the same to the members of its
+`impl` blocks, which need not restate them:
+
+```loke
+Buffered :: struct($T: type) where Source(T) {
+	held: T.Element,   // the record's bound grants `T.Element` to its fields
+}
+impl Buffered($T) {
+	take :: proc(self) -> T.Element { return self.held; }   // and to its members
+}
+```
 
 Because the clause is followed immediately by the declaration's `{`, **a bound
 may not have a composite literal at its top level**: in `where Additive(T) {`
@@ -9482,6 +9500,13 @@ foreach (name in names) {
 	use(entry);
 }
 port := settings.lookup_value("port") or_else return .err(.Missing_Port);
+```
+
+With such a fallback, or one that [never returns](#diverging-procedures), the
+expression may be a [statement](#statements) of its own:
+
+```loke
+queue.try_append(job) or_else panic("the queue is full");
 ```
 
 A `return` value extends to the end of the expression, as any fallback does.

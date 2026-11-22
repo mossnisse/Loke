@@ -53,6 +53,17 @@ pick :: proc(o: Option(int)) -> Result([dynamic]int, string) {
 	return .ok(move(buf));
 }
 
+// A statement of its own, when the fallback leaves or never returns.
+leading :: proc(values: []Option(int), queue: inout [dynamic]int) -> int {
+	n := 0;
+	foreach (o in values) {
+		o or_else break;
+		queue.try_append(n) or_else panic("the queue is full");
+		n += 1;
+	}
+	return n;
+}
+
 COUNT :: sum_present([]Option(int){.some(1), .none, .some(4)});
 FOUND :: lookup(map[string]int{"a" = 1}, "a");
 
@@ -63,6 +74,9 @@ main :: proc() {
 	fmt.println(sum_present([]Option(int){.some(1), .none, .some(4)}), COUNT);
 	fmt.println(pick(.none));
 	fmt.println(pick(.some(3)));
+	queue := [dynamic]int{};
+	led := leading([]Option(int){.some(1), .some(3), .none, .some(4)}, inout queue);
+	fmt.println(led, queue);
 	values := [?]Option(int){.some(1), .none, .some(-2), .some(3)};
 	// An argument made before the exit is dropped on the exit's path.
 	foreach (o in values) {

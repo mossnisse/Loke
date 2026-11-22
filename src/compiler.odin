@@ -106,6 +106,8 @@ Compiler :: struct {
 	// Which of two generic templates is the more specialized, once asked
 	// (`compare_generic_specificity`).
 	specificity:           map[[2]Symbol_Id]i8,
+	// The members of a long record or enum by name (`field_named`).
+	field_names:           map[Type_Id]map[Identifier_Id]Symbol_Id,
 	instantiation_count:   int,
 	instantiation_limit_hit: bool,
 	// The diagnostic that already carries the instantiation stack, so unwinding

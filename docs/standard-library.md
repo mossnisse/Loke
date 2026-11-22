@@ -5262,7 +5262,7 @@ forms are built from the
 for `15.10.2026`.
 
 Time zones chosen by name, such as `Europe/Stockholm`, are not here yet; see
-[Open questions in `core:time`](open-questions.md#open-questions-in-coretime).
+[Named time zones](future-plans.md#named-time-zones).
 
 | Type | Holds | Zero value |
 | --- | --- | --- |
@@ -5472,7 +5472,7 @@ A `Zone` is a fixed offset or the system zone, the one the operating system's
 clock shows. It is plain copyable data like the package's other types, and its
 zero value is UTC. `now_local()` is `local_zone().to_local(now())`. A zone
 chosen by name is not here; see
-[Named time zones](open-questions.md#named-time-zones).
+[Named time zones](future-plans.md#named-time-zones).
 
 A fixed zone prints as its offset does, `+05:30`, or `Z` at zero, so the zero
 value and `fixed_zone(UTC)` print `Z`, and `parse_offset` reads the text back.

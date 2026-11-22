@@ -412,7 +412,13 @@ and a wait of its own would cost more: a lock and a
 condition variable in each `Once` would grow it from 4 bytes to 24, and an
 address wait on the state word (`WaitOnAddress`) lives in
 `synchronization.lib`, which every C host of an object build importing
-`core:sync`, even through `core:log`, would have to add to its link.
+`core:sync`, even through `core:log`, would have to add to its link. Nor
+would the address wait be faster now that a waiter marks the state: a
+prototype measured within 0.2 ms of the shared lock on 100,000 first calls,
+with and without threads parked on another `Once`. It would save about 30
+lines, and is worth taking only if an object build comes to name its system
+libraries to the host's linker. Windows' `INIT_ONCE` needs a stable address,
+and a Loke `Once` can move after it fires.
 
 **A thread per task, with no serial fallback.** Running the tasks one after
 another would be cheaper, but it is a different program: `thread_local`
@@ -1042,6 +1048,19 @@ common case of an absent value that ends a step, without a nested switch or
 not new expressions, so they keep the statements' rules and cleanups. A loop's
 header cannot use `break` or `continue` this way: it is evaluated outside the
 body, so whether it leaves the loop or an enclosing one would be a new rule.
+
+### Which expressions are statements
+
+A [statement](design.md#statements) that only computes a value is an error,
+since the value is dropped. A call and an `or_return` were the two that do
+more, and `queue.try_append(job) or_else panic("full");` was refused with
+them, though its call runs and its fallback leaves. An `or_else` whose
+fallback leaves, with `break`, `continue`, or `return`, or is a call that
+never returns, is now a statement too, whatever its operand: `found or_else
+return;` on a local is a guard, as `found or_return;` already was. A fallback
+that only yields a value stays an error. `step() or_else recover();` would
+make `or_else` a second spelling of `if`, and its fallback's value is dropped
+with the payload.
 
 ### The failure operand of `or_return`
 
@@ -1681,6 +1700,15 @@ whatever spelling reached it, so keeping the alias's name would need the written
 syntax at every message; that is left open in
 [Parametric aliases](open-questions.md#parametric-aliases).
 
+The bundled packages do not declare one. `core:io` and eleven others spell
+`Result(T, Error)` in full, 51 times in their interface files, 17 of them in
+`core:encoding/json`. A `Result($T)` in each would shorten those signatures
+and hide the error type one lookup away, in the place a caller reads to learn
+what a call can fail with; every diagnostic would still print the expansion;
+and `io.Result(int)` beside `json.Result(int)` would be two meanings of a name
+that already has one. An application with one error type is where an alias
+earns its place, as `Io_Result` does in the examples.
+
 ### Colon annotations on inferred generic bindings
 
 `x: $T: Shape` had no specified constraint semantics. Parameter patterns such
@@ -1970,13 +1998,31 @@ which a `T.Real` argument satisfies; those helpers are gone.
 
 The grant stays narrow: the members that met a requirement, on the types they
 were required of, in the declaration the bound constrains, and only where
-ordinary lookup finds nothing. A bound on a record still does not carry into
-the record's methods ([Slots through a record's bound](open-questions.md#slots-through-a-records-bound)),
-so `core:math/dense`'s methods that name `T.Real` restate `linalg.Scalar(T)`.
-Operators and other expression requirements keep the applying package's
+ordinary lookup finds nothing. Operators and other expression requirements keep the applying package's
 visibility, widened as a slot's is: a type no importer can name meets them with
 its private operators too
 ([Interface bodies](design.md#interface-bodies)).
+
+### A record's bounds reach its `impl` members
+
+`dense.Lu(T)` is declared `where linalg.Scalar(T)`, so no instance exists for
+an element type without `T.Real`. A method in `impl Lu($T)` still could not
+name `T.Real`, or call `x.abs()` on one, until it restated the bound, because
+the record's grant reached only its fields. A restated bound that can never
+fail says nothing: it excludes no method, and the interface file already shows
+the bound on the record. So a generic record's bare bounds now grant the
+members of its `impl` blocks what they grant its fields
+([Interface bodies](design.md#interface-bodies)), and `core:math/dense`'s
+methods dropped the ten clauses that repeated their record's.
+
+Against it was that a method's bounds were all in its own signature. They
+still are, for every bound that can exclude the method
+([where clauses](design.md#where-clauses)): `linalg.Vector3($T)` is bounded by
+`Numeric(T)`, and its `length` keeps `where Real(T)`. The grant is read where
+the record wrote its bounds, in the instance's own scope, so an `impl` in
+another package, or one that names the parameter differently, gets the same
+members. A procedure that only takes the record has no grant: it is no member
+of the type, and a bound in its own signature is what its callers read.
 
 ### Requirements reach what slots reach
 
@@ -2998,7 +3044,7 @@ every caller that wants only the text.
 
 ### String ownership and concurrency
 
-Immutable strings can share storage, so reference counting is atomic. The cost is measured under [Thread-affine strings](open-questions.md#thread-affine-strings). The
+Immutable strings can share storage, so reference counting is atomic. The cost is measured under [Thread-affine strings](future-plans.md#thread-affine-strings). The
 allocator must separately support the thread performing the final drop; that
 transfer obligation remains with the programmer. A `string_view` borrows text
 without sharing ownership.
@@ -3120,7 +3166,7 @@ prefix inside an ordinary comment, such as `// doc:`, would be dropped silently
 by a typo. `///` is also Rust's and C#'s marker. A `///` that documents nothing
 is a warning, so a doc comment cannot be lost by a blank line or by standing
 above something that is not documented. See
-[Using a package without reading its code](open-questions.md#using-a-package-without-reading-its-code-proposal-2026-10-21).
+[Package documentation](future-plans.md#package-documentation).
 
 A type declared in a procedure body has no documented fields, since the type
 itself is not documented there: `-doc` and an interface file never show a
@@ -4620,10 +4666,11 @@ level.
 
 ### A temporary lent to a call keeps its slot
 
-An element of a `[dynamic]T` or map literal is handed to the container as soon
-as it is evaluated, and the slots of its large temporaries then serve the next
-element, unless the element handed an address to a call
-(`note_lent_arguments`). A temporary [lives until its full expression
+A part of a literal is stored as soon as it is evaluated: an element of a
+`[dynamic]T` or map literal is handed to the container, and one of a fixed
+array, a slice, or a record is written into the value being built. The slots
+of its large temporaries then serve the next part, unless the part handed an
+address to a call (`note_lent_arguments`). A temporary [lives until its full expression
 ends](design.md#temporaries-and-procedure-boundaries), and a callee may keep
 the address by unchecked means for a later element's call to read. Every
 `self: ^` method call on a temporary counts. So a `[dynamic]u8` literal of 40

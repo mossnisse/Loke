@@ -35,4 +35,11 @@ wrong_value :: proc(o: Option(int)) -> int {
 	return x;
 }
 
+// design.md "Statements": as a statement, its fallback leaves or never returns.
+zero :: proc() -> int { return 0; }
+dropped :: proc(o: Option(int)) {
+	o or_else 0;
+	o or_else zero();
+}
+
 main :: proc() {}

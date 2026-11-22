@@ -239,10 +239,10 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 
 	case ^Stmt_Expr:
 		for expr in s.exprs {
-			if expr != nil && !expression_statement_has_effect(expr) {
+			check_expr(k, expr)
+			if expr != nil && !expression_statement_has_effect(k.c, expr) {
 				errorf(k.c, expr_span(expr), "L0313", "this expression statement has no effect")
 			}
-			check_expr(k, expr)
 			report_discarded_required_results(k, expr)
 		}
 		return flow_past(k.c, s.exprs)
@@ -336,14 +336,19 @@ check_when_stmt :: proc(k: ^Checker, s: ^Stmt_When) -> Flow_Info {
 	return FLOWS
 }
 
-// A call or an `or_return`; anything else computes a value and drops it.
+// design.md "Statements": a call, an `or_return`, or an `or_else` whose
+// fallback leaves or never returns; anything else computes a value and drops it.
 @(private = "file")
-expression_statement_has_effect :: proc(e: Expr) -> bool {
+expression_statement_has_effect :: proc(c: ^Compiler, e: Expr) -> bool {
 	#partial switch v in e {
 	case ^Expr_Call:
 		return true
 	case ^Expr_Postfix:
 		return v.op == .Or_Return
+	case ^Expr_Or_Else:
+		// Asked of a checked expression: whether a fallback call returns is
+		// its resolution's to say.
+		return v.exit != nil || call_diverges(c, v.fallback)
 	}
 	return false
 }

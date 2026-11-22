@@ -160,6 +160,20 @@ checklist.
 
 ### Changed
 
+- A generic record's bare `where` bounds grant the members of its `impl` blocks what they grant
+  its fields ([where clauses](docs/design.md#where-clauses)). A method of `impl Lu($T)`, where
+  `Lu :: struct($T: type) where linalg.Scalar(T)`, names `T.Real` and calls its slots without
+  restating the bound, in its signature, its own bounds, and its body
+  ([reasons](docs/comments.md#a-records-bounds-reach-its-impl-members)). `core:math/dense`'s
+  methods drop the ten bounds that repeated their record's.
+- An `or_else` whose fallback leaves or never returns is a statement
+  ([Statements](docs/design.md#statements)): `queue.try_append(job) or_else panic("full");` and
+  `found or_else return;` were `L0313`, "this expression statement has no effect".
+- A fixed-array, slice, or record literal's parts reuse the frame slots of large temporaries,
+  as a `[dynamic]T` or map literal's do. `[40]u8{first_of(large(0)), ...}` over a 5000-byte
+  argument kept 40 such slots, and a literal of 300 overflowed the stack; it keeps one.
+- A member of a record or enum with 32 or more is found by name through an index: a `switch`
+  naming each of an enum's 40,000 members takes 1.6 s in the front end, from 10.
 - `-opt=speed` also unswitches loops, as `-opt=aggressive` already did
   ([reasons](docs/comments.md#-optspeed-unswitches-loops)). A checked index such as
   `out[i + j*n]` in a loop over `i` left a branch on the overflow of `j*n` in the loop, which

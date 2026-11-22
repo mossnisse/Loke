@@ -1,0 +1,12 @@
+L0304
+@6:208
+`M3` is already a member of this enum
+L0408
+@11:7
+`Member` has no member `M40`
+L0363
+@12:14
+`Member` has no member `Missing`
+L0363
+@13:15
+`Wide` has no field `f40`
