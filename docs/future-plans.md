@@ -242,8 +242,8 @@ evidence, in this order; the designs that wait for a caller are in
    implementation-defined case.
 2. Fuzz scanner and document agreement and writer call sequences, and check
    writer output with an independent parser. The locale fault host in
-   `tests/obj` checks the runtime's fallible numeric entry points; carry an
-   injected locale failure through `strconv`, `fmt`, and the JSON errors too.
+   `tests/obj` checks the runtime's fallible float spelling; carry an injected
+   locale failure through `fmt` and the JSON write errors too.
 3. Keep a benchmark corpus: state files of 2–64 KiB, large numeric arrays, many
    small objects, long ASCII strings, non-ASCII text, and dense escapes of
    1–64 MiB, plus tiny tokens and large-then-small document reuse. Report time,

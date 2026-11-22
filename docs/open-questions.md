@@ -542,15 +542,31 @@ person does: models are trained on human-written code yet process it
 differently. Encapsulation and abstraction stay important either way, so that
 a model can work on one part of a program without reading the rest.
 
-## Open questions in `core:strconv`
+## Open questions in `core:fmt`
 
-- `parse_f64` rounds through the C library's `strtod`, as `fmt` already does to
-  find its shortest spellings. That makes it foreign code, which
-  [Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)
-  keeps out of constants for good. Both now run in a fixed "C" numeric locale, so `setlocale` through a foreign
-  binding no longer changes them. A correctly rounded parser in Loke
-  (Eisel-Lemire with a big-decimal fallback) would make the parser usable in
-  constants. Is that worth that much code?
+- Printing a float still goes through the C library: the runtime tries
+  `snprintf` precisions until `strtod` reads the value back, both in a "C"
+  numeric locale whose creation can fail. So printing a float can panic,
+  `try_spell_f64` has a `Backend_Error`, and, being foreign code, neither runs
+  in a [constant](design.md#compile-time-procedure-evaluation).
+  [`strconv.parse_f64`](standard-library.md#corestrconv) is Loke code now and
+  could do the reading back; a shortest-spelling algorithm in Loke, such as
+  Ryu or Schubfach, would remove the rest. Is that worth its code and tables?
+
+## Constant tables in the front end
+
+- A large array constant is slow to check. `core:strconv`'s table of powers
+  of five, 1302 `u64` literals of 16 hexadecimal digits, adds about 11 ms to
+  the front end of every program that imports the package: a program that
+  prints one parsed float went from 43 to 54 ms (`-emit-ll`, fastest of 15,
+  2026-11-22), and 51 ms of that remains when nothing reads the table. Alone
+  in a program, the same table costs 9 ms, 1302 one-digit literals 4 ms, and
+  the same digits in one raw string 1 ms: about 3 µs an element and 0.2 µs a
+  digit. Where the time goes is not profiled; `bi_parse_int_literal` reads
+  every literal into a big integer. Until this is cheaper, a package pays for
+  its tables in each build, and a constant that computes one is no way out:
+  only decoding this table from that raw string by compile-time evaluation
+  took over 200 ms.
 
 ## Open questions in `core:math`
 

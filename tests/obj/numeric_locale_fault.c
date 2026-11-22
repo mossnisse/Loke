@@ -1,13 +1,13 @@
-// standard-library "`core:fmt`" and "`core:strconv`": float text is the "C"
-// locale's, and failing to create that locale panics rather than falling back to
-// the process locale. A Loke program cannot make `_create_locale` fail, so this
-// host compiles its own copy of `runtime/format.c` with that call redirected and
-// sets a decimal-comma locale. The fallible entry points behind
-// `strconv.try_parse_f64` and `fmt.try_spell_f64` must report the failure, as
-// out of memory when the creation failed to allocate and as unavailable
-// otherwise; printing a float must then panic. `corpus_test.odin` runs it and
-// expects exit 0: the panic stub exits with it; a print that returns exits 1,
-// and a wrong fallible answer exits 4 or more.
+// standard-library "`core:fmt`": printed float text is the "C" locale's, and
+// failing to create that locale panics rather than falling back to the process
+// locale. A Loke program cannot make `_create_locale` fail, so this host
+// compiles its own copy of `runtime/format.c` with that call redirected and
+// sets a decimal-comma locale. The fallible entry point behind
+// `fmt.try_spell_f64` must report the failure, as out of memory when the
+// creation failed to allocate and as unavailable otherwise; printing a float
+// must then panic. `corpus_test.odin` runs it and expects exit 0: the panic
+// stub exits with it; a print that returns exits 1, and a wrong fallible
+// answer exits 5 or more.
 #include <errno.h>
 #include <locale.h>
 #include <stdio.h>
@@ -58,10 +58,6 @@ int main(void) {
     if (setlocale(LC_NUMERIC, "de-DE") == 0) {
         setlocale(LC_NUMERIC, "fr-FR");
     }
-    double value = 0;
-    if (loke_rt_v1_try_parse_f64("1.5", &value) != LOKE_RT_NUMERIC_UNAVAILABLE) {
-        return 4;
-    }
     uint8_t spelled[LOKE_RT_FLOAT_SPELLING_MAX];
     if (loke_rt_v1_try_spell_f64(spelled, 1.5) != -LOKE_RT_NUMERIC_UNAVAILABLE) {
         return 5;
@@ -71,9 +67,6 @@ int main(void) {
         return 6;
     }
     fail_with_enomem = 1;
-    if (loke_rt_v1_try_parse_f64("1.5", &value) != LOKE_RT_NUMERIC_OUT_OF_MEMORY) {
-        return 7;
-    }
     if (loke_rt_v1_try_spell_f64(spelled, 1.5) != -LOKE_RT_NUMERIC_OUT_OF_MEMORY) {
         return 8;
     }

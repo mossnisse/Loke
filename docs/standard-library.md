@@ -1928,10 +1928,7 @@ traversal is a `foreach`. A schema-shaped reader can switch on each key in one
 traversal and reject repeated known fields with flags of its own.
 
 ```loke
-Access_Code :: enum {
-	Wrong_Kind, Missing_Key, Duplicate_Key, Not_Integer, Out_Of_Range,
-	Out_Of_Memory, Backend_Failure,
-}
+Access_Code :: enum { Wrong_Kind, Missing_Key, Duplicate_Key, Not_Integer, Out_Of_Range }
 Access_Error :: struct { code: Access_Code, offset: int, expected: Kind, actual: Kind }
 ```
 
@@ -1963,7 +1960,7 @@ zero.
 The integer conversions require integer spelling: `1.0` and `1e0` are
 `Not_Integer`. They check the whole range, signed minimum and unsigned maximum
 included; `to_u64` reads `-0` as zero and any other negative integer is
-`Out_Of_Range`. `to_f64` is [`strconv.try_parse_f64`](#corestrconv): correctly
+`Out_Of_Range`. `to_f64` is [`strconv.parse_f64`](#corestrconv): correctly
 rounded, losing integer precision past 2^53, rounding a magnitude too small to
 a signed zero, and reporting one too large as `Out_Of_Range` rather than an
 infinity. A valid number can therefore fail a requested conversion. The
@@ -3109,10 +3106,6 @@ parse_u64(text: string_view, base := 0) -> Result(u64, Parse_Error)
 parse_int(text: string_view, base := 0) -> Result(int, Parse_Error)
 parse_uint(text: string_view, base := 0) -> Result(uint, Parse_Error)
 parse_f64(text: string_view) -> Result(f64, Parse_Error)
-
-Backend_Error :: enum { Out_Of_Memory, Unavailable }
-try_parse_f64(text: string_view)
-	-> Result(f64, (parse: Parse_Error | backend: Backend_Error))
 ```
 
 `Parse_Error` distinguishes invalid syntax, invalid base, overflow, and trailing
@@ -3130,19 +3123,27 @@ a prefix, never lead the digits.
 `parse_f64` accepts `[+-]digits[.digits][(e|E)[+-]digits]`, where the digits on
 one side of the point may be absent but not on both. Underscores follow the
 integer rule in all three digit runs, the exponent included. The result is the
-correctly rounded `f64`, so every finite `f64` printed by the default
-`core:fmt` format parses back to itself. Precision wrappers such as `fmt.fixed`
-may round the value before printing.
-A finite spelling beyond the largest `f64` is `Overflow`; one below the smallest
-subnormal rounds to a signed zero. `inf` and `nan` are not accepted. The point is
-always `.`, whatever numeric locale foreign code has set for the C library.
-Parsing allocates nothing, however long the text: digits past the 767th
+correctly rounded `f64`: the nearest one, and of two equally near, the one
+whose mantissa is even. So every finite `f64` printed by the default `core:fmt`
+format parses back to itself. Precision wrappers such as `fmt.fixed` may round
+the value before printing.
+A finite spelling that rounds beyond the largest `f64` is `Overflow`: one at
+least halfway from it to 2^1024. One that rounds below the smallest subnormal,
+at most half of it, is a signed zero. `inf` and `nan` are not accepted.
+
+The parser is Loke code, with no foreign call behind it. The point is always
+`.` and no locale is consulted, whatever foreign code has set for the C
+library; nothing can fail but the text; and a constant may be initialized with
+it ([Compile-time procedure evaluation](design.md#compile-time-procedure-evaluation)):
+
+```loke
+PLANCK :: strconv.parse_f64("6.62607015e-34") or_else 0.0;
+```
+
+Parsing allocates nothing, however long the text: digits past the 768th
 significant one are reduced to whether any of them is nonzero, which is all
-that can change the rounding. As with formatting, failing to create the "C"
-numeric locale panics. `try_parse_f64` gives every other answer `parse_f64`
-gives and reports that failure as a `Backend_Error` instead: `Out_Of_Memory`
-when creating the locale failed to allocate, `Unavailable` otherwise.
-[`core:encoding/json`](#numbers) converts numbers with it.
+that can change the rounding. [`core:encoding/json`](#numbers) converts numbers
+with it.
 
 Formatting scalars remains in `core:fmt`; `strconv` should not grow a second
 formatting system.

@@ -138,6 +138,17 @@ checklist.
   a file that does not import `core:unsafe`, though it reads the pointee as a type it was not
   declared with, as `(^u64)(p)` does; it is now `L0706` there. `([^]u8)(p)` still needs no
   import. Upgrade by importing `core:unsafe` in the file that converts.
+- `strconv.try_parse_f64` and `strconv.Backend_Error` are removed, and `json.Access_Code` loses
+  `Out_Of_Memory` and `Backend_Failure` ([`core:strconv`](docs/standard-library.md#corestrconv),
+  [Numbers](docs/standard-library.md#numbers)). They reported a failure to create the C
+  library's "C" numeric locale, which `strconv.parse_f64` no longer uses, so none of them can
+  occur. Upgrade by calling `parse_f64`, whose `Parse_Error` is the whole failure, and by
+  deleting the `switch` cases that name the two access codes:
+
+  ```
+  value := strconv.try_parse_f64(text) or_else 0.0;   // before
+  value := strconv.parse_f64(text) or_else 0.0;       // after
+  ```
 
 ### Added
 
@@ -319,11 +330,22 @@ checklist.
   at compile time, so a default build has no loop or shift-count checks left in either. At
   `-opt=speed`, `bench/binary.loke` runs about 3% faster, with the same output.
 - [`core:strconv`](docs/standard-library.md#corestrconv)'s integer parsers check each digit
-  against a cutoff computed once per call rather than dividing for it, and `parse_f64` checks
-  and respells its text in one pass. Results and errors are unchanged. At `-opt=speed`, three
-  million parses take 65 ms, from 112, for short integers and 162 ms, from 578, for ones of 16
-  to 34 digits; 20,000 floats of 4,095 digits take 212 ms, from 244, and short floats as long as
-  before.
+  against a cutoff computed once per call rather than dividing for it. Results and errors are
+  unchanged. At `-opt=speed`, three million parses take 65 ms, from 112, for short integers and
+  162 ms, from 578, for ones of 16 to 34 digits.
+- [`strconv.parse_f64`](docs/standard-library.md#corestrconv) is written in Loke and no longer
+  calls the C library's `strtod` (rationale under
+  [Standard-library API choices](docs/comments.md#standard-library-api-choices)). It consults no
+  locale, nothing but its text can fail, and a constant may be initialized with it:
+  `PLANCK :: strconv.parse_f64("6.62607015e-34") or_else 0.0;` was `L0341`. Up to 19
+  significant digits take one multiplication by a tabulated power of five, the Eisel-Lemire
+  algorithm; a longer spelling that it cannot settle is compared with a halfway point digit for
+  digit. Results are the same correctly rounded values, but for the tie under **Fixed**. At
+  `-opt=speed` a million numbers of a few digits parse in 36 ms, from 152, a million of 17
+  digits in 62 ms, from 264, and 20,000 of 4,095 digits in 139 ms, from 353; a default build
+  takes 220 ms, from 309, for the first. A program that parses a float carries a 10 KB table of
+  those powers, and the front end takes about 11 ms longer for one that imports the package
+  ([Constant tables in the front end](docs/open-questions.md#constant-tables-in-the-front-end)).
 - [`core:strings`](docs/standard-library.md#corestrings) searches a one-byte needle or an ASCII
   rune with `memchr`, converts ASCII case in place in one copy of the text, builds `repeat` by
   doubling the written prefix, and trims trailing whitespace from the end instead of scanning the
@@ -441,6 +463,11 @@ checklist.
   `Holder(u8 if WIDE else u32)` was `L0432`, though each compiled once the expression was bound
   to a name. `size_of(i32 if WIDE else i64)` was 0, the size of the expression's own type,
   `type`; it is now 4.
+- [`strconv.parse_f64`](docs/standard-library.md#corestrconv) rounds a tie spelled with 768
+  significant digits to the even neighbour. A point halfway between two `f64`s can have that
+  many, and only 767 were kept exactly, so such a tie read as below itself: the one between the
+  largest subnormal and the smallest normal, written out in full, parsed to the subnormal,
+  `2.225073858507201e-308`. It is now `2.2250738585072014e-308`.
 - [`term.read_line`](docs/standard-library.md#standard-byte-streams-and-line-input) reads a
   console line of up to 8,190 characters on Windows 10. Its console dropped what passed the
   first read's buffer, so a typed or pasted line longer than 510 characters lost its end without

@@ -1,4 +1,4 @@
-package main; import "core:fmt"; import "core:strconv"; import "core:strings";
+package main; import "core:fmt"; import "core:mem"; import "core:strconv"; import "core:strings";
 
 // `core:strconv` end to end (standard-library "`core:strconv`").
 //
@@ -17,6 +17,54 @@ show_f64 :: proc(text: string_view) {
 	case .ok(outcome):  fmt.println(outcome);
 	case .err(outcome): fmt.println(int(outcome));
 	}
+}
+
+// The parser is Loke all the way down, so the compiler runs it for a constant
+// (design.md "Compile-time procedure evaluation"): the product by a power of
+// five, the comparison of every digit with a halfway point, and a failure.
+AVOGADRO :: strconv.parse_f64("6.02214076e23") or_else 0.0;
+ABOVE_A_TIE :: strconv.parse_f64("9007199254740993.0000000000000000001") or_else 0.0;
+PAST_F64 :: strconv.parse_f64("1e999");
+
+// The point halfway between the double with bits `low` and the next one up,
+// exactly: its decimal digits, and the power of ten that `0.DIGITS` takes. It
+// is twice the mantissa plus one, at one binary power less, and a negative
+// binary power is as many factors of five with the point moved left.
+Halfway :: struct { digits: string, exponent: int }
+
+halfway :: proc(low: u64) -> Halfway {
+	mantissa := low & 0x000FFFFFFFFFFFFF;
+	power := -1075;
+	if (low >> 52 != 0) {
+		mantissa |= 0x0010000000000000;
+		power = int(low >> 52) - 1076;
+	}
+	// Least significant digit first.
+	digits: [dynamic]u8 = {};
+	for (rest := 2 * mantissa + 1; rest > 0; rest /= 10) { digits.append(u8(rest % 10)); }
+	factor := 2 if power > 0 else 5;
+	steps := power if power > 0 else -power;
+	for (step := 0; step < steps; step += 1) {
+		carry := 0;
+		for (i := 0; i < digits.len(); i += 1) {
+			carry += int(digits[i]) * factor;
+			digits[i] = u8(carry % 10);
+			carry /= 10;
+		}
+		if (carry > 0) { digits.append(u8(carry)); }
+	}
+	text: strings.String_Builder = {};
+	for (i := digits.len() - 1; i >= 0; i -= 1) { text.append_byte_ascii(u8('0') + digits[i]); }
+	return Halfway{text.finish(), digits.len() + (0 if power > 0 else power)};
+}
+
+// A tie goes to the neighbour with the even mantissa, and a nonzero digit after
+// it, however far out, to the one above.
+show_halfway :: proc(low: u64) {
+	point := halfway(low);
+	scale := "e" + fmt.to_string(mem.default_allocator(), point.exponent);
+	show_f64("0." + point.digits + scale);
+	show_f64("0." + point.digits + strings.repeat("0", 800) + "1" + scale);
 }
 
 main :: proc() {
@@ -141,10 +189,10 @@ main :: proc() {
 	case .err(float_overflow): fmt.println(int(float_overflow));
 	}
 
-	// The C library reads only the first 768 significant digits. Past them, a
-	// nonzero digit still breaks a tie upwards: 2^53 + 1 is halfway between two
-	// doubles, and anything above it rounds up. Before, the final 1 was dropped
-	// once it was the 769th digit, and this read as 2^53.
+	// Only the first 768 significant digits are kept. Past them, a nonzero digit
+	// still breaks a tie upwards: 2^53 + 1 is halfway between two doubles, and
+	// anything above it rounds up. Before, the final 1 was dropped once it was
+	// the 769th digit, and this read as 2^53.
 	tie := "9007199254740993." + strings.repeat("0", 760) + "1";
 	show_f64(tie);
 	// A long run of leading zeros is not significant, and a huge exponent is not
@@ -159,7 +207,43 @@ main :: proc() {
 	show_f64("0." + zeros + "1e10000001");
 	show_f64("1" + zeros + "e-10000000");
 
-	// The fallible form answers the same, with the failure it can add beside
-	// the text's own.
-	fmt.println(strconv.try_parse_f64("2.5"), strconv.try_parse_f64("1e999"));
+	// Rounded to nearest, a tie to the even neighbour. Up to 19 significant
+	// digits take one multiplication by a power of five.
+	show_f64("9007199254740993");         // 2^53 + 1 is a tie: down to 2^53
+	show_f64("9007199254740995");         // 2^53 + 3 is a tie: up to 2^53 + 4
+	show_f64("4503599627370497.5");       // a tie after a division by five: up
+	show_f64("1e23");                     // no double is 1e23; the one below is nearer
+	show_f64("2.2250738585072011e-308");  // the largest subnormal
+	show_f64("2.2250738585072012e-308");  // the smallest normal
+	show_f64("4.9e-324");                 // the smallest subnormal
+	show_f64("2.4703282292062327e-324");  // less than half of it
+	show_f64("-2.4703282292062328e-324"); // more than half of it
+	show_f64("1.7976931348623158e308");   // past the largest f64, and rounds to it
+	show_f64("1.7976931348623159e308");   // rounds past it: Overflow
+
+	// Digits past the 19th seldom matter: the 19 and the 19 plus one round to
+	// the same double.
+	show_f64("3.14159265358979323846264338327950288419716939937510");
+	show_f64("0.1000000000000000055511151231257827021181583404541015625");
+
+	// When they do, every digit is compared with the halfway point: here the
+	// ties above 1 and above the double after it, and a digit either side.
+	show_f64("1.00000000000000011102230246251565404236316680908203125");
+	show_f64("1.00000000000000011102230246251565404236316680908203126");
+	show_f64("1.00000000000000033306690738754696212708950042724609375");
+	show_f64("1.00000000000000033306690738754696212708950042724609374");
+
+	// The same at the edges of the range. Zero and the smallest subnormal; the
+	// largest subnormals and the smallest normal, whose halfway points have all
+	// 768 digits; and the largest doubles, where rounding up is Overflow.
+	// Before, the 768th digit of a tie was dropped, so the fourth pair read as
+	// the largest subnormal.
+	show_halfway(0);
+	show_halfway(1);
+	show_halfway(0x000FFFFFFFFFFFFE);
+	show_halfway(0x000FFFFFFFFFFFFF);
+	show_halfway(0x7FEFFFFFFFFFFFFE);
+	show_halfway(0x7FEFFFFFFFFFFFFF);
+
+	fmt.println(AVOGADRO, ABOVE_A_TIE, PAST_F64);
 }

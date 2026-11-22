@@ -4006,18 +4006,44 @@ boundaries and API shapes follow a few common choices:
 - **JSON recognition is not `strconv`'s.** `strconv` accepts whitespace, a
   leading `+`, prefixes, and underscores, none of which JSON allows, so the
   scanner checks the spelling and `strconv` only converts it.
-- **The numeric conversions have fallible forms.** Float text goes through the
-  C library's "C" numeric locale, whose creation can fail. Printing has no way
-  to report that and panics; a JSON writer or reader must report it, so
-  `fmt.try_spell_f64` and `strconv.try_parse_f64` expose the failure while the
-  conversion algorithms stay in those packages. A bounded output buffer would
-  not make the panic recoverable. Each package has its own two-member
-  `Backend_Error`, because neither imports the other.
-- **`strconv.parse_f64` reduces a long mantissa itself.** The UCRT's `strtod`
-  reads only the first 768 significant digits and ignores the rest without a
-  sticky digit, so a tie broken by a later digit rounded the wrong way. Keeping
-  767 digits and one standing for any nonzero remainder gives the correctly
-  rounded result for any length, from a fixed buffer.
+- **Spelling a float has a fallible form.** Printed float text goes through
+  the C library's "C" numeric locale, whose creation can fail. Printing has no
+  way to report that and panics; a JSON writer must report it, so
+  `fmt.try_spell_f64` exposes the failure while the algorithm stays in `fmt`.
+  A bounded output buffer would not make the panic recoverable. Reading a float
+  has no such failure, as the next entry says.
+- **`strconv.parse_f64` is written in Loke.** It rounded through the C
+  library's `strtod`. That made it foreign code, which
+  [compile-time evaluation](design.md#compile-time-procedure-evaluation) keeps
+  out of constants; it needed the "C" numeric locale, whose creation can fail,
+  so the package carried a `try_parse_f64` and a `Backend_Error` for a failure
+  no text causes, and `core:encoding/json` two access codes for them; and the
+  UCRT reads only 768 significant digits, so the text was respelled into a
+  fixed buffer first. The parser is now the Eisel-Lemire algorithm: up to 19
+  significant digits are one multiplication by a tabulated power of five,
+  which rounds every such input correctly. A longer spelling is rounded at its
+  first 19 digits and at one more than them; if the two differ, every digit is
+  compared with the point halfway between, as big integers. The two removed
+  names and the two access codes are the breaking part.
+
+  It costs about 100 lines more than the `strtod` version had, and a table of
+  1302 words, 10 KB in a program that parses a float. A million numbers of a
+  few digits parse in 36 ms where `strtod` took 152, and a million of 17
+  digits in 62 ms where it took 264 (`-opt=speed`; 220 and 350 ms against 309
+  and 520 without optimization). The table's literals add about 11 ms to the
+  front end of a program importing the package, which
+  [open-questions.md](open-questions.md#constant-tables-in-the-front-end)
+  takes up. A constant that only decodes the table from a string, less work
+  than computing it, took over 200 ms to evaluate. Clinger's exact path for
+  short mantissas, one floating-point multiplication or division, was 23%
+  faster on numbers of a few digits and was left out: a third path to keep
+  right, for a fifth of the time of the shortest inputs.
+- **`strconv.parse_f64` keeps 768 digits and a sticky one.** No `f64` has more
+  than 767 significant decimal digits, but the point halfway between two can
+  have 768: the one between the largest subnormal and the smallest normal
+  does. Past that many digits, only whether any is nonzero can matter. The
+  parser kept 767 before, with the sticky digit as the 768th, and so read an
+  exact 768-digit tie as just below it.
 - **Small vectors and matrices are records, not `Simd`.** `Vector3(f32)` has
   the layout of `[3]f32` and `Matrix(f32, 4, 4)` that of `[16]f32`, so arrays
   of them have no padding the program did not ask for and go to a GPU upload

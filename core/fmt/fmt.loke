@@ -290,8 +290,6 @@ impl Unsigned {
 	failure, `Unavailable` otherwise. Printing panics instead, because a sink
 	has no way to report it.
 */
-// `core:strconv` has the same two answers for reading a float, as its own type
-// because neither package imports the other.
 Backend_Error :: enum { Out_Of_Memory, Unavailable }
 
 /// The most bytes `try_spell_f64` writes.

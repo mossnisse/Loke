@@ -4,11 +4,12 @@ import "core:fmt";
 import "core:mem";
 import "core:strconv";
 
-// Float text is the "C" locale's whatever the process locale is
-// (standard-library "`core:strconv`"): a program that switches the C library to
+// Float text does not follow the process locale (standard-library
+// "`core:strconv`" and "`core:fmt`"): a program that switches the C library to
 // a decimal-comma locale for its own C code still parses and prints `1.5`.
-// Before, `parse_f64("1.5")` stopped at the point and answered `1.0`, and
-// `fmt` printed `1.,5`.
+// Parsing consults no locale, and printing uses the "C" one. Before,
+// `parse_f64("1.5")` stopped at the point and answered `1.0`, and `fmt`
+// printed `1.,5`.
 //
 // The locale is the C library's, set the way foreign C code would set it. A
 // machine with none of these locales runs the same checks under "C", which
@@ -30,8 +31,7 @@ main :: proc() {
 	value := strconv.parse_f64(fmt.to_string(mem.default_allocator(), 0.1)) or_else 0.0;
 	fmt.println(value == 0.1);
 
-	// The fallible forms read and spell in the same locale.
-	fmt.println(strconv.try_parse_f64("2.5"), strconv.try_parse_f64("1e999"), strconv.try_parse_f64("x"));
+	// The fallible form spells in the same locale.
 	spelled: [fmt.FLOAT_SPELLING_MAX]u8 = {};
 	values := []f64{1.5, -0.0, 0.1, 1e21, 5e-324, -2.2250738585072014e-308};
 	foreach (number in values) {

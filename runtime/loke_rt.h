@@ -501,16 +501,13 @@ void loke_rt_v1_fmt_f32(const loke_rt_writer_v1 *w, float value);
 void loke_rt_v1_fmt_f16(const loke_rt_writer_v1 *w, float value);
 void loke_rt_v1_fmt_fixed(const loke_rt_writer_v1 *w, double value, int64_t digits);
 /* Float text in the "C" numeric locale, whatever the process locale is, for
- * `core:strconv` and `fmt.try_spell_f64`. Each answers a failure to make that
- * locale where printing panics. `try_parse_f64` answers 0 and stores the
- * value, or one of the codes below; `try_spell_f64` writes what `fmt_f64`
- * prints into `out`, which holds `LOKE_RT_FLOAT_SPELLING_MAX` bytes, and
- * answers the count, or a code negated. */
-#define LOKE_RT_NUMERIC_REJECTED 1
+ * `fmt.try_spell_f64`, which answers a failure to make that locale where
+ * printing panics. It writes what `fmt_f64` prints into `out`, which holds
+ * `LOKE_RT_FLOAT_SPELLING_MAX` bytes, and answers the count, or one of the
+ * codes below negated. */
 #define LOKE_RT_NUMERIC_OUT_OF_MEMORY 2
 #define LOKE_RT_NUMERIC_UNAVAILABLE 3
 #define LOKE_RT_FLOAT_SPELLING_MAX 32
-int32_t loke_rt_v1_try_parse_f64(const char *text, double *value);
 int64_t loke_rt_v1_try_spell_f64(uint8_t *out, double value);
 void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value);

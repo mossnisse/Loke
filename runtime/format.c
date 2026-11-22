@@ -20,8 +20,9 @@
 
 /* The "C" numeric locale, made once and shared by every thread. The process
  * locale is mutable through `setlocale`, and under a decimal-comma one plain
- * `printf` and `strtod` spell and read `1,5`: every spelling and reading of a
- * float here and in `core:strconv` goes through this locale instead.
+ * `printf` and `strtod` spell and read `1,5`: every spelling of a float here,
+ * and the reading back that finds the shortest one, goes through this locale
+ * instead. `core:strconv` reads floats in Loke, with no locale at all.
  *
  * Two threads racing to make it both succeed, and the loser frees its copy.
  * Failing to make it answers 0 with `*failure` set to `LOKE_RT_NUMERIC_*`: the
@@ -60,21 +61,6 @@ static _locale_t c_numeric(void) {
 		no_c_numeric();
 	}
 	return made;
-}
-
-/* `core:strconv`'s float conversion. The caller has already checked the
- * spelling, so a correct conversion consumes all of it; one that does not
- * answers `LOKE_RT_NUMERIC_REJECTED`, and a locale that cannot be made answers
- * its failure. Otherwise it stores the value and answers 0. */
-int32_t loke_rt_v1_try_parse_f64(const char *text, double *value) {
-	int32_t failure = 0;
-	_locale_t locale = try_c_numeric(&failure);
-	if (locale == 0) {
-		return failure;
-	}
-	char *end = 0;
-	*value = _strtod_l(text, &end, locale);
-	return *end == 0 ? 0 : LOKE_RT_NUMERIC_REJECTED;
 }
 
 /* Standard output a process has none of is dropped, as the C library drops it;

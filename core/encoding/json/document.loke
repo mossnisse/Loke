@@ -363,16 +363,10 @@ impl Number {
 		is never an infinity or a NaN.
 	*/
 	to_f64 :: proc(self) -> Result(f64, Access_Error) {
-		switch (strconv.try_parse_f64(self.spelling)) {
+		// A JSON number is a spelling `strconv` reads, so only its size can fail.
+		switch (strconv.parse_f64(self.spelling)) {
 		case .ok(value): return value;
-		case .err(failure):
-			switch (failure) {
-			case .parse: return .err(access_error(.Out_Of_Range, self.offset));
-			case .backend(error):
-				code := Access_Code.Backend_Failure;
-				if (error == .Out_Of_Memory) { code = .Out_Of_Memory; }
-				return .err(access_error(code, self.offset));
-			}
+		case .err: return .err(access_error(.Out_Of_Range, self.offset));
 		}
 	}
 

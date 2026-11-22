@@ -2575,10 +2575,10 @@ a_foreign_object_for_the_dynamic_crt_is_warned_about :: proc(t: ^testing.T) {
 	}
 }
 
-// standard-library "`core:fmt`" and "`core:strconv`": when the runtime cannot
-// create its "C" numeric locale, reading a float panics instead of using the
-// process locale. `numeric_locale_fault.c` builds its own copy of
-// `runtime/format.c` with that creation failing, and exits 0 from the panic.
+// standard-library "`core:fmt`": when the runtime cannot create its "C" numeric
+// locale, printing a float panics instead of using the process locale.
+// `numeric_locale_fault.c` builds its own copy of `runtime/format.c` with that
+// creation failing, and exits 0 from the panic.
 @(test)
 numeric_locale_failure_panics :: proc(t: ^testing.T) {
 	clang, include_flags, found := host_toolchain()

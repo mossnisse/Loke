@@ -94,77 +94,38 @@ parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error
 	the point may be empty but not both. Underscores may follow any digit, the
 	rule `parse_u64` applies, in all three digit runs.
 
-	The result is correctly rounded, and what `fmt` prints this parses to the
-	same value. Parsing is in the "C" numeric locale, so a program that sets a
-	decimal-comma locale for its own C code still parses `1.5` as one and a
-	half. It allocates nothing, however long the text.
+	The result is correctly rounded, to the nearest `f64` with a tie going to
+	the even one, and what `fmt` prints this parses to the same value. The
+	point is always `.`: no locale is consulted. It allocates nothing, however
+	long the text, and calls no foreign code, so it can initialize a constant.
 
 	Infinities and NaNs are not spellable; a caller that needs them tests for the
-	words itself. A finite spelling past the largest `f64` is `Overflow`; one
-	too small for the smallest subnormal rounds to a signed zero.
-
-	Making that locale can fail, which panics here; `try_parse_f64` reports it.
+	words itself. A finite spelling that rounds past the largest `f64` is
+	`Overflow`; one too small for the smallest subnormal rounds to a signed zero.
 */
 // The lexer takes underscores in a written literal's mantissa but not its
 // exponent; that asymmetry carries no reason this package can see, so one rule
 // covers all three digit runs here.
-parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
-	switch (try_parse_f64(text)) {
-	case .ok(value): return value;
-	case .err(failure):
-		switch (failure) {
-		case .parse(error): return .err(error);
-		case .backend: panic("cannot create the \"C\" numeric locale for float text");
-		}
-	}
-}
-
-/**
-	What can stop a float conversion other than its text: the "C" numeric
-	locale it runs in could not be made. `Out_Of_Memory` when that was an
-	allocation failure, `Unavailable` otherwise.
-*/
-// `core:fmt` has the same two answers for spelling a float, as its own type
-// because neither package imports the other.
-Backend_Error :: enum {
-	Out_Of_Memory,
-	Unavailable,
-}
-
-/**
-	`parse_f64`, answering a `Backend_Error` where that panics. Every other
-	answer is the same.
-*/
-// standard-library "`core:strconv`": the shared fallible conversion that
-// `core:encoding/json` reads numbers with.
 //
-// The syntax is checked here and the rounding is the C library's `strtod`, the
-// same one `fmt` relies on to find the shortest spelling that reads back.
-try_parse_f64 :: proc(
-	text: string_view,
-) -> Result(f64, (parse: Parse_Error | backend: Backend_Error)) {
+// standard-library "`core:strconv`": written in Loke, with the C library's
+// `strtod` nowhere behind it. The first 19 significant digits fit a `u64`, and
+// `round_decimal` rounds that times a power of ten correctly. Digits past them
+// rarely matter: the value lies between the mantissa and the mantissa plus one
+// at the same power of ten, and when both round to one `f64`, that is it.
+// Otherwise they round to neighbours, since the two are one part in ten to the
+// 18th apart and doubles a thousand times that, and `above_halfway` compares
+// every digit with the point halfway between the two.
+parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	bytes := trim_ascii_space(text).bytes();
-	// `strtod` reads to a terminator, which a view does not have, and knows
-	// nothing of underscores. So the text is checked and respelled in one pass as
-	// `[-]0.DIGITSe[-]NNN`, with no underscores, no leading zeros, and at most
-	// `KEPT_DIGITS` significant digits, so that `strtod` reads any length of text
-	// out of a fixed buffer. A one stands in for the digits dropped past those
-	// when any of them is not zero. The zeroed buffer supplies the terminator.
-	spelled: [SPELLED]u8 = {};
 	at := 0;
-	used := 0;
-	if (skip_sign(bytes, inout at)) {
-		spelled[0] = u8('-');
-		used = 1;
-	}
-	spelled[used] = u8('0');
-	spelled[used + 1] = u8('.');
-	used += 2;
-	first := used;
-	// The value is 0.DIGITS times ten to `scale` plus the written exponent.
-	scale := 0;
-	significant := false;
-	dropped := false;
+	negative := skip_sign(bytes, inout at);
+	first := at;
+	// The value is `mantissa` times ten to `exponent`, more when `truncated`: a
+	// nonzero digit followed the `MANTISSA_DIGITS` significant ones kept.
+	mantissa: u64 = 0;
+	significant := 0;
+	exponent := 0;
+	truncated := false;
 	after_point := false;
 	// Either run around the point may be empty, but not both. An underscore
 	// may follow only a digit in its own run.
@@ -181,118 +142,253 @@ try_parse_f64 :: proc(
 		if (!is_digit(byte)) { break; }
 		in_run = true;
 		any_digit = true;
-		if (!significant && byte == u8('0')) {
-			if (after_point) { scale -= 1; }
-			continue;
-		}
-		significant = true;
-		if (!after_point) { scale += 1; }
-		if (used - first < KEPT_DIGITS) {
-			spelled[used] = byte;
-			used += 1;
-		} else if (byte != u8('0')) {
-			dropped = true;
+		if (significant < MANTISSA_DIGITS) {
+			// A leading zero leaves the mantissa zero and is not counted.
+			mantissa = mantissa * 10 + u64(byte - u8('0'));
+			if (mantissa != 0) { significant += 1; }
+			if (after_point) { exponent -= 1; }
+		} else {
+			if (byte != u8('0')) { truncated = true; }
+			if (!after_point) { exponent += 1; }
 		}
 	}
-	if (!any_digit) { return .err(.parse(.Invalid_Syntax)); }
+	if (!any_digit) { return .err(.Invalid_Syntax); }
+	digits := bytes[first:at];
 
-	// The written exponent saturates only past `ceiling`. `scale` is at most the
-	// text's length either way, so an exponent beyond that and the limit leaves
-	// the total beyond the limit, in its own direction, whatever `scale`
-	// cancels; one below it is read exactly. Both stay far from overflowing,
-	// since no text in memory is within a tenth of the largest `int`.
-	ceiling := bytes.len() + EXPONENT_LIMIT;
-	exponent := 0;
+	// The written exponent saturates only past `ceiling`. The digits moved
+	// `exponent` by at most the text's length either way, so a written one
+	// beyond that and the limit leaves the total beyond the limit, in its own
+	// direction, whatever the digits cancel; one below it is read exactly. Both
+	// stay far from overflowing, since no text in memory is within a tenth of
+	// the largest `int`.
 	if (at < bytes.len() && (bytes[at] == u8('e') || bytes[at] == u8('E'))) {
 		at += 1;
-		negative := skip_sign(bytes, inout at);
+		minus := skip_sign(bytes, inout at);
+		ceiling := bytes.len() + EXPONENT_LIMIT;
+		written := 0;
 		in_run = false;
 		for (; at < bytes.len(); at += 1) {
 			byte := bytes[at];
 			if (byte == u8('_') && in_run) { continue; }
 			if (!is_digit(byte)) { break; }
 			in_run = true;
-			if (exponent <= ceiling) { exponent = exponent * 10 + int(byte - u8('0')); }
+			if (written <= ceiling) { written = written * 10 + int(byte - u8('0')); }
 		}
-		if (!in_run) { return .err(.parse(.Invalid_Syntax)); }
-		if (negative) { exponent = -exponent; }
+		if (!in_run) { return .err(.Invalid_Syntax); }
+		exponent += -written if minus else written;
 	}
-	if (at != bytes.len()) { return .err(.parse(.Trailing_Data)); }
+	if (at != bytes.len()) { return .err(.Trailing_Data); }
 
-	if (!significant) {
-		// Every digit was zero, and `0.0` keeps the sign.
-		spelled[used] = u8('0');
-	} else {
-		if (dropped) {
-			spelled[used] = u8('1');
-			used += 1;
-		}
-		total := scale + exponent;
-		if (total > EXPONENT_LIMIT) { total = EXPONENT_LIMIT; }
-		if (total < -EXPONENT_LIMIT) { total = -EXPONENT_LIMIT; }
-		spelled[used] = u8('e');
-		used += 1;
-		if (total < 0) {
-			spelled[used] = u8('-');
-			used += 1;
-			total = -total;
-		}
-		spelled[used] = u8('0') + u8(total / 100);
-		spelled[used + 1] = u8('0') + u8(total / 10 % 10);
-		spelled[used + 2] = u8('0') + u8(total % 10);
-	}
-	value: f64 = 0;
-	switch (rt_try_parse_f64(unsafe.cstring_view(unsafe.raw_data(spelled[:])), &mut value)) {
-	case 0:
-	case NUMERIC_OUT_OF_MEMORY: return .err(.backend(.Out_Of_Memory));
-	case NUMERIC_UNAVAILABLE:   return .err(.backend(.Unavailable));
-	// The syntax was checked above, so this is the C library disagreeing with
-	// it. A short conversion is still not a value to return.
-	case: return .err(.parse(.Invalid_Syntax));
+	bits := round_decimal(mantissa, exponent);
+	if (truncated && bits != round_decimal(mantissa + 1, exponent) && above_halfway(digits, exponent, bits)) {
+		// The next `f64` up, the infinity after the largest included.
+		bits += 1;
 	}
 	// A finite decimal outside f64's range must not quietly become an infinity:
 	// infinities are not accepted spellings, and `Parse_Error.Overflow` exists
 	// precisely for a value the destination cannot hold.
-	if (value > 1.7976931348623157e308 || value < -1.7976931348623157e308) {
-		return .err(.parse(.Overflow));
-	}
-	return value;
+	if (bits == INFINITY) { return .err(.Overflow); }
+	// Every digit zero is zero, and `-0.0` keeps the sign.
+	if (negative) { bits |= SIGN; }
+	return unsafe.transmute(f64, bits);
 }
 
 // ---------------------------------------------------------------- private --
 
-// `strtod` in the runtime's "C" numeric locale, which also checks that it read
-// the whole spelling. Private, or the file-wide `@(public)` would export it as
-// `strconv.rt_try_parse_f64`.
+// The significant digits `parse_f64` keeps in a `u64`: every 19-digit number
+// fits, and so does one more than the largest.
 @(private)
-foreign loke_runtime {
-	@(link_name="loke_rt_v1_try_parse_f64")
-	rt_try_parse_f64 :: proc "c" (text: cstring_view, value: ^mut f64) -> i32 ---;
-}
-
-// `loke_rt.h`'s answers besides 0 and `LOKE_RT_NUMERIC_REJECTED`.
-@(private)
-NUMERIC_OUT_OF_MEMORY :: 2;
-@(private)
-NUMERIC_UNAVAILABLE :: 3;
+MANTISSA_DIGITS :: 19;
 
 // More significant digits than this cannot change how a double rounds, as long
-// as a nonzero digit past them is remembered: no double, and no point halfway
-// between two of them, has more. The UCRT's `strtod` reads only the first 768
-// and ignores the rest, so a longer spelling handed to it whole could round the
-// wrong way; this many and the sticky digit are exactly what it reads.
+// as a nonzero digit past them is remembered: the longest double has 767, and
+// the longest point halfway between two of them has 768, the one between the
+// largest subnormal and the smallest normal among them.
 @(private)
-KEPT_DIGITS :: 767;
+KEPT_DIGITS :: 768;
 
-// The respelled mantissa is in [0.1, 1), so past ten to this power either way
-// every one overflows or underflows whatever its digits, and the combined
-// exponent saturates here, three digits at most.
+// Past ten to this power either way a nonzero mantissa of up to
+// `MANTISSA_DIGITS` digits overflows or underflows whatever its digits, so the
+// written exponent need not be read exactly beyond it.
 @(private)
 EXPONENT_LIMIT :: 400;
 
-// `-0.`, the kept digits, a sticky digit, `e-400`, and the terminator.
+// An `f64`'s bits: the sign, the infinity, and the bit a normal mantissa
+// leaves implicit.
 @(private)
-SPELLED :: 3 + KEPT_DIGITS + 1 + 5 + 1;
+SIGN :: u64(0x8000000000000000);
+@(private)
+INFINITY :: u64(0x7FF0000000000000);
+@(private)
+IMPLICIT_BIT :: u64(0x0010000000000000);
+
+// The bits of the `f64` nearest `mantissa` times ten to `exponent`, a tie
+// going to the even one: zero when it is too small for the smallest
+// subnormal, `INFINITY` past the largest.
+//
+// This is the Eisel-Lemire algorithm as the `fast_float` library has it. Ten to
+// `exponent` is two to it times five to it, and the first only moves the binary
+// exponent, so the bits wanted are the top of `mantissa` times a power of five.
+// `POWERS_OF_FIVE` holds 128 bits of each power, and the product of those with
+// a 64-bit mantissa always has the 55 bits used here right, which
+// "powers_of_five.loke" gives the reference for; so no input needs a fallback.
+@(private)
+round_decimal :: proc(mantissa: u64, exponent: int) -> u64 {
+	// The largest mantissa `parse_f64` passes, ten to the 19th, is at ten to the
+	// -343 still below half the smallest subnormal, and the smallest, one, is at
+	// ten to the 309 above the largest `f64`.
+	if (mantissa == 0 || exponent < MIN_POWER_OF_FIVE) { return 0; }
+	if (exponent > MAX_POWER_OF_FIVE) { return INFINITY; }
+
+	// The mantissa with its top bit set, and the `zeros` that were above it.
+	w := mantissa;
+	zeros := 0;
+	for (step := 32; step > 0; step /= 2) {
+		if (w >> (64 - step) == 0) {
+			w <<= step;
+			zeros += step;
+		}
+	}
+
+	// The 55 bits are the 53 of an `f64`'s mantissa, one to round by, and one
+	// more because the product's top bit may be clear. The low half of the power
+	// can change them only when the nine bits below them are all ones.
+	index := 2 * (exponent - MIN_POWER_OF_FIVE);
+	product := u128(w) *% u128(POWERS_OF_FIVE[index]);
+	if ((product >> 64) & 0x1FF == 0x1FF) {
+		product += (u128(w) *% u128(POWERS_OF_FIVE[index + 1])) >> 64;
+	}
+	high := u64(product >> 64);
+	low := u64(product & 0xFFFFFFFFFFFFFFFF);
+	top := int(high >> 63);
+	// 54 bits: the mantissa with its implicit bit, and the rounding bit.
+	shift := top + 9;
+	rounded := high >> shift;
+	// The biased exponent of a normal result. `217706 / 65536` is the base-two
+	// logarithm of ten, near enough that the shift floors `exponent` times it.
+	biased := ((217706 * exponent) >> 16) + 1086 + top - zeros;
+	if (biased <= 0) {
+		// Subnormal, where the mantissa loses `1 - biased` bits, every one when
+		// that is its width or more, and the bits are the mantissa alone. No tie
+		// can occur: a point halfway between two subnormals has over 700
+		// significant digits. Rounding up to the smallest normal gives that
+		// one's bits as well.
+		rounded >>= 1 - biased;
+		return (rounded + (rounded & 1)) >> 1;
+	}
+	// The rounding bit alone, below an even mantissa, rounds up unless the
+	// value is exactly halfway: the bits dropped below it are all zero. Only a
+	// power of five small enough to leave or divide a 64-bit mantissa exactly
+	// can do that, and the rounded-up reciprocal of a negative power may then
+	// leave a one in `low`.
+	if (low <= 1 && exponent >= -4 && exponent <= 23 && rounded & 3 == 1 && rounded << shift == high) {
+		rounded -= 1;
+	}
+	// Adding the mantissa in carries a round up to the next power of two into
+	// the exponent, and past the largest exponent into the infinity's.
+	bits := (u64(biased - 1) << 52) + ((rounded + (rounded & 1)) >> 1);
+	return bits if bits < INFINITY else INFINITY;
+}
+
+// A natural number as little-endian 64-bit limbs, for `above_halfway`. Neither
+// side of its comparison reaches 2^2607: the largest is a halfway point's 54
+// bits times five to the 1092, for `KEPT_DIGITS` and a sticky digit at the
+// smallest power of ten, times two to the 17.
+@(private)
+BIG_LIMBS :: 41;
+
+@(private)
+Big :: struct {
+	limbs: [BIG_LIMBS]u64,
+	used:  int,
+}
+
+impl Big {
+	// `self` times `factor`, plus `addend`.
+	@(private)
+	mul_add :: proc(self: inout Big, factor: u64, addend: u64) {
+		carry := addend;
+		for (i := 0; i < self.used; i += 1) {
+			wide := u128(self.limbs[i]) *% u128(factor) + u128(carry);
+			self.limbs[i] = u64(wide & 0xFFFFFFFFFFFFFFFF);
+			carry = u64(wide >> 64);
+		}
+		if (carry != 0) {
+			self.limbs[self.used] = carry;
+			self.used += 1;
+		}
+	}
+
+	// `self` times `base` to the `power`, as many factors at a time as a `u64`
+	// holds. A `power` of zero or less changes nothing.
+	@(private)
+	scale :: proc(self: inout Big, base: u64, power: int) {
+		factor: u64 = 1;
+		for (left := power; left > 0; left -= 1) {
+			factor *= base;
+			if (left == 1 || factor > 0xFFFFFFFFFFFFFFFF / base) {
+				self.mul_add(factor, 0);
+				factor = 1;
+			}
+		}
+	}
+}
+
+// Whether the decimal `digits`, which may hold underscores and a point, rounds
+// to the `f64` after the one with bits `low` rather than to that one. `low` is
+// not negative, `exponent` is the power of ten of the decimal's first
+// `MANTISSA_DIGITS` significant digits, and the decimal lies between those two
+// values.
+//
+// The decimal is compared with the point halfway between them, exactly: both
+// are an integer times powers of two and five, a negative power on one side is
+// a positive one on the other, and what is left is two integers. `KEPT_DIGITS`
+// says why a sticky one may stand for the digits past those.
+@(private)
+above_halfway :: proc(digits: []u8, exponent: int, low: u64) -> bool {
+	// `decimal` times ten to `power10`.
+	decimal: Big = {};
+	count := 0;
+	sticky := false;
+	foreach (byte in digits) {
+		if (!is_digit(byte) || (count == 0 && byte == u8('0'))) { continue; }
+		if (count < KEPT_DIGITS) {
+			decimal.mul_add(10, u64(byte - u8('0')));
+			count += 1;
+		} else if (byte != u8('0')) {
+			sticky = true;
+		}
+	}
+	if (sticky) {
+		decimal.mul_add(10, 1);
+		count += 1;
+	}
+	power10 := exponent + MANTISSA_DIGITS - count;
+
+	// `halfway` times two to `power2`: an `f64` is its mantissa times two to
+	// the -1074 when subnormal, and otherwise has the implicit bit and a biased
+	// exponent that counts from there. Halfway to the next is twice the mantissa
+	// plus one, at one power less.
+	mantissa := low & (IMPLICIT_BIT - 1);
+	power2 := -1075;
+	if (low >= IMPLICIT_BIT) {
+		mantissa |= IMPLICIT_BIT;
+		power2 = int(low >> 52) - 1076;
+	}
+	halfway: Big = {};
+	halfway.mul_add(1, 2 * mantissa + 1);
+
+	decimal.scale(5, power10);
+	halfway.scale(5, -power10);
+	decimal.scale(2, power10 - power2);
+	halfway.scale(2, power2 - power10);
+	if (decimal.used != halfway.used) { return decimal.used > halfway.used; }
+	for (i := decimal.used - 1; i >= 0; i -= 1) {
+		if (decimal.limbs[i] != halfway.limbs[i]) { return decimal.limbs[i] > halfway.limbs[i]; }
+	}
+	// A tie goes to the even mantissa, which is the odd one's neighbour.
+	return low & 1 == 1;
+}
 
 // Steps `at` past a leading `+` or `-`, answering whether it was a minus.
 @(private)

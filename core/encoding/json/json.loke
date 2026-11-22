@@ -90,9 +90,6 @@ Access_Code :: enum {
 	Not_Integer,
 	/// A number the requested type cannot hold.
 	Out_Of_Range,
-	Out_Of_Memory,
-	/// The numeric conversion could not be set up (`strconv.Backend_Error`).
-	Backend_Failure,
 }
 
 /**
