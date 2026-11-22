@@ -368,9 +368,11 @@ impl Weighted {
 		finite positive sum. A zero weight's index is never drawn. Storage comes
 		from `allocator` and follows its failure policy.
 	*/
+	// inferred: result is backed by `allocator`
 	from_weights :: proc(weights: []f64, allocator: Allocator = mem.default_allocator()) -> Weighted ---;
 
 	// `from_weights`, reporting an allocation failure instead.
+	// inferred: result is backed by `allocator`
 	try_from_weights :: proc(
 		weights: []f64, allocator: Allocator = mem.default_allocator(),
 	) -> Result(Weighted, Allocator_Error) ---;

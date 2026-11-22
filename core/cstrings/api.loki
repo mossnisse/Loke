@@ -29,6 +29,7 @@ C_String :: struct {
 	// and fields private to the package
 }
 
+// inferred: result is backed by `allocator`
 from_string :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(C_String, Error) ---;
@@ -40,6 +41,7 @@ impl C_String {
 		as long as the foreign side holds it is the caller's obligation, and is the
 		whole reason this type exists.
 	*/
+	// inferred: result borrows `self`
 	view :: proc(self: ^) -> cstring_view ---;
 
 	// Excludes the terminator.

@@ -87,6 +87,7 @@ format_to_with :: proc(w: Writer, options: Options, args: ..dyn Formattable) ---
 	format in memory, then write the result and handle that write's error. To
 	append to a `strings.String_Builder`, pass the result to its own `append`.
 */
+// inferred: result is backed by `allocator`
 to_string :: proc(allocator: Allocator, args: ..dyn Formattable) -> string ---;
 
 /*

@@ -565,12 +565,14 @@ Dynamic_Index_Set :: struct {
 
 impl Dynamic_Index_Set {
 	// An empty set of `cap` indices. A negative `cap` panics.
+	// inferred: result is backed by `allocator`
 	init :: proc(cap: int, allocator: Allocator = mem.default_allocator()) -> Dynamic_Index_Set ---;
 
 	/*
 		As `init`, but a failure to allocate is returned rather than handled by
 		the allocator's failure policy. A negative `cap` panics.
 	*/
+	// inferred: result is backed by `allocator`
 	try_init :: proc(cap: int, allocator: Allocator = mem.default_allocator()) -> Result(Dynamic_Index_Set, Allocator_Error) ---;
 
 	/*
@@ -587,9 +589,11 @@ impl Dynamic_Index_Set {
 	try_resize :: proc(self: inout, cap: int) -> Status(Allocator_Error) ---;
 
 	// The set as a read-only view, borrowed from it.
+	// inferred: result borrows `self`
 	view :: proc(self: ^) -> Index_View ---;
 
 	// The set as a mutable view, which borrows it exclusively.
+	// inferred: result borrows `self`
 	view_mut :: proc(self: inout) -> Index_View_Mut ---;
 
 	// The number of indices the set can hold.
@@ -649,6 +653,7 @@ impl Dynamic_Index_Set {
 
 	Element :: int;
 
+	// inferred: result borrows `self`
 	iter :: proc(self: ^) -> Index_Iterator ---;
 
 	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) ---;
@@ -669,6 +674,7 @@ impl Index_View {
 		`words_for_bits(cap)`. The bits of the final word at or above `cap` are
 		ignored.
 	*/
+	// inferred: result borrows `words`
 	over :: proc(words: []u64, cap: int) -> Index_View ---;
 
 	cap :: proc(self) -> int ---;
@@ -699,6 +705,7 @@ impl Index_View {
 
 	Element :: int;
 
+	// inferred: result borrows `self`
 	iter :: proc(self) -> Index_Iterator ---;
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) ---;
@@ -715,9 +722,11 @@ Index_View_Mut :: struct {
 
 impl Index_View_Mut {
 	// As `Index_View.over`, writable.
+	// inferred: result borrows `words`
 	over :: proc(words: []mut u64, cap: int) -> Index_View_Mut ---;
 
 	// The same set, read-only, borrowed from this view.
+	// inferred: result borrows through `self`
 	as_view :: proc(self: ^) -> Index_View ---;
 
 	cap :: proc(self: ^) -> int ---;
@@ -771,6 +780,7 @@ impl Index_View_Mut {
 
 	Element :: int;
 
+	// inferred: result borrows through `self`
 	iter :: proc(self: ^) -> Index_Iterator ---;
 
 	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) ---;
@@ -787,6 +797,7 @@ Index_Iterator :: struct {
 impl Index_Iterator {
 	Element :: int;
 
+	// inferred: result borrows `self`
 	iter :: proc(self) -> Index_Iterator ---;
 
 	next :: proc(self: inout) -> Option(int) ---;

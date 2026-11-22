@@ -62,6 +62,7 @@ stderr :: proc() -> Output ---;
 	arrives intact; a redirected handle is read as bytes and validated as UTF-8.
 	End of input before any byte is `End_Of_Input`.
 */
+// inferred: result is backed by `allocator`
 read_line :: proc(
 	allocator: Allocator = mem.default_allocator(),
 	options: io.Line_Options = {},
@@ -74,6 +75,7 @@ read_line :: proc(
 	There is nothing to flush: this package's `Output` is unbuffered, so the label
 	has reached the operating system before the read begins.
 */
+// inferred: result is backed by `allocator`
 prompt :: proc(
 	label: string_view,
 	allocator: Allocator = mem.default_allocator(),

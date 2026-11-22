@@ -40,6 +40,7 @@ String_Builder :: struct {
 }
 
 // A builder whose buffer *and* finished string come from `allocator`.
+// inferred: result is backed by `allocator`
 init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder ---;
 
 impl String_Builder {
@@ -84,12 +85,14 @@ impl String_Builder {
 		The text as an owned `string`: one linear copy. The buffer is retained for
 		reuse afterwards.
 	*/
+	// inferred: result is backed by the allocator of `self`
 	finish :: proc(self: inout String_Builder) -> string ---;
 
 	/*
 		The same, reporting an allocation failure instead of applying a policy. The
 		builder is left completely unchanged when it fails.
 	*/
+	// inferred: result is backed by the allocator of `self`
 	try_finish :: proc(self: inout String_Builder) -> Result(string, Allocator_Error) ---;
 
 	/*
@@ -99,11 +102,14 @@ impl String_Builder {
 		rejected. `copy_string` is the one to reach for when the text really must
 		outlast the builder.
 	*/
+	// inferred: result borrows `self`
 	view :: proc(self: ^) -> string_view ---;
 
 	// A copy of what is written so far. The builder is not disturbed either way.
+	// inferred: result is backed by `allocator`
 	copy_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string ---;
 
+	// inferred: result is backed by `allocator`
 	try_copy_string :: proc(
 		self, allocator: Allocator = mem.default_allocator(),
 	) -> Result(string, Allocator_Error) ---;
@@ -114,6 +120,8 @@ impl String_Builder {
 	separator therefore yields a final empty part, and an empty separator yields
 	the whole text once.
 */
+// inferred: result borrows `text`
+// inferred: result borrows `separator`
 split :: proc(text: string_view, separator: string_view) -> Split_Iterator ---;
 
 Split_Iterator :: struct {
@@ -125,8 +133,11 @@ impl Split_Iterator {
 
 	Iterator :: Split_Iterator;
 
+	// inferred: result borrows `self.rest`
+	// inferred: result borrows `self.separator`
 	iter :: proc(self) -> Split_Iterator ---;
 
+	// inferred: result borrows `self.rest`
 	next :: proc(self: inout Split_Iterator) -> Option(string_view) ---;
 }
 
@@ -134,6 +145,7 @@ impl Split_Iterator {
 	Runs of non-whitespace, with every run of Unicode White_Space between them
 	discarded. Empty and all-whitespace text yield nothing.
 */
+// inferred: result borrows `text`
 fields :: proc(text: string_view) -> Fields_Iterator ---;
 
 Fields_Iterator :: struct {
@@ -145,8 +157,10 @@ impl Fields_Iterator {
 
 	Iterator :: Fields_Iterator;
 
+	// inferred: result borrows `self`
 	iter :: proc(self) -> Fields_Iterator ---;
 
+	// inferred: result borrows `self`
 	next :: proc(self: inout Fields_Iterator) -> Option(string_view) ---;
 }
 
@@ -154,6 +168,7 @@ impl Fields_Iterator {
 	Lines separated by `\n` or `\r\n`, with the ending removed. A final
 	unterminated line is yielded; a final ending is not followed by an empty line.
 */
+// inferred: result borrows `text`
 lines :: proc(text: string_view) -> Lines_Iterator ---;
 
 Lines_Iterator :: struct {
@@ -165,8 +180,10 @@ impl Lines_Iterator {
 
 	Iterator :: Lines_Iterator;
 
+	// inferred: result borrows `self`
 	iter :: proc(self) -> Lines_Iterator ---;
 
+	// inferred: result borrows `self`
 	next :: proc(self: inout Lines_Iterator) -> Option(string_view) ---;
 }
 
@@ -174,9 +191,11 @@ impl Lines_Iterator {
 	A copy of `text` in storage from `allocator`. Failure follows the allocator's
 	failure policy, like every other implicitly allocating operation.
 */
+// inferred: result is backed by `allocator`
 copy :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string ---;
 
 // The fallible half: the error, with nothing allocated.
+// inferred: result is backed by `allocator`
 try_copy :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(string, Allocator_Error) ---;
@@ -206,14 +225,18 @@ count :: proc(text: string_view, needle: string_view) -> int ---;
 // Whether `value` is Unicode White_Space, not only one of the ASCII five.
 is_space :: proc(value: rune) -> bool ---;
 
+// inferred: result borrows `text`
 trim_left_space :: proc(text: string_view) -> string_view ---;
 
 // `text` without the white space at its end.
+// inferred: result borrows `text`
 trim_right_space :: proc(text: string_view) -> string_view ---;
 
+// inferred: result borrows `text`
 trim_space :: proc(text: string_view) -> string_view ---;
 
 // Trims any scalar value that appears in `cutset` from both ends.
+// inferred: result borrows `text`
 trim :: proc(text: string_view, cutset: string_view) -> string_view ---;
 
 /*
@@ -225,12 +248,14 @@ Cut :: struct {
 	after: string_view,
 }
 
+// inferred: result borrows `text`
 cut :: proc(text: string_view, separator: string_view) -> Option(Cut) ---;
 
 /*
 	`text[low:high]`, or `.none` where that slice would panic: a bound out of
 	range, `low` after `high`, or a bound inside a code point.
 */
+// inferred: result borrows `text`
 try_slice :: proc(text: string_view, low, high: int) -> Option(string_view) ---;
 
 /*
@@ -247,14 +272,17 @@ floor_boundary :: proc(text: string_view, offset: int) -> int ---;
 ceil_boundary :: proc(text: string_view, offset: int) -> int ---;
 
 // The first `limit` scalar values, or all of `text` when it has fewer.
+// inferred: result borrows `text`
 prefix_runes :: proc(text: string_view, limit: int) -> string_view ---;
 
+// inferred: result is backed by `allocator`
 join :: proc(
 	parts: []string_view,
 	separator: string_view = "",
 	allocator: Allocator = mem.default_allocator(),
 ) -> string ---;
 
+// inferred: result is backed by `allocator`
 repeat :: proc(
 	text: string_view, times: int, allocator: Allocator = mem.default_allocator(),
 ) -> string ---;
@@ -263,6 +291,7 @@ repeat :: proc(
 	Replaces up to `limit` non-overlapping occurrences, or every one when `limit`
 	is negative. An empty `old` matches nowhere, which keeps the result finite.
 */
+// inferred: result is backed by `allocator`
 replace :: proc(
 	text: string_view,
 	old: string_view,
@@ -275,6 +304,8 @@ replace :: proc(
 	`text` in upper case. Only ASCII letters change: every non-ASCII scalar value
 	is copied as it stands.
 */
+// inferred: result is backed by `allocator`
 to_upper :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string ---;
 
+// inferred: result is backed by `allocator`
 to_lower :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string ---;

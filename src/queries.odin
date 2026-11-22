@@ -176,6 +176,13 @@ query_documentation :: proc(s: ^Compilation_Session, handle: Symbol_Handle, allo
 	return text, text != ""
 }
 
+// What the compiler inferred of a procedure, one phrase each, as its interface
+// file shows them (`inferred_facts`). The caller owns the phrases.
+query_inferred :: proc(s: ^Compilation_Session, handle: Symbol_Handle, allocator := context.allocator) -> []string {
+	if _, found := query_symbol(s, handle); !found { return nil }
+	return inferred_facts(&s.compiler, handle.id, allocator)
+}
+
 // A procedure group returns its available members. A generic template supplies
 // written syntax; erroneous/unresolved signatures are absent.
 query_signatures :: proc(s: ^Compilation_Session, handle: Symbol_Handle) -> ([]Query_Signature, bool) {

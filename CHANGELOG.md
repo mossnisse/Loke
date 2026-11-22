@@ -141,6 +141,22 @@ checklist.
 
 ### Added
 
+- An interface file and a hover say what the compiler inferred of a public procedure and its
+  signature does not show, in `// inferred:` lines above it
+  ([Inferred lines](docs/compiler-guide.md#inferred-lines)): what its result borrows, which
+  allocator backs it, and whose package state a call writes.
+
+  ```
+  // inferred: result borrows `path`
+  base :: proc(path: string_view) -> string_view ---;
+
+  // inferred: result is backed by `allocator`
+  clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator()) -> string ---;
+  ```
+
+  A generic procedure and one inside a `when` get none. The lines report the current body and
+  are not a compatibility promise. The bundled packages' `api.loki` files carry them, and a
+  project's own are stale until `lokec <dir> -api` rewrites them.
 - `string_view.from_utf8_prefix(bytes)` borrows the longest prefix of a byte slice that is valid
   UTF-8 ([string type conversions](docs/design.md#string-type-conversions)). It cannot fail, and
   its length is the offset of the first invalid sequence, so a caller can report where bytes stop

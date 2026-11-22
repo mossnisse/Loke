@@ -218,8 +218,9 @@ hover :: proc(s: ^Server, session: ^lokec.Compilation_Session, at: lokec.Query_P
 	return strings.to_string(b)
 }
 
-// How a binding reads in a hover. A procedure shows its signature, a type or
-// constant its declaration, and anything else its name and recorded type.
+// How a binding reads in a hover. A procedure shows its signature under what
+// the compiler inferred of it, as its interface file does; a type or constant
+// its declaration; and anything else its name and recorded type.
 @(private = "file")
 declaration_text :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Query_Symbol) -> string {
 	#partial switch symbol.kind {
@@ -229,6 +230,9 @@ declaration_text :: proc(session: ^lokec.Compilation_Session, symbol: lokec.Quer
 		for signature in signatures {
 			name := symbol.name
 			if member, found := lokec.query_symbol(session, signature.symbol); found { name = member.name }
+			for fact in lokec.query_inferred(session, signature.symbol, context.temp_allocator) {
+				append(&lines, fmt.tprintf("// inferred: %s", fact))
+			}
 			append(&lines, fmt.tprintf("%s :: %s", name, signature.text))
 		}
 		if len(lines) > 0 { return strings.join(lines[:], "\n", context.temp_allocator) }

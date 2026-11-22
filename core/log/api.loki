@@ -43,6 +43,8 @@ Logger :: dyn mut Sink;
 	The handle the program is logging through, for code that wants to pass it on
 	rather than call the package procedures.
 */
+// inferred: result borrows package state
+// inferred: writes package state
 current :: proc() -> Logger ---;
 
 /*
@@ -50,6 +52,8 @@ current :: proc() -> Logger ---;
 	the level in front of it. It is the fallback *and* an ordinary provider — a
 	build may select `log.standard_logger` explicitly to say so.
 */
+// inferred: result borrows package state
+// inferred: writes package state
 standard_logger :: proc() -> Logger ---;
 
 /*
@@ -90,12 +94,16 @@ impl Writer_Sink($W) {
 	into_writer :: proc(self: move) -> W ---;
 }
 
+// inferred: writes package state
 debug :: proc(args: ..dyn fmt.Formattable) ---;
 
+// inferred: writes package state
 info :: proc(args: ..dyn fmt.Formattable) ---;
 
+// inferred: writes package state
 warning :: proc(args: ..dyn fmt.Formattable) ---;
 
+// inferred: writes package state
 error :: proc(args: ..dyn fmt.Formattable) ---;
 
 /*
@@ -111,4 +119,5 @@ enabled :: proc(level: Level) -> bool ---;
 	at it without switching over five members to reach one of the four fixed
 	procedures. An `off` build discards it too.
 */
+// inferred: writes package state
 at :: proc(level: Level, args: ..dyn fmt.Formattable) ---;

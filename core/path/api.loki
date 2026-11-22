@@ -30,6 +30,7 @@ is_absolute :: proc(path: string_view) -> bool ---;
 	`\\?\UNC\server\share` for a UNC one. Nothing above it can be created,
 	removed, or walked, which is what a caller needs it for.
 */
+// inferred: result borrows `path`
 volume :: proc(path: string_view) -> string_view ---;
 
 /*
@@ -37,12 +38,14 @@ volume :: proc(path: string_view) -> string_view ---;
 	and the volume is never part of it: `base("C:a")` is `a`, while a root -- a
 	`C:\` or a `\\server\share` -- has no last element at all.
 */
+// inferred: result borrows `path`
 base :: proc(path: string_view) -> string_view ---;
 
 /*
 	Everything before the last element, with no trailing separator except at a
 	root. A path with no separator at all has the directory `.`.
 */
+// inferred: result borrows `path`
 directory :: proc(path: string_view) -> string_view ---;
 
 /*
@@ -50,15 +53,18 @@ directory :: proc(path: string_view) -> string_view ---;
 	names a hidden file rather than an extension, so `extension(".config")` is "",
 	and `..` names the parent rather than a file with the extension `.`.
 */
+// inferred: result borrows `path`
 extension :: proc(path: string_view) -> string_view ---;
 
 // The last element without its extension.
+// inferred: result borrows `path`
 stem :: proc(path: string_view) -> string_view ---;
 
 /*
 	The parts as one path, cleaned. Empty parts are dropped, so joining with ""
 	changes nothing.
 */
+// inferred: result is backed by `allocator`
 join :: proc(
 	parts: []string_view, allocator: Allocator = mem.default_allocator(),
 ) -> string ---;
@@ -79,4 +85,5 @@ join :: proc(
 	precisely to bypass normalization — Windows passes them to the filesystem
 	verbatim — so rewriting one would be wrong.
 */
+// inferred: result is backed by `allocator`
 clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator()) -> string ---;

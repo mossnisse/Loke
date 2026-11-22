@@ -83,6 +83,8 @@ Number :: struct {
 	allocation, the document's own included, comes from `allocator`, and a
 	failed parse releases all of it.
 */
+// inferred: result borrows `input`
+// inferred: result is backed by `allocator`
 parse :: proc(
 	input: []u8,
 	allocator: Allocator = mem.default_allocator(),
@@ -90,6 +92,8 @@ parse :: proc(
 ) -> Result(Document, Parse_Error) ---;
 
 // The same for text already known to be UTF-8, which skips that validation.
+// inferred: result borrows `input`
+// inferred: result is backed by `allocator`
 parse_text :: proc(
 	input: string_view,
 	allocator: Allocator = mem.default_allocator(),
@@ -101,6 +105,8 @@ parse_text :: proc(
 	selects the document's own storage; the string keeps the allocator it has.
 	The string is consumed whether or not the parse succeeds.
 */
+// inferred: result is backed by the allocator of `input`
+// inferred: result is backed by `allocator`
 parse_owned :: proc(
 	input: move string,
 	allocator: Allocator = mem.default_allocator(),
@@ -109,12 +115,14 @@ parse_owned :: proc(
 
 impl Document {
 	// An empty document whose storage will come from `allocator`.
+	// inferred: result is backed by `allocator`
 	init :: proc(allocator: Allocator = mem.default_allocator()) -> Document ---;
 
 	/*
 		The root value, or `.none` for an empty, cleared, or failed document. A
 		successful parse always has one, `null` included.
 	*/
+	// inferred: result borrows `self`
 	root :: proc(self: ^) -> Option(Value) ---;
 
 	/*
@@ -153,8 +161,10 @@ impl Value {
 		The decoded text, borrowed from the input when it had no escapes and from
 		the document otherwise.
 	*/
+	// inferred: result borrows `self`
 	string :: proc(self) -> Result(string_view, Access_Error) ---;
 
+	// inferred: result borrows `self`
 	number :: proc(self) -> Result(Number, Access_Error) ---;
 
 	// `number()` and its conversion, with either's error.
@@ -164,8 +174,10 @@ impl Value {
 
 	to_f64 :: proc(self) -> Result(f64, Access_Error) ---;
 
+	// inferred: result borrows `self`
 	array :: proc(self) -> Result(Array, Access_Error) ---;
 
+	// inferred: result borrows `self`
 	object :: proc(self) -> Result(Object, Access_Error) ---;
 }
 
@@ -175,8 +187,10 @@ impl Array {
 	len :: proc(self) -> int ---;
 
 	// The element at `index`, found by walking the elements before it.
+	// inferred: result borrows `self`
 	at :: proc(self, index: int) -> Option(Value) ---;
 
+	// inferred: result borrows `self`
 	iter :: proc(self) -> Array_Iterator ---;
 }
 
@@ -185,6 +199,7 @@ Array_Iterator :: struct {
 }
 
 impl Array_Iterator {
+	// inferred: result borrows `self`
 	next :: proc(self: inout Array_Iterator) -> Option(Value) ---;
 }
 
@@ -199,11 +214,14 @@ impl Object {
 		`Duplicate_Key`, never the first or last of them. A successful lookup
 		says nothing about whether other keys repeat.
 	*/
+	// inferred: result borrows `self`
 	find :: proc(self, key: string_view) -> Result(Option(Value), Access_Error) ---;
 
 	// `find`, with no member at all reported as `Missing_Key`.
+	// inferred: result borrows `self`
 	require :: proc(self, key: string_view) -> Result(Value, Access_Error) ---;
 
+	// inferred: result borrows `self`
 	iter :: proc(self) -> Member_Iterator ---;
 }
 
@@ -212,6 +230,7 @@ Member_Iterator :: struct {
 }
 
 impl Member_Iterator {
+	// inferred: result borrows `self`
 	next :: proc(self: inout Member_Iterator) -> Option(Member) ---;
 }
 
@@ -220,10 +239,12 @@ impl Member_Iterator {
 	whitespace around it. It borrows `text`, so an exact decimal can be written
 	without building a document.
 */
+// inferred: result borrows `text`
 number :: proc(text: string_view) -> Result(Number, Parse_Error) ---;
 
 impl Number {
 	// The spelling, exactly as written.
+	// inferred: result borrows `self`
 	text :: proc(self) -> string_view ---;
 
 	/*
@@ -435,6 +456,7 @@ writer :: proc(
 	unless the options say otherwise. The output is assembled in memory and
 	copied once into the string.
 */
+// inferred: result is backed by `allocator`
 stringify :: proc(
 	value: Value,
 	allocator: Allocator = mem.default_allocator(),

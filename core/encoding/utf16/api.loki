@@ -36,6 +36,7 @@ Error :: enum {
 	A `string_view` is valid UTF-8 by construction, so the only failures are an
 	interior zero and allocation.
 */
+// inferred: result is backed by `allocator`
 encode :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]u16, Error) ---;
@@ -45,6 +46,7 @@ encode :: proc(
 	pass the exact range to convert, which is what every Windows API that reports
 	a length gives.
 */
+// inferred: result is backed by `allocator`
 decode :: proc(
 	units: []u16, allocator: Allocator = mem.default_allocator(),
 ) -> Result(string, Error) ---;

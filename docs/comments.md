@@ -3168,6 +3168,33 @@ is a warning, so a doc comment cannot be lost by a blank line or by standing
 above something that is not documented. See
 [Package documentation](future-plans.md#package-documentation).
 
+### Inferred facts are shown, not promised
+
+A signature does not say what a result borrows, which allocator backs it, or
+whether a call writes package state. The compiler infers all three, so a reader
+had to open the body to learn what the checker would hold a caller to. The
+[`// inferred:` lines](compiler-guide.md#inferred-lines) of an interface file
+and a hover print them. They are comments, not syntax: a written contract is a
+separate question
+([Public borrow contracts should stand on their own](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own)),
+and lines that only report add no rule to the language and cost a package
+author nothing.
+
+One line per parameter keeps the file readable. Without that rule
+`json.parse` read "borrows `allocator`" and "is backed by `allocator`", and
+every method of a view read "borrows `self`" and "is backed by the allocator
+of `self`": two true statements with one consequence for the caller, that the
+argument outlives the result.
+
+A written effect must not depend on who compiles the package. A procedure that
+calls through a `dyn` view or a procedure value may run any body of the
+program, so its whole effect grows with the program it is checked in, and the
+interface file of a dependency would differ between a tree, where each package
+is its own root, and a project that imports it. The lines therefore take a
+procedure's own part and name only its package and the packages it imports,
+which a body from elsewhere cannot add to. A generic procedure has no line
+because it has no one contract.
+
 A type declared in a procedure body has no documented fields, since the type
 itself is not documented there: `-doc` and an interface file never show a
 local, and a field's comment with no type above it to belong to would be shown

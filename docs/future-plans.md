@@ -476,34 +476,19 @@ nothing checks it. What a package tells its users is therefore generated from
 its source, checked by the compiler, or run by the test runner, and prose is
 kept for intent, which goes stale slowest. [`///` doc comments](design.md#comments),
 the checked-in [interface file](compiler-guide.md#interface-files), and
-[`@(intrinsic)`](design.md#intrinsic) declarations are built. The steps below
-were accepted on 2026-11-22; each one's language rules move to
+[`@(intrinsic)`](design.md#intrinsic) declarations are built, and so is the
+first step. The steps below were accepted on 2026-11-22; each one's language rules move to
 [design.md](design.md) with its implementation, and what the plan does not
 decide is in [Package documentation](open-questions.md#package-documentation).
 
 ### Steps
 
-The compiler infers whether a result borrows an argument and from which
-allocator it comes (the [result
-contract](design.md#procedure-result-contracts)), and whether a call writes
-package state (the [write effect](design.md#global-write-effects)). Neither
-`-doc`, hover, nor the interface file shows them, so a reader opens the body to
-learn them.
-
-**1. Inferred facts are shown, one line each.** The interface file and hover
-add an `// inferred:` line to a public procedure for its result contract and
-its write effect, and say nothing when there is nothing to report:
-
-- ``result borrows `text` `` or ``result borrows `list.items` ``, from the
-  parameter paths the result contract records;
-- ``result is backed by `allocator` ``, from its region provenance;
-- `writes package state`, for the package's own globals, or
-  ``writes state of `core:log` ``, for another package's.
-
-A generic procedure's contract is per instantiation, and a declaration inside
-a `when` is checked for one target only, so neither gets the line. An inferred
-fact is not a compatibility promise: a release names a changed `inferred:`
-line of a bundled package as a possible break. A
+**1. Inferred facts are shown, one line each — shipped.** The interface
+file and hover put an `// inferred:` line above a public procedure for what
+its result borrows, which allocator backs it, and whose package state a call
+writes, and say nothing when there is nothing to report
+([Inferred lines](compiler-guide.md#inferred-lines),
+[reasons](comments.md#inferred-facts-are-shown-not-promised)). A
 [written contract](design-review-2026-10-31.md#public-borrow-contracts-should-stand-on-their-own), once
 it exists, would be shown in its place, without "inferred".
 

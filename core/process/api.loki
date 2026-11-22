@@ -94,4 +94,5 @@ Output :: struct {
 	waits. stderr is read on a thread of its own, so a child filling either pipe
 	while the other is read cannot deadlock. A failed read ends the child.
 */
+// inferred: writes state of `core:thread`
 output :: proc(command: Command) -> Result(Output, io.Error) ---;

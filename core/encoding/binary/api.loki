@@ -81,6 +81,7 @@ impl Reader {
 		subrecords, names a place in the source. A `base` that would overflow `u64`
 		at the end of `bytes` panics.
 	*/
+	// inferred: result borrows `bytes`
 	init :: proc(bytes: []u8, order: endian.Order, base: u64 = 0) -> Reader ---;
 
 	// Where the next read happens: `base` plus the position.

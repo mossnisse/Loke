@@ -1,0 +1,18 @@
+// A dependency whose state the root's procedures write.
+package journal;
+
+lines := 0;
+
+/// Counts one line.
+@(public) note :: proc() { lines += 1; }
+
+/// How many lines were counted.
+@(public) count :: proc() -> int { return lines; }
+
+@(public) Sink :: interface($T: type) {
+	slot put: proc(self: inout, value: int);
+}
+
+/// Hands `value` to whatever `sink` is. What that writes is the caller's to
+/// know, so nothing is inferred here.
+@(public) send :: proc(sink: dyn mut Sink, value: int) { sink.put(value); }

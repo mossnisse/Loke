@@ -190,6 +190,7 @@ append :: proc(path: string_view) -> Result(File, io.Error) ---;
 	positive limit that would be exceeded returns `Limit_Exceeded` and no partial
 	result.
 */
+// inferred: result is backed by `allocator`
 read_bytes :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result([dynamic]u8, io.Error) ---;
@@ -201,6 +202,7 @@ read_bytes :: proc(
 	This allocates the file twice over; a caller who cannot afford the second
 	copy wants `read_bytes`.
 */
+// inferred: result is backed by `allocator`
 read_text :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result(string, io.Error) ---;
@@ -287,6 +289,7 @@ remove_directory :: proc(path: string_view) -> Status(io.Error) ---;
 	        }
 	    }
 */
+// inferred: result is backed by `allocator`
 read_directory :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(Directory_Reader, io.Error) ---;

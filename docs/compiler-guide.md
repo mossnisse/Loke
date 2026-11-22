@@ -365,6 +365,53 @@ and the `.loki` extension keeps the file out of it. `-api-check` compares the
 text without carriage returns, so a checkout that turned its line ends into
 CRLF does not make it stale.
 
+### Inferred lines
+
+Some of what a caller needs to know is in no signature: the compiler infers
+whether a result borrows an argument and which allocator backs it (its
+[result contract](design.md#procedure-result-contracts)), and whether a call
+writes package state (its [write effect](design.md#global-write-effects)).
+The interface file says so in `// inferred:` lines above a public procedure,
+after its doc comment, one fact a line, and writes none when there is nothing
+to say:
+
+```loke
+// The part of `text` after its first byte.
+// inferred: result borrows `text`
+rest :: proc(text: string_view) -> string_view ---;
+
+// inferred: result is backed by `allocator`
+filled :: proc(count: int, allocator: Allocator = mem.default_allocator()) -> [dynamic]int ---;
+
+// inferred: writes package state
+// inferred: writes state of `core:log`
+record :: proc(n: int) ---;
+```
+
+| Line | Meaning |
+| --- | --- |
+| ``result borrows `text` `` | The result may view or point into what the argument names, so the argument outlives it. A path, as `pair.left`, names the field of a record argument it borrows through; the others are free. |
+| ``result borrows through `list` `` | The result may be a borrow that the storage the argument names holds, as a view stored in the record a pointer leads to, and not a borrow of that storage. |
+| ``result is backed by `allocator` `` | Storage the result owns, or views, comes from that allocator. For an argument that is no allocator handle, the line reads ``the allocator of `list` ``: the one that argument's storage uses. |
+| `result borrows package state` | The result may point into a variable of the procedure's own package; ``state of `core:log` `` names another package's. |
+| `writes package state` | A call may write a variable of the procedure's own package, itself or through what it calls; ``state of `core:log` `` names another package's. |
+
+A parameter gets one line, its strongest: an allocator handle that backs the
+result is not also listed as borrowed, and an argument the result borrows is
+not also listed for its allocator. The receiver is the parameter `self`.
+
+Three things get no line. A generic procedure has a contract for each
+instantiation, not one. A procedure inside a `when` is checked for one target,
+and the file is every target's. And what a procedure value or `dyn` view
+handed to the procedure writes is the caller's to know, so only state of the
+procedure's own package and of the packages it imports is named. The lines are
+therefore the same whichever program the package is checked in.
+
+The lines report what the compiler found in this version of the body. They
+are not part of the signature, and editing a body can change them; a release
+names a changed line of a bundled package among its
+[upgrade notes](releasing.md#upgrade-notes) as a possible break.
+
 ## Running tests
 
 `-test` builds the root package's [test procedures](design.md#test-procedures)
@@ -670,7 +717,8 @@ that produced the diagnostics:
 
 - **Hover** shows the declaration of the name under the cursor and its
   [doc comment](design.md#doc-comments), as [`-doc`](#common-options) shows it. A
-  procedure shows its signature, a type or constant its declaration, and a
+  procedure shows its signature, under the [`// inferred:` lines](#inferred-lines)
+  its interface file has, a type or constant its declaration, and a
   variable, parameter, or field its type.
 - **Go to definition** jumps to where the name is declared, including in an
   imported package or the bundled library.

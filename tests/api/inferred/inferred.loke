@@ -1,0 +1,88 @@
+// future-plans.md "Package documentation": an interface file says, one
+// `// inferred:` line each, what a public procedure's result borrows, which
+// allocator backs it, and whose package state a call writes.
+package inferred;
+
+import "core:mem";
+import "./journal";
+
+@(public) Pair :: struct {
+	@(public) left:  string_view,
+	@(public) right: string_view,
+}
+
+@(public) List :: struct {
+	@(public) items: [dynamic]int,
+	@(public) names: []string_view,
+}
+
+total := 0;
+slots: [4]int;
+
+/// The result views the argument.
+@(public) trimmed :: proc(text: string_view) -> string_view { return text[1:]; }
+
+/// The result views one field of the argument, and not the other.
+@(public) left_of :: proc(pair: Pair) -> string_view { return pair.left; }
+
+/// The result is a view the argument's storage holds, not the argument.
+@(public) first_name :: proc(list: ^List) -> string_view { return list.names[0]; }
+
+/// The result owns storage from the allocator it is given.
+@(public) filled :: proc(count: int, allocator: Allocator = mem.default_allocator()) -> [dynamic]int {
+	out: [dynamic]int via allocator = {};
+	foreach (i in 0 ..< count) { out.append(i); }
+	return out;
+}
+
+/// The result owns storage from the allocator its argument uses.
+@(public) doubled :: proc(list: ^List) -> [dynamic]int {
+	out: [dynamic]int via list.items.allocator() = {};
+	foreach (item in list.items) { out.append(item*2); }
+	return out;
+}
+
+/// A call writes this package's state.
+@(public) add :: proc(n: int) { total += n; }
+
+/// A call writes an imported package's state, and this one's.
+@(public) record :: proc(n: int) {
+	journal.note();
+	total += n;
+}
+
+/// The result points into this package's state.
+@(public) slot :: proc(index: int) -> ^int { return &slots[index]; }
+
+/// Nothing to report.
+@(public) sum :: proc(a, b: int) -> int { return a + b; }
+
+/// A generic procedure has a contract per instantiation, so none is shown.
+@(public) pick :: proc(values: []$T) -> ^T { return &values[0]; }
+
+// A branch of a `when` is checked for one target only, so nothing is shown.
+when (LOKE_DEBUG) {
+	/// The checked form.
+	@(public) checked :: proc(text: string_view) -> string_view { return text; }
+} else {
+	/// The unchecked form.
+	@(public) checked :: proc(text: string_view) -> string_view { return text[0:]; }
+}
+
+impl List {
+	/// A method's receiver is a parameter as any other.
+	@(public) view :: proc(self: ^) -> []int { return self.items[:]; }
+}
+
+// What a sink of this package writes when `journal.send` calls it is not
+// `journal`'s to report.
+Counter :: struct { seen: int }
+impl Counter {
+	@(public) put :: proc(self: inout, value: int) { total += value; self.seen += 1; }
+}
+
+/// Sends through a sink of this package.
+@(public) forward :: proc(value: int) {
+	counter := Counter{};
+	journal.send((dyn mut journal.Sink)(&mut counter), value);
+}

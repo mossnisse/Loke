@@ -708,6 +708,23 @@ hover_shows_declarations_and_comments :: proc(t: ^testing.T) {
 	testing.expect(t, is_null_result(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "Never"))))
 }
 
+// future-plans.md "Package documentation": a hover shows what the compiler
+// inferred of a procedure above its signature, as its interface file does.
+@(test)
+hover_shows_inferred_facts :: proc(t: ^testing.T) {
+	text := "package main;\ncount := 0;\n/// The rest of `text`.\nrest :: proc(text: string_view) -> string_view { count += 1; return text[1:]; }\nsum :: proc(a, b: int) -> int { return a + b; }\nmain :: proc() {\n\t_ = rest(\"abc\");\n\t_ = sum(1, 2);\n}\n"
+	h: Harness
+	if !start(&h, t, "hover-inferred") { finish(&h); return }
+	defer finish(&h)
+	open(&h, "main.loke", text)
+	testing.expect_value(
+		t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "rest(\"abc"))),
+		"// inferred: result borrows `text`\n// inferred: writes package state\nrest :: proc(text: string_view) -> string_view\n\nThe rest of `text`.",
+	)
+	// Nothing to report leaves the signature alone.
+	testing.expect_value(t, hover_value(ask(&h, "textDocument/hover", "main.loke", position_of(t, text, "sum(1"))), "sum :: proc(a, b: int) -> int")
+}
+
 // design.md "Doc comments": hover shows a doc comment only where `L0260` does
 // not report it. One above a local documents nothing; one above a field does.
 @(test)

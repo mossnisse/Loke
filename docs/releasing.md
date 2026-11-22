@@ -54,6 +54,11 @@ changes** in [CHANGELOG.md](../CHANGELOG.md). Explain what stopped working and h
 to update affected code, with a before/after example when needed. These entries
 become the release's upgrade notes.
 
+An [`// inferred:` line](compiler-guide.md#inferred-lines) of a bundled
+package's interface file is not a promise, but a caller may have relied on it:
+a commit that adds a borrow or a write to one, or changes what backs a result,
+names the procedure among the breaking changes as a possible break.
+
 ## Release checklist
 
 1. Confirm `main` is green in CI, whose gate runs `bundle.ps1` to check that

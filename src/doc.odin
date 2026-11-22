@@ -210,6 +210,9 @@ Api_Item :: struct {
 	// whether it is shown at all, and those a foreign block lends its members.
 	attributes: [dynamic]string,
 	doc:        string,
+	// `.Decl`: what the compiler inferred of a public procedure outside any
+	// `when`, one phrase each (`inferred_facts`).
+	inferred:   []string,
 	// `.Decl`: private to the package, so shown only once a shown item refers
 	// to it.
 	private:    bool,
@@ -556,6 +559,11 @@ api_decl :: proc(
 		item.text = proc_interface_text(b, d, literal, block)
 		item.terminator = " ---;"
 		api_refs(&w, literal)
+		// A branch of a `when` is checked for one target only, and the file is
+		// every target's.
+		if !item.private && len(b.branches) == 0 {
+			item.inferred = inferred_facts(c, literal.symbol, context.allocator)
+		}
 		// design.md "Foreign system": a member takes the block's calling
 		// convention and result requirement unless it states its own.
 		if has_attribute(block_attributes, "require_results") && !has_attribute(d.attributes, "require_results") {
@@ -1083,6 +1091,9 @@ write_interface_items :: proc(b: ^strings.Builder, a: ^Api_Package, items: []Api
 				fmt.sbprintfln(b, "%s// %s", indent, PRIVATE_NOTE)
 			}
 			write_doc_lines(b, item.doc, indent)
+			for fact in item.inferred {
+				fmt.sbprintfln(b, "%s// inferred: %s", indent, fact)
+			}
 			for attribute in item.attributes {
 				fmt.sbprintfln(b, "%s@(%s)", indent, attribute)
 			}
