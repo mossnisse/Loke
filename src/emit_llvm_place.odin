@@ -312,11 +312,17 @@ symbol_place :: proc(e: ^Emitter, symbol: Symbol_Id) -> string {
 	return "null"
 }
 
-// `value` in storage of its own, as the temporary `expr` makes.
+// `value` in storage of its own, as the temporary `expr` makes. A call's large
+// result is already in a slot of this full expression that nothing else names,
+// so that slot is the temporary, with no copy into a second one. One a local's
+// value extends still gets storage of its own (`temporary_slot_for`).
 @(private = "file")
 hold_in_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, value: string) -> string {
-	slot := temporary_slot_for(e, expr, type)
-	store(e, type, value, slot)
+	slot := value
+	if value != e.call_slot || expr_base(expr).extended {
+		slot = temporary_slot_for(e, expr, type)
+		store(e, type, value, slot)
+	}
 	hold_addressed_temporary(e, expr, type, slot)
 	return slot
 }

@@ -169,13 +169,11 @@ reproduction before a change.
 
 ## Compiler source audit follow-ups (2026-11-18)
 
-- **Shorten the lifetime of overload-ranking alias views.** Alias expansion used
-  to compare candidates allocates transient ASTs in the compilation's semantic
-  arena. Measure an alias-heavy workload before assigning those views to a
-  shorter-lived allocator.
-- **Use exact hashed membership for wide integers.** Duplicate checking scans
-  every previous value outside `i64`. Keep keys exact and measure generated
-  switches and backed enum lookups before changing the representation.
+- **Index an enum's members by name.** `field_named` scans the member list, so
+  a switch that names every member of a generated enum is quadratic: 40,000
+  members and as many `.Member` cases take 2.4 s in the front end, where the
+  enum alone takes 0.9 s, and 10,000 take 0.36 s (2026-11-22). Measure an
+  index by name against the memory it adds to every enum and record.
 - **Measure the borrow solver's allocation and rescanning hypotheses.** The
   audit lists changes it could not justify without a workload: skipping the
   loaded-below rows of a body with no cursor anchor, caching `at_once_reaches`
@@ -209,46 +207,22 @@ remain from them:
 
 ## LLVM source review follow-ups
 
-- **Constant emission.** A union constant whose active payload reaches past
-  the storage's head, such as `.small({1, 2, 3})` beside a `[65536]u8`
-  variant, still spells the whole padding member byte by byte: its LLVM type
-  is one `[N x i8]`, which has no compact spelling for a value only partly
-  zero. Only a global of another value type, as a relocation image is, could
-  shorten it. Decide whether the size of such initializers matters enough for
-  that.
+- **Returning a large value.** `return out;` of a 5000-byte local copies it
+  into a temporary and then into the result, and `return Large{...}` zeroes
+  three slots and copies twice (read in the IR on 2026-11-22). Building the
+  value in the result's storage would remove the copies; measure a kernel
+  that returns large records first.
+- **Slot reuse in fixed-array and slice literals.** Only a `[dynamic]T` or map
+  literal ends an element's temporaries (`end_operand_temporaries` in
+  [emit_llvm_cleanup.odin](../src/emit_llvm_cleanup.odin)), so `[40]u8{...}`
+  and `[]u8{...}` of by-value calls `first_of(large(i))`, with a 5000-byte
+  `Large`, keep 40 `Large` slots in the frame where the growable literal keeps
+  1. Whether their elements should reuse slots the same way is open; an
+  element that [lends its temporary to a
+  call](comments.md#a-temporary-lent-to-a-call-keeps-its-slot) would keep its
+  slot in either.
 - **Container emission.** Measure miss-heavy `find_or_insert` before
   changing the runtime ABI to reuse a probe across a user copy hook.
-
-## Literal elements that lend a temporary to a call
-
-A `[dynamic]T` or map literal hands each element to the container as soon as
-it is evaluated, and the element's large temporaries' slots then serve the
-next one. An element that hands an address to a call keeps them until the
-literal is built (`note_lent_arguments` in
-[emit_llvm_cleanup.odin](../src/emit_llvm_cleanup.odin)), since the callee may
-keep the address by `unsafe` means for the rest of the full expression
-([Temporaries and procedure boundaries](design.md#temporaries-and-procedure-boundaries)).
-Every `self: ^` method call on a temporary counts, though only a callee that
-reaches `unsafe` can keep its receiver past the call. So a `[dynamic]u8`
-literal of 40 elements `large(i).first()`, with a 5000-byte `Large`, takes 80
-`Large` slots in the frame, two an element, where its slots were reused before
-`05e2b195`; one of `first_of(large(i))` by value still takes 1 (counted in the
-emitted IR on 2026-11-12). A long literal of such calls can now exhaust the
-stack.
-
-A procedure summary saying whether a call may keep an argument's address past
-its return, true for any body that reaches `unsafe` or calls through a
-procedure value, would keep the reuse for every other call. Whether that fact
-pays for itself, or a literal of large method calls is rare enough, is open.
-Found on 2026-11-07 in a review of `05e2b195` (P3).
-
-A fixed-array or slice literal reuses no slot in either form, since only the
-`[dynamic]T` and map literals end an element's temporaries
-(`end_operand_temporaries` in
-[emit_llvm_containers.odin](../src/emit_llvm_containers.odin)): `[40]u8{...}`
-and `[]u8{...}` take 40 `Large` slots for the by-value calls and 80 for the
-method calls. Whether they should reuse slots as the growable literals do is
-open with the summary. Found on 2026-11-12.
 
 ## JSON follow-ups
 
@@ -592,23 +566,6 @@ a join is not one, since [structured
 concurrency](design.md#structured-concurrency) already answers it
 ([reasons](comments.md#tasks-that-borrow-joined-by-their-block)).
 
-## Open questions in `core:thread`
-
-**Waking channel waiters only when they can proceed.** A channel's guard
-wakes every waiter after any change, so filling a capacity-64 channel and
-draining it on one thread makes 128 wake calls per batch. Signalling only on
-empty becoming nonempty, full becoming nonfull, a side's last endpoint
-dropping, or the first `close` makes two, for four more lines, but the timing
-ranges of nine runs of 12,000 batches overlapped: a wake with no sleeper costs
-little. It needs a probe with threads parked on both sides to show a gain.
-[Channel implementation](../core/thread/channel.loke)
-
-**Reusing `container.Deque` for the channel queue** needs an append operation
-whose allocation effects exclude growth. With `append_moved`, the checker
-sees a possible allocator reservation and reports `L0732` for existing
-multiple-sender cases even when the channel preallocates and checks capacity.
-[Deque interface](../core/container/api.loki)
-
 ## Open questions in `core:sync`
 
 **Waiting on each `Once` state word.** `WaitOnAddress` and `WakeByAddressAll`
@@ -625,16 +582,6 @@ every C host of an object build importing `core:sync` would add
 names its system libraries to the host's linker. Windows `INIT_ONCE` is not an
 alternative, since it needs a stable address and a Loke `Once` can move after
 it fires.
-
-**A completed `Lazy.get` sets up its `defer`.** `Once.do` keeps its `defer` in
-a private procedure, so a call on a completed `Once` pays for no unwinding
-frame, and 800,000 such calls take 1.5 ms, from 3.2. The same split in
-`Lazy.get` took 800,000 completed calls from 5.0 ms to 2.6, but the inner
-procedure is generic over `init`, and a rejected `init` was then reported
-against `core:sync` (``while instantiating `Lazy(T).fill` ``) with the caller's
-`get` nowhere in the diagnostic, so it was not made. It needs either an
-instantiation note that names the outermost call, or a frame pushed only on
-the path that reaches the `defer`.
 
 ## Lent storage whose owners cross threads
 
@@ -1001,23 +948,13 @@ difference written as an index no longer has a branch of its own: its
 overflow is tested behind the bounds comparison
 ([Runtime and library boundary](compiler-architecture.md#runtime-and-library-boundary)),
 and LLVM vectorizes past that, so `xs[i + offset]` and `xs[i - offset]` in a
-loop cost what the wrapping forms do. Three shapes still pay, measured on
+loop cost what the wrapping forms do. A check that does not vary in the loop,
+behind one that does, is removed by unswitching the loop, which `-opt=speed`
+[asks for](comments.md#-optspeed-unswitches-loops) as `-opt=aggressive` always
+did: the checked `k*n` of `out[i + j*n] = out[i + j*n] + a[i + k*n]*factor`,
+or a `b[round]` after `a[r*n + c]`. Two shapes still pay, measured on
 2026-11-16 after `c2645cd2` with Clang 22.1.8:
 
-- **A check that does not vary in the loop, behind one that does.**
-  `hand_multiply` in `bench/dense.loke` writes
-  `out[i + j*n] = out[i + j*n] + a[i + k*n]*factor`. The checked `k*n` comes
-  after the bounds comparison of `out[i + j*n]`, so LLVM hoists the
-  multiplication and leaves the branch on its overflow in the loop. It removes
-  that by unswitching the loop, which Clang does at `-O3` only: eight products
-  of 256 by 256 matrices take 38 ms at `-opt=aggressive` and 102 ms at
-  `-opt=speed`. A bounds check that does not vary, `b[round]` after
-  `a[r*n + c]`, is held the same way. A program avoids it at `-opt=speed` by
-  writing `j*n` and `k*n` before the inner loop, or by slicing once and
-  indexing from zero, `column := out[mut j*n : j*n + n]` and then `column[i]`:
-  38 ms and 36 ms. `-O2` with `-mllvm -enable-nontrivial-unswitch` vectorizes
-  each kernel that `-O3` does; the IR was read, and nothing was timed. Open:
-  whether `-opt=speed` should pass it, for what build time and code size.
 - **An operation below the last one.** In `xs[base + i + 1]` the inner
   `base + i` keeps its branch. The bounds comparison cannot stand in for it,
   since a valid index may pass through a negative result, as `xs[i - 10 + 20]`
@@ -1026,9 +963,9 @@ loop cost what the wrapping forms do. Three shapes still pay, measured on
 - **A product**, which can wrap to any index.
 
 Proving the common shapes overflow-free (an index affine in loop variables
-whose ranges are known before the loop) does not reach `hand_multiply`, where
-nothing bounds `n` before the loops; versioning the loop would, at the cost of
-a second copy of it. A descending index, `xs[last - i]`, is not vectorized
+whose ranges are known before the loop) does not reach a loop such as
+`hand_multiply`'s, where nothing bounds `n` before the loops; versioning the
+loop would, at the cost of a second copy of it. A descending index, `xs[last - i]`, is not vectorized
 with `-%` either, so its checks are not what holds it.
 
 ### Slots through a record's bound
@@ -1130,6 +1067,12 @@ What the adopted error handling proposal left open:
 - **Binding the error in `errdefer`.** Zig's `errdefer |err|` names the error
   being returned. An `errdefer` reads locals today; binding needs a syntax and
   a rule for an error that has moved into the result.
+- **`or_else` as a statement.** `queue.try_append(x) or_else panic("full");`
+  is `L0313`, "this expression statement has no effect", though the call runs
+  and the fallback leaves: only a call and an `or_return` count as having an
+  effect. [design.md](design.md) does not say which expression statements
+  do. Should an `or_else` whose fallback diverges be one, over an operand that
+  is? Found on 2026-11-22.
 
 ## Anonymous unions and their follow-ups (2026-10-18)
 

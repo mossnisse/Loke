@@ -1,0 +1,2 @@
+call i8 @loke.p.Large.first(ptr %t
+not call void @llvm.memcpy.p0.p0.i64(ptr %t*, ptr %t*, i64 5000, i1 false)

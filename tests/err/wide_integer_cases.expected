@@ -1,0 +1,15 @@
+L0380
+@15:2
+enum variants must have distinct integer representations
+
+L0367
+@22:7
+this value is already covered by an earlier case
+
+L0365
+@27:9
+this procedure can end without returning a value
+
+L0366
+@28:2
+this switch over `Code` does not cover Higher

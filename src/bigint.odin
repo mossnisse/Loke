@@ -402,31 +402,78 @@ bi_from_f64_trunc :: proc(c: Value_Storage, value: f64) -> (result: Big_Int, exa
 	return magnitude, exact
 }
 
-// A set of integers for code that can see thousands. Only the few past `i64` are
-// compared one by one.
-Integer_Set :: struct {
-	small: map[i64]bool,
-	large: [dynamic]Big_Int,
+// A map from integers for code that can see thousands, such as a generated
+// switch over 64-bit hashes, half of which are past `i64`. A key in `i64` is
+// looked up by value. One past it is in `wide`, found by a hash of its digits:
+// `first` names the newest entry with that hash, and `next` chains the earlier
+// ones, each compared exactly. The zero value is an empty map that finds
+// nothing.
+Integer_Map :: struct($V: typeid) {
+	small: map[i64]V,
+	wide:  [dynamic]Wide_Entry(V),
+	first: map[u64]int,
 }
 
-new_integer_set :: proc(capacity: int, allocator: mem.Allocator) -> Integer_Set {
-	return Integer_Set{small = make(map[i64]bool, capacity, allocator), large = make([dynamic]Big_Int, allocator)}
+@(private = "file")
+Wide_Entry :: struct($V: typeid) {
+	key:   Big_Int,
+	value: V,
+	next:  int, // an earlier entry with the same hash, or -1
+}
+
+Integer_Set :: Integer_Map(struct {})
+
+new_integer_map :: proc($V: typeid, capacity: int, allocator: mem.Allocator) -> Integer_Map(V) {
+	return {
+		small = make(map[i64]V, capacity, allocator),
+		wide  = make([dynamic]Wide_Entry(V), allocator),
+		first = make(map[u64]int, allocator),
+	}
+}
+
+integer_map_find :: proc(c: Value_Storage, m: ^Integer_Map($V), key: Big_Int) -> (value: V, found: bool) {
+	if small, fits := bi_to_i64(c, key); fits {
+		return m.small[small]
+	}
+	at, hashed := m.first[bi_hash(key)]
+	for hashed && at >= 0 {
+		entry := m.wide[at]
+		if bi_cmp(entry.key, key) == 0 {
+			return entry.value, true
+		}
+		at = entry.next
+	}
+	return
+}
+
+// Maps `key` to `value` unless it already maps to one; whether it was new.
+integer_map_add :: proc(c: Value_Storage, m: ^Integer_Map($V), key: Big_Int, value: V) -> bool {
+	if _, found := integer_map_find(c, m, key); found {
+		return false
+	}
+	if small, fits := bi_to_i64(c, key); fits {
+		m.small[small] = value
+		return true
+	}
+	hash := bi_hash(key)
+	earlier, hashed := m.first[hash]
+	append(&m.wide, Wide_Entry(V){key, value, hashed ? earlier : -1})
+	m.first[hash] = len(m.wide) - 1
+	return true
 }
 
 // Whether `value` is new to the set, adding it if so.
 integer_set_add :: proc(c: Value_Storage, set: ^Integer_Set, value: Big_Int) -> bool {
-	if small, fits := bi_to_i64(c, value); fits {
-		if small in set.small {
-			return false
-		}
-		set.small[small] = true
-		return true
+	return integer_map_add(c, set, value, struct {}{})
+}
+
+// FNV-1a over the sign and the digits in use, which are canonical: equal
+// integers hash alike.
+@(private = "file")
+bi_hash :: proc(v: Big_Int) -> u64 {
+	hash := u64(0xcbf29ce484222325) ~ u64(v.sign)
+	for digit in v.digit[:v.used] {
+		hash = (hash ~ u64(digit)) * 0x100000001b3
 	}
-	for other in set.large {
-		if bi_cmp(other, value) == 0 {
-			return false
-		}
-	}
-	append(&set.large, value)
-	return true
+	return hash
 }

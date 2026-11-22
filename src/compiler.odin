@@ -103,6 +103,9 @@ Compiler :: struct {
 	// same key, so an alias names one type however often it is applied.
 	alias_expansions:      map[string]Type_Id,
 	instantiation_stack:   [dynamic]Instantiation_Frame,
+	// Which of two generic templates is the more specialized, once asked
+	// (`compare_generic_specificity`).
+	specificity:           map[[2]Symbol_Id]i8,
 	instantiation_count:   int,
 	instantiation_limit_hit: bool,
 	// The diagnostic that already carries the instantiation stack, so unwinding

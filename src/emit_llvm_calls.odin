@@ -987,6 +987,7 @@ emit_bound_call :: proc(
 	}
 	symbol := symbol_of(e.c, symbol_id)
 	callee := callee
+	e.call_slot = ""
 	if receiver_type == "ptr" {
 		e.lent_to_calls += 1 // an erased receiver is the address of the value it views
 	} else {
@@ -1025,6 +1026,7 @@ emit_bound_call :: proc(
 		}
 	}
 	emit_after_call(e, &call, callee_type, result)
+	e.call_slot = sret_slot
 	return callee_type.result != INVALID_TYPE ? result : "0"
 }
 

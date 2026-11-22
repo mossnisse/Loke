@@ -537,6 +537,32 @@ may view a channel's counters, so it still conflicts with a sender), and a raw
 pointer or erased view keeps the old answer. Moving the voices in, which the
 check already accepted, stays the stronger shape when the loop owns them.
 
+### A channel keeps its own queue and wakes every waiter
+
+Two simplifications of [`thread.Channel`](../core/thread/channel.loke) were
+measured on 2026-11-22, on an Intel i5-9600K with an optimized compiler, and
+not made.
+
+- **The queue stays a ring of its own.** A `container.Deque` reserved once
+  could hold the items. The checker was not what stood in the way: with an
+  append that hands the element back when no slot is free, and so never
+  reaches the allocator, senders in several tasks compiled with no `L0732`.
+  But `core:thread` would then import `core:container`, and every program that
+  imports `core:thread` would check that package too. The front end of a
+  program importing `core:fmt` and `core:thread` went from about 100 ms to
+  145 ms, and its whole build from about 285 ms to 340 ms, to remove some 15
+  lines of ring arithmetic. The append was not added either, since nothing
+  else asks for it.
+- **A changed guard wakes every waiter.** Waking only when the queue stops
+  being empty or full, or a side closes, cuts the wake calls of a batch that
+  fills and drains a capacity-64 channel from 128 to 2. A probe sent 200,000
+  to 800,000 items through capacities 1, 8, and 64, with four senders and
+  four receivers, eight and one, one and eight, and one and one, so that
+  threads were parked on both sides. The best of five runs differed by no
+  more than repeated runs of one version did: from 7% faster, with eight
+  senders and one receiver, to 4% slower at capacity 1. A wake with no
+  sleeper costs little, and a wake with one is a thread the queue needed.
+
 ### A spare slot in the ring
 
 The [ring](standard-library.md#rings) is a cached-index SPSC ring with one
@@ -4566,6 +4592,71 @@ declined on 2026-11-21 after reading the code they would change.
   clause, asks what a generic application's parameters take, and tracks which
   field or member it is in. A walker parameterized over all of that would be a
   callback at nearly every case, longer than either walk.
+
+### `-opt=speed` unswitches loops
+
+A checked index such as `out[i + j*n]`, in a loop over `i`, leaves the
+overflow test of `j*n`, which does not vary in the loop, behind the bounds
+comparison, which does. LLVM hoists the multiplication and removes the branch
+only by unswitching the loop, which Clang does at `-O3` alone. So the plain
+way to write a matrix loop ran three times slower at `-opt=speed` than at
+`-opt=aggressive`: eight products of 256 by 256 matrices by `hand_multiply`
+of `bench/dense.loke`, with a size the optimizer cannot see, took 94 ms and
+32 ms. `-opt=speed` therefore passes `-mllvm -enable-nontrivial-unswitch`, and
+the same products take 32 ms.
+
+Measured on 2026-11-22 with Clang 22.1.8 through `perf.ps1`, the fastest of
+five runs: most examples and benchmarks build 1% to 3% slower, which is near
+the spread of the measurement; `bench/geometry` builds 7% slower,
+`examples/game_of_life` 11%, and `bench/dense` 14%. Executables are the same
+size, except `game_of_life` at 13% more and `dense` and `geometry` at 4%. No
+other benchmark's run time moved beyond its spread. The slow loop comes from
+Loke's own checks, which C at `-O2` does not have, so removing it is what
+`speed` is for; a program that wants `-O2` exactly has no spelling for it.
+
+The option is LLVM's, not Clang's, so a Clang that drops it would fail every
+`-opt=speed` build. The optimization corpus of the full gate builds at that
+level.
+
+### A temporary lent to a call keeps its slot
+
+An element of a `[dynamic]T` or map literal is handed to the container as soon
+as it is evaluated, and the slots of its large temporaries then serve the next
+element, unless the element handed an address to a call
+(`note_lent_arguments`). A temporary [lives until its full expression
+ends](design.md#temporaries-and-procedure-boundaries), and a callee may keep
+the address by unchecked means for a later element's call to read. Every
+`self: ^` method call on a temporary counts. So a `[dynamic]u8` literal of 40
+elements `large(i).first()`, with a 5000-byte `Large`, keeps 40 `Large` slots
+in the frame, where one of `first_of(large(i))` by value keeps 1. It kept 80
+until 2026-11-22: a borrow of a call's large result copied it into a second
+slot before lending it.
+
+A procedure summary saying whether a call may keep an argument's address past
+its return would give the other calls their reuse back. It was considered on
+2026-11-22 and not built. It has to be true of every body that reaches an
+unchecked operation through any callee: a conversion to `rawptr`, `[^]T`, or
+an integer, a use of `core:unsafe`, a foreign call, and a call through a
+procedure value or a `dyn` view. The callee that keeps the address also need
+not be the one that reads it: one may store it as an integer in a global, and
+another, handed nothing, may read through it. A summary that misses a route
+reuses a slot the program can still read, which is a miscompilation no checked
+program shows. What it would save is frame size, in a literal of many calls
+that each lend a temporary over 4096 bytes. Revisit it if a program exhausts
+its stack that way.
+
+### A partly zero union constant is spelled in full
+
+A union constant whose active payload reaches past the storage's head, such as
+`.small({1, 2, 3})` beside a `[65536]u8` variant, spells its padding member
+byte by byte: its LLVM type is one `[N x i8]`, which has no compact spelling
+for a value only partly zero. A global could be given a value type of its own
+instead, as a relocation image is; a constant used as an operand could not.
+Measured on 2026-11-22, one such global beside a 64 KiB variant adds about
+390 KB to the IR, 17 ms to emitting it, and 25 ms to the build, and the cost
+falls with the variant's size: 6 characters a byte. The executable holds the
+same bytes either way. That is too little to carry a second spelling of
+union globals, until a program has many of them.
 
 ### The evaluator's memory limit counts what it holds
 

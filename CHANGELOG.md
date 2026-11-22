@@ -160,6 +160,25 @@ checklist.
 
 ### Changed
 
+- `-opt=speed` also unswitches loops, as `-opt=aggressive` already did
+  ([reasons](docs/comments.md#-optspeed-unswitches-loops)). A checked index such as
+  `out[i + j*n]` in a loop over `i` left a branch on the overflow of `j*n` in the loop, which
+  kept it from vectorizing: eight products of 256 by 256 matrices written over plain slices
+  take 32 ms, from 94. Loop-heavy programs build up to 14% slower and may grow, by 13% for
+  `examples/game_of_life`; most build within 3% of before, at the same size.
+- `sync.Lazy.get` on a value already made sets up no `defer`: 8,000,000 calls take 5.5 ms at
+  `-opt=speed`, from 25.
+- A borrow of a call's large result, such as the receiver in `large(i).first()`, uses the slot
+  the call wrote it into. The result was copied into a second temporary first, so each such
+  call of a 5000-byte record copied 5000 bytes and kept two slots in the frame.
+- Generated code with thousands of integers checks faster. A `switch` over 40,000 constants at
+  or above 2^63, as half of all 64-bit hashes are, takes 0.6 s in the front end, from 8.2: a
+  repeated case past `i64` was found by comparing with every earlier one. An enum of 40,000
+  such members with a `switch` naming each takes 2.4 s, from 60, and declaring any enum of
+  40,000 members 0.9 s, from 2.0.
+- Calls of a procedure group whose candidates are generic use less compiler memory: which of
+  two is the more specialized is decided once, not at every call. A body of 20,000 such calls
+  peaks at 493 MB, from 719.
 - `values.sort()`, `values.reverse_sort()`, `slice.sort`, and `slice.reverse_sort` are up to
   twice as fast: each is `slice.sort_by` with the element's `<` called directly, where they
   reached the runtime's C introsort through an indirect call per comparison. At `-opt=speed`,
@@ -341,6 +360,12 @@ checklist.
 
 ### Fixed
 
+- An error in a generic instance names every instantiation back to the caller's call. A
+  provenance error, such as `L0647`, `L0724`, or `L0726`, in an instance that another generic
+  procedure had called named only that instance, at the library's line, with the caller's call
+  nowhere in the diagnostic. And where more than four instantiations are open, as in a
+  recursion that reaches the instantiation limit, the notes end with the call that began them,
+  after the count of those left out.
 - A constant expression of type `type` names its type wherever an expression may be written
   ([`type` and `typeid`](docs/design.md#type-and-typeid)). `(i32 if WIDE else i64)(7)` was
   `L0320`, `(Small if WIDE else Large).make()` and a field descriptor's

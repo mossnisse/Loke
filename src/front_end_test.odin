@@ -23,7 +23,8 @@ interned_identifier_keeps_its_own_text :: proc(t: ^testing.T) {
 	testing.expect(t, intern_identifier(&c, "xb") != id, "the name was found under the buffer's new text")
 }
 
-// Recursive errors keep recognizable instance names within a bounded width.
+// Recursive errors keep recognizable instance names within a bounded width,
+// and name the call that began the recursion last.
 @(test)
 recursive_generic_diagnostics_bound_instance_names :: proc(t: ^testing.T) {
 	p: Checked
@@ -37,11 +38,17 @@ main :: proc() { _ = deep(1); }
 	testing.expect_value(t, diagnostic.code, "L0436")
 	testing.expect(t, strings.contains(diagnostic.message, "..."))
 	testing.expect(t, len(diagnostic.message) < 200)
+	frames := make([dynamic]string, context.temp_allocator)
 	for note in diagnostic.notes {
 		if strings.has_prefix(note.message, "while instantiating `") {
-			testing.expect(t, len(note.message) < 110 && strings.contains(note.message, "..."))
+			append(&frames, note.message)
 		}
 	}
+	if !testing.expect_value(t, len(frames), NOTED_INSTANTIATION_FRAMES) { return }
+	for frame in frames[:len(frames) - 1] {
+		testing.expect(t, len(frame) < 110 && strings.contains(frame, "..."))
+	}
+	testing.expect_value(t, frames[len(frames) - 1], "while instantiating `deep(int)`")
 }
 
 // The body of the file's `main :: proc() { ... }`.

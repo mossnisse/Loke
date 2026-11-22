@@ -1,0 +1,37 @@
+// Integers past `i64` are found by a hash of their digits, compared exactly
+// (`Integer_Map`): a repeated case, a repeated member representation, and the
+// member a case covers are each still seen there.
+package main;
+
+Code :: enum u64 {
+	Low = 1,
+	High = 0x8000_0000_0000_0001,
+	Higher = 0x8000_0000_0000_0002,
+}
+
+Repeated :: enum u64 {
+	First = 0xFFFF_FFFF_FFFF_FFFE,
+	Second = 0xFFFF_FFFF_FFFF_FFFF,
+	Again = 0xFFFF_FFFF_FFFF_FFFE,
+}
+
+pick :: proc(x: u64) -> int {
+	switch (x) {
+	case 0x8000_0000_0000_0000: return 1;
+	case 0x8000_0000_0000_0001: return 2;
+	case 9223372036854775808: return 3;
+	case: return 0;
+	}
+}
+
+name :: proc(code: Code) -> int {
+	switch (code) {
+	case .Low: return 1;
+	case .High: return 2;
+	}
+}
+
+main :: proc() {
+	_ = pick(1);
+	_ = name(.Low);
+}

@@ -232,6 +232,9 @@ Function_State :: struct {
 	// How many calls so far were handed an address, which they may keep past
 	// their return (`note_lent_arguments`).
 	lent_to_calls: int,
+	// The slot the newest call wrote its large result into, or "" if it returned
+	// none that way (`hold_in_temporary`).
+	call_slot: string,
 	// Per open full expression, the slot holding the stack pointer saved before
 	// its first runtime-sized alloca, or "" while it has none.
 	stack_saves: [dynamic]string,

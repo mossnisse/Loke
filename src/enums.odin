@@ -21,7 +21,9 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 	}
 
 	members := make([dynamic]Symbol_Id, 0, len(value.fields), k.c.semantic_allocator)
-	seen := new_integer_set(len(value.fields), context.temp_allocator)
+	// Looked up, not scanned: a generated enum can have thousands of members.
+	seen := new_integer_map(struct {}, len(value.fields), context.temp_allocator)
+	named := make(map[Identifier_Id]bool, len(value.fields), context.temp_allocator)
 	next := bi_from_i64(k.c, 0)
 	for &field in value.fields {
 		discriminant := next
@@ -32,8 +34,12 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 		} else if !bi_fits(discriminant, type_bits(k.c, backing), type_signed(k.c, backing)) {
 			errorf(k.c, field.name.span, "L0352", "enum member representation does not fit `%s`", type_name(k.c, backing))
 		}
-		if field.name.text != "" && field.name.text != "_" && member_named(k.c, members[:], name_identifier(k.c, field.name)) != INVALID_SYMBOL {
-			errorf(k.c, field.name.span, "L0304", "`%s` is already a member of this enum", field.name.text)
+		if field.name.text != "" && field.name.text != "_" {
+			name := name_identifier(k.c, field.name)
+			if name in named {
+				errorf(k.c, field.name.span, "L0304", "`%s` is already a member of this enum", field.name.text)
+			}
+			named[name] = true
 		}
 		if !integer_set_add(k.c, &seen, discriminant) {
 			errorf(k.c, field.name.span, "L0380", "enum variants must have distinct integer representations")
@@ -78,16 +84,14 @@ enum_member_value :: proc(k: ^Checker, value: Expr, backing: Type_Id) -> (Big_In
 	return folded.integer, true
 }
 
-// An enum's members by value, for those that fit `i64`.
-enum_members_by_value :: proc(c: ^Compiler, type: Type_Id) -> map[i64]Symbol_Id {
+// An enum's members by value.
+enum_members_by_value :: proc(c: ^Compiler, type: Type_Id) -> Integer_Map(Symbol_Id) {
 	info := underlying_info(c, type)
-	members := make(map[i64]Symbol_Id, len(info.fields), context.temp_allocator)
+	members := new_integer_map(Symbol_Id, len(info.fields), context.temp_allocator)
 	for member in info.fields {
 		symbol := symbol_of(c, member)
 		if symbol != nil && symbol.const_value.kind == .Integer {
-			if value, fits := bi_to_i64(c, symbol.const_value.integer); fits {
-				members[value] = member
-			}
+			integer_map_add(c, &members, symbol.const_value.integer, member)
 		}
 	}
 	return members

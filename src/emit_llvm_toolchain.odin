@@ -228,8 +228,17 @@ runtime_sources :: proc(dir: string) -> (sources: []string, err: os.Error) {
 @(private)
 append_codegen_flags :: proc(command: ^[dynamic]string, target: Target_Info, opt_mode: Opt_Mode) {
 	append(command, OPT_CLANG_FLAGS[opt_mode])
+	if opt_mode == .Speed {
+		append(command, ..SPEED_CLANG_FLAGS)
+	}
 	append_target_flags(command, target.cpu)
 }
+
+// comments.md "`-opt=speed` unswitches loops": a checked index leaves a branch
+// that does not vary in a loop behind one that does, which only unswitching
+// removes, and Clang does that at `-O3` alone.
+@(private = "file", rodata)
+SPEED_CLANG_FLAGS := []string{"-mllvm", "-enable-nontrivial-unswitch"}
 
 // `-Ofast` is deliberately absent: it changes floating-point semantics.
 @(private = "file", rodata)

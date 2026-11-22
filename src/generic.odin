@@ -100,8 +100,11 @@ Instance :: struct {
 	body_checked: bool,
 	span:         Span,
 	// The call that selected this instance for its body to be checked, which a
-	// later diagnostic in the body names (`note_instance_sites`).
-	selected_at:  Span,
+	// later diagnostic in the body names (`note_instance_sites`), and the
+	// instantiations that call was itself in, outermost first: a library's
+	// instance selects another, and only the outermost call is the caller's.
+	selected_at:    Span,
+	selected_under: []Instantiation_Frame,
 	// Why a silent probe rejected this cached instance, for a later request that
 	// reports.
 	rejection:    Instance_Rejection,
@@ -551,10 +554,16 @@ anon_union_pattern_variant :: proc(written: ^Type_Anon_Union, label: string) -> 
 
 // design.md "Parametric aliases": a parameter written through an alias ranks
 // as its expansion, so `Io_Result($T)` is more specialized than
-// `Result($T, $E)`.
+// `Result($T, $E)`. The answer depends on the two declarations alone and is
+// kept: the views are clones in the semantic arena, which a group called at
+// thousands of sites would otherwise build again at each.
 compare_generic_specificity :: proc(k: ^Checker, a, b: ^Generic_Template) -> int {
 	if a == nil || b == nil {
 		return 0
+	}
+	pair := [2]Symbol_Id{a.symbol, b.symbol}
+	if known, found := k.c.specificity[pair]; found {
+		return int(known)
 	}
 	left := decl_proc_literal(a.decl)
 	right := decl_proc_literal(b.decl)
@@ -568,12 +577,14 @@ compare_generic_specificity :: proc(k: ^Checker, a, b: ^Generic_Template) -> int
 		}
 		return types
 	}
+	order: i8
 	switch pattern_relations(views(k, a.scope, left.signature.params), views(k, b.scope, right.signature.params)) {
-	case .Left:  return -1
-	case .Right: return 1
+	case .Left:  order = -1
+	case .Right: order = 1
 	case .Equal, .Crossed:
 	}
-	return 0
+	k.c.specificity[pair] = order
+	return int(order)
 }
 
 // The patterns a written type is built from, in written order. design.md
@@ -2282,7 +2293,8 @@ report_instantiation_limit :: proc(k: ^Checker, span: Span, format: string, args
 	note_instantiation_stack(k)
 }
 
-// The innermost frames name a recursion; the rest are counted.
+// The innermost frames name a recursion, and the outermost the call that began
+// it, which is the one in the caller's code; the rest are counted.
 NOTED_INSTANTIATION_FRAMES :: 4
 
 note_instantiation_stack :: proc(k: ^Checker, from := -1) {
@@ -2298,19 +2310,21 @@ note_instantiation_stack :: proc(k: ^Checker, from := -1) {
 		noted := false
 		for note in diagnostic.notes { noted ||= strings.has_prefix(note.message, "while instantiating `") }
 		if noted { continue }
-		shown := 0
-		#reverse for frame in k.c.instantiation_stack {
-			if shown >= NOTED_INSTANTIATION_FRAMES {
-				append(&diagnostic.notes, Note{span = NO_SPAN, message = fmt.aprintf(
-					"and %d more instantiation%s", len(k.c.instantiation_stack) - shown,
-					len(k.c.instantiation_stack) - shown == 1 ? "" : "s",
-				)})
-				break
+		stack := k.c.instantiation_stack[:]
+		// Frames 1 through `skipped` are counted, not named.
+		skipped := max(len(stack) - NOTED_INSTANTIATION_FRAMES, 0)
+		#reverse for frame, depth in stack {
+			if depth >= 1 && depth <= skipped {
+				if depth == skipped {
+					append(&diagnostic.notes, Note{span = NO_SPAN, message = fmt.aprintf(
+						"and %d more instantiation%s", skipped, skipped == 1 ? "" : "s",
+					)})
+				}
+				continue
 			}
 			append(&diagnostic.notes, Note{span = frame.span, message = fmt.aprintf(
 				"while instantiating `%s`", short_instantiation_name(k.c, generic_instance_name(k.c, frame.symbol, frame.bindings)),
 			)})
-			shown += 1
 		}
 	}
 }
@@ -2726,6 +2740,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 		return
 	}
 	instance.selected_at = span.file == NO_FILE ? instance.span : span
+	instance.selected_under = slice.clone(k.c.instantiation_stack[:], k.c.semantic_allocator)
 	pend_template_private_read(k, template, instance.scope)
 	literal := decl_proc_literal(instance.decl)
 	if literal == nil || literal.body == nil {

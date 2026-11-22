@@ -1,0 +1,22 @@
+// A borrow of a call's large result takes the slot the call wrote it into as
+// its temporary: `hold_in_temporary` once copied the whole value into a second
+// slot before lending it to the receiver.
+package main;
+
+import "core:fmt";
+
+Large :: struct { bytes: [5000]u8 }
+
+impl Large {
+	first :: proc(self: ^) -> u8 { return self.bytes[0]; }
+}
+
+large :: proc(seed: int) -> Large {
+	out := Large{};
+	out.bytes[0] = u8(seed);
+	return out;
+}
+
+main :: proc() {
+	fmt.println(large(1).first(), large(2).first());
+}

@@ -41,6 +41,19 @@ expect_rejection :: proc(t: ^testing.T, c: ^Compiler, message: string, loc := #c
 	                "expected only %q, got %d errors ending in %q", message, c.error_count, last, loc = loc)
 }
 
+// comments.md "`-opt=speed` unswitches loops": only that level asks Clang for
+// what `-O3` already does.
+@(test)
+speed_alone_asks_for_loop_unswitching :: proc(t: ^testing.T) {
+	for mode in Opt_Mode {
+		command := make([dynamic]string, context.temp_allocator)
+		append_codegen_flags(&command, {}, mode)
+		asked := false
+		for word in command { asked ||= word == "-enable-nontrivial-unswitch" }
+		testing.expectf(t, asked == (mode == .Speed), "-opt=%v: unswitching asked for is %v", mode, asked)
+	}
+}
+
 @(test)
 debug_defer_copies_bind_each_local_address :: proc(t: ^testing.T) {
 	p: Checked

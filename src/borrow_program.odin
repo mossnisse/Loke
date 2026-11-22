@@ -307,11 +307,13 @@ note_instance_sites :: proc(k: ^Checker, literal: ^Expr_Proc, first: int) {
 	if instance == nil || instance.selected_at.file == NO_FILE {
 		return
 	}
+	depth := len(k.c.instantiation_stack)
+	append(&k.c.instantiation_stack, ..instance.selected_under)
 	append(&k.c.instantiation_stack, Instantiation_Frame {
 		symbol   = instance.template,
 		bindings = instance.bindings,
 		span     = instance.selected_at,
 	})
-	defer pop(&k.c.instantiation_stack)
+	defer resize(&k.c.instantiation_stack, depth)
 	note_instantiation_stack(k, first)
 }

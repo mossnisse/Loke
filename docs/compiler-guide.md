@@ -99,7 +99,7 @@ These actions take a tree, and every other takes a file or one directory:
 | --- | --- |
 | `-o <path>` | Set the executable or object output path. Defaults to the input path with `.exe`, `.obj`, or, for a test build, `.test.exe`. With a tree input, it names a directory; see [Testing a tree](#testing-a-tree). |
 | `-test` | Build the root package's tests and run each in its own process, or do so for each package of a tree; see [Running tests](#running-tests). |
-| `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`. Above `none`, when `lld-link.exe` is installed beside Clang, as the LLVM installer does, the runtime is linked as bitcode and optimized with the program; `-print-toolchain` reports this as `lto=yes`. |
+| `-opt=<mode>` | Set optimization: `none` (default), `minimal`, `size`, `speed`, or `aggressive`. These map to Clang `-O0`, `-O1`, `-Os`, `-O2`, and `-O3`; `speed` also unswitches loops, as `-O3` does, so that a checked index whose test does not vary in a loop does not hold the loop back. Above `none`, when `lld-link.exe` is installed beside Clang, as the LLVM installer does, the runtime is linked as bitcode and optimized with the program; `-print-toolchain` reports this as `lto=yes`. |
 | `-cpu=<level>` | Set the instruction set the build may use: `x86-64` (default), `x86-64-v2`, or `x86-64-v3`; see [CPU levels](#cpu-levels). |
 | `-panic=unwind\|abort` | Select whether a panic runs registered cleanup before termination. Default: `unwind`. |
 | `-define:NAME=VALUE` | Supply a project-wide `build_config` value. Repeat for different names. |

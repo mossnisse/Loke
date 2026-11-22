@@ -380,16 +380,21 @@ impl Lazy($T) {
 	// unchecked address, as `Mutex`'s guard does, after `publish`'s parameter
 	// has checked what it keeps.
 	get :: proc(self: ^, @(escape=static) init: $F) -> ^T where Callable(F, proc() -> T) {
-		if (self.once.claim()) {
-			finished := false;
-			defer self.once.settle(finished);
-			self.publish(init());
-			finished = true;
-		}
+		if (self.once.claim()) { self.fill(init); }
 		switch (self.slot) {
 		case .some(value): return &value;
 		case .none: panic("a `Lazy` was read before it was made");
 		}
+	}
+
+	// Apart from `get`, so a call on a completed `Lazy` sets up no `defer`.
+	@(private)
+	fill :: proc(self: ^, @(escape=static) init: $F) where Callable(F, proc() -> T) {
+		// Runs on the way out whether `init` returned or panicked.
+		finished := false;
+		defer self.once.settle(finished);
+		self.publish(init());
+		finished = true;
 	}
 
 	/**

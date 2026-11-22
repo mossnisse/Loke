@@ -61,7 +61,7 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		return Flow_Info{}
 	}
 	cases := Case_Values {
-		integers = new_integer_set(0, context.temp_allocator),
+		integers = new_integer_map(struct {}, 0, context.temp_allocator),
 		others   = make([dynamic]Const_Value, 0, 8, context.temp_allocator),
 		covered  = make(map[Symbol_Id]bool, 0, context.temp_allocator),
 	}
@@ -111,7 +111,8 @@ Case_Values :: struct {
 	integers: Integer_Set,
 	others:   [dynamic]Const_Value,
 	covered:  map[Symbol_Id]bool,
-	members:  map[i64]Symbol_Id,
+	// An enum subject's members by value; empty for any other subject.
+	members:  Integer_Map(Symbol_Id),
 }
 
 @(private = "file")
@@ -148,14 +149,8 @@ check_case_value :: proc(k: ^Checker, value: Expr, subject: Type_Id, cases: ^Cas
 		errorf(k.c, expr_span(value), "L0367", "this value is already covered by an earlier case")
 		return
 	}
-	if cases.members != nil && base.const_value.kind == .Integer {
-		member := INVALID_SYMBOL
-		if small, fits := bi_to_i64(k.c, base.const_value.integer); fits {
-			member = cases.members[small]
-		} else {
-			member = enum_member_by_value(k.c, subject, base.const_value)
-		}
-		if member != INVALID_SYMBOL {
+	if base.const_value.kind == .Integer {
+		if member, found := integer_map_find(k.c, &cases.members, base.const_value.integer); found {
 			cases.covered[member] = true
 		}
 	}

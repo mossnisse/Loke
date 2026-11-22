@@ -74,7 +74,8 @@ options:
                   whether a panic runs each active frame's registered cleanup
                   before the program stops (default: unwind)
     -opt=none|minimal|size|speed|aggressive
-                  optimization level, mapped to clang -O0/-O1/-Os/-O2/-O3
+                  optimization level, mapped to clang -O0/-O1/-Os/-O2/-O3;
+                  speed also unswitches loops
                   (default: none)
     -cpu=x86-64|x86-64-v2|x86-64-v3
                   the instruction set the build may use; an executable checks
