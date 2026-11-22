@@ -52,6 +52,7 @@ true false
 .none .none .none .none
 23:59:59.999999999 00:00:00.000000001 00:00:00.00000012
 2024-02-29T00:30:00 2024-03-01T00:30:00 2024-02-26T23:30:00 2024-02-29T00:30:00
+2024-02-27T23:59:00 2024-02-26T22:30:00 2024-02-29T00:00:00
 true false true
 2554-07-20T23:47:16.854775808
 -- day walk: 3652425 days, 0 wrong
@@ -152,6 +153,12 @@ P1Y                            .err(Invalid_Value)
 PT1D                           .err(Invalid_Syntax)
 P                              .err(Invalid_Syntax)
 PT                             .err(Invalid_Syntax)
+PT1                            .err(Invalid_Syntax)
+P1H                            .err(Invalid_Syntax)
+P1M                            .err(Invalid_Value)
+P1DT1H                         .err(Invalid_Value)
+PT1HT1M                        .err(Invalid_Syntax)
+PT1H2M3.5S                     .ok(1h2m3.5s)
 PT1.5H30M                      .err(Invalid_Syntax)
 PT1S1M                         .err(Invalid_Syntax)
 -                              .err(Invalid_Syntax)

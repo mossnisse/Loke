@@ -168,6 +168,9 @@ checklist.
   `examples/game_of_life`; most build within 3% of before, at the same size.
 - `sync.Lazy.get` on a value already made sets up no `defer`: 8,000,000 calls take 5.5 ms at
   `-opt=speed`, from 25.
+- [`time.tick_now`](docs/standard-library.md#coretime) scales a counter that ticks every 100
+  nanoseconds, as Windows 10's and 11's does, without dividing: 10,000,000 readings take
+  165 ms at `-opt=speed`, from 360.
 - A borrow of a call's large result, such as the receiver in `large(i).first()`, uses the slot
   the call wrote it into. The result was copied into a second temporary first, so each such
   call of a 5000-byte record copied 5000 bytes and kept two slots in the frame.

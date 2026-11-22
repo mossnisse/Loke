@@ -143,6 +143,7 @@ calendar :: proc() {
 	// Date and time arithmetic counts every day as 24 hours.
 	evening := time.Date_Time{date = date(2024, .February, 28), time = clock(23, 30, 0)};
 	fmt.println(evening + time.HOUR, evening + 25 * time.HOUR, evening - 48 * time.HOUR, evening - (-time.HOUR));
+	fmt.println(evening - (23 * time.HOUR + 31 * time.MINUTE), evening + -49 * time.HOUR, evening + 30 * time.MINUTE);
 	fmt.println(evening < evening + time.NANOSECOND, evening > evening + time.NANOSECOND, evening <= evening);
 	fmt.println(time.Date_Time{date = date(2262, .April, 11), time = clock(0, 0, 0)} - time.Duration(-9223372036854775807 - 1));
 }
@@ -315,6 +316,7 @@ parsing :: proc() {
 		"-1.5s", "-PT1.5S", "1.5h", "PT0.5H", "0.000000000001h", "1h0.5m", "2562047h47m16.854775807s",
 		"-2562047h47m16.854775808s", "2562047h47m16.854775808s", "9999999999999h", "PT2562047H47M16.854775807S",
 		" 10ms ", "1s1s", "1s1h", "1.5h30m", "1", "h", "1x", "1d", "2w", "P1D", "P1Y", "PT1D", "P", "PT",
+		"PT1", "P1H", "P1M", "P1DT1H", "PT1HT1M", "PT1H2M3.5S",
 		"PT1.5H30M", "PT1S1M", "-", "--1s", "1n", "1.s", ".5s",
 		// A long fraction counts in full before truncating to the nanosecond.
 		"0.0000000000002777778h", "PT0.0000000000002777778H", "0.0000000000166666667m",

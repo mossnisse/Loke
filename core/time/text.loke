@@ -194,54 +194,45 @@ impl Text {
 		// The magnitude as a `u64`, which holds the most negative one too.
 		magnitude := u64(i64(value)) if value >= 0 else u64(-(i64(value) + 1)) + 1;
 		if (value < 0) { self.put(u8('-')); }
+		// The short form counts less than a second in its largest unit.
+		if (!style.iso && magnitude > 0 && magnitude < u64(SECOND)) {
+			if (magnitude < u64(MICROSECOND)) {
+				self.put_number(magnitude, 1);
+				self.put_text("ns");
+			} else if (magnitude < u64(MILLISECOND)) {
+				self.put_number(magnitude / u64(MICROSECOND), 1);
+				self.put_fraction(magnitude % u64(MICROSECOND), 3, 0, true);
+				self.put_text("µs");
+			} else {
+				self.put_number(magnitude / u64(MILLISECOND), 1);
+				self.put_fraction(magnitude % u64(MILLISECOND), 6, 0, true);
+				self.put_text("ms");
+			}
+			return;
+		}
+		// Otherwise the two forms differ in a prefix and their letters' case.
+		// Zero prints its seconds, `0s` or `PT0S`.
+		units := "hms".bytes();
+		if (style.iso) {
+			self.put_text("PT");
+			units = "HMS".bytes();
+		}
 		hours := magnitude / u64(HOUR);
 		minutes := magnitude / u64(MINUTE) % 60;
 		seconds := magnitude / u64(SECOND) % 60;
 		fraction := magnitude % u64(SECOND);
-		if (style.iso) {
-			self.put_text("PT");
-			if (hours > 0) {
-				self.put_number(hours, 1);
-				self.put(u8('H'));
-			}
-			if (minutes > 0) {
-				self.put_number(minutes, 1);
-				self.put(u8('M'));
-			}
-			if (seconds > 0 || fraction > 0 || magnitude == 0) {
-				self.put_number(seconds, 1);
-				self.put_fraction(fraction, 9, 0, true);
-				self.put(u8('S'));
-			}
-			return;
+		if (hours > 0) {
+			self.put_number(hours, 1);
+			self.put(units[0]);
 		}
-		if (magnitude == 0) {
-			self.put_text("0s");
-		} else if (magnitude < u64(MICROSECOND)) {
-			self.put_number(magnitude, 1);
-			self.put_text("ns");
-		} else if (magnitude < u64(MILLISECOND)) {
-			self.put_number(magnitude / u64(MICROSECOND), 1);
-			self.put_fraction(magnitude % u64(MICROSECOND), 3, 0, true);
-			self.put_text("µs");
-		} else if (magnitude < u64(SECOND)) {
-			self.put_number(magnitude / u64(MILLISECOND), 1);
-			self.put_fraction(magnitude % u64(MILLISECOND), 6, 0, true);
-			self.put_text("ms");
-		} else {
-			if (hours > 0) {
-				self.put_number(hours, 1);
-				self.put(u8('h'));
-			}
-			if (minutes > 0) {
-				self.put_number(minutes, 1);
-				self.put(u8('m'));
-			}
-			if (seconds > 0 || fraction > 0) {
-				self.put_number(seconds, 1);
-				self.put_fraction(fraction, 9, 0, true);
-				self.put(u8('s'));
-			}
+		if (minutes > 0) {
+			self.put_number(minutes, 1);
+			self.put(units[1]);
+		}
+		if (seconds > 0 || fraction > 0 || magnitude == 0) {
+			self.put_number(seconds, 1);
+			self.put_fraction(fraction, 9, 0, true);
+			self.put(units[2]);
 		}
 	}
 }
@@ -273,13 +264,8 @@ Parse_Error :: enum {
 	local time names no instant.
 */
 parse_time :: proc(text: string_view) -> Result(Time, Parse_Error) {
-	scanner := Scanner{bytes = trim(text)};
-	date_time := scanner.date_time() or_return;
-	if (scanner.at == scanner.bytes.len()) { return .err(.Missing_Offset); }
-	offset := scanner.offset() or_return;
-	scanner.confirm_leap(date_time.time, offset) or_return;
-	scanner.end() or_return;
-	return date_time.at_offset(offset).to_time() or_return .Out_Of_Range;
+	value := parse_offset_date_time(text) or_return;
+	return value.to_time() or_return .Out_Of_Range;
 }
 
 parse_offset_date_time :: proc(text: string_view) -> Result(Offset_Date_Time, Parse_Error) {
@@ -332,12 +318,7 @@ parse_offset :: proc(text: string_view) -> Result(Offset, Parse_Error) {
 parse_duration :: proc(text: string_view) -> Result(Duration, Parse_Error) {
 	scanner := Scanner{bytes = trim(text)};
 	negative := scanner.take(u8('-'));
-	magnitude: u64 = 0;
-	if (scanner.take(u8('P'))) {
-		magnitude = scanner.iso_duration() or_return;
-	} else {
-		magnitude = scanner.short_duration() or_return;
-	}
+	magnitude := scanner.duration() or_return;
 	if (negative) {
 		if (magnitude > 0x8000000000000000) { return .err(.Out_Of_Range); }
 		if (magnitude == 0x8000000000000000) { return Duration(-9223372036854775807 - 1); }
@@ -364,7 +345,7 @@ is_space :: proc(byte: u8) -> bool {
 		byte == u8('\v') || byte == u8('\f');
 }
 
-// The short form's units, largest first.
+// A duration's units, largest first. ISO 8601's form has the first three.
 @(private)
 Unit :: enum { Hour, Minute, Second, Millisecond, Microsecond, Nanosecond }
 
@@ -534,48 +515,12 @@ impl Scanner {
 		return number;
 	}
 
-	// After the `P`: `T` and hours, minutes, and seconds, at least one of them.
-	iso_duration :: proc(self: inout) -> Result(u64, Parse_Error) {
-		total: u64 = 0;
-		components := 0;
-		timed := false;
-		last := -1;
-		fractional := false;
-		for (; self.at < self.bytes.len(); ) {
-			if (!timed && self.take(u8('T'))) {
-				timed = true;
-				continue;
-			}
-			if (fractional) { return .err(.Invalid_Syntax); }
-			number := self.number() or_return;
-			designator := self.peek();
-			self.at += 1;
-			if (!timed) {
-				// Years, months, weeks, and days.
-				if (designator == u8('Y') || designator == u8('M') || designator == u8('W') || designator == u8('D')) {
-					return .err(.Invalid_Value);
-				}
-				return .err(.Invalid_Syntax);
-			}
-			unit := Unit.Hour;
-			switch (designator) {
-			case u8('H'): unit = .Hour;
-			case u8('M'): unit = .Minute;
-			case u8('S'): unit = .Second;
-			case: return .err(.Invalid_Syntax);
-			}
-			if (int(unit) <= last) { return .err(.Invalid_Syntax); }
-			last = int(unit);
-			total = add_component(total, number, unit) or_return;
-			fractional = number.fraction.len() > 0;
-			components += 1;
-		}
-		if (!timed || components == 0) { return .err(.Invalid_Syntax); }
-		return total;
-	}
-
-	// `1h30m`, `2m0.5s`, `153ms`, `1.5µs`, `250ns`.
-	short_duration :: proc(self: inout) -> Result(u64, Parse_Error) {
+	// A duration's magnitude: the short form, `1h30m`, `2m0.5s`, `153ms`,
+	// `1.5µs`, `250ns`, or ISO 8601's, a `P`, a `T`, and hours, minutes, and
+	// seconds. Either has at least one component.
+	duration :: proc(self: inout) -> Result(u64, Parse_Error) {
+		iso := self.take(u8('P'));
+		timed := iso && self.take(u8('T'));
 		total: u64 = 0;
 		last := -1;
 		fractional := false;
@@ -583,7 +528,12 @@ impl Scanner {
 		for (; self.at < self.bytes.len(); ) {
 			if (fractional) { return .err(.Invalid_Syntax); }
 			number := self.number() or_return;
-			unit := self.unit() or_return;
+			unit := Unit.Hour;
+			if (iso) {
+				unit = self.iso_unit(timed) or_return;
+			} else {
+				unit = self.unit() or_return;
+			}
 			if (int(unit) <= last) { return .err(.Invalid_Syntax); }
 			last = int(unit);
 			total = add_component(total, number, unit) or_return;
@@ -592,6 +542,22 @@ impl Scanner {
 		return total;
 	}
 
+	// A designator of ISO 8601's form. Before the `T` come years, months,
+	// weeks, and days, which a `Duration` cannot hold.
+	iso_unit :: proc(self: inout, timed: bool) -> Result(Unit, Parse_Error) {
+		if (!timed) {
+			if (self.take(u8('Y')) || self.take(u8('M')) || self.take(u8('W')) || self.take(u8('D'))) {
+				return .err(.Invalid_Value);
+			}
+			return .err(.Invalid_Syntax);
+		}
+		if (self.take(u8('H'))) { return .ok(.Hour); }
+		if (self.take(u8('M'))) { return .ok(.Minute); }
+		if (self.take(u8('S'))) { return .ok(.Second); }
+		return .err(.Invalid_Syntax);
+	}
+
+	// A unit of the short form.
 	unit :: proc(self: inout) -> Result(Unit, Parse_Error) {
 		if (self.take(u8('h'))) { return .ok(.Hour); }
 		if (self.take(u8('m'))) {

@@ -64,7 +64,7 @@ impl Date {
 
 	/// 1970-01-01 was a Thursday.
 	weekday :: proc(self) -> Weekday {
-		return Weekday.from_int(floor_mod(self.days + 3, 7) + 1) or_else panic("time: a weekday outside 1 to 7");
+		return Weekday.from_int(math.floor_mod(self.days + 3, 7) + 1) or_else panic("time: a weekday outside 1 to 7");
 	}
 
 	/// 1 for January 1st.
@@ -83,7 +83,7 @@ impl Date {
 	}
 
 	add_days :: proc(self, days: i64) -> Date {
-		return in_range(self.days + days);
+		return Date.from_unix_days(self.days + days) or_else out_of_range();
 	}
 
 	/**
@@ -93,9 +93,9 @@ impl Date {
 	add_months :: proc(self, months: i64) -> Date {
 		civil := civil_from_days(self.days);
 		total := i64(civil.year) * 12 + i64(civil.month - 1) + months;
-		year := floor_div(total, 12);
+		year := math.floor_div(total, 12);
 		if (year < 0 || year > 9999) { out_of_range(); }
-		month := Month.from_int(floor_mod(total, 12) + 1) or_else panic("time: a month outside 1 to 12");
+		month := Month.from_int(math.floor_mod(total, 12) + 1) or_else panic("time: a month outside 1 to 12");
 		day := math.min(civil.day, days_in_month(int(year), month));
 		return Date{days_from_civil(int(year), int(month), day)};
 	}
@@ -113,9 +113,7 @@ impl Date {
 	greater_equal :: operator(>=) proc(left, right: Date) -> bool { return left.days >= right.days; }
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		text := Text{};
-		text.put_date(self, DEFAULT_STYLE);
-		text.send(writer);
+		styled(self, DEFAULT_STYLE).format(writer, options);
 	}
 }
 
@@ -151,9 +149,7 @@ impl Time_Of_Day {
 	greater_equal :: operator(>=) proc(left, right: Time_Of_Day) -> bool { return left.nanoseconds >= right.nanoseconds; }
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		text := Text{};
-		text.put_time_of_day(self, DEFAULT_STYLE);
-		text.send(writer);
+		styled(self, DEFAULT_STYLE).format(writer, options);
 	}
 }
 
@@ -170,31 +166,26 @@ Date_Time :: struct {
 
 impl Date_Time {
 	add :: operator(+) proc(left: Date_Time, right: Duration) -> Date_Time {
-		return left.moved(floor_div(i64(right), NANOSECONDS_PER_DAY), floor_mod(i64(right), NANOSECONDS_PER_DAY));
+		return left.moved(i64(right) / NANOSECONDS_PER_DAY, i64(right) % NANOSECONDS_PER_DAY);
 	}
 
 	/// `left` moved back by `right`.
-	// `left + -right` would overflow negating the most negative duration, so the
-	// whole days and the rest are negated apart: whole days never overflow.
+	// `left + -right` would overflow negating the most negative duration; its
+	// whole days and the rest, negated apart, cannot.
 	subtract :: operator(-) proc(left: Date_Time, right: Duration) -> Date_Time {
-		days := floor_div(i64(right), NANOSECONDS_PER_DAY);
-		rest := floor_mod(i64(right), NANOSECONDS_PER_DAY);
-		if (rest == 0) { return left.moved(-days, 0); }
-		return left.moved(-days - 1, NANOSECONDS_PER_DAY - rest);
+		return left.moved(-(i64(right) / NANOSECONDS_PER_DAY), -(i64(right) % NANOSECONDS_PER_DAY));
 	}
 
-	// Moved by whole days and `rest` nanoseconds, less than one day. The two
-	// are kept apart because a long duration added to the time of day could
-	// overflow where the result is still in range.
+	// Moved by whole days and `rest` nanoseconds, less than one day either way.
+	// The two are kept apart because a long duration added to the time of day
+	// could overflow where the result is still in range.
 	@(private)
 	moved :: proc(self, days: i64, rest: i64) -> Date_Time {
-		carry := days;
 		clock := self.time.nanoseconds + rest;
-		if (clock >= NANOSECONDS_PER_DAY) {
-			clock -= NANOSECONDS_PER_DAY;
-			carry += 1;
-		}
-		return {self.date.add_days(carry), Time_Of_Day{clock}};
+		return {
+			self.date.add_days(days + math.floor_div(clock, NANOSECONDS_PER_DAY)),
+			Time_Of_Day{math.floor_mod(clock, NANOSECONDS_PER_DAY)},
+		};
 	}
 
 	less :: operator(<) proc(left, right: Date_Time) -> bool {
@@ -209,9 +200,7 @@ impl Date_Time {
 	}
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		text := Text{};
-		text.put_date_time(self, DEFAULT_STYLE);
-		text.send(writer);
+		styled(self, DEFAULT_STYLE).format(writer, options);
 	}
 }
 
@@ -236,9 +225,7 @@ impl Offset {
 	minutes :: proc(self) -> int { return self.east; }
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		text := Text{};
-		text.put_offset(self, DEFAULT_STYLE);
-		text.send(writer);
+		styled(self, DEFAULT_STYLE).format(writer, options);
 	}
 }
 
@@ -259,14 +246,11 @@ impl Offset_Date_Time {
 	to_time :: proc(self) -> Option(Time) {
 		instant := i128(self.date_time.date.days) * i128(NANOSECONDS_PER_DAY) +
 			i128(self.date_time.time.nanoseconds) - i128(self.offset.east) * i128(MINUTE);
-		if (instant < i128(-9223372036854775807 - 1) || instant > i128(9223372036854775807)) { return .none; }
-		return Time{i64(instant)};
+		return Time{math.to(i64, instant) or_return};
 	}
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		text := Text{};
-		text.put_offset_date_time(self, DEFAULT_STYLE);
-		text.send(writer);
+		styled(self, DEFAULT_STYLE).format(writer, options);
 	}
 }
 
@@ -277,12 +261,6 @@ impl Offset_Date_Time {
 // 0000-01-01 and 9999-12-31, in days since 1970-01-01.
 @(private) FIRST_DAY :: i64(-719528);
 @(private) LAST_DAY :: i64(2932896);
-
-@(private)
-in_range :: proc(days: i64) -> Date {
-	if (days < FIRST_DAY || days > LAST_DAY) { out_of_range(); }
-	return Date{days};
-}
 
 // A date computed from a valid one has gone past the calendar's ends, as integer
 // arithmetic past its range does. Dates read from input are checked by the
@@ -297,7 +275,7 @@ out_of_range :: proc() -> ! {
 @(private)
 days_from_civil :: proc(year, month, day: int) -> i64 {
 	y := i64(year) - i64(1 if month <= 2 else 0);
-	era := floor_div(y, 400);
+	era := math.floor_div(y, 400);
 	year_of_era := y - era * 400;
 	day_of_year := i64((153 * (month - 3 if month > 2 else month + 9) + 2) / 5 + day - 1);
 	day_of_era := year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
@@ -308,7 +286,7 @@ days_from_civil :: proc(year, month, day: int) -> i64 {
 @(private)
 civil_from_days :: proc(days: i64) -> (year: int, month: int, day: int) {
 	z := days + 719468;
-	era := floor_div(z, 146097);
+	era := math.floor_div(z, 146097);
 	day_of_era := z - era * 146097;
 	year_of_era := (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
 	day_of_year := day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
@@ -317,20 +295,4 @@ civil_from_days :: proc(days: i64) -> (year: int, month: int, day: int) {
 	month := int(shifted_month + 3 if shifted_month < 10 else shifted_month - 9);
 	year := int(year_of_era + era * 400) + (1 if month <= 2 else 0);
 	return {year, month, day};
-}
-
-@(private)
-floor_div :: proc(value, divisor: i64) -> i64 {
-	quotient := value / divisor;
-	if ((value % divisor != 0) && ((value < 0) != (divisor < 0))) { return quotient - 1; }
-	return quotient;
-}
-
-// From the remainder, not `value - floor_div(value, divisor) * divisor`, whose
-// product overflows for a value near the end of the `i64` range.
-@(private)
-floor_mod :: proc(value, divisor: i64) -> i64 {
-	remainder := value % divisor;
-	if ((remainder != 0) && ((remainder < 0) != (divisor < 0))) { return remainder + divisor; }
-	return remainder;
 }

@@ -94,9 +94,7 @@ impl Duration {
 	}
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		text := Text{};
-		text.put_duration(self, DEFAULT_STYLE);
-		text.send(writer);
+		styled(self, DEFAULT_STYLE).format(writer, options);
 	}
 }
 
@@ -161,12 +159,12 @@ impl Time {
 		Whole seconds, rounding down, so an instant before 1970 that is not on a
 		second reads as the second it falls in.
 	*/
-	unix_seconds :: proc(self) -> i64 { return floor_div(self.nanoseconds, i64(SECOND)); }
+	unix_seconds :: proc(self) -> i64 { return math.floor_div(self.nanoseconds, i64(SECOND)); }
 
 	utc :: proc(self) -> Date_Time {
 		return Date_Time{
-			Date{floor_div(self.nanoseconds, NANOSECONDS_PER_DAY)},
-			Time_Of_Day{floor_mod(self.nanoseconds, NANOSECONDS_PER_DAY)},
+			Date{math.floor_div(self.nanoseconds, NANOSECONDS_PER_DAY)},
+			Time_Of_Day{math.floor_mod(self.nanoseconds, NANOSECONDS_PER_DAY)},
 		};
 	}
 
@@ -174,22 +172,11 @@ impl Time {
 	// The day and the time of day are split before the offset is applied, so an
 	// instant at either end of the range cannot overflow on the way.
 	at_offset :: proc(self, offset: Offset) -> Offset_Date_Time {
-		days := floor_div(self.nanoseconds, NANOSECONDS_PER_DAY);
-		clock := floor_mod(self.nanoseconds, NANOSECONDS_PER_DAY) + i64(offset.east) * i64(MINUTE);
-		if (clock >= NANOSECONDS_PER_DAY) {
-			clock -= NANOSECONDS_PER_DAY;
-			days += 1;
-		} else if (clock < 0) {
-			clock += NANOSECONDS_PER_DAY;
-			days -= 1;
-		}
-		return Offset_Date_Time{Date_Time{Date{days}, Time_Of_Day{clock}}, offset};
+		return self.utc().moved(0, i64(offset.east) * i64(MINUTE)).at_offset(offset);
 	}
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		text := Text{};
-		text.put_time(self, DEFAULT_STYLE);
-		text.send(writer);
+		styled(self, DEFAULT_STYLE).format(writer, options);
 	}
 }
 
@@ -286,12 +273,16 @@ system_nanoseconds :: proc() -> i64 {
 
 // Scaled by a quotient and a remainder, so the product cannot overflow however
 // long the machine has been up. Neither call fails on a supported system.
+// Current Windows counts 100-nanosecond ticks, which need no division; the two
+// divisions cost more than both calls. The frequency is not kept between
+// readings, since asking for it takes a tenth of what reading the counter does.
 @(private)
 monotonic_nanoseconds :: proc() -> i64 {
 	count: i64 = 0;
 	frequency: i64 = 0;
 	_ = rt_performance_counter(&mut count);
 	_ = rt_performance_frequency(&mut frequency);
+	if (frequency == 10000000) { return count * 100; }
 	return count / frequency * 1000000000 + count % frequency * 1000000000 / frequency;
 }
 

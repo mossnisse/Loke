@@ -186,7 +186,9 @@ impl Rules {
 }
 
 // Instants and wall-clock times in nanoseconds since 1970 in 128 bits, so the
-// whole calendar's are exact, beyond the range of `Time`.
+// whole calendar's are exact, beyond the range of `Time`. A narrower unit
+// would save a tenth of a system zone's resolution, most of which is asking
+// Windows for the rules.
 @(private) WIDE_DAY :: i128(86400000000000);
 @(private) WIDE_MINUTE :: i128(60000000000);
 
@@ -211,7 +213,7 @@ transition_in :: proc(transition: Transition, year: int) -> i128 {
 	day := transition.day;
 	if (transition.week != 0) {
 		first := Date{days_from_civil(year, month, 1)};
-		day = 1 + int(floor_mod(i64(transition.weekday - int(first.weekday())), 7)) + 7 * (transition.week - 1);
+		day = 1 + int(math.floor_mod(i64(transition.weekday - int(first.weekday())), 7)) + 7 * (transition.week - 1);
 		for (; day > last; ) { day -= 7; }
 	} else if (day > last) {
 		day = last;
