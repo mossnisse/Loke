@@ -370,6 +370,10 @@ floor_mod :: proc(x: $T, y: T) -> T where Integral(T), Ordered(T) ---;
 	The number of set bits in `value`, which is a value of an integer type:
 	`count_ones(u8(0b1011))` is `3`, and `count_ones(i32(-1))` is `32`. A
 	constant argument gives a constant.
+
+	A `Simd(T, N)` of integer lanes is counted lane by lane, into a vector of
+	the same type. `leading_zeros`, `trailing_zeros`, `bit_width`,
+	`reverse_bits`, and the rotations take one the same way.
 */
 @(intrinsic)
 count_ones :: proc(value: $T) -> int ---;
@@ -400,6 +404,9 @@ trailing_zeros :: proc(value: $T) -> int ---;
 	every `int` is defined and a negative count rotates right:
 	`rotate_left(u8(0b1000_0001), 1)` is `0b0000_0011`, and
 	`rotate_left(x, -1) == rotate_right(x, 1)`.
+
+	A vector's count is a vector of its own type, lane by lane, which a scalar
+	of the lane type splats to.
 */
 @(intrinsic)
 rotate_left :: proc(value: $T, count: int) -> T ---;

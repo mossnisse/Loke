@@ -1069,6 +1069,8 @@ Their layout is row-major in declaration order, with the rightmost index varying
 fastest. For `a: [D0][D1]...[Dn]T`, the scalar elements of `a[0]` precede those
 of `a[1]`. In two dimensions, `a[row][column]` has the flat element offset
 `row*Columns + column`.
+[`slice.flatten`](standard-library.md#flat-views-of-nested-arrays) borrows
+those elements as one slice.
 
 **Built-in indexing takes exactly one index.** A nested container is indexed by
 chaining: `a[i][j][k]`. Each step is evaluated left to right and performs its
@@ -9960,6 +9962,21 @@ arena := mem.Arena.init();
 scratch: [dynamic]u8 via arena.allocator() = {};
 view := scratch[:];
 release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
+```
+
+A call may hand such a parameter only a region its caller created, or one the
+caller received under the same attribute: the default provider, an allocator
+read from a global, and one of unknown origin are rejected. So nothing resets
+the default provider's region, and a reset through the parameter leaves what
+that provider backs alone. An owner built with another received allocator is
+still ended by it, since the two parameters may name one region:
+
+```loke
+gather :: proc(@(allocator_reset) scratch: Allocator, other: Allocator) {
+	kept: [dynamic]int = {};                  // the default provider's
+	held := make([dynamic]int, 1, other);
+	free_all(scratch);                        // ERROR while `held` is live; `kept` is no obstacle
+}
 ```
 
 The following low-level procedures are built in. Normal managed strings, arrays,

@@ -156,7 +156,8 @@ REGION_FLOWS := [?]Region_Flow {
 // too, but not one dropped or moved away, and a deferred reset runs in cleanup
 // order (design.md "Allocators", "Region tracking"). Two arenas of the case's
 // own are regions apart; a received allocator may be any region, so two may be
-// one, and one may be the default provider's. An owner backed
+// one, but one that may be reset is never the default provider's, which
+// nothing resets (design.md "@(allocator_reset)"). An owner backed
 // by a local region cannot leave by a return, into file-scope storage, into
 // storage the caller owns, or into a local that outlives the provider; one
 // backed by a received region may be returned or left in an argument, but
@@ -172,9 +173,9 @@ region_expected :: proc(place: Region_Place, route: Region_Route, flow: Region_F
 	switch flow.rule {
 	case .Legal:
 	case .Reset:
-		return backing != .Default || place.backing == .Received ? "L0537" : ""
+		return backing != .Default ? "L0537" : ""
 	case .Reset_Other:
-		return place.backing == .Received ? "L0537" : ""
+		return backing == .Received ? "L0537" : ""
 	case .Return:
 		return backing == .Local ? "L0592" : ""
 	case .Store_Static:

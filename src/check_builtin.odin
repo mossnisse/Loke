@@ -62,10 +62,10 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Math_Fma_Instruction, .Math_Sqrt_Instruction, .Math_Floor_Instruction, .Math_Ceil_Instruction,
 	     .Math_Trunc_Instruction, .Math_Round_Instruction, .Math_Mod_Instruction:
 		check_float_instruction_builtin(k, v, ident, sym.builtin)
-	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width:
-		check_bit_count_builtin(k, v, ident, sym.builtin)
-	case .Math_Reverse_Bits, .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
-		check_bit_value_builtin(k, v, ident, sym.builtin)
+	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width, .Math_Reverse_Bits:
+		check_bit_pattern_builtin(k, v, ident, sym.builtin)
+	case .Math_Is_Power_Of_Two, .Math_Next_Power_Of_Two, .Math_Checked_Next_Power_Of_Two:
+		check_power_of_two_builtin(k, v, ident, sym.builtin)
 	case .Math_Rotate_Left, .Math_Rotate_Right:
 		check_rotate_builtin(k, v, ident, sym.builtin)
 	case .Type_Info_Of:
@@ -906,30 +906,96 @@ check_float_instruction_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr
 	v.type = operand
 }
 
-// The count is an `int` whatever the operand's width, as a length is. A vector
-// is refused: the lane-wise forms are not specified.
+// standard-library.md "Integer bit operations": a count, the width, or the
+// reversal of a bit pattern. A count is an `int` whatever the operand's width,
+// as a length is; a vector answers lane by lane, in a vector of its own type.
 @(private = "file")
-check_bit_count_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	arg, type, ok := check_bit_operand(k, v, ident)
+check_bit_pattern_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	if !builtin_arity_ok(k, v, ident, "L0738", 1) {
+		return
+	}
+	type, ok := check_integer_operand(k, v.args[0].value, ident, lanes = true)
 	if !ok {
 		return
 	}
-	v.type = TYPE_INT
-	if base := expr_base(arg); base.const_value.kind == .Integer {
-		count := bit_count(base.const_value.integer, type_bits(k.c, type), kind)
-		v.const_value = int_const(k.c, i64(count))
-	}
+	v.bound = bound_exprs(k, v.args[0].value)
+	v.type = kind == .Math_Reverse_Bits || simd_operand(k.c, type) ? type : TYPE_INT
+	fold_bit_pattern(k, v, kind, type)
 }
 
-// A constant `next_power_of_two` that does not fit is design.md "Integer
-// overflow"'s compile-time diagnostic. An `Option` is not a constant, so the
-// checked form folds only by evaluation.
+// A vector's count is a vector of its type, which a lane's scalar splats to, as
+// a shift's count is (design.md "Lane-wise operators").
 @(private = "file")
-check_bit_value_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	arg, type, ok := check_bit_operand(k, v, ident)
+check_rotate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	if !builtin_arity_ok(k, v, ident, "L0738", 2) {
+		return
+	}
+	value, count := v.args[0].value, v.args[1].value
+	type, ok := check_integer_operand(k, value, ident, lanes = true)
 	if !ok {
 		return
 	}
+	wanted := simd_operand(k.c, type) ? type : TYPE_INT
+	count_type := check_single_expr(k, count, wanted)
+	if count_type == INVALID_TYPE {
+		return
+	}
+	lane := wanted != TYPE_INT && assignable(k.c, count_type, type_of(k.c, wanted).element)
+	if count_type != wanted && !type_is_untyped(k.c, count_type) && !lane {
+		shape := wanted == TYPE_INT ? "an `int` count" : fmt.tprintf("a count of `%s` or of its lane type", type_name(k.c, wanted))
+		errorf(k.c, expr_span(count), "L0738", "`%s` takes %s; found `%s`", ident.name, shape, type_name(k.c, count_type))
+		return
+	}
+	if !materialize(k, count, wanted) {
+		return
+	}
+	v.bound = bound_exprs(k, value, count)
+	v.type = type
+	fold_bit_pattern(k, v, kind, type)
+}
+
+// Constant operands fold: a scalar to the operation's value, and a vector lane
+// by lane.
+@(private = "file")
+fold_bit_pattern :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind, type: Type_Id) {
+	operands: [2]Const_Value
+	for bound, index in v.bound {
+		operands[index] = expr_base(bound).const_value
+		if operands[index].kind != .Integer && operands[index].kind != .Aggregate {
+			return
+		}
+	}
+	if !simd_operand(k.c, type) {
+		v.const_value = integer_const(bit_pattern_const(k.c, kind, operands[0].integer, operands[1].integer, type))
+		return
+	}
+	info := type_of(k.c, type)
+	elements := make([]Const_Value, info.count, k.c.semantic_allocator)
+	for &element, index in elements {
+		lanes: [2]Big_Int
+		for operand, at in operands[:len(v.bound)] {
+			lanes[at] = operand.aggregate.elements[index].integer
+		}
+		element = integer_const(bit_pattern_const(k.c, kind, lanes[0], lanes[1], info.element))
+	}
+	v.const_value = aggregate_const(k.c, type, elements)
+}
+
+// A power-of-two operation reads the value, not its pattern, and takes no
+// vector. A constant `next_power_of_two` that does not fit is design.md
+// "Integer overflow"'s compile-time diagnostic. An `Option` is not a constant,
+// so the checked form folds only by evaluation.
+@(private = "file")
+check_power_of_two_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	if !builtin_arity_ok(k, v, ident, "L0738", 1) {
+		return
+	}
+	arg := v.args[0].value
+	type, ok := check_integer_operand(k, arg, ident)
+	if !ok {
+		return
+	}
+	v.bound = bound_exprs(k, arg)
 	if kind == .Math_Checked_Next_Power_Of_Two {
 		v.type = option_type(k, type, v.span)
 		return
@@ -939,7 +1005,7 @@ check_bit_value_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, 
 	if base.const_value.kind != .Integer {
 		return
 	}
-	result, fits := bit_value_const(k.c, base.const_value.integer, type, kind)
+	result, fits := power_of_two_const(k.c, base.const_value.integer, type, kind)
 	if !fits {
 		report_integer_overflow(k.c, v.span, result.integer, type)
 		v.type = INVALID_TYPE
@@ -948,63 +1014,20 @@ check_bit_value_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, 
 	v.const_value = result
 }
 
-// The call stays invalid until the caller sets its result type.
-@(private = "file")
-check_bit_operand :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) -> (arg: Expr, type: Type_Id, ok: bool) {
-	if !builtin_arity_ok(k, v, ident, "L0738", 1) {
-		return
-	}
-	arg = v.args[0].value
-	type, ok = check_integer_operand(k, arg, ident)
-	if !ok {
-		return
-	}
-	v.bound = bound_exprs(k, arg)
-	return arg, type, true
-}
-
 // A value of an integer type, distinct ones included; an unfixed constant is an
-// `int`.
+// `int`. With `lanes`, a vector of integer lanes too.
 @(private = "file")
-check_integer_operand :: proc(k: ^Checker, e: Expr, ident: ^Expr_Ident) -> (type: Type_Id, ok: bool) {
+check_integer_operand :: proc(k: ^Checker, e: Expr, ident: ^Expr_Ident, lanes := false) -> (type: Type_Id, ok: bool) {
 	type, ok = check_defaulted_operand(k, e)
 	if !ok {
 		return
 	}
-	if !type_is_integer(k.c, type) {
+	integer := lanes && simd_operand(k.c, type) ? type_of(k.c, type).element : type
+	if !type_is_integer(k.c, integer) {
 		errorf(k.c, expr_span(e), "L0738", "`%s` takes a value of an integer type; found `%s`", ident.name, type_name(k.c, type))
 		return type, false
 	}
 	return type, true
-}
-
-@(private = "file")
-check_rotate_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
-	if !builtin_arity_ok(k, v, ident, "L0738", 2) {
-		return
-	}
-	value, count := v.args[0].value, v.args[1].value
-	type, ok := check_integer_operand(k, value, ident)
-	if !ok {
-		return
-	}
-	count_type := check_single_expr(k, count)
-	if count_type == INVALID_TYPE {
-		return
-	}
-	if count_type != TYPE_INT && !type_is_untyped(k.c, count_type) {
-		errorf(k.c, expr_span(count), "L0738", "`%s` takes an `int` count; found `%s`", ident.name, type_name(k.c, count_type))
-		return
-	}
-	if !materialize(k, count, TYPE_INT) {
-		return
-	}
-	v.bound = bound_exprs(k, value, count)
-	v.type = type
-	base, by := expr_base(value), expr_base(count)
-	if base.const_value.kind == .Integer && by.const_value.kind == .Integer {
-		v.const_value = integer_const(rotate_const(k.c, base.const_value.integer, by.const_value.integer, type, kind))
-	}
 }
 
 // ------------------------------------------------------- source locations --

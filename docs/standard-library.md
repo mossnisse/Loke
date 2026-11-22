@@ -2605,6 +2605,36 @@ their candidate only with an element strictly before or after it under `<`, so
 equal elements keep the earliest, and a NaN is the answer only when it is first.
 `clone` and `try_clone` take `allocator := mem.default_allocator()`.
 
+### Flat views of nested arrays
+
+```loke
+flatten     :: proc(rows: [][$N]$T) -> []T;
+flatten_mut :: proc(rows: []mut [$N]$T) -> []mut T;
+```
+
+A nested fixed array is one contiguous value
+([Multidimensional arrays](design.md#multidimensional-arrays)), and slicing
+it gives its rows: `[4][4]f32` slices to `[][4]f32`. `slice.flatten(rows)`
+views the elements of every row as one slice over the same storage, row 0's
+first, `rows.len() * N` elements long. `flatten_mut` is the writable form,
+over rows that may be written.
+
+```loke
+grid := [2][3]int{{1, 2, 3}, {4, 5, 6}};
+flat := slice.flatten(grid);                        // [1, 2, 3, 4, 5, 6]
+slice.fill(slice.flatten_mut(grid[mut :]), 0);
+
+columns := slice.flatten(matrix.columns);           // a `linalg.Matrix(f32, 4, 4)`'s 16 elements
+view := dense.View(f32).from_column_major(columns, 4, 4);
+```
+
+The view borrows what `rows` borrows, as `rows[lo:hi]` does: it cannot outlive
+the array, and the array is suspended while a mutable one is in use. The rows
+may be any slice of fixed arrays, a `[dynamic][N]T`'s among them, and a second
+call flattens one level more, so `flatten(flatten(cube))` views a `[A][B][C]T`
+as `A*B*C` elements. No rows, or rows of no elements, give an empty view.
+Nothing is copied and no element is read.
+
 ## `core:container`
 
 `Small_Array`, `Bit_Set`, `Enum_Array`, `Priority_Queue`, and `Deque`, with the
@@ -4093,11 +4123,12 @@ checked_next_power_of_two :: proc(value: $T) -> Option(T);
 ```
 
 `value` has an integer type of any width, signed or unsigned, or a `distinct`
-type over one; an unfixed constant is an `int`. A float, rune, enum, `bool`,
-or `Simd` vector is a compilation error. The counts, the rotations, and the
-reversal read the value's two's-complement bit pattern at its type's width
-`W`, so a signed and an unsigned value with the same bits give the same
-answer:
+type over one; an unfixed constant is an `int`. A float, rune, enum, or `bool`
+is a compilation error; a `Simd` vector has the [lane-wise
+forms](#lane-wise-bit-operations) of the first seven. The counts, the
+rotations, and the reversal read the value's two's-complement bit pattern at
+its type's width `W`, so a signed and an unsigned value with the same bits
+give the same answer:
 
 | Call | Result |
 | --- | --- |
@@ -4153,6 +4184,38 @@ for `popcnt`, `x86-64-v3` for the other two) and a short instruction sequence
 below it. No level has a bit reversal instruction, so `reverse_bits` is a byte
 swap and shift-and-mask steps at every level. A result is the same at every
 level.
+
+#### Lane-wise bit operations
+
+The counts, `bit_width`, the rotations, and `reverse_bits` take a
+[`Simd(T, N)`](design.md#simd-vectors) of integer lanes and answer lane by
+lane, each lane as the scalar operation answers a `T`:
+
+```loke
+count_ones     :: proc(value: Simd($T, $N)) -> Simd(T, N);   // and leading_zeros, trailing_zeros, bit_width
+reverse_bits   :: proc(value: Simd($T, $N)) -> Simd(T, N);
+rotate_left    :: proc(value: Simd($T, $N), count: Simd(T, N)) -> Simd(T, N);   // and rotate_right
+```
+
+A count is a lane of the vector's own type, where the scalar forms give an
+`int`: a lane-wise [operator](design.md#lane-wise-operators) keeps its
+operand's type, every count fits its lane, `W` being at most `2^(W-1) - 1` from
+8 bits up, and a `Simd(int, N)` does not exist past eight lanes. So
+`count_ones(v) << 1` and `simd.reduce_add(count_ones(v))` need no conversion; a
+sum of counts past the lane's range panics as any checked sum does.
+
+A rotation's count is a vector of the same type, which a scalar of the lane
+type splats to, as a [shift's count](design.md#lane-wise-operators) is. Each
+lane's count is taken modulo `W`, floored, so a negative count lane rotates
+the other way and no count panics, where a negative shift count does. A
+constant count that the lane type does not hold is a compilation error.
+
+Constant operands give a constant vector. The power-of-two operations take no
+vector. Each lane-wise form is the scalar form's LLVM intrinsic over a vector.
+x86-64 has a vector instruction for a count or a rotation only with AVX-512,
+which no offered [CPU level](compiler-guide.md#cpu-levels) reaches, so below
+it a lane-wise form is a sequence of shifts, masks, and table lookups: measure
+a kernel before relying on one.
 
 ## `core:math/repro`
 

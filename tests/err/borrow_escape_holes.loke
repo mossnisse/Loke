@@ -12,13 +12,12 @@ main :: proc() {
 	escape() = 1;
 }
 
-// A region passed through a call keeps its default-provider bit, so a reset
-// that may name the default provider conflicts with an owner backed by it.
+// A region passed through a call keeps its default-provider bit, so it is not
+// one a reset-capable parameter may be handed: nothing resets the default
+// provider (design.md "@(allocator_reset)").
 take :: proc(a: Allocator) -> Allocator { return a; }
-reset :: proc(@(allocator_reset) a: Allocator) {
+release :: proc(@(allocator_reset) a: Allocator) { free_all(a); }
+reset :: proc() {
 	b := take(mem.default_allocator());
-	numbers: [dynamic]int via b = {};
-	numbers.append(1);
-	free_all(a);
-	_ = numbers.len();
+	release(b);
 }

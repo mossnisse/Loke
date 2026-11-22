@@ -46,7 +46,7 @@ prov_materialize_reset :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset) {
 	if event.verb == "" {
 		for held in op.held {
 			region := op.provider_end ? prov_result_region(graph, held) : prov_reset_value_region(graph, held)
-			if !region_is_empty(region) && regions_may_overlap(region, set) {
+			if !region_is_empty(region) && reset_may_end(region, set) {
 				event.verb = "this temporary"
 				event.owner_span = expr_span(prov_value(graph, held).origin)
 				break
@@ -61,7 +61,7 @@ prov_materialize_reset :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset) {
 	// design.md "Allocators": a result reaches the caller before the deferred
 	// statements run, so it is live across a reset among them.
 	if returning, held := op.returning.?; held && event.verb == "" && !op.provider_end {
-		if regions_may_overlap(prov_returning_region(graph, returning), set) {
+		if reset_may_end(prov_returning_region(graph, returning), set) {
 			event.ends_result = true
 			event.owner_span = returning.span
 		}
@@ -91,14 +91,14 @@ prov_reset_blocker :: proc(graph: ^Flow_Graph, op: Prov_Event_Reset, set: Region
 		case:
 			region = prov_reset_symbol_region(graph, id, owner.type)
 		}
-		if region_is_empty(region) || !regions_may_overlap(region, set) {
+		if region_is_empty(region) || !reset_may_end(region, set) {
 			continue
 		}
 		stored: Prov_Merged_Region
 		if root, found := graph.root_by_symbol[id]; found {
 			stored = graph.merged_regions[prov_storage_for_root(graph, root)]
 		}
-		if stored.precision == {} || !regions_may_overlap(stored.region, set) {
+		if stored.precision == {} || !reset_may_end(stored.region, set) {
 			return owner, {}
 		}
 		if blocker == nil {
@@ -142,7 +142,7 @@ prov_reset_temporary :: proc(graph: ^Flow_Graph, root: Root_Id, event: ^Prov_Eve
 	if storage := prov_storage(graph, temporary.storage); storage.key.temporary != nil && type_is_managed(graph.k.c, storage.type) {
 		join(graph, &region, storage.type, graph.region_content[temporary.storage][:], event.provider_end)
 	}
-	if region_is_empty(region) || !regions_may_overlap(region, event.region) { return false }
+	if region_is_empty(region) || !reset_may_end(region, event.region) { return false }
 	event.verb, event.owner_span = temporary.name, temporary.span
 	return true
 }

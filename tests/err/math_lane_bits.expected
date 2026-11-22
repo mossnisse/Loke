@@ -1,0 +1,21 @@
+L0738
+@14:22
+`count_ones` takes a value of an integer type; found `Simd(f32, 4)`
+L0738
+@15:24
+`reverse_bits` takes a value of an integer type; found `Simd(bool, 4)`
+L0738
+@16:27
+`is_power_of_two` takes a value of an integer type; found `Simd(u32, 4)`
+L0738
+@17:29
+`next_power_of_two` takes a value of an integer type; found `Simd(u32, 4)`
+L0738
+@18:30
+`rotate_left` takes a count of `Simd(u32, 4)` or of its lane type; found `int`
+L0738
+@19:31
+`rotate_right` takes a count of `Simd(u32, 4)` or of its lane type; found `Simd(u8, 4)`
+L0352
+@20:31
+300 is not representable by `Simd(u8, 4)`

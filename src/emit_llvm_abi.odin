@@ -269,6 +269,15 @@ intrinsic_type_suffix :: proc(llvm: string) -> string {
 	return llvm
 }
 
+// The suffix of an intrinsic overloaded on `type`: a vector's is its lane
+// count before its lane's.
+intrinsic_suffix_of :: proc(e: ^Emitter, type: Type_Id) -> string {
+	if info := underlying_info(e.c, type); info != nil && info.kind == .Simd {
+		return fmt.aprintf("v%d%s", info.count, intrinsic_type_suffix(simd_lane_llvm_type(e, info)))
+	}
+	return intrinsic_type_suffix(llvm_type(e, type))
+}
+
 // ----------------------------------------------------------- foreign calls --
 
 // The `define` signature of a foreign-convention procedure's body under the

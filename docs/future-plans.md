@@ -134,14 +134,16 @@ as the negative binomial, Cauchy, and Weibull; buffered streams,
 `fs.absolute`, `fs.canonicalize`, and symlinks; fallible twins of
 allocating string transformations other than `copy`, Unicode case mapping,
 normalization, and grapheme segmentation; terminal colors, cursor movement,
-mouse and resize events; `thread.try_spawn`, `try_lock`, and thread identity
+mouse and resize events (a buffered reader is also what would spare
+`term.read_line` its one read per byte of redirected input: the bytes past a
+line's end must be kept for the next call, and the borrowed `term.Input` it
+acquires each time has nowhere to keep them); `thread.try_spawn`, `try_lock`,
+and thread identity
 (a bare condition variable is left out on purpose: `Monitor` replaces it, see
 [Waiting on a condition, not a signal](comments.md#waiting-on-a-condition-not-a-signal)).
 Math gaps include hyperbolics,
 `cbrt`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise SIMD math, and
-the lane-wise integer bit operations (see
-[Integer bit operations not yet provided](open-questions.md#integer-bit-operations-not-yet-provided))
-and [bit field extract and deposit](#bit-field-extract-and-deposit).
+[bit field extract and deposit](#bit-field-extract-and-deposit).
 `core:simd`'s remaining gaps are specified in
 [What SIMD does not do](design.md#what-simd-does-not-do).
 [`core:math/linalg`](standard-library.md#coremathlinalg) has vectors,
@@ -758,6 +760,23 @@ between them, for a caller that needs one.
 [`core:math`'s integer bit operations](standard-library.md#integer-bit-operations)
 would need a portable fallback with the same result. They wait for a caller
 that settles that contract.
+
+### `x86-64-v4`
+
+[`-cpu`](compiler-guide.md#cpu-levels) offers v2 and v3. v4 adds AVX-512,
+which AMD has from Zen 4 and Intel on server and workstation parts but not on
+consumer parts since Alder Lake. It follows the other levels, startup check
+included, once there is AVX-512 hardware to run the level tests on: a level
+nobody has run is not offered. `native` is not planned
+([reasons](comments.md#a-cpu-level-changes-instructions-not-results)).
+
+### Binding the error in `errdefer`
+
+Zig's `errdefer |err|` names the error being returned. A Loke
+[`errdefer`](design.md#defer-statement) reads locals, which covers undoing
+incomplete work, the purpose it was added for. Binding needs a syntax and a
+rule for an error that has already moved into the result, and waits for a
+program whose cleanup depends on which error it is.
 
 ### Thread-affine strings
 

@@ -38,6 +38,7 @@ CPU_LEVEL_CASES :: []string {
 	"tests/run/lib_dense_kernels.loke",
 	"tests/run/lib_dense_complex.loke",
 	"tests/run/lib_math_bits.loke",
+	"tests/run/lib_math_lane_bits.loke",
 	"tests/run/lib_simd.loke",
 	"tests/run/simd_byte_lanes.loke",
 	"tests/run/lib_random.loke",

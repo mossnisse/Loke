@@ -1,0 +1,55 @@
+// standard-library.md "Flat views of nested arrays": `slice.flatten` views the
+// scalar elements of nested fixed arrays as one slice over the same storage,
+// row by row, and `flatten_mut` writes through it. A second call flattens one
+// level more, and rows of no elements or no rows give an empty view.
+package main;
+
+import "core:fmt";
+import "core:math/dense";
+import "core:math/linalg";
+import "core:slice";
+
+Matrix :: struct { columns: [4][4]f32 }
+
+sum :: proc(values: []f32) -> f32 {
+	total: f32 = 0;
+	foreach (value in values) { total += value; }
+	return total;
+}
+
+main :: proc() {
+	grid := [2][3]int{{1, 2, 3}, {4, 5, 6}};
+	flat := slice.flatten(grid);
+	fmt.println(flat, flat.len());
+
+	writable := slice.flatten_mut(grid[mut :]);
+	writable[5] = 60;
+	slice.reverse(writable);
+	fmt.println(grid);
+
+	// One row of a slice of rows, and a reslice of the flat view.
+	fmt.println(slice.flatten(grid[1:]), slice.flatten(grid)[2:4]);
+
+	cube: [2][2][2]u8 = {};
+	all := slice.flatten_mut(slice.flatten_mut(cube[mut :]));
+	foreach (i in 0 ..< all.len()) { all[i] = u8(i); }
+	fmt.println(cube, slice.flatten(slice.flatten(cube)).len());
+
+	matrix: Matrix = {};
+	slice.fill(slice.flatten_mut(matrix.columns[mut :]), 0.5);
+	fmt.println(sum(slice.flatten(matrix.columns)));
+
+	none: [0][3]int = {};
+	empty: [3][0]int = {};
+	fmt.println(slice.flatten(none).len(), slice.flatten(empty).len());
+
+	rows := [dynamic][2]int{{1, 2}, {3, 4}, {5, 6}};
+	fmt.println(slice.flatten(rows[:]));
+
+	// A fixed matrix viewed by `core:math/dense` with no copy: a write through
+	// the view lands in the matrix.
+	fixed := linalg.Matrix(f64, 2, 2){columns = {{1, 2}, {3, 4}}};
+	view := dense.View_Mut(f64).from_column_major(slice.flatten_mut(fixed.columns[mut :]), 2, 2);
+	view[0, 1] = 30;
+	fmt.println(view[1, 0], fixed.columns);
+}

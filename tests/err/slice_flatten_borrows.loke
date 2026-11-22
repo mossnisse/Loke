@@ -1,0 +1,23 @@
+// standard-library.md "Flat views of nested arrays": a flat view borrows what
+// its rows borrow, so it cannot outlive them, the array is not written while a
+// mutable one is in use, and a read-only array gives no mutable view.
+package main;
+
+import "core:slice";
+
+escaped :: proc() -> []int {
+	grid := [2][3]int{{1, 2, 3}, {4, 5, 6}};
+	return slice.flatten(grid);
+}
+
+main :: proc() {
+	grid := [2][3]int{{1, 2, 3}, {4, 5, 6}};
+	writable := slice.flatten_mut(grid[mut :]);
+	grid[0][0] = 9;
+	writable[5] = 60;
+	_ = escaped();
+}
+
+read_only :: proc(rows: [][2]int) {
+	_ = slice.flatten_mut(rows);
+}

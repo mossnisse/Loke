@@ -12,22 +12,6 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 2026-10-31, and the proposals from them not yet decided, are in
 [design-review-2026-10-31.md](design-review-2026-10-31.md).
 
-## What the region matrix left open
-
-The [region matrix](../tests/region_matrix_test.odin) judges the compiler
-against a model of the rules written apart from it. Writing the model met a
-place where [design.md](design.md) does not decide, and the model follows the
-compiler there (2026-11-16):
-
-- **A received resettable allocator beside the default provider.** A reset of
-  an `@(allocator_reset)` parameter is `L0537` while an owner backed by the
-  default provider is live, because a received allocator [may be any
-  region](design.md#allocator-regions-and-region-provenance). No checked call
-  can pass the default provider there: handing it, or an allocator read from a
-  global, to such a parameter is `L0538`. So the two regions could be told
-  apart, which would accept more programs and reject none. Whether that
-  precision is wanted is open.
-
 ## Provenance architecture
 
 A review of the root and region provenance checker on 2026-11-01 asked where its
@@ -277,8 +261,6 @@ generates it from source, checks it, or runs it. It leaves these open:
   has an `@(intrinsic)` signature written for readers and checked only for its
   name. Checking more needs a signature form that states such typing, or a
   rule for which written forms an operation's typing must accept.
-- **Interface files outside the repository.** Whether a project's own
-  packages get `api.loki` by default.
 
 ## The `op`/`try_op` pair
 
@@ -601,18 +583,6 @@ kept and a decision on the default after measurement
   search covers two `f64` arguments, and no proof is known to rule it out.
   Their results are the same everywhere either way.
 
-### Integer bit operations not yet provided
-
-[Integer bit operations](standard-library.md#integer-bit-operations) has the
-counts, the bit width, the rotations, the reversal, and the power-of-two
-operations. Left out until a caller settles their contracts:
-
-- **Lane-wise forms.** LLVM's `ctpop`, `ctlz`, `cttz`, `bitreverse`, and
-  funnel shifts take vectors, so a `Simd(T, N)` operand could count lane by
-  lane. The result type is the question: a `Simd(int, N)` widens every lane
-  past the operand's, and a `Simd(T, N)` is not an `int` as the scalar forms
-  are. The checker refuses a vector today, so either choice can be added.
-
 ## Alias facts for the optimizer
 
 The emitter writes `nonnull` on pointer parameters and nothing else, and a
@@ -704,31 +674,6 @@ Open:
   closed in the ten days before, so it would be emitted behind an option until
   "none known" has held for a while.
 
-## Targeting x86-64 levels
-
-Programs target baseline x86-64 (SSE2), which every 64-bit x86 processor runs,
-unless built with [`-cpu`](compiler-guide.md#cpu-levels), which offers v2 and
-v3 with a startup check; a level changes instructions, not results
-([comments.md](comments.md#a-cpu-level-changes-instructions-not-results)).
-The levels are:
-
-| Level | Adds | Processors |
-| --- | --- | --- |
-| v2 | SSE4.2, POPCNT | Intel from 2008, AMD from 2011; Windows 11 24H2 itself requires SSE4.2 and POPCNT |
-| v3 | AVX2, FMA, BMI, LZCNT | Intel Core from Haswell (2013), AMD from Excavator (2015) |
-| v4 | AVX-512 | AMD Zen 4 and later, Intel server and workstation parts; not Intel consumer parts since Alder Lake |
-
-Steam's survey, as quoted in the Flax Engine's
-[commits](https://git.flaxengine.com/Flax/FlaxEngine/commit/d1774cac28988b46bd1de87aec26745ae71fcb48),
-put SSE4.2 at 99.78% (September 2025) and AVX2 at 94.48% (May 2025). Windows on
-Arm emulates AVX2 and FMA for x64 programs from Windows 11 24H2. Run-time
-dispatch is added only where measured, as
-[`@(cpu_dispatch)`](design.md#cpu_dispatchstring) does for
-`core:math/repro`'s `f64` functions. Open:
-
-- Should v4 and `native` follow? v4 needs AVX-512 hardware to test on, and
-  `native` resolves to a feature set of its own rather than a level.
-
 ## Open questions from the linear algebra spike
 
 A spike tried `linalg`'s `Real` interface and generic matrix shapes against
@@ -754,18 +699,6 @@ through `core:unsafe`, which gives up the checker's guarantee for code the
 library does not control. The package's factorizations work through one view by
 index and need neither; the question is what a user writing their own blocked
 algorithm gets.
-
-### Flat views of nested fixed arrays
-
-A nested fixed array is one contiguous value
-([Multidimensional arrays](design.md#multidimensional-arrays)), so
-`linalg.Matrix(f32, 4, 4)`'s `columns: [4][4]f32` holds 16 consecutive
-elements. Safe code cannot borrow them as one `[]f32`: slicing takes one
-index, and `[4][4]f32` slices to `[][4]f32`. A flattening borrow, a
-contributed member returning `[]T` over every scalar element, would let the
-dense package view a fixed matrix without a copy, and would serve image
-buffers and lookup tables stored as nested arrays. Without it the dense
-package copies at the boundary.
 
 ### Overflow checks in index arithmetic
 
@@ -797,14 +730,6 @@ whose ranges are known before the loop) does not reach a loop such as
 loop would, at the cost of a second copy of it. A descending index, `xs[last - i]`, is not vectorized
 with `-%` either, so its checks are not what holds it.
 
-## Open questions in `core:term`
-
-- **Buffer redirected lines across calls.** Redirected input goes through
-  `io.read_line`, which requests one byte at a time. A caller-owned buffered
-  reader could cut those reads while retaining bytes past the line ending
-  for the next call. The current `term.read_line` acquires a fresh borrowed
-  input on each call. [Line reader interface](../core/io/api.loki)
-
 ## Formatting
 
 The current formatter rules and rationale are in [comments.md
@@ -815,17 +740,6 @@ does not leave its neighbors misaligned; indenting a continued line inside
 brackets, which `core/` leaves at the bracket's level; and indenting the later
 values of a wrapped multi-value statement (`x, y :=` above `1,` and `2;`), whose
 commas read as a list's, since the tokens do not tell a block's `{` from a list's.
-
-## Error handling (2026-10-13)
-
-What the adopted error handling proposal left open:
-
-- **A replacement that discards information.** `f() or_return .Bad` drops the
-  error `f` returned. That is explicit at the site, as the switch it replaces
-  was, but when the error is not an enum a lint could ask for a mapper.
-- **Binding the error in `errdefer`.** Zig's `errdefer |err|` names the error
-  being returned. An `errdefer` reads locals today; binding needs a syntax and
-  a rule for an error that has moved into the result.
 
 ## Anonymous unions and their follow-ups (2026-10-18)
 
@@ -949,26 +863,3 @@ Count declarations, propagation and dispatch sites, and lines; check that
 error context survives; and compare the diagnostics after adding, renaming,
 and removing a variant or a label. Document an idiom in a tutorial only after
 it has been compared this way.
-
-## Last-use transfer into a container, `box`, or `shared`
-
-[Last-use transfer](design.md#last-use-transfer) moves a local that a binding or
-an assignment would clone, itself or as an operand of the construction bound,
-when nothing reads it again. A
-[container insertion](design.md#container-insertion), `box`, and `shared` take
-their operand as an initialization does and still clone it, so
-`out.append(list);`, `out.append(Pair{list, 1});`, and `node := box(list);`
-allocate at `list`'s last use unless `move(list)` is written.
-
-Extending the transfer to them is open:
-
-- **Which allocator.** A clone into a container allocates from the container's
-  provider, and a `box` or `shared` from the allocator it is given. A move keeps
-  the local's own allocator, so the element could be backed by a different
-  region than the container holding it. A binding keeps the clone when its
-  destination has a `via`, which is written at the declaration; a container's
-  provider belongs to its value, and the lifecycle analysis that decides the
-  transfer does not know it.
-- **Arguments.** An insertion is a call, and an argument of a `move` parameter
-  needs a written `move` so that the call shows what it gives away. A transfer
-  at an insertion would be the one argument that moves unwritten.

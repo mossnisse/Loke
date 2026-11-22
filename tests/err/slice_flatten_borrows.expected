@@ -1,0 +1,9 @@
+L0526
+@10:9
+this slice cannot be returned: `grid` ends when this procedure returns
+L0511
+@16:2
+this write of `grid` is not compatible with the mutable slice of it that is still in use
+L0392
+@22:6
+no overload of `flatten_mut` applies to these arguments

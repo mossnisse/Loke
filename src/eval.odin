@@ -2058,17 +2058,9 @@ eval_math_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		eval_operands(ev, v.bound, operands[:]) or_return
 		return scalar(exact_mod(operands[0].constant, operands[1].constant), v.type), true
 
-	case .Math_Rotate_Left, .Math_Rotate_Right:
-		operands: [2]Eval_Value
-		eval_operands(ev, v.bound, operands[:]) or_return
-		rotated := rotate_const(ev.k.c, operands[0].integer, operands[1].integer, v.type, symbol.builtin, ev.alloc)
-		return scalar(integer_const(rotated), v.type), true
-
-	case .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros, .Math_Bit_Width:
-		operand := eval_expr(ev, v.bound[0]) or_return
-		source := expr_base(v.bound[0]).type
-		count := bit_count(operand.integer, type_bits(ev.k.c, source), symbol.builtin)
-		return scalar(integer_const(bi_from_i64(ev.alloc, i64(count))), TYPE_INT), true
+	case .Math_Rotate_Left, .Math_Rotate_Right, .Math_Count_Ones, .Math_Leading_Zeros, .Math_Trailing_Zeros,
+	     .Math_Bit_Width, .Math_Reverse_Bits:
+		return eval_bit_pattern(ev, v, symbol.builtin)
 	}
 
 	// design.md "Integer overflow": a `next_power_of_two` that would panic at
@@ -2077,14 +2069,35 @@ eval_math_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 	operand := eval_expr(ev, v.bound[0]) or_return
 	source := expr_base(v.bound[0]).type
 	if symbol.builtin == .Math_Checked_Next_Power_Of_Two {
-		power, fits := bit_value_const(ev.k.c, operand.integer, source, .Math_Next_Power_Of_Two, ev.alloc)
+		power, fits := power_of_two_const(ev.k.c, operand.integer, source, .Math_Next_Power_Of_Two, ev.alloc)
 		return eval_option(ev, v.type, scalar(power, source), fits)
 	}
-	result, fits := bit_value_const(ev.k.c, operand.integer, source, symbol.builtin, ev.alloc)
+	result, fits := power_of_two_const(ev.k.c, operand.integer, source, symbol.builtin, ev.alloc)
 	if !fits {
 		report_integer_overflow(ev.k.c, v.span, result.integer, source, ev.alloc)
 	}
 	return eval_folded(ev, result, fits, v.type)
+}
+
+// standard-library.md "Integer bit operations": the operations that read a bit
+// pattern, which a vector answers lane by lane at its lane's width.
+@(private = "file")
+eval_bit_pattern :: proc(ev: ^Evaluator, v: ^Expr_Call, kind: Builtin_Kind) -> (out: Eval_Value, success: bool) {
+	operands: [2]Eval_Value
+	eval_operands(ev, v.bound, operands[:len(v.bound)]) or_return
+	source := expr_base(v.bound[0]).type
+	info := underlying_info(ev.k.c, source)
+	if info.kind != .Simd {
+		value := bit_pattern_const(ev.k.c, kind, operands[0].integer, operands[1].integer, source, ev.alloc)
+		return scalar(integer_const(value), v.type), true
+	}
+	elements := eval_elements(ev, int(info.count)) or_return
+	for &element, index in elements {
+		value, count := eval_simd_lane(operands[0], index), eval_simd_lane(operands[1], index)
+		lane := bit_pattern_const(ev.k.c, kind, value.integer, count.integer, info.element, ev.alloc)
+		element = scalar(integer_const(lane), info.element)
+	}
+	return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
 }
 
 @(private = "file")

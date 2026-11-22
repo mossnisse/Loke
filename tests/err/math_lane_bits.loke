@@ -1,0 +1,21 @@
+// standard-library.md "Integer bit operations": a vector has the lane-wise
+// forms of the operations that read a bit pattern, over integer lanes, and a
+// rotation's count is a vector of the same type or a scalar of its lane type.
+// The power-of-two operations take no vector.
+package main;
+
+import "core:math";
+
+main :: proc() {
+	floats: Simd(f32, 4) = 1.0;
+	lanes: Simd(u32, 4) = 1;
+	narrow: Simd(u8, 4) = 1;
+	count: int = 3;
+	_ = math.count_ones(floats);
+	_ = math.reverse_bits(lanes == lanes);
+	_ = math.is_power_of_two(lanes);
+	_ = math.next_power_of_two(lanes);
+	_ = math.rotate_left(lanes, count);
+	_ = math.rotate_right(lanes, narrow);
+	_ = math.rotate_left(narrow, 300);
+}

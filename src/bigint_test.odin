@@ -556,12 +556,12 @@ evaluator_folds_keep_only_results :: proc(t: ^testing.T) {
 	testing.expect(t, bi_eq_i64(&c, unturned, -3), "a rotation by 0 changed its value")
 	expect_only_result(t, &storage, before, unturned, "a rotation by 0")
 	for value in ([]Big_Int{three, large}) {
-		power, _ := bit_value_const(&c, value, TYPE_U32, .Math_Next_Power_Of_Two, alloc)
+		power, _ := power_of_two_const(&c, value, TYPE_U32, .Math_Next_Power_Of_Two, alloc)
 		expect_only_result(t, &storage, before, power.integer, "next_power_of_two")
 	}
 	for value in ([]Big_Int{zero, bi_from_i64(alloc, 1), minus_three}) {
 		before = storage.bytes
-		one, _ := bit_value_const(&c, value, TYPE_I32, .Math_Next_Power_Of_Two, alloc)
+		one, _ := power_of_two_const(&c, value, TYPE_I32, .Math_Next_Power_Of_Two, alloc)
 		testing.expectf(t, bi_eq_i64(&c, one.integer, 1), "next_power_of_two(%s) is not 1", bi_text(&c, value))
 		expect_only_result(t, &storage, before, one.integer, "next_power_of_two of a value up to 1")
 	}

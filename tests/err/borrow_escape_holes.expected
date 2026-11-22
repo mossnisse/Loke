@@ -1,6 +1,6 @@
 L0526
 @8:15
 this `inout` result cannot be returned: `local` ends when this procedure returns
-L0537
+L0538
 @22:2
-this reset would end the region backing `numbers`, which is still live here
+this call may reset a pre-existing or unknown allocator region, so the reset cannot be hidden in this procedure

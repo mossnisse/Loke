@@ -1092,6 +1092,13 @@ cost is that a member of a bare `or_return`'s payload needs parentheses,
 `(f() or_return).len()`. A member call on a propagated value is short enough
 to bind first or parenthesise, and the diagnostic suggests the parentheses.
 
+A replacement drops the error it replaces: `f() or_return .Bad` discards what
+`f` returned. No lint asks for a mapper there. The replacement is written at
+the site, as the switch it stands for was, and a warning against a construct
+the programmer chose has no spelling that silences it other than the longer
+form it was added to replace. A caller that wants the payload kept writes the
+variant that carries it.
+
 `Option.ok_or` stays after the failure operand took over propagation. A
 failure operand adapts an absence only where it returns. An `Option` that
 becomes a `Result` value has no such site: it is stored, passed to a
@@ -1229,8 +1236,7 @@ stored borrow is one the destination keeps. A construction that is a call's
 argument has a temporary for a destination, and how the callee keeps it is the
 call's business, so its operands are copied as before. A
 [container insertion](design.md#container-insertion), `box`, and `shared` are
-left out for the allocator each clones with, which is
-[an open question](open-questions.md#last-use-transfer-into-a-container-box-or-shared).
+left out too ([An insertion clones at a last use](#an-insertion-clones-at-a-last-use)).
 
 It stays a second rule beside the returned one. Nothing follows a `return` but
 deferred statements, so that rule moves without asking about liveness and
@@ -1250,6 +1256,28 @@ region backing the local, since the moved value keeps its allocator where the
 clone took the destination's. Both were already errors for `copy := list;`.
 A borrow the procedure itself stores keeps the copy instead, by the exclusion.
 
+### An insertion clones at a last use
+
+`out.append(list);`, `out.append(Pair{list, 1});`, and `node := box(list);`
+clone `list` even when nothing reads it again, and `move(list)` is how a
+program hands it over. Extending
+[last-use transfer](design.md#last-use-transfer) to an insertion, `box`, and
+`shared` was considered and declined on 2026-11-22, for two reasons.
+
+A clone into a container allocates from the container's provider, and a `box`
+or `shared` from the allocator it is given, so the element is backed by the
+region that holds it. A move keeps the local's own allocator. A binding keeps
+its clone when the destination has a `via`, which is written at the
+declaration. A container's provider belongs to its value, so the same test
+would need the lifecycle analysis to know both regions and to keep the copy
+wherever it could not prove them one. Whether a statement allocates would then
+depend on what the checker can prove about two allocators, which a reader of
+the statement cannot see.
+
+An insertion is also a call, and an argument given to a `move` parameter needs
+a written `move`, so that a call shows what it gives away. A transfer here
+would be the one argument that moves unwritten.
+
 ### `errdefer`
 
 `defer if (failed)` left the flag to the programmer, who had to set it on every
@@ -1259,7 +1287,8 @@ outcome behave alike. Its spelling follows Zig: one reserved word, found by
 search, shaped like `defer`. Unlike Zig's, it also runs during panic unwinding:
 it exists to undo incomplete work, a panic leaves work as incomplete as a
 failure return does, and `defer` already runs there. Binding the error, Zig's
-`errdefer |err|`, is left for later.
+`errdefer |err|`, [waits for a program](future-plans.md#binding-the-error-in-errdefer)
+whose cleanup depends on which error it is.
 
 Once a success return has walked past an `errdefer`, it is retired: a panic in
 an older cleanup does not bring it back. Scope exit is one LIFO traversal, and
@@ -2765,6 +2794,27 @@ as the intrinsic was. The evaluator retypes a vector and its array without
 going through their bytes, and the backend reads an aggregate place in place,
 at the alignment it has there, instead of copying it into a slot first; the
 second helps every aggregate `transmute` of a place.
+
+### A lane-wise count stays in its lane
+
+`math.count_ones` of an integer is an `int`, as a length is. Of a
+`Simd(T, N)` it is a `Simd(T, N)`
+([Lane-wise bit operations](standard-library.md#lane-wise-bit-operations)).
+The other candidate, `Simd(int, N)`, does not exist for most operands: a vector
+is at most 64 bytes, so `Simd(int, N)` stops at eight lanes, and the counts of
+a `Simd(u8, 64)` have no such type. Keeping the lane type is also what every
+lane-wise operator does, and what LLVM's `ctpop`, `ctlz`, and `cttz` return,
+so the count needs no conversion before it is shifted by, compared, or summed.
+Every count fits: a lane of `W` bits holds `W`.
+
+A rotation's count is a vector of the value's type for the same reason a
+shift's is: one count a lane, and a scalar splats. It differs from a shift in
+what a negative lane does. A rotation by any count is defined, so it never
+panics, where a shift by a negative count is an error.
+
+The power-of-two operations stay scalar. `next_power_of_two` panics where the
+power does not fit, and a lane-wise form would need the any-lane rule of the
+checked operators for one caller nobody has named.
 
 ### Signed shifts stay bit operations
 
@@ -4464,6 +4514,26 @@ boundaries and API shapes follow a few common choices:
   [package rule](standard-library.md#small-packages-and-explicit-imports) keeps what
   needs no compiler out of `base:`.
 
+### A flat view is a library procedure
+
+[`slice.flatten`](standard-library.md#flat-views-of-nested-arrays) answers a
+need that built-in slicing cannot: `[4][4]f32` slices to its rows, and
+`core:math/dense` copied a fixed matrix to view its 16 elements. It is a
+`core:slice` procedure, not a contributed member like
+[`split_at_mut`](#splitting-a-mutable-slice-is-compiler-known) and not new
+slicing syntax, because a library can write it. `split_at_mut` returns two
+views of one sequence, which no procedure result can lend together. A flat
+view is one view of its argument, which a result lends as any reslice does.
+
+The procedure takes the slice of rows, not the array, so one signature serves
+a fixed array, which converts, a part of one, and a `[dynamic][N]T`, and a
+deeper nest is two calls. The body builds the view through a C pointer, whose
+lifetime is unchecked. It is reached through a procedure value so that the
+call is one the checker does not follow: the result then borrows the argument
+under the signature's own contract
+([Procedure result contracts](design.md#procedure-result-contracts)), as
+`container.Deque` lends its slots.
+
 ## Compiler design choices
 
 ### Compiler-supplied names are declared in source
@@ -4495,6 +4565,17 @@ documented where its package is, which a generated table would not do.
 The declaration adds no symbol. It never reaches the selected view the checker
 walks, so no other pass treats a `---` body as a foreign procedure or a missing
 definition, and the name keeps the one identity the compiler gave it.
+
+### A build does not write interface files
+
+`lokec <dir> -api` writes `api.loki`, and nothing else does
+([Interface files](compiler-guide.md#interface-files)). A build or a check
+writes its output and no source directory: a checkout that was only compiled
+would otherwise show changes, two builds of one package would race on the
+file, and a dependency's interface would be rewritten by the project importing
+it. A project that wants the files current runs `-api-check` in its build, as
+the test suite does for the bundled packages, and the failure names the stale
+ones.
 
 ### Projects name dependencies, not versions
 
@@ -4530,8 +4611,12 @@ rather than a hand-picked approximation such as "v3 means AVX2", and baseline
 stays the default. Moving it to v2 would gain little, since SSE4.2 and POPCNT
 speed few programs, and would make every program refuse to start on an older
 processor whose author never asked for that; a program that wants v2 says so
-with `-cpu`. `x86-64-v4` waits for AVX-512 hardware to test on, and
-`native` for a reason to resolve one machine's features. There is no public
+with `-cpu`. `x86-64-v4` [waits](future-plans.md#x86-64-v4) for AVX-512
+hardware to test on. There is no `native`: it names one machine's feature set,
+not a level, so the program is valid only where it was built, its startup
+check would test a set no other build shares, and no test run anywhere else
+covers what it compiles to. A program for the build machine names the level
+that machine has. There is no public
 `-target` while Windows x64 is the only target, since an option accepting one
 value would fix triple spelling before a second target forces it
 ([More platforms](future-plans.md#more-platforms)).
@@ -5194,6 +5279,22 @@ what its place holds. Exclusions tried first hid that second mistake and were re
 it was found; the one for moved records also accepted a real conflict. A spawn's own call
 still skips this, not for its verdicts but to report a conflict once, as the task already
 holds what it is given until the join.
+
+### Nothing resets the default provider
+
+A received allocator may be any region, so a reset of one was taken to end
+whatever the default provider backs too. But a reset reaches only a region the
+body created or an [`@(allocator_reset)`](design.md#allocator_reset)
+parameter, and no call may hand such a parameter the default provider, an
+allocator read from a global, or one of unknown origin (`L0538`). By induction
+over callers, a parameter that may be reset is never the default provider's
+region. `reset_may_end` uses that: an owner the default provider backs is no
+obstacle to a reset, and may be kept across one or returned past a deferred
+one. This accepts more programs and rejects none; two received allocators may
+still be one region. Every other use of a parameter's region, by a task or an
+escape, still takes it for possibly the default's, since only a reset has the
+rule that keeps the default out. The [region
+matrix](../tests/region_matrix_test.odin) states the rule in its model.
 
 ### Provenance slots and regions stay apart
 

@@ -141,6 +141,29 @@ checklist.
 
 ### Added
 
+- `math.count_ones`, `leading_zeros`, `trailing_zeros`, `bit_width`, `reverse_bits`,
+  `rotate_left`, and `rotate_right` take a `Simd(T, N)` of integer lanes and answer lane by lane,
+  in a vector of the same type
+  ([Lane-wise bit operations](docs/standard-library.md#lane-wise-bit-operations)). A vector was
+  `L0738`. A rotation's count is a vector too, which a scalar of the lane type splats to, and
+  constant operands give a constant vector:
+
+  ```
+  bytes := simd.from_array(block);                     // `block: [16]u8`
+  set := simd.reduce_add(math.count_ones(bytes));      // at most 128, which a `u8` lane holds
+  mixed := math.rotate_left(state, 13) ~ state;        // `state: Simd(u32, 8)`
+  ```
+- `slice.flatten(rows)` and `slice.flatten_mut(rows)` view the elements of nested fixed arrays as
+  one slice over the same storage ([Flat views of nested
+  arrays](docs/standard-library.md#flat-views-of-nested-arrays)). `[4][4]f32` slices to its rows,
+  so its 16 elements had no checked `[]f32`, and `core:math/dense` could view a fixed matrix only
+  through a copy. The view borrows what the rows borrow:
+
+  ```
+  grid := [2][3]int{{1, 2, 3}, {4, 5, 6}};
+  flat := slice.flatten(grid);                                                  // [1, 2, 3, 4, 5, 6]
+  view := dense.View(f32).from_column_major(slice.flatten(matrix.columns), 4, 4);
+  ```
 - An interface file and a hover say what the compiler inferred of a public procedure and its
   signature does not show, in `// inferred:` lines above it
   ([Inferred lines](docs/compiler-guide.md#inferred-lines)): what its result borrows, which
@@ -176,6 +199,13 @@ checklist.
 
 ### Changed
 
+- A reset through an `@(allocator_reset)` parameter no longer counts an owner the default
+  provider backs as live in the region being reset ([Allocator regions and region
+  provenance](docs/design.md#allocator-regions-and-region-provenance)). No call may hand such a
+  parameter the default provider, so nothing resets its region, but `free_all(scratch)` was
+  `L0537` while a `[dynamic]int` built with `mem.default_allocator()`, or left unbound, was
+  live, and so was returning one past a deferred reset. An owner built with another received
+  allocator still blocks the reset, since two parameters may name one region.
 - A generic record's bare `where` bounds grant the members of its `impl` blocks what they grant
   its fields ([where clauses](docs/design.md#where-clauses)). A method of `impl Lu($T)`, where
   `Lu :: struct($T: type) where linalg.Scalar(T)`, names `T.Real` and calls its slots without

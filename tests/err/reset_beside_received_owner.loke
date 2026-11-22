@@ -1,0 +1,13 @@
+// design.md "Allocator regions and region provenance": two received
+// allocators may name one region, so a reset of one ends an owner built with
+// the other, where an owner the default provider backs is no obstacle.
+package main;
+
+gather :: proc(@(allocator_reset) scratch: Allocator, other: Allocator) {
+	kept: [dynamic]int = {};
+	held := make([dynamic]int, 1, other);
+	free_all(scratch);
+	kept.append(held.len());
+}
+
+main :: proc() {}

@@ -377,6 +377,18 @@ regions_may_overlap :: proc(a, b: Region_Set) -> bool {
 	return (a.default && b.default) || a.locals & b.locals != 0
 }
 
+// Whether a reset of `reset` may end what `region` backs. Nothing resets the
+// default provider's region: a reset is of a region the body created or of a
+// parameter carrying the promise, and no call hands such a parameter the
+// default provider (design.md "@(allocator_reset)"). So what that provider
+// backs stays, where any other use of a parameter's region may be a use of the
+// default's.
+reset_may_end :: proc(region, reset: Region_Set) -> bool {
+	backed := region
+	backed.default = false
+	return regions_may_overlap(backed, reset)
+}
+
 region_is_parameter_backed :: proc(set: Region_Set) -> bool {
 	return set.params != 0
 }

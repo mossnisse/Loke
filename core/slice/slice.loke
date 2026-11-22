@@ -15,8 +15,9 @@
 	`make_heap` and its relatives keep a binary heap in a slice the caller owns.
 */
 // design.md "Slices", standard-library.md "Sorting slices",
-// standard-library.md "Partitioning and selection", and
-// standard-library.md "Slice queries and copies".
+// standard-library.md "Partitioning and selection",
+// standard-library.md "Slice queries and copies", and
+// standard-library.md "Flat views of nested arrays".
 //
 // The public surface is ordinary Loke over `[]T` and `[]mut T`. `sort` and
 // `reverse_sort` are also what the contributed `values.sort()` and
@@ -25,6 +26,7 @@
 package slice;
 
 import "core:mem";
+import "core:unsafe";
 
 // ---------------------------------------------------------------- ordering --
 
@@ -269,4 +271,47 @@ try_clone :: proc(
 	owned := try_make([dynamic]T, 0, values.len(), allocator) or_return;
 	owned.try_append(..values) or_return;
 	return .ok(move(owned));
+}
+
+// -------------------------------------------------------------- flat views --
+
+/**
+	The elements of every row of `rows`, in order, as one slice: row 0's, then
+	row 1's. A nested fixed array is one contiguous value, so this is a view of
+	the same storage, `rows.len() * N` elements long, and it borrows what
+	`rows` borrows. A fixed array converts to the slice of its rows, so a
+	`[R][C]T` is flattened by `flatten(grid)`, and one level more by a second
+	call.
+*/
+// standard-library.md "Flat views of nested arrays".
+//
+// The view is built through a C pointer, whose lifetime nothing checks, so
+// `Rows.flat` alone would hand back a slice that borrows nothing. A call
+// through a procedure value is one the checker does not follow, and its
+// result then borrows the argument (design.md "Procedure result contracts").
+flatten :: proc(rows: [][$N]$T) -> []T {
+	reach: proc(rows: [][N]T) -> []T = Rows(T, N).flat;
+	return reach(rows);
+}
+
+/// `flatten` over rows that may be written: `flatten_mut(grid[mut :])`.
+flatten_mut :: proc(rows: []mut [$N]$T) -> []mut T {
+	reach: proc(rows: []mut [N]T) -> []mut T = Rows(T, N).flat_mut;
+	return reach(rows);
+}
+
+// A generic procedure is not a value; a member of an instance is.
+@(private)
+Rows :: struct($T: type, $N: int) {}
+
+impl Rows($T, $N) {
+	@(private)
+	flat :: proc(rows: [][N]T) -> []T {
+		return ([^]T)(unsafe.raw_data(rows))[0:rows.len() * N];
+	}
+
+	@(private)
+	flat_mut :: proc(rows: []mut [N]T) -> []mut T {
+		return ([^]T)(unsafe.raw_data(rows))[0:rows.len() * N];
+	}
 }

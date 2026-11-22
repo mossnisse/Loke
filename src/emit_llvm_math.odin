@@ -50,10 +50,12 @@ emit_math_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_typ
 	return "0"
 }
 
-// A one-operand intrinsic `key`, declared over the operand's own LLVM type.
+// The one-operand intrinsic `name`, overloaded on the operand's own LLVM type.
 @(private = "file")
-emit_unary_intrinsic :: proc(e: ^Emitter, v: ^Expr_Call, key: string) -> string {
-	llvm := llvm_type(e, expr_base(v.bound[0]).type)
+emit_unary_intrinsic :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
+	type := expr_base(v.bound[0]).type
+	llvm := llvm_type(e, type)
+	key := fmt.aprintf("%s.%s", name, intrinsic_suffix_of(e, type))
 	declare_intrinsic(e, key, llvm, llvm)
 	operand := emit_expr(e, v.bound[0])
 	return emit_value(e, "call %s @%s(%s %s)", llvm, key, llvm, operand)
@@ -63,38 +65,45 @@ emit_unary_intrinsic :: proc(e: ^Emitter, v: ^Expr_Call, key: string) -> string 
 // The zero-operand flag is false, so a zero operand counts as its width rather
 // than as poison.
 @(private = "file")
-emit_zero_count :: proc(e: ^Emitter, name, llvm, operand: string) -> string {
-	key := fmt.aprintf("llvm.%s.%s", name, llvm)
+emit_zero_count :: proc(e: ^Emitter, name: string, type: Type_Id, operand: string) -> string {
+	llvm := llvm_type(e, type)
+	key := fmt.aprintf("llvm.%s.%s", name, intrinsic_suffix_of(e, type))
 	declare_intrinsic(e, key, llvm, fmt.aprintf("%s, i1", llvm))
 	return emit_value(e, "call %s @%s(%s %s, i1 false)", llvm, key, llvm, operand)
 }
 
 // `llvm.ctpop`, `llvm.ctlz`, or `llvm.cttz` (`name`) of an integer operand,
-// widened or narrowed to the `int` result.
+// widened or narrowed to the `int` result. A vector's counts stay in its lanes.
 @(private = "file")
 emit_bit_count :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	source := expr_base(v.bound[0]).type
-	llvm := llvm_type(e, source)
-	count := name == "ctpop" \
-		? emit_unary_intrinsic(e, v, fmt.aprintf("llvm.ctpop.%s", llvm)) \
-		: emit_zero_count(e, name, llvm, emit_expr(e, v.bound[0]))
+	count := name == "ctpop" ? emit_unary_intrinsic(e, v, "llvm.ctpop") : emit_zero_count(e, name, source, emit_expr(e, v.bound[0]))
+	if type_is_simd(e.c, source) {
+		return count
+	}
 	return resize_int(e, count, type_bits(e.c, source), type_bits(e.c, TYPE_INT), signed = false)
 }
 
 // The width less the leading zeros, which a zero operand makes the width, so
 // the bit width of zero is zero. The count is at most 128, so subtracting it
-// as an `int` keeps every result.
+// as an `int` keeps every result; a vector subtracts in its lanes, whose width
+// each holds.
 @(private = "file")
 emit_bit_width :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	source := expr_base(v.bound[0]).type
 	leading := emit_bit_count(e, v, "ctlz")
-	return emit_value(e, "sub %s %d, %s", llvm_type(e, TYPE_INT), type_bits(e.c, expr_base(v.bound[0]).type), leading)
+	if info := underlying_info(e.c, source); info.kind == .Simd {
+		width := simd_repeated(e, info, fmt.aprint(type_bits(e.c, info.element)))
+		return emit_value(e, "sub %s %s, %s", llvm_type(e, source), width, leading)
+	}
+	return emit_value(e, "sub %s %d, %s", llvm_type(e, TYPE_INT), type_bits(e.c, source), leading)
 }
 
 // `llvm.bitreverse`. No x86-64 CPU level has an instruction for it, so LLVM
 // expands it to a byte swap and shift-and-mask steps, never a loop.
 @(private = "file")
 emit_reverse_bits :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
-	return emit_unary_intrinsic(e, v, fmt.aprintf("llvm.bitreverse.%s", llvm_type(e, expr_base(v.bound[0]).type)))
+	return emit_unary_intrinsic(e, v, "llvm.bitreverse")
 }
 
 // A positive value with no bit below its highest: `x > 0` and `x & (x - 1)`
@@ -127,7 +136,7 @@ emit_next_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, che
 	small, below := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, 1", small, signed ? "sle" : "ule", llvm, x)
 	fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", below, llvm, x)
-	leading := emit_zero_count(e, "ctlz", llvm, below)
+	leading := emit_zero_count(e, "ctlz", source, below)
 	needed, exponent, overflowed := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = sub %s %d, %s", needed, llvm, bits, leading)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s 0, %s %s", exponent, small, llvm, llvm, needed)
@@ -145,15 +154,18 @@ emit_next_power_of_two :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id, che
 // rotates it. The funnel shift takes its amount modulo the width, a power of
 // two, so the `int` count's low bits are all it needs, and `trunc` or `zext`
 // keeps them: the floored remainder the specification gives a negative count.
+// A vector's count is already a vector of its lanes.
 @(private = "file")
 emit_rotate :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
 	source := expr_base(v.bound[0]).type
 	llvm := llvm_type(e, source)
-	key := fmt.aprintf("llvm.%s.%s", name, llvm)
+	key := fmt.aprintf("llvm.%s.%s", name, intrinsic_suffix_of(e, source))
 	declare_intrinsic(e, key, llvm, fmt.aprintf("%s, %s, %s", llvm, llvm, llvm))
 	value := emit_expr(e, v.bound[0])
 	count := emit_expr(e, v.bound[1])
-	count = resize_int(e, count, type_bits(e.c, TYPE_INT), type_bits(e.c, source), signed = false)
+	if !type_is_simd(e.c, source) {
+		count = resize_int(e, count, type_bits(e.c, TYPE_INT), type_bits(e.c, source), signed = false)
+	}
 	return emit_value(e, "call %s @%s(%s %s, %s %s, %s %s)", llvm, key, llvm, value, llvm, value, llvm, count)
 }
 
@@ -181,6 +193,5 @@ emit_fma_instruction :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 // functions of those names; the result is exact either way.
 @(private = "file")
 emit_float_instruction :: proc(e: ^Emitter, v: ^Expr_Call, name: string) -> string {
-	suffix := intrinsic_type_suffix(llvm_type(e, expr_base(v.bound[0]).type))
-	return emit_unary_intrinsic(e, v, fmt.aprintf("llvm.%s.%s", name, suffix))
+	return emit_unary_intrinsic(e, v, fmt.aprintf("llvm.%s", name))
 }

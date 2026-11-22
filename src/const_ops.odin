@@ -117,22 +117,32 @@ bit_count :: proc(value: Big_Int, bits: int, builtin: Builtin_Kind) -> int {
 	return x == 0 ? bits : int(intrinsics.count_trailing_zeros(x))
 }
 
-// The compile-time value of `core:math.reverse_bits`, `is_power_of_two`, or
-// `next_power_of_two` (`builtin`) of `value`, of integer type `type`.
-// `is_power_of_two` and `next_power_of_two` read the value: a power of two is
-// positive, and every value up to 1 rounds up to 1. A `next_power_of_two` that
-// does not fit `type` is not `fits`, and `result` is then the mathematical power,
-// for the overflow diagnostic.
-bit_value_const :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, builtin: Builtin_Kind, allocator: mem.Allocator = {}) -> (result: Const_Value, fits: bool) {
+// The compile-time value of a `core:math` operation that reads a bit pattern
+// (`builtin`): a count or the width of `value`, an integer of type `type`, its
+// reversal, or its rotation by `count`, which only a rotation reads.
+bit_pattern_const :: proc(c: ^Compiler, builtin: Builtin_Kind, value, count: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> Big_Int {
 	storage := value_allocator(c, allocator)
 	bits := type_bits(c, type)
-	signed := type_signed(c, type)
-	x := bi_pattern(value, bits)
 	#partial switch builtin {
+	case .Math_Rotate_Left, .Math_Rotate_Right:
+		return rotate_const(c, value, count, type, builtin, storage)
 	case .Math_Reverse_Bits:
-		reversed := intrinsics.reverse_bits(x) >> uint(128 - bits)
-		return integer_const(bi_from_pattern(storage, reversed, bits, signed)), true
-	case .Math_Is_Power_Of_Two:
+		reversed := intrinsics.reverse_bits(bi_pattern(value, bits)) >> uint(128 - bits)
+		return bi_from_pattern(storage, reversed, bits, type_signed(c, type))
+	}
+	return bi_from_i64(storage, i64(bit_count(value, bits, builtin)))
+}
+
+// The compile-time value of `core:math.is_power_of_two` or `next_power_of_two`
+// (`builtin`) of `value`, of integer type `type`. Both read the value: a power
+// of two is positive, and every value up to 1 rounds up to 1. A
+// `next_power_of_two` that does not fit `type` is not `fits`, and `result` is
+// then the mathematical power, for the overflow diagnostic.
+power_of_two_const :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, builtin: Builtin_Kind, allocator: mem.Allocator = {}) -> (result: Const_Value, fits: bool) {
+	storage := value_allocator(c, allocator)
+	bits := type_bits(c, type)
+	x := bi_pattern(value, bits)
+	if builtin == .Math_Is_Power_Of_Two {
 		return bool_const(bi_sign(value) > 0 && intrinsics.count_ones(x) == 1), true
 	}
 	if bi_sign(value) <= 0 || bi_magnitude_bits(value) == 1 {
@@ -140,7 +150,7 @@ bit_value_const :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, builtin: Bu
 	}
 	// `value` is above 1 here, so its pattern is its value.
 	exponent := 128 - int(intrinsics.count_leading_zeros(x - 1))
-	return integer_const(bi_pow2(storage, exponent)), exponent < bits - (signed ? 1 : 0)
+	return integer_const(bi_pow2(storage, exponent)), exponent < bits - (type_signed(c, type) ? 1 : 0)
 }
 
 // The compile-time value of `core:math.rotate_left` or `rotate_right`

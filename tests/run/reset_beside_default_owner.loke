@@ -1,0 +1,29 @@
+// design.md "Allocator regions and region provenance": nothing resets the
+// default provider's region, since no call hands it to an
+// `@(allocator_reset)` parameter. So an owner it backs stays live across a
+// reset of a received allocator, a deferred one included, and may be returned.
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+scratch_sum :: proc(@(allocator_reset) scratch: Allocator, count: int) -> [dynamic]int {
+	defer free_all(scratch);
+	kept := make([dynamic]int, 0, 0, mem.default_allocator());
+	unbound: [dynamic]int = {};
+	work := make([dynamic]int, count, scratch);
+	foreach (i in 0 ..< count) { work[i] = i * i; }
+	total := 0;
+	foreach (value in work) { total += value; }
+	drop(work);
+	kept.append(total);
+	unbound.append(count);
+	free_all(scratch);
+	kept.append(kept[0] + unbound[0]);
+	return move(kept);
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	fmt.println(scratch_sum(arena.allocator(), 4));
+}
