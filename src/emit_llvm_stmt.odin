@@ -539,14 +539,14 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	target := s.lhs[0]
 	type := expr_base(target).type
 	if s.operator != INVALID_SYMBOL {
-		operands := [2]Expr{target, s.rhs[0]}
+		operands, order := compound_operator_operands(s)
 		if s.operator_direct {
 			// A direct `+=` overload writes through its `inout` destination.
 			emit_operator_call(e, s.operator, operands[:])
 			return
 		}
 		address := emit_address(e, target)
-		value := emit_operator_call(e, s.operator, operands[:], left_place = address)
+		value := emit_operator_call(e, s.operator, operands[:], left_place = address, order = order)
 		emit_replacing_store(e, s, 0, type, compound_result_as(e, value, symbol_of(e.c, s.operator).result, type), address)
 		return
 	}

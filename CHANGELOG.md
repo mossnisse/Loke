@@ -660,8 +660,12 @@ checklist.
   ([Temporaries and procedure boundaries](docs/design.md#temporaries-and-procedure-boundaries)).
   It ends with the statement in a `for` update or a deferred statement, which extend nothing, and
   is `L0417` rather than invalid IR for a field or a parameter, which keeps no temporary. The right
-  operand is borrowed, dropped, and kept alive as in the written assignment, and is evaluated
-  before the destination is read ([Evaluation order](docs/design.md#evaluation-order)).
+  operand is borrowed, dropped, and kept alive as in the written assignment.
+- A compound assignment that falls back to a binary operator, a user one or one a `distinct` type
+  delegates, reads its destination after the right operand
+  ([Evaluation order](docs/design.md#evaluation-order)). With `v += bump(inout v);`, compiled code
+  read `v` before `bump` wrote it, though compile-time evaluation read it after, and a delegated
+  `string` concatenation's destination passed to `inout` on the right was `L0511`.
 - Assignment through `operator([]=)` follows [Evaluation order](docs/design.md#evaluation-order).
   `g[index()] = value();` called `index()` first; a multiple assignment such as
   `key, names[key] = "new", 8;` passed the key the earlier write had replaced, and

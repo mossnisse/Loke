@@ -190,8 +190,8 @@ emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 }
 
 // An operator, index, or slice call. A non-empty `left_place` is the address
-// of an already-evaluated left operand, and `order` is the slots of `bound` in
-// evaluation order where that is not their own.
+// of an already-evaluated left operand, read in its turn, and `order` is the
+// slots of `bound` in evaluation order where that is not their own.
 @(private)
 emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr, left_place := "", order: []int = nil) -> string {
 	symbol := symbol_of(e.c, symbol_id)
@@ -202,15 +202,10 @@ emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr, lef
 		return emit_delegated(e, symbol, bound, left_place, order)
 	}
 	info := type_of(e.c, symbol.proc_type)
-	receiver := left_place
-	if left_place != "" && !param_mode_is_pointer(info.param_modes[0]) {
-		receiver = load_place(e, info.parameters[0], left_place)
-	}
-	return emit_bound_call(e, symbol_id, callee_name(e, symbol_id), info, bound, receiver = receiver, order = order)
+	return emit_bound_call(e, symbol_id, callee_name(e, symbol_id), info, bound, receiver_place = left_place, order = order)
 }
 
-// A `distinct` newtype's forwarding overload. Only one that forwards to an
-// overload is called out of order (`form_fallback_set`).
+// A `distinct` newtype's forwarding overload.
 @(private = "file")
 emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: string, order: []int) -> string {
 	if symbol.delegate_target != INVALID_SYMBOL {
@@ -221,8 +216,16 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr, left_place: 
 	if len(bound) == 1 {
 		return emit_unary_op(e, op, underlying, emit_expr(e, bound[0]))
 	}
-	lhs := left_place != "" ? load_place(e, underlying, left_place) : emit_borrowed_operand(e, bound[0])
-	rhs := emit_borrowed_operand(e, bound[1])
+	operands: [2]string
+	for step in 0 ..< 2 {
+		index := step < len(order) ? order[step] : step
+		if index == 0 && left_place != "" {
+			operands[0] = load_place(e, underlying, left_place)
+		} else {
+			operands[index] = emit_borrowed_operand(e, bound[index])
+		}
+	}
+	lhs, rhs := operands[0], operands[1]
 	if type_is_simd(e.c, underlying) {
 		return emit_simd_binary_values(e, op, underlying, lhs, rhs)
 	}
@@ -769,12 +772,13 @@ Bound_Operands :: struct {
 }
 
 // Binds operands in evaluation order: `order`'s slots, or left to right
-// without one. `consumed` and `consuming_body` are `consumed_element_slot`'s
-// answer.
+// without one. The first operand is `receiver`, already evaluated, or what
+// `receiver_place` holds, read in its turn. `consumed` and `consuming_body` are
+// `consumed_element_slot`'s answer.
 @(private = "file")
 emit_call_operands :: proc(
 	e: ^Emitter, symbol: ^Symbol, callee_type: ^Type_Info, bound: []Expr, call_node: ^Expr_Call, order: []int,
-	receiver: string, consumed: int, consuming_body: bool,
+	receiver, receiver_place: string, consumed: int, consuming_body: bool,
 ) -> Bound_Operands {
 	scope := begin_default_scope(e, symbol)
 	defer end_default_scope(e, &scope)
@@ -792,6 +796,12 @@ emit_call_operands :: proc(
 		index := step < len(order) ? order[step] : step
 		argument := bound[index]
 		enter_default_scope(e, &scope, index, argument)
+		if index == 0 && receiver_place != "" {
+			pointer := param_mode_is_pointer(param_mode_at(callee_type, 0))
+			operands[0] = pointer ? receiver_place : load_place(e, callee_type.parameters[0], receiver_place)
+			bind_default_scope(e, &scope, 0, operands[0])
+			continue
+		}
 		if index == 0 && receiver != "" {
 			operands[0] = receiver
 			bind_default_scope(e, &scope, 0, receiver)
@@ -986,6 +996,7 @@ emit_bound_call :: proc(
 	receiver := "",
 	receiver_type := "",
 	order: []int = nil,
+	receiver_place := "",
 ) -> string {
 	if callee_type == nil {
 		return "0"
@@ -1003,7 +1014,7 @@ emit_bound_call :: proc(
 		callee = consuming_op_name(e, symbol_id)
 	}
 	order := call_node != nil ? call_node.bound_order : order
-	call := emit_call_operands(e, symbol, callee_type, bound, call_node, order, receiver, consumed, consuming_body)
+	call := emit_call_operands(e, symbol, callee_type, bound, call_node, order, receiver, receiver_place, consumed, consuming_body)
 	defer delete(call.argument_cleanups)
 
 	if convention_is_foreign(callee_type.convention) {

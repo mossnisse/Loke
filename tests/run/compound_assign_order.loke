@@ -1,8 +1,37 @@
 package main; import "core:fmt";
 
-// design.md: a compound assignment reads its destination after the right
-// operand, at compile time and at run time alike.
+// design.md "Evaluation order": a compound assignment reads its destination
+// after the right operand, at compile time and at run time alike, whether the
+// operation is built in, a user operator it falls back to, or one a distinct
+// type delegates.
 bump :: proc(p: ^mut int) -> int { p^ = 100; return 1; }
 f :: proc() -> int { x := 5; p := &mut x; x += bump(p); return x; }
 C :: f();
-main :: proc() { fmt.println(C, f()); }
+
+V :: struct { n: int }
+add :: operator(+) proc(v: V, w: V) -> V { return {v.n + w.n}; }
+reset :: proc(v: inout V) -> V { v.n = 100; return {1}; }
+
+W :: distinct V;
+impl W { delegate(+); }
+reset_w :: proc(w: inout W) -> W { w.n = 100; return W{1}; }
+
+Text :: distinct string;
+impl Text { delegate(+); }
+retext :: proc(t: inout Text) -> Text { t = Text("abc"); return Text("!"); }
+
+fallbacks :: proc() -> int {
+	v := V{1};
+	v += reset(inout v);
+	w := W{1};
+	w += reset_w(inout w);
+	t := Text("a");
+	t += retext(inout t);
+	return v.n * 10000 + w.n * 10 + string(t).len();
+}
+FALLBACKS :: fallbacks();
+
+main :: proc() {
+	fmt.println(C, f());
+	fmt.println(FALLBACKS, fallbacks());
+}

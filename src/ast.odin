@@ -380,16 +380,24 @@ Expr_Binary :: struct {
 }
 
 @(private = "file", rodata)
-SWAPPED_OPERANDS := [2]int{1, 0}
+REVERSED_OPERANDS := [2]int{1, 0}
 
 // A user operator's operands in parameter order, and those slots in evaluation
 // order where the two differ, as `Expr_Call.bound_order` holds them.
 binary_operator_operands :: proc(v: ^Expr_Binary) -> (bound: [2]Expr, order: []int) {
 	bound = v.swapped ? {v.rhs, v.lhs} : {v.lhs, v.rhs}
 	if v.swapped != v.right_first {
-		order = SWAPPED_OPERANDS[:]
+		order = REVERSED_OPERANDS[:]
 	}
 	return
+}
+
+// A compound assignment's operator operands, as `binary_operator_operands`
+// gives them. Its binary fallback reads the destination after the right
+// operand, as `right_first` orders one (design.md "Evaluation order"); a
+// direct overload takes the destination's address before it.
+compound_operator_operands :: proc(s: ^Stmt_Assign) -> (bound: [2]Expr, order: []int) {
+	return {s.lhs[0], s.rhs[0]}, s.operator_direct ? nil : REVERSED_OPERANDS[:]
 }
 
 // `a ..= b` and `a ..< b`, kept apart from Expr_Binary.

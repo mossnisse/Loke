@@ -1271,8 +1271,8 @@ walk_flow_assign_provenance :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	prov_note_assigned_procs(graph, s)
 	value_loans := make([][]int, len(s.rhs), graph.alloc)
 	if s.operator != INVALID_SYMBOL {
-		operands := make([]Expr, 2, graph.alloc)
-		operands[0], operands[1] = s.lhs[0], s.rhs[0]
+		bound, order := compound_operator_operands(s)
+		operands := slice.clone(bound[:], graph.alloc)
 		// design.md "Operator declarations": a direct compound overload is the
 		// whole statement, a call like any other.
 		if s.operator_direct {
@@ -1281,7 +1281,7 @@ walk_flow_assign_provenance :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		}
 		// The binary operator, then a write of its result.
 		result := symbol_of(graph.k.c, s.operator).result
-		value_loans[0] = prov_call(graph, prov_synthetic_call(graph, s.operator, operands, result, s.op_span))
+		value_loans[0] = prov_call(graph, prov_synthetic_call(graph, s.operator, operands, result, s.op_span, order = order))
 		prov_assign(graph, s, value_loans)
 		prov_note_overwrites(graph, s)
 		return
