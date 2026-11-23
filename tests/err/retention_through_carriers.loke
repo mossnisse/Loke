@@ -4,6 +4,7 @@ package main;
 // every root that carrier may name. That carrier is the one whose pointee holds
 // the place, read through every carrier outside it, as `b` in `p^.b^.value`, or
 // a call's result; a lock's guard reaches the lock's storage that way.
+import "core:sync";
 import "core:thread";
 
 Box :: struct { value: Option(^int), items: [dynamic]^int, keys: map[^int]int }
@@ -217,6 +218,37 @@ written_through :: proc() {
 	holder := View{view = &kept};
 	p := &mut holder;
 	set(inout p^);
+}
+
+// A `stored` argument lands only where the callee can write: what a mutable
+// carrier reaches, and an atomic behind a read-only one, not what a read-only
+// carrier points at.
+Cell :: struct { latest: sync.Atomic(Option(^int)) }
+Ref :: struct { cell: ^Cell }
+shared: static Cell = {};
+keep_through :: proc(destination: ^mut Holder, @(escape=stored) value: ^int) { destination.b.value = .some(value); }
+keep_view :: proc(destination: ^mut View, @(escape=stored) value: ^int) { destination.view = value; }
+publish :: proc(destination: ^Cell, @(escape=stored) value: ^int) { destination.latest.store(.some(value)); }
+publish_through :: proc(destination: ^mut Ref, @(escape=stored) value: ^int) { destination.cell.latest.store(.some(value)); }
+kept_through_mutable :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	keep_through(&mut holder, &value);
+}
+published :: proc() {
+	value := 42;
+	publish(&shared, &value);
+}
+published_through :: proc() {
+	value := 42;
+	r := Ref{&shared};
+	publish_through(&mut r, &value);
+}
+kept_beside_read_only :: proc() -> int {
+	value := 3;
+	holder := View{view = &kept};
+	keep_view(&mut holder, &value);
+	return holder.view^;
 }
 
 main :: proc() {}

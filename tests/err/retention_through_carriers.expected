@@ -1,54 +1,63 @@
 L0647
-@23:2
+@24:2
 this pointer borrows `value`, which does not outlive `locked`: process-lifetime storage
 L0647
-@29:2
+@30:2
 this pointer borrows `value`, which does not outlive `watched`: process-lifetime storage
 L0647
-@36:2
+@37:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@42:2
+@43:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@48:2
+@49:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@55:2
+@56:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@61:2
+@62:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@68:2
+@69:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@77:2
+@78:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@83:2
+@84:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@95:2
+@96:2
 this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
 L0647
-@101:2
+@102:2
 this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
 L0647
-@107:2
+@108:2
 this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
 L0647
-@112:2
+@113:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
 L0647
-@118:2
+@119:2
 this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
 L0513
-@132:10
+@133:10
 this pointer is used after `value`, the local it borrows, has ended
 L0513
-@146:11
+@147:11
 this pointer is used after `value`, the local it borrows, has ended
 L0646
-@156:2
+@157:2
 this pointer borrows `value`, which is not written `@(escape=stored)`, so it cannot reach `holder`
+L0647
+@236:2
+this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
+L0647
+@240:2
+this pointer borrows `value`, which does not outlive `shared`: process-lifetime storage
+L0647
+@245:2
+this pointer borrows `value`, which does not outlive `shared`: process-lifetime storage

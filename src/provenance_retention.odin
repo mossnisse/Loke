@@ -213,8 +213,8 @@ prov_call_thread_local_writes :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals
 
 // The carriers among `carriers`, a value of `type`, that a write may go
 // through: each mutable one, and in what any carrier points at, each mutable
-// one again. A read-only carrier is no destination, but a mutable one read
-// through it is. Below a truncated path, or a pointee whose type is already
+// one again. A read-only carrier is no destination unless it names an atomic
+// (`path_names_destination`), but a mutable one read through it is. Below a truncated path, or a pointee whose type is already
 // being walked, the walk goes on in the analysis (`prov_load_writable`), since
 // a recursive type reaches any depth; a read-only truncated path counts when a
 // carrier in it leads to a destination.
@@ -238,7 +238,7 @@ prov_mutable_reach :: proc(graph: ^Flow_Graph, carriers: []int, type: Type_Id, s
 		if len(selected) == 0 {
 			continue
 		}
-		if path.mutable {
+		if path_names_destination(c, path) {
 			out = prov_join(graph, out, selected)
 		}
 		info := underlying_info(c, path.type)
@@ -352,11 +352,14 @@ prov_retain_into_argument :: proc(
 		return
 	}
 	place := !packed && prov_argument_is_place(graph, v, index)
-	if !packed && !place && index == 0 && prov_receiver_is_synchronized(graph, v) {
+	synchronized := !packed && !place && index == 0 && prov_receiver_is_synchronized(graph, v)
+	if synchronized {
 		_, _, place = prov_place_of(graph, argument)
 	}
 	if !place {
-		prov_retain_through(graph, carrier, prov_parameter_type(graph, v, index), sources, v.span, retained, retained_mutable)
+		// An atomic receiver no root names, as `target.store(...)` through
+		// `target: ^sync.Atomic(...)`, is what its carrier names.
+		prov_retain_through(graph, carrier, prov_parameter_type(graph, v, index), sources, v.span, retained, retained_mutable, names_place = synchronized)
 		return
 	}
 	root, path, rooted := prov_place_of(graph, argument)
@@ -414,17 +417,18 @@ prov_link_retained_places :: proc(graph: ^Flow_Graph, sources, places: []int, mu
 }
 
 // Through an argument's carriers, of `type`, and what they reach in turn.
-// design.md "Borrows crossing between tasks": what a callee writes back rather
-// than retains lands in the storage the mutable carriers name, and below that
-// only where another mutable carrier leads (`prov_mutable_reach`), so neither
-// what `slot: ^int` points at in `publish(&mut slot)` nor a read-only field
-// beside a mutable one is a destination. Carriers that `names_place`, lent for an
-// `inout` place, are the destination themselves.
+// design.md "Retaining a borrow", "Borrows crossing between tasks": what a
+// callee keeps or writes back lands in the storage the mutable carriers name,
+// and below that only where another mutable carrier leads
+// (`prov_mutable_reach`), so neither what `slot: ^int` points at in
+// `publish(&mut slot)` nor a read-only field beside a mutable one is a
+// destination. Carriers that `names_place`, lent for an `inout` place or an
+// atomic receiver, are the destination themselves.
 @(private = "file")
 prov_retain_through :: proc(
 	graph: ^Flow_Graph, held: []int, type: Type_Id, sources: []int, span: Span, retained, retained_mutable: bool, names_place := false,
 ) {
-	carriers := names_place ? held : retained ? prov_with_content(graph, held, span) : prov_mutable_reach(graph, held, type, span)
+	carriers := names_place ? held : prov_mutable_reach(graph, held, type, span)
 	if len(carriers) == 0 {
 		return
 	}

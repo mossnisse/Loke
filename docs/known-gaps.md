@@ -7,30 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A `stored` argument is checked against storage only a read-only carrier reaches
-
-[Retaining a borrow](design.md#retaining-a-borrow) lets a callee write a
-`stored` argument's borrows into any compatible mutable destination it
-receives. The call site also checks the argument against storage a destination
-reaches only through a read-only carrier, where the callee cannot write.
-
-```loke
-package main;
-
-Holder :: struct { view: ^int }
-kept: static int = 7;
-keep :: proc(destination: ^mut Holder, @(escape=stored) value: ^int) { destination.view = value; }
-main :: proc() {
-    local := 3;
-    holder := Holder{view = &kept};
-    keep(&mut holder, &local);
-}
-```
-
-Run `lokec <file> -emit-ll`. The compiler reports `L0647`: `local` does not
-outlive `kept`, though `keep` can store only into `holder`. The same call
-through an `inout` receiver compiles.
-
 ### Unfixed decimal literals round before constant folding
 
 `static_assert(9007199254740993.0 != 9007199254740992.0);` reports

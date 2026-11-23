@@ -213,6 +213,34 @@ truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited:
 	return false
 }
 
+// design.md "Retaining a borrow": whether the storage a path's carriers name is
+// itself a destination, as a mutable carrier's is, or a read-only one's that
+// holds an atomic a borrow can be stored in. A truncated path holds every
+// carrier in its cut.
+@(private)
+path_names_destination :: proc(c: ^Compiler, path: Carrier_Path) -> bool {
+	if path.mutable || !path.truncated {
+		return path.mutable || carrier_names_atomic(c, path.type)
+	}
+	leaves := make([dynamic]Type_Id, 0, 4, context.temp_allocator)
+	walking := make(map[Type_Id]bool, context.temp_allocator)
+	carrier_leaves(c, path.cut, &leaves, &walking)
+	for leaf in leaves {
+		if carrier_names_atomic(c, leaf) {
+			return true
+		}
+	}
+	return false
+}
+
+// Whether a carrier of `type` points at an atomic that can hold a borrow, which
+// an atomic operation writes through a read-only carrier.
+@(private)
+carrier_names_atomic :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	info := underlying_info(c, type)
+	return info != nil && synchronized_field_within(c, info.element, borrowing = true) != nil
+}
+
 // Whether what a carrier points at leads to a destination through it, read-only
 // or not: a synchronized field that can hold a borrow, as design.md "Retaining a
 // borrow" lets an atomic operation store one through a read-only carrier, or a

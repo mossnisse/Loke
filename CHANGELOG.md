@@ -466,6 +466,11 @@ checklist.
 
 ### Fixed
 
+- A `stored` argument is checked only against storage the callee can write
+  ([Retaining a borrow](docs/design.md#retaining-a-borrow)). `keep(&mut holder, &local)`, with
+  `holder.view: ^int` pointing at a `static`, was `L0647`, as if `keep` could store `&local`
+  in that static through the read-only `view`. What a mutable carrier reaches, and an atomic
+  behind a read-only one, are still destinations.
 - A map lookup on the way to a store leaves its key in no map
   ([Maps](docs/design.md#maps)). `tallies[&local].n = 3`, with `tallies` a `static`
   `map[^int]Counter`, was `L0647`, as if it inserted `&local`, though only `m[key] = elem`
