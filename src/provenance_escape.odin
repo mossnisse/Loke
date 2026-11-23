@@ -8,26 +8,19 @@ import "core:fmt"
 import "core:slice"
 
 // A borrow stored where it outlives the statement, resolved as a place so fields,
-// elements, and writes through an alias are all seen.
+// elements, and writes through an alias are all seen. A place reached through
+// carriers retains where its store read them (`prov_retain_into`).
 @(private)
 prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, span: Span) {
-	if len(sources) == 0 {
-		return
-	}
 	root, _, ok := prov_place_of(graph, target)
-	// A view binding or a destination carrier retains in the storage it names.
-	through := ok ? prov_root_view(graph, root) : prov_retain_through_carrier(graph, target)
-	if len(through) > 0 {
-		prov_emit(graph, Prov_Event {
-			kind    = .Retain,
-			span    = span,
-			sources = sources,
-			root    = NO_ROOT,
-			into    = through,
-		})
+	if len(sources) == 0 || !ok {
 		return
 	}
-	if !ok { return }
+	// A view binding retains in the storage it names.
+	if through := prov_root_view(graph, root); len(through) > 0 {
+		prov_retain_into(graph, through, sources, span)
+		return
+	}
 	descriptor := graph.roots[int(root)]
 	into := retain_kind_for_root(descriptor.kind)
 	if into == .None {
@@ -43,14 +36,15 @@ prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, spa
 	})
 }
 
-// The slots of the carrier a destination is written through (`p^.view`,
-// `d[0].view`), or nil when the chain stays in lexical storage.
+// design.md "Retaining a borrow": a borrow stored into what the carriers
+// `through` may name. A store through carriers passes the ones it read
+// (`prov_read_through_carrier`): the carrier whose pointee holds the place, as
+// `b` in `p^.b^.value`, or a call's result, not the outermost.
 @(private)
-prov_retain_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> []int {
-	if carrier := prov_place_carrier(graph, prov_input_value(graph, place)); carrier != 0 {
-		return prov_carrier_slots(graph, prov_value(graph, carrier).origin)
+prov_retain_into :: proc(graph: ^Flow_Graph, through, sources: []int, span: Span) {
+	if len(through) > 0 && len(sources) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Retain, span = span, sources = sources, root = NO_ROOT, into = through})
 	}
-	return nil
 }
 
 // The last carrier crossed on the way to this place. Loading a carrier from
@@ -72,7 +66,11 @@ prov_carrier_slots :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	if root, path, ok := prov_place_of(graph, e); ok {
 		return prov_content_at(graph, root, path)
 	}
-	return prov_retain_through_carrier(graph, e)
+	// Behind a carrier (`p^.view`, `d[0].view`): the slots of that carrier.
+	if carrier := prov_place_carrier(graph, prov_input_value(graph, e)); carrier != 0 {
+		return prov_carrier_slots(graph, prov_value(graph, carrier).origin)
+	}
+	return nil
 }
 
 // An owner backed by a region the procedure received may not be returned,

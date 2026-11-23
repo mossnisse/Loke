@@ -7,33 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A lock's guard can retain a borrow beyond its lifetime
-
-[Retaining a borrow](design.md#retaining-a-borrow) requires a borrowed value to
-outlive storage that retains it, and a destination reached through a carrier
-uses every root that carrier may name. A `thread.Guard(T)` names its mutex, but
-a store through `get` is checked against the guard alone, so a process-lifetime
-`thread.Mutex(T)` keeps a pointer to a local.
-
-```loke
-package main;
-import "core:thread";
-
-cell: static thread.Mutex(Option(^int)) = {};
-publish :: proc() {
-    value := 42;
-    guard := cell.lock();
-    guard.get() = .some(&value);
-}
-main :: proc() { publish(); }
-```
-
-Run `lokec <file> -emit-ll`. The compiler emits IR. A guard of a local mutex
-that outlives the stored value is rejected with `L0513`, and the same store
-through `sync.Atomic(Option(^int)).store` is `L0647`. `Guard.get` reaches the
-value through a `rawptr`, which hides from its caller that the result is the
-mutex's storage; `thread.Monitor_Guard(T).get` does the same.
-
 ### A `stored` argument is checked against storage only a read-only carrier reaches
 
 [Retaining a borrow](design.md#retaining-a-borrow) lets a callee write a

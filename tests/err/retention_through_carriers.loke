@@ -1,0 +1,109 @@
+package main;
+
+// design.md "Retaining a borrow": a destination reached through a carrier uses
+// every root that carrier may name. That carrier is the one whose pointee holds
+// the place, read through every carrier outside it, as `b` in `p^.b^.value`, or
+// a call's result; a lock's guard reaches the lock's storage that way.
+import "core:thread";
+
+Box :: struct { value: Option(^int), items: [dynamic]^int, keys: map[^int]int }
+Holder :: struct { b: ^mut Box }
+
+cell: static Box = {};
+kept: static int = 7;
+locked: static thread.Mutex(Option(^int)) = {};
+watched: static thread.Monitor(Option(^int)) = {};
+
+box_of :: proc(holder: ^mut Holder) -> ^mut Box { return holder.b; }
+value_of :: proc(holder: inout Holder) -> inout Option(^int) { return inout holder.b.value; }
+
+guarded :: proc() {
+	value := 42;
+	guard := locked.lock();
+	guard.get() = .some(&value);
+}
+
+monitored :: proc() {
+	value := 42;
+	guard := watched.lock();
+	guard.get() = .some(&value);
+}
+
+two_hops :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	p := &mut holder;
+	p^.b^.value = .some(&value);
+}
+
+through_result :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	box_of(&mut holder).value = .some(&value);
+}
+
+through_inout_result :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	value_of(inout holder) = .some(&value);
+}
+
+appended :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	p := &mut holder;
+	p^.b^.items.append(&value);
+}
+
+appended_to_result :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	box_of(&mut holder).items.append(&value);
+}
+
+keyed :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	p := &mut holder;
+	p^.b^.keys[&value] = 1;
+}
+
+keep :: proc(destination: inout Box, @(escape=stored) value: ^int) { destination.value = .some(value); }
+
+kept_through :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	p := &mut holder;
+	keep(inout p^.b^, &value);
+}
+
+kept_through_result :: proc() {
+	value := 42;
+	holder := Holder{&mut cell};
+	keep(inout box_of(&mut holder)^, &value);
+}
+
+// What a parameter's pointer leads to is the caller's storage too.
+left_in_caller :: proc(holder: ^Holder, value: ^int) {
+	holder.b.value = .some(value);
+}
+
+// What outlives the destination may be stored, and a guard of a local lock may
+// reach a local that outlives it.
+fine :: proc() {
+	guard := locked.lock();
+	guard.get() = .some(&kept);
+	holder := Holder{&mut cell};
+	p := &mut holder;
+	p^.b^.value = .some(&kept);
+	keep(inout p^.b^, &kept);
+	box_of(&mut holder).items.append(&kept);
+	value := 1;
+	local: thread.Mutex(Option(^int)) = {};
+	{
+		inner := local.lock();
+		inner.get() = .some(&value);
+	}
+}
+
+main :: proc() {}

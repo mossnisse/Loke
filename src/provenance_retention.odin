@@ -359,13 +359,16 @@ prov_retain_into_argument :: proc(
 		prov_retain_through(graph, carrier, prov_parameter_type(graph, v, index), sources, v.span, retained, retained_mutable)
 		return
 	}
+	root, path, rooted := prov_place_of(graph, argument)
+	if !rooted {
+		// `inout p^.b^`: the carrier the call lends names the place
+		// (`prov_lend_carrier`), read through every carrier outside it.
+		prov_retain_through(graph, carrier, prov_parameter_type(graph, v, index), sources, v.span, retained, retained_mutable, names_place = true)
+		return
+	}
 	// `inout p` with `p: ^mut T`: through `p` as well as into it.
 	if prov_type_reaches_destination(graph.k.c, prov_type(graph, argument)) {
 		prov_retain_through(graph, prov_carrier_slots(graph, argument), prov_type(graph, argument), sources, v.span, retained, retained_mutable)
-	}
-	root, path, ok := prov_place_of(graph, argument)
-	if !ok {
-		return
 	}
 	prov_retain_escape(graph, argument, sources, v.span)
 	slots := prov_content_at(graph, root, path)
@@ -407,10 +410,13 @@ prov_link_retained_places :: proc(graph: ^Flow_Graph, sources, places: []int, mu
 // than retains lands in the storage the mutable carriers name, and below that
 // only where another mutable carrier leads (`prov_mutable_reach`), so neither
 // what `slot: ^int` points at in `publish(&mut slot)` nor a read-only field
-// beside a mutable one is a destination.
+// beside a mutable one is a destination. Carriers that `names_place`, lent for an
+// `inout` place, are destinations themselves, with what they reach.
 @(private = "file")
-prov_retain_through :: proc(graph: ^Flow_Graph, held: []int, type: Type_Id, sources: []int, span: Span, retained, retained_mutable: bool) {
-	carriers := retained ? prov_with_content(graph, held, span) : prov_mutable_reach(graph, held, type, span)
+prov_retain_through :: proc(
+	graph: ^Flow_Graph, held: []int, type: Type_Id, sources: []int, span: Span, retained, retained_mutable: bool, names_place := false,
+) {
+	carriers := retained || names_place ? prov_with_content(graph, held, span) : prov_mutable_reach(graph, held, type, span)
 	if len(carriers) == 0 {
 		return
 	}

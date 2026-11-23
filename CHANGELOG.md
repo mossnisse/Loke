@@ -149,6 +149,21 @@ checklist.
   value := strconv.try_parse_f64(text) or_else 0.0;   // before
   value := strconv.parse_f64(text) or_else 0.0;       // after
   ```
+- A store through carriers retains its borrow in what the innermost carrier names
+  ([Retaining a borrow](docs/design.md#retaining-a-borrow)). `p^.b^.value = .some(&local)`,
+  where `b` points at `static` storage, compiled: the store was checked against what `p` names,
+  not `b`. So did a store through a call's result, as `box_of(&mut holder).value = ...` or an
+  `inout` result's `value_of(inout holder) = ...`, an `append`, map key, or `@(escape=stored)`
+  argument's `inout p^.b^` destination reached either way, and a store through a lock's guard: `guard.get() = .some(&local)` on a `static`
+  `thread.Mutex(Option(^int))` or `thread.Monitor` left a pointer to a local in the lock. Each
+  is now `L0647`, or `L0646` for a parameter not written `@(escape=stored)`, as for the same
+  store into the named place. Upgrade by keeping what such a store names alive for as long as
+  its destination:
+
+  ```
+  guard.get() = .some(&local);   // before: `local` ends while `cell` holds it
+  guard.get() = .some(&kept);    // after: `kept` is `static`
+  ```
 
 ### Added
 

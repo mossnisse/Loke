@@ -450,18 +450,19 @@ prov_root_place :: proc(graph: ^Flow_Graph, place: Prov_Place) -> (Root_Id, []Pr
 }
 
 // Walks a place chain's index expressions; the place is one access, not one per
-// link.
+// link. A store publishing map keys passes `through`, the carrier slots it read
+// that hold the place, if any (`prov_read_through_carrier`).
 @(private)
-prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := false) {
+prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := false, through: []int = nil) {
 	#partial switch v in e {
 	case ^Expr_Selector:
-		prov_walk_subscripts(graph, v.operand, publish_map_keys)
+		prov_walk_subscripts(graph, v.operand, publish_map_keys, through)
 	case ^Expr_Postfix:
 		if v.boxed {
-			prov_walk_subscripts(graph, v.operand, publish_map_keys)
+			prov_walk_subscripts(graph, v.operand, publish_map_keys, through)
 		}
 	case ^Expr_Index:
-		prov_walk_subscripts(graph, v.operand, publish_map_keys)
+		prov_walk_subscripts(graph, v.operand, publish_map_keys, through)
 		key_sources: []int
 		for index, position in v.indices {
 			loans := walk_flow_expr(graph, index)
@@ -473,7 +474,7 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := fa
 			// A map index hashes its key and compares it with the stored ones.
 			prov_key_effects(graph, prov_type(graph, v.operand), v.span)
 			if publish_map_keys && len(v.indices) == 1 {
-				prov_publish_map_key(graph, v, key_sources)
+				prov_publish_map_key(graph, v, key_sources, through)
 			}
 		}
 	}
@@ -482,7 +483,7 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := fa
 // Assigning through a map place may insert its key; an existing equal key stays,
 // so the key dependency joins.
 @(private = "file")
-prov_publish_map_key :: proc(graph: ^Flow_Graph, v: ^Expr_Index, key_sources: []int) {
+prov_publish_map_key :: proc(graph: ^Flow_Graph, v: ^Expr_Index, key_sources, through: []int) {
 	map_type := prov_type(graph, v.operand)
 	key_type := underlying_info(graph.k.c, map_type).key
 	prov_copy_effects(graph, key_type, v.span)
@@ -491,7 +492,8 @@ prov_publish_map_key :: proc(graph: ^Flow_Graph, v: ^Expr_Index, key_sources: []
 	if !ok {
 		prov_store_map_key_region(graph, prov_input_value(graph, v.operand), prov_input_value(graph, v.indices[0]))
 		// Reached through a carrier: publish to what it may name.
-		if through := prov_retain_through_carrier(graph, v.operand); len(through) > 0 {
+		prov_retain_into(graph, through, key_sources, v.span)
+		if len(through) > 0 {
 			prov_reborrow(graph, key_sources, key_type)
 			prov_emit(graph, Prov_Event {
 				kind = .Publish, span = v.span, sources = key_sources, into = through,

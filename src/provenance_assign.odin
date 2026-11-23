@@ -436,12 +436,13 @@ prov_assign_through_carrier :: proc(
 	if len(through) == 0 && !walked {
 		return false
 	}
+	prov_retain_into(graph, through, sources, expr_span(target))
 	if !walked {
 		prov_write_through(graph, through, below, expr_span(target), "write", target)
 	}
 	prov_store_region(graph, prov_input_value(graph, target), prov_input_value(graph, value))
 	if !walked {
-		prov_walk_subscripts(graph, target, true)
+		prov_walk_subscripts(graph, target, true, through)
 	}
 	if len(through) > 0 {
 		prov_publish_store(graph, s, target, sources, through, below, permutes, replaces_read)

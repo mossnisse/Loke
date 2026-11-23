@@ -96,11 +96,11 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	if len(stored) == 0 {
 		return
 	}
-	// Also covers a receiver reached through a carrier.
 	prov_retain_escape(graph, receiver, stored, v.span)
 	root, path, ok := prov_place_of(graph, receiver)
 	if !ok {
 		through, _, _ := prov_read_through_carrier(graph, receiver, store = true)
+		prov_retain_into(graph, through, stored, v.span)
 		for part in parts[:count] {
 			prov_publish_contained(graph, through, part.actual, part.type, v.span)
 		}

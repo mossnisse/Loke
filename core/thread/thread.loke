@@ -284,6 +284,9 @@ impl Guard($T) {
 		The guarded value, for as long as this guard holds the lock: an `inout`
 		result borrows the guard, so nothing reached through it outlives the lock.
 	*/
+	// The result names whatever the guard reaches, its mutex among them, so
+	// a borrow stored into it must outlive the mutex (design.md "Retaining a
+	// borrow"), though the `rawptr` hides which storage it is.
 	get :: proc(self: inout) -> inout T {
 		return inout (^mut T)(rawptr(&self.mutex.value))^;
 	}
