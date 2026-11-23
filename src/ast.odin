@@ -970,6 +970,9 @@ Stmt_Assign :: struct {
 	// The lowering's own writes, whose setter destinations read only what it
 	// bound, so it is not lowered again.
 	prepared:        bool,
+	// The lowering's `_ = a[i0]`: it prepares the element's place, as a
+	// destination is prepared, checking its bounds in its turn, and reads nothing.
+	checks_bounds:   bool,
 	// `grid[x, y] += v` through `operator([])` and `operator([]=)`: the checked
 	// block later phases run instead of this statement.
 	lowered:         ^Block,

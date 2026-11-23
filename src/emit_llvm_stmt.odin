@@ -394,6 +394,10 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		emit_compound_assign(e, s)
 		return
 	}
+	if s.checks_bounds {
+		emit_address(e, s.rhs[0])
+		return
+	}
 	if s.destructure.active {
 		emit_destructure_assign(e, s)
 		return

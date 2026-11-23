@@ -129,6 +129,11 @@ builtin_indexes :: proc(info: ^Type_Info, indices: int) -> bool {
 
 // Whether `check_index` answers `operand[...]` itself.
 index_is_builtin :: proc(c: ^Compiler, operand: Type_Id, indices: int) -> bool {
+	return builtin_indexes(indexed_subject(c, operand), indices)
+}
+
+// What `operand[...]` indexes: a box's payload, or what a pointer points at.
+indexed_subject :: proc(c: ^Compiler, operand: Type_Id) -> ^Type_Info {
 	subject := operand
 	if payload, boxed := index_box_payload(c, subject); boxed {
 		subject = payload
@@ -137,7 +142,7 @@ index_is_builtin :: proc(c: ^Compiler, operand: Type_Id, indices: int) -> bool {
 	if info != nil && info.kind == .Pointer {
 		info = type_of(c, info.element)
 	}
-	return builtin_indexes(info, indices)
+	return info
 }
 
 // `a[i]` for a fixed array.

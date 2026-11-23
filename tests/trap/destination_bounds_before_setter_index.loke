@@ -1,0 +1,25 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": destinations are prepared from left to right,
+// so the bounds check of `a[i]` panics before the setter destination's index
+// `key()` is evaluated.
+Grid :: struct { cells: [3]int }
+
+impl Grid {
+	get :: operator([]) proc(self: Grid, key: int) -> int { return self.cells[key]; }
+	set :: operator([]=) proc(self: inout Grid, key: int, value: int) { self.cells[key] = value; }
+}
+
+key :: proc() -> int {
+	fmt.println("key");
+	return 0;
+}
+
+main :: proc() {
+	g := Grid{};
+	a := [2]int{};
+	i := 2;
+	a[i], g[key()] = 7, 8;
+}

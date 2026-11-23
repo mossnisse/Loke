@@ -79,4 +79,10 @@ main :: proc() {
 	s := first[mut :];
 	s, g[0], s[1] = second[mut :], 7, 9;
 	fmt.println(first, second);
+	// An element checked in its turn, before `index()`, holds no borrow, so a
+	// mutable slice of its array may still be another destination.
+	whole := [2]int{};
+	part := whole[mut :];
+	part[1], whole[0], g[index()] = 5, 6, 7;
+	fmt.println(whole);
 }

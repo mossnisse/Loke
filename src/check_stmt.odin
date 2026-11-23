@@ -788,7 +788,10 @@ written_root :: proc(e: Expr) -> Expr {
 // assignment does, and writes from left to right, calling each setter in its
 // turn. A destination that is neither indexed nor an effect-free place, or is
 // reached through a pointer another destination rewrites, is bound by address,
-// and a literal value is written where it is used. A lone setter destination
+// and a literal value is written where it is used. An element whose bounds the
+// last statement would check after a later destination's binding ran a call
+// or a check is prepared in its own turn too, by `_ = a[i0];` marked
+// `checks_bounds`. A lone setter destination
 // is checked as written, as its call, unless both its value and its indices
 // have effects to order.
 @(private = "file")
@@ -834,6 +837,14 @@ lower_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 		if indexed, is_index := target.(^Expr_Index); is_index {
 			receiver, index_names := bind_index_place(k, &stmts, indexed, prefix, span, changing)
 			append(&destinations, lowered_index(k, indexed, index_names, receiver, span))
+			// An element's bounds are checked in its turn, holding no borrow,
+			// when a later destination's binding has an effect.
+			if later_binding_has_effect(s.lhs[position + 1:]) && index_checks_bounds(k, indexed) {
+				checked := lowered_index(k, indexed, index_names, receiver, span)
+				check := synth_assign(k.c, {synth_ident(k.c, "_", span)}, {checked}, s.op_span, span)
+				check.checks_bounds = true
+				append(&stmts, check)
+			}
 		} else if is_effect_free_place(target) && !reached_through_changing(target, changing) {
 			append(&destinations, clone_expr(k.c, target))
 		} else {
@@ -848,6 +859,53 @@ lower_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	append(&stmts, writes)
 	check_lowered_block(k, s, stmts[:], scope)
 	return true
+}
+
+// Whether binding one of `targets` in `lower_setter_assign` runs a call or a
+// check that may panic: a receiver or place other than an effect-free one, or
+// an index other than a name or literal.
+@(private = "file")
+later_binding_has_effect :: proc(targets: []Expr) -> bool {
+	for target in targets {
+		indexed, is_index := target.(^Expr_Index)
+		if !is_index {
+			if !is_effect_free_place(target) {
+				return true
+			}
+			continue
+		}
+		if !is_effect_free_place(indexed.operand) {
+			return true
+		}
+		for index in indexed.indices {
+			if !lowered_pure(index) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Whether preparing `target` only checks its bounds, so preparing it twice is
+// the same as once: built-in indexing of an array, slice, or vector, but not
+// of a map, whose store inserts. Asked of a copy under a probe.
+@(private = "file")
+index_checks_bounds :: proc(k: ^Checker, target: ^Expr_Index) -> bool {
+	probe := begin_probe(k.c)
+	defer end_probe(k.c, probe)
+	operand := check_single_expr(k, clone_expr(k.c, target.operand), position = .Place)
+	if operand == INVALID_TYPE || len(target.indices) != 1 {
+		return false
+	}
+	info := indexed_subject(k.c, operand)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Array, .Slice, .Dynamic_Array, .Simd:
+		return true
+	}
+	return false
 }
 
 // Whether `target = value` must hold its value before preparing the

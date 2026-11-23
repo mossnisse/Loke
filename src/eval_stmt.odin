@@ -241,6 +241,10 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	if s.op != .Assign {
 		return eval_compound_assign(ev, s)
 	}
+	if s.checks_bounds {
+		_, ok := eval_place(ev, s.rhs[0])
+		return ok ? .Normal : .Fail
+	}
 	if s.destructure.active {
 		values, ok := eval_destructure(ev, &s.destructure, s.rhs[0])
 		if !ok { return .Fail }
