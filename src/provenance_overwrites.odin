@@ -47,8 +47,8 @@ prov_note_overwrites :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	if graph.current == NO_BLOCK || graph.replaying_facts {
 		return
 	}
-	for target in s.lhs {
-		if is_discard(target) {
+	for target, index in s.lhs {
+		if is_discard(target) || assign_setter(s, index) != nil {
 			continue
 		}
 		place := prov_input_place(graph, target)

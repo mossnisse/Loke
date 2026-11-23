@@ -61,7 +61,7 @@ ast_clone_classifies_every_node_field :: proc(t: ^testing.T) {
 		{Decl, "kind names duration declared_type via values top_level", "symbols value_clones destructure sig_state check_state check_failed"},
 		{Stmt_Error, "partial", ""},
 		{Stmt_Expr, "exprs", ""},
-		{Stmt_Assign, "op op_span lhs rhs", "rhs_clones destination_live destructure operator operator_direct place_setter setter_bound lowered"},
+		{Stmt_Assign, "op op_span lhs rhs", "rhs_clones destination_live destructure operator operator_direct setters prepared lowered"},
 		{Stmt_If, "init cond then otherwise", ""},
 		{Stmt_For, "init cond post body condition_only", ""},
 		{Stmt_Foreach, "bindings iterable body", "kind reversed indexed element_type item_type borrows count iterator_type iter_symbol next_symbol expansion"},

@@ -238,12 +238,6 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	if s.lowered != nil {
 		return eval_block(ev, s.lowered)
 	}
-	// design.md "Indexing and slicing": `grid[x, y] = v` calls `operator([]=)`
-	// with the arguments the checker bound.
-	if s.place_setter != INVALID_SYMBOL {
-		_, ok := eval_operator_call(ev, s.place_setter, s.setter_bound, s.op_span)
-		return ok ? .Normal : .Fail
-	}
 	if s.op != .Assign {
 		return eval_compound_assign(ev, s)
 	}
@@ -258,32 +252,44 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 				values[index] = widen_eval_value(ev.k.c, values[index], from, to)
 			}
 		}
-		return eval_write_targets(ev, s.lhs, values)
+		return eval_write_targets(ev, s, values)
 	}
 	// The array is scratch: each write copies a value out.
 	values, value_err := make([]Eval_Value, len(s.rhs), ev.alloc)
 	if value_err != nil { return .Fail }
 	defer delete(values, ev.alloc)
 	for value, index in s.rhs {
+		if assign_setter(s, index) != nil {
+			continue
+		}
 		copied, ok := eval_copied(ev, value)
 		if !ok { return .Fail }
 		values[index] = copied
 	}
-	return eval_write_targets(ev, s.lhs, values)
+	return eval_write_targets(ev, s, values)
 }
 
 // design.md "Assignment statements": values, then destinations, then writes.
+// design.md "Indexing and slicing": a setter destination's write calls
+// `operator([]=)` with the arguments the checker bound, its value among them.
 @(private = "file")
-eval_write_targets :: proc(ev: ^Evaluator, targets: []Expr, values: []Eval_Value) -> Eval_Flow {
-	destinations, err := make([]Eval_Destination, len(targets), ev.alloc)
+eval_write_targets :: proc(ev: ^Evaluator, s: ^Stmt_Assign, values: []Eval_Value) -> Eval_Flow {
+	destinations, err := make([]Eval_Destination, len(s.lhs), ev.alloc)
 	if err != nil { return .Fail }
 	defer delete(destinations, ev.alloc)
-	for target, index in targets {
+	for target, index in s.lhs {
+		if assign_setter(s, index) != nil {
+			continue
+		}
 		destination, ok := eval_destination(ev, target)
 		if !ok { return .Fail }
 		destinations[index] = destination
 	}
 	for destination, index in destinations {
+		if setter := assign_setter(s, index); setter != nil {
+			if _, ok := eval_operator_call(ev, setter.symbol, setter.bound, s.op_span); !ok { return .Fail }
+			continue
+		}
 		slot, ok := destination_slot(ev, destination)
 		if !ok { return .Fail }
 		retyped := values[index]

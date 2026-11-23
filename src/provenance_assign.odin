@@ -216,6 +216,12 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	permutes := prov_assign_permutes(graph, s)
 	clones := s.destructure.active ? s.destructure.clones : s.rhs_clones
 	for target, index in s.lhs {
+		// design.md "Operator declarations": an `operator([]=)` destination's
+		// write is a call like any other, made in its turn.
+		if setter := assign_setter(s, index); setter != nil {
+			prov_call(graph, prov_synthetic_call(graph, setter.symbol, setter.bound, TYPE_VOID, expr_span(target), indexes = true))
+			continue
+		}
 		copies := index < len(clones) && clones[index]
 		source: []Proj_Step
 		if s.destructure.active { source = {proj_field(prov_destructure_index(graph.k.c, &s.destructure, index))} }
@@ -365,7 +371,10 @@ prov_assign_redefines :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) -> []int {
 	if len(s.lhs) == 1 {
 		return written[:]
 	}
-	for target in s.lhs {
+	for target, index in s.lhs {
+		if assign_setter(s, index) != nil {
+			continue
+		}
 		if ident, is_ident := target.(^Expr_Ident); is_ident {
 			if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
 				append(&written, slot)
@@ -390,7 +399,7 @@ prov_assign_destinations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, written: [
 	}
 	destinations := make([]Prov_Destination, len(s.lhs), graph.alloc)
 	for target, index in s.lhs {
-		if _, is_ident := target.(^Expr_Ident); is_ident {
+		if _, is_ident := target.(^Expr_Ident); is_ident || assign_setter(s, index) != nil {
 			continue
 		}
 		if _, _, place_ok := prov_place_of(graph, target); place_ok {
@@ -522,7 +531,7 @@ prov_store_keeps_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // (`Carrier_Move`).
 @(private)
 prov_assign_permutes :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) -> bool {
-	if len(s.lhs) < 2 || len(s.lhs) != len(s.rhs) || s.op != .Assign {
+	if len(s.lhs) < 2 || len(s.lhs) != len(s.rhs) || s.op != .Assign || s.setters != nil {
 		return false
 	}
 	used := make([]bool, len(s.lhs), graph.alloc)

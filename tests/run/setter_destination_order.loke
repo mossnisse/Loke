@@ -72,4 +72,11 @@ main :: proc() {
 	q := &mut g;
 	q, q^[1] = &mut h, 4;
 	fmt.println(g.cells[1], h.cells[1]);
+	// `s[1]` is prepared before any write, so it is in the slice `s` held
+	// before the statement.
+	first := [2]int{1, 2};
+	second := [2]int{3, 4};
+	s := first[mut :];
+	s, g[0], s[1] = second[mut :], 7, 9;
+	fmt.println(first, second);
 }

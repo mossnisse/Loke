@@ -53,6 +53,21 @@ compute :: proc() -> int {
 
 VALUE :: compute();
 
+// design.md "Evaluation order": every other destination is prepared before a
+// setter writes, so `s[1]` is in the slice `s` held before the statement.
+prepared_first :: proc() -> int {
+	g := Grid{};
+	first := [2]int{1, 2};
+	second := [2]int{3, 4};
+	s := first[mut :];
+	s, g[0, 0], s[1] = second[mut :], 7, 9;
+	g[1, 0], g[0, 1] = 5, 6;
+	return first[1]*10000 + second[1]*1000 + g.cells[0] + g.cells[1] + g.cells[2];
+}
+
+PREPARED_FIRST :: prepared_first();
+
 main :: proc() {
 	fmt.println(VALUE, compute());
+	fmt.println(PREPARED_FIRST, prepared_first());
 }

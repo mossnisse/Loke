@@ -512,7 +512,7 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		}
 		// `grid[x, y] = v` on a container with no location to hand out.
 		if indexed, is_index := target.(^Expr_Index); is_index {
-			if check_place_setter(k, s, indexed, s.rhs[index]) {
+			if check_place_setter(k, s, index, indexed) {
 				continue
 			}
 		}
@@ -570,12 +570,16 @@ reject_destructured_conversion :: proc(k: ^Checker, field, destination: Type_Id,
 // returning `inout` exists, so a type that can supply an address still gets an
 // ordinary store.
 @(private = "file")
-check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, value: Expr) -> bool {
+check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, index: int, target: ^Expr_Index) -> bool {
 	setters := place_setters(k, target)
 	if setters == nil {
 		return false
 	}
-	s.place_setter, s.setter_bound = resolve_place_setter(k, s.op_span, target, value, setters)
+	if s.setters == nil {
+		s.setters = make([]Place_Setter, len(s.lhs), k.c.semantic_allocator)
+	}
+	chosen := &s.setters[index]
+	chosen.symbol, chosen.bound = resolve_place_setter(k, s.op_span, target, s.rhs[index], setters)
 	return true
 }
 
@@ -776,18 +780,20 @@ written_root :: proc(e: Expr) -> Expr {
 // design.md "Evaluation order": an assignment with an `operator([]=)`
 // destination is checked as the block
 //
-//     { v0: T0 = a; v1: T1 = b; r0 := &mut grid; i0 := i; r0^[i0] = v0; x = v1; }
+//     { v0: T0 = a; v1: T1 = b; r0 := &mut grid; i0 := i; r0^[i0], x = v0, v1; }
 //
 // so every value is evaluated, at the type its destination gives it, then every
-// destination's receiver and indices, then each write, the setter call among
-// them, from left to right. A destination that is neither indexed nor an
-// effect-free place, or is reached through a pointer another destination
-// rewrites, is bound by address, and a literal value is written where it is
-// used. A lone setter destination is checked as written, as its call,
-// unless both its value and its indices have effects to order.
+// destination's receiver and indices. The last statement, `prepared`, then
+// prepares each other destination's place before any write, as an ordinary
+// assignment does, and writes from left to right, calling each setter in its
+// turn. A destination that is neither indexed nor an effect-free place, or is
+// reached through a pointer another destination rewrites, is bound by address,
+// and a literal value is written where it is used. A lone setter destination
+// is checked as written, as its call, unless both its value and its indices
+// have effects to order.
 @(private = "file")
 lower_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
-	if !any_place_setter(k, s.lhs) {
+	if s.prepared || !any_place_setter(k, s.lhs) {
 		return false
 	}
 	if len(s.lhs) == 1 && !setter_order_matters(k, s.lhs[0].(^Expr_Index), s.rhs[0]) {
@@ -818,7 +824,8 @@ lower_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 		values[position] = synth_ident(k.c, name, span)
 	}
 	changing := Changed_Names{written = s.lhs}
-	destinations := make([]Expr, len(s.lhs), context.temp_allocator)
+	destinations := make([dynamic]Expr, 0, len(s.lhs), context.temp_allocator)
+	written := make([dynamic]Expr, 0, len(s.lhs), context.temp_allocator)
 	for target, position in s.lhs {
 		if is_discard(target) {
 			continue
@@ -826,20 +833,19 @@ lower_setter_assign :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 		prefix := lowered_position_name(k, "assign$", position, "$")
 		if indexed, is_index := target.(^Expr_Index); is_index {
 			receiver, index_names := bind_index_place(k, &stmts, indexed, prefix, span, changing)
-			destinations[position] = lowered_index(k, indexed, index_names, receiver, span)
+			append(&destinations, lowered_index(k, indexed, index_names, receiver, span))
 		} else if is_effect_free_place(target) && !reached_through_changing(target, changing) {
-			destinations[position] = clone_expr(k.c, target)
+			append(&destinations, clone_expr(k.c, target))
 		} else {
 			name := concat(k.c, prefix, "place")
 			append(&stmts, synth_decl(k.c, .Var, name, lowered_address(k, target, span), span))
-			destinations[position] = synth_deref(k.c, synth_ident(k.c, name, span), span)
+			append(&destinations, synth_deref(k.c, synth_ident(k.c, name, span), span))
 		}
+		append(&written, values[position])
 	}
-	for destination, position in destinations {
-		if destination != nil {
-			append(&stmts, synth_assign(k.c, {destination}, {values[position]}, s.op_span, span))
-		}
-	}
+	writes := synth_assign(k.c, destinations[:], written[:], s.op_span, span)
+	writes.prepared = true
+	append(&stmts, writes)
 	check_lowered_block(k, s, stmts[:], scope)
 	return true
 }

@@ -353,7 +353,7 @@ emit_destructure_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		roots[index] = place_root_symbol(target)
 	}
 	values, guards := emit_destructure_fields(e, plan, s.rhs[0], roots)
-	destinations := emit_destinations(e, s.lhs)
+	destinations := emit_destinations(e, s)
 	for target, index in s.lhs {
 		if is_discard(target) {
 			continue
@@ -382,7 +382,8 @@ declare_local :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 }
 
 // design.md "Assignment statements": every value, then every destination
-// address, then the writes.
+// address, then the writes. A setter destination's call is its write, and
+// reads its value then; the checker left nothing there to order.
 @(private = "file")
 emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	if s.lowered != nil {
@@ -391,10 +392,6 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	}
 	if s.op != .Assign {
 		emit_compound_assign(e, s)
-		return
-	}
-	if s.place_setter != INVALID_SYMBOL {
-		emit_operator_call(e, s.place_setter, s.setter_bound)
 		return
 	}
 	if s.destructure.active {
@@ -408,6 +405,9 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	guards := make([]Deferred, len(s.rhs))
 	for value, index in s.rhs {
 		target := s.lhs[index]
+		if assign_setter(s, index) != nil {
+			continue
+		}
 		type := expr_base(target).type
 		clones := index < len(s.rhs_clones) && s.rhs_clones[index]
 		values[index] = emit_copied_expr(e, value, type, clones, destination = place_root_symbol(target))
@@ -415,18 +415,20 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 			guards[index] = hold_temporary_value(e, type, values[index])
 		}
 	}
-	destinations := emit_destinations(e, s.lhs)
+	destinations := emit_destinations(e, s)
 	for target, index in s.lhs {
-		if is_discard(target) {
+		if setter := assign_setter(s, index); setter != nil {
+			emit_operator_call(e, setter.symbol, setter.bound)
+		} else if is_discard(target) {
 			emit_discarded_temporary(e, s.rhs[index], values[index])
-			continue
+		} else {
+			emit_destination_write(e, s, destinations, index, expr_base(target).type, values[index], guards[index])
 		}
-		emit_destination_write(e, s, destinations, index, expr_base(target).type, values[index], guards[index])
 	}
 }
 
 // Where each write of an assignment goes: `addresses` for a place, `inserting`
-// for `m[key] = elem`, and neither for a `_`.
+// for `m[key] = elem`, and neither for a `_` or a setter.
 @(private = "file")
 Assign_Destinations :: struct {
 	addresses: []string,
@@ -434,10 +436,11 @@ Assign_Destinations :: struct {
 }
 
 @(private = "file")
-emit_destinations :: proc(e: ^Emitter, targets: []Expr) -> Assign_Destinations {
+emit_destinations :: proc(e: ^Emitter, s: ^Stmt_Assign) -> Assign_Destinations {
+	targets := s.lhs
 	out := Assign_Destinations{make([]string, len(targets)), make([]Map_Assignment_Destination, len(targets))}
 	for target, index in targets {
-		if is_discard(target) {
+		if is_discard(target) || assign_setter(s, index) != nil {
 			continue
 		}
 		if entry := inserting_map_index(target); entry != nil {

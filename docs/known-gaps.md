@@ -7,11 +7,12 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A multiple assignment through a setter writes before its other destinations are prepared
+### A bounds check waits for a later setter destination's indices
 
-[Evaluation order](design.md#evaluation-order) prepares every destination before
-any write. A destination that calls `operator([]=)` is written while the
-destinations after it are still unprepared.
+[Evaluation order](design.md#evaluation-order) prepares destinations from left
+to right. In a multiple assignment through `operator([]=)`, an ordinary
+destination's bounds check runs after every setter destination's receiver and
+indices are evaluated, even one to its right.
 
 ```loke
 package main;
@@ -22,21 +23,19 @@ impl Grid {
     get :: operator([]) proc(self: Grid, key: int) -> int { return self.cells[key]; }
     set :: operator([]=) proc(self: inout Grid, key: int, value: int) { self.cells[key] = value; }
 }
+key :: proc() -> int { fmt.println("key"); return 0; }
 main :: proc() {
     g := Grid{};
-    first := [2]int{1, 2};
-    second := [2]int{3, 4};
-    s := first[mut :];
-    s, g[0], s[1] = second[mut :], 7, 9;
-    fmt.println(first, second);
+    a := [2]int{};
+    i := 2;
+    a[i], g[key()] = 7, 8;
 }
 ```
 
-The program prints `[1, 2] [3, 9]`: `s[1]` writes into the slice assigned to `s`
-by the same statement. Without `g[0]` it prints `[1, 9] [3, 4]`. Likewise, in
-`g[0], a[i] = 7, 8;` with `i` out of bounds the setter runs before the bounds
-check panics. Fixing both moves the setter call into the ordinary assignment's
-destination preparation in the emitter, control-flow graph, and evaluator.
+The program prints `key` before the panic. The checker's lowering binds each
+setter destination's indices to temporaries, and the final assignment then
+prepares the ordinary places. Binding the ordinary place by address would order
+the check but hold a mutable borrow across the later destinations.
 
 ### A compound assignment cannot view its operator's result
 

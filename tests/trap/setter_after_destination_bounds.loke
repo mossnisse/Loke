@@ -1,0 +1,22 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Evaluation order": every destination is prepared before any
+// write, so the bounds check of `a[i]` panics before the setter of `g[0]` runs.
+Grid :: struct { cells: [3]int }
+
+impl Grid {
+	get :: operator([]) proc(self: Grid, key: int) -> int { return self.cells[key]; }
+	set :: operator([]=) proc(self: inout Grid, key: int, value: int) {
+		fmt.println("set", key, value);
+		self.cells[key] = value;
+	}
+}
+
+main :: proc() {
+	g := Grid{};
+	a := [2]int{};
+	i := 2;
+	g[0], a[i] = 7, 8;
+}

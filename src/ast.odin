@@ -964,12 +964,30 @@ Stmt_Assign :: struct {
 	// A user `+=`, or the `+` it falls back to; INVALID_SYMBOL when built in.
 	operator:        Symbol_Id,
 	operator_direct: bool,
-	// `grid[x, y] = v` through `operator([]=)`, bound in parameter order.
-	place_setter:    Symbol_Id,
-	setter_bound:    []Expr,
+	// Per destination, nil when none: a `grid[x, y] = v` that calls
+	// `operator([]=)` as its write.
+	setters:         []Place_Setter,
+	// The lowering's own writes, whose setter destinations read only what it
+	// bound, so it is not lowered again.
+	prepared:        bool,
 	// `grid[x, y] += v` through `operator([])` and `operator([]=)`: the checked
 	// block later phases run instead of this statement.
 	lowered:         ^Block,
+}
+
+// An `operator([]=)` call, its arguments bound in parameter order; `symbol` is
+// INVALID_SYMBOL when the destination is an ordinary place.
+Place_Setter :: struct {
+	symbol: Symbol_Id,
+	bound:  []Expr,
+}
+
+// The setter destination `index` of `s` calls, or nil for an ordinary place.
+assign_setter :: proc(s: ^Stmt_Assign, index: int) -> ^Place_Setter {
+	if index < len(s.setters) && s.setters[index].symbol != INVALID_SYMBOL {
+		return &s.setters[index]
+	}
+	return nil
 }
 
 Stmt_If :: struct {

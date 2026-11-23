@@ -412,7 +412,8 @@ link_unwind_after_moves :: proc(graph: ^Flow_Graph, e: Expr) {
 }
 
 // So do an assignment's writes when they run a `drop` hook: each drops its
-// destination's old value first, and `_ =` drops the value itself.
+// destination's old value first, and `_ =` drops the value itself. A setter
+// destination's write is a call.
 @(private = "file")
 link_unwind_before_writes :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	if s.op != .Assign || !moved_since_unwind_link(graph) {
@@ -420,7 +421,7 @@ link_unwind_before_writes :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	}
 	for target, index in s.lhs {
 		dropped := is_discard(target) && index < len(s.rhs) ? expr_base(s.rhs[index]) : expr_base(target)
-		if dropped != nil && type_drop_runs_hook(graph.k.c, dropped.type) {
+		if assign_setter(s, index) != nil || dropped != nil && type_drop_runs_hook(graph.k.c, dropped.type) {
 			link_unwind(graph)
 			return
 		}
@@ -1263,16 +1264,12 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 @(private = "file")
 walk_flow_assign_provenance :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	prov_note_assigned_procs(graph, s)
-	// design.md "Operator declarations": `operator([]=)` and a direct compound
-	// overload are the whole statement, a call like any other.
-	if s.place_setter != INVALID_SYMBOL {
-		prov_call(graph, prov_synthetic_call(graph, s.place_setter, s.setter_bound, TYPE_VOID, s.op_span, indexes = true))
-		return
-	}
 	value_loans := make([][]int, len(s.rhs), graph.alloc)
 	if s.operator != INVALID_SYMBOL {
 		operands := make([]Expr, 2, graph.alloc)
 		operands[0], operands[1] = s.lhs[0], s.rhs[0]
+		// design.md "Operator declarations": a direct compound overload is the
+		// whole statement, a call like any other.
 		if s.operator_direct {
 			prov_call(graph, prov_synthetic_call(graph, s.operator, operands, TYPE_VOID, s.op_span))
 			return
@@ -1285,6 +1282,10 @@ walk_flow_assign_provenance :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		return
 	}
 	for value, index in s.rhs {
+		// A setter's call reads its value with its other arguments (`prov_assign`).
+		if assign_setter(s, index) != nil {
+			continue
+		}
 		value_loans[index] = walk_flow_assigned(graph, s, value, index)
 		prov_hold_owner(graph, value)
 		walk_clone_via(graph, s, index)

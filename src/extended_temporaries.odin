@@ -18,7 +18,7 @@ mark_extended_temporaries :: proc(c: ^Compiler, stmt: Stmt) {
 			}
 		}
 	case ^Stmt_Assign:
-		if s.op != .Assign || s.destructure.active || s.lowered != nil || s.place_setter != INVALID_SYMBOL {
+		if s.op != .Assign || s.destructure.active || s.lowered != nil {
 			return
 		}
 		for target, index in s.lhs {
