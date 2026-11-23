@@ -5,7 +5,8 @@ import "core:fmt";
 // design.md "Temporaries and procedure boundaries": `x op= y` on a whole local
 // is the assignment `x = x op y`, so the binary fallback's result that `x`
 // views lives until the end of `x`'s block. design.md "Evaluation order": the
-// right operand is evaluated before the operation reads `x`.
+// right operand is evaluated before the operation reads `x`. The right operand
+// is passed, dropped, and kept alive as in the written assignment.
 Tag :: struct { n: int }
 
 concat :: operator(+) proc(s: string_view, t: Tag) -> string {
@@ -21,6 +22,17 @@ two :: proc() -> int { return 2; }
 pick :: operator(+) proc(f: F, t: Tag) -> proc() -> int { return two; }
 
 make_tag :: proc() -> Tag { return {4}; }
+
+@(move_only) Owned :: struct { n: int }
+impl Owned {
+	bye :: hook(drop) proc(self: inout Owned) { fmt.println("drop", self.n); }
+}
+Holder :: struct { o: Owned }
+named :: operator(+) proc(s: string_view, o: Owned) -> string { return "owned"; }
+make_owned :: proc(n: int) -> Owned { return {n}; }
+
+View :: struct { data: []int }
+first :: operator(+) proc(s: string_view, v: View) -> string { return "seven" if v.data[0] == 7 else "other"; }
 
 rewrite :: proc(s: inout string_view) -> Tag {
 	s = "zzz";
@@ -53,4 +65,10 @@ main :: proc() {
 	f += Tag{1};
 	fmt.println(s, a, f());
 	fmt.println(VIEWED, viewed());
+	h := Holder{Owned{1}};
+	s += h.o;
+	s += make_owned(2);
+	fmt.println(s, h.o.n);
+	s += View{[dynamic]int{7}[:]};
+	fmt.println(s);
 }

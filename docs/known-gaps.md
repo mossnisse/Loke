@@ -36,5 +36,5 @@ main :: proc() {
 The program prints `101 2`: compile-time evaluation reads `v` after `bump`, and
 the compiled code before it. `emit_operator_call` loads its `left_place` before
 it evaluates the other operands. A fallback whose result its local destination
-views is lowered to `v0 := y; x = x op v0;` and reads in the specified order.
-
+views is lowered to `x = x op y` with `Expr_Binary.right_first` set, and reads in
+the specified order.

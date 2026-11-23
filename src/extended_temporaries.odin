@@ -18,6 +18,14 @@ mark_extended_temporaries :: proc(c: ^Compiler, stmt: Stmt) {
 			}
 		}
 	case ^Stmt_Assign:
+		if s.lowered_inline {
+			// Statements in the scope holding `s` lend as `s` does: a `for`
+			// update or a deferred statement does not ask.
+			for inner in s.lowered.stmts {
+				mark_extended_temporaries(c, inner)
+			}
+			return
+		}
 		if s.op != .Assign || s.destructure.active || s.lowered != nil {
 			return
 		}

@@ -670,14 +670,10 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 // design.md "Temporaries and procedure boundaries": `x op= y` on a whole local
 // variable whose binary fallback produces a value `x` views, as a `string` for
 // a `string_view`, is the assignment `x = x op y` to that local, so the result
-// is extended to the end of its block. It is checked as
-//
-//     v0 := y; x = x op v0;
-//
-// run in the scope that holds it (`lowered_inline`), so the right operand is
-// evaluated before the operation reads `x` (design.md "Evaluation order"). A
-// right operand with nothing to order, or a constant, which keeps its unfixed
-// type for the operator to settle, is written where it is used.
+// is extended to the end of its block. It is checked as that assignment, run
+// in the scope that holds it (`lowered_inline`), so `y` is borrowed, dropped,
+// and kept alive as written, and its `+` evaluates `y` before it reads `x`
+// (`right_first`; design.md "Evaluation order").
 @(private = "file")
 lower_compound_view :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	op := compound_operator(s.op)
@@ -694,21 +690,16 @@ lower_compound_view :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
 	if !viewed {
 		return false
 	}
-	span := s.span
-	stmts := make([dynamic]Stmt, 0, 2, k.c.semantic_allocator)
-	value := clone_expr(k.c, s.rhs[0])
-	if !lowered_constant(k, s.rhs[0]) && needs_temporary(k, s.rhs[0]) {
-		append(&stmts, synth_decl(k.c, .Var, "compound$value", value, span))
-		value = synth_ident(k.c, "compound$value", span)
-	}
 	combined := new(Expr_Binary, k.c.semantic_allocator)
-	combined.span = span
+	combined.span = s.span
 	combined.op = op
 	combined.op_span = s.op_span
 	combined.lhs = clone_expr(k.c, s.lhs[0])
-	combined.rhs = value
-	append(&stmts, synth_assign(k.c, {clone_expr(k.c, s.lhs[0])}, {combined}, s.op_span, span))
-	check_lowered_block(k, s, stmts[:], new_scope(k.c, k.scope, .Local))
+	combined.rhs = clone_expr(k.c, s.rhs[0])
+	combined.right_first = true
+	stmts := make([]Stmt, 1, k.c.semantic_allocator)
+	stmts[0] = synth_assign(k.c, {clone_expr(k.c, s.lhs[0])}, {combined}, s.op_span, s.span)
+	check_lowered_block(k, s, stmts, k.scope)
 	s.lowered_inline = true
 	return true
 }

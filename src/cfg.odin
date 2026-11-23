@@ -694,14 +694,14 @@ leave_flow_scope :: proc(graph: ^Flow_Graph) {
 }
 
 @(private = "file")
-walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
+walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt, lends := true) {
 	// A move in these statements is still one the enclosing statement made.
 	outer, outer_kills := graph.unwind_entry, graph.unwind_kills
 	defer graph.unwind_entry, graph.unwind_kills = outer, outer_kills
 	for stmt in stmts {
 		graph.unwind_entry = emit_unwind_branch(graph, stmt)
 		graph.unwind_kills = graph.kills
-		walk_flow_stmt(graph, stmt, lends = true)
+		walk_flow_stmt(graph, stmt, lends = lends)
 	}
 }
 
@@ -1244,7 +1244,8 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	defer resize(&graph.held_owners, held)
 	if s.lowered != nil {
 		if s.lowered_inline {
-			walk_flow_stmts(graph, s.lowered.stmts)
+			// `mark_extended_temporaries` marked them if this statement lends.
+			walk_flow_stmts(graph, s.lowered.stmts, lends = false)
 		} else {
 			walk_flow_block(graph, s.lowered)
 		}
@@ -1845,14 +1846,18 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> (carried: []int) {
 		if prov && v.resolution.kind == .User_Operator {
 			return prov_call(graph, prov_operator_call(graph, v))
 		}
-		walk_flow_expr(graph, v.lhs)
+		first, second := v.lhs, v.rhs
+		if v.right_first {
+			first, second = second, first
+		}
+		walk_flow_expr(graph, first)
 		if v.op == .And_And || v.op == .Or_Or {
 			merge := fork_flow_branch(graph)
-			walk_flow_expr(graph, v.rhs)
+			walk_flow_expr(graph, second)
 			link(graph, graph.current, merge)
 			graph.current = merge
 		} else {
-			walk_flow_expr(graph, v.rhs)
+			walk_flow_expr(graph, second)
 			if prov {
 				prov_operator_effects(graph, v)
 				prov_note_fresh_owner(graph, v)

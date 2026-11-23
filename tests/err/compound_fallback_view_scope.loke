@@ -1,0 +1,27 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": a `for` update and a
+// deferred statement extend nothing, so the binary fallback's result that a
+// compound assignment there leaves its local viewing ends with the statement,
+// as the written `s = s + Tag{1}` does.
+Tag :: struct { n: int }
+
+concat :: operator(+) proc(s: string_view, t: Tag) -> string { return "x"; }
+
+update :: proc() {
+	s: string_view = "";
+	for (i := 0; i < 2; s += Tag{i}) {
+		fmt.println(s);
+		i += 1;
+	}
+}
+
+deferred :: proc() {
+	s: string_view = "";
+	defer fmt.println(s);
+	defer s += Tag{1};
+}
+
+main :: proc() {}

@@ -657,8 +657,11 @@ checklist.
   the destination would only view, a `string` stored in a `string_view` or a `[N]T` in a `[]T`, or a
   procedure stored in a `dyn proc`, lives until the end of the block when the destination is a whole
   local variable, as for the written `x = x + y`
-  ([Temporaries and procedure boundaries](docs/design.md#temporaries-and-procedure-boundaries)), and
-  is `L0417` rather than invalid IR for a field or a parameter, which keeps no temporary.
+  ([Temporaries and procedure boundaries](docs/design.md#temporaries-and-procedure-boundaries)).
+  It ends with the statement in a `for` update or a deferred statement, which extend nothing, and
+  is `L0417` rather than invalid IR for a field or a parameter, which keeps no temporary. The right
+  operand is borrowed, dropped, and kept alive as in the written assignment, and is evaluated
+  before the destination is read ([Evaluation order](docs/design.md#evaluation-order)).
 - Assignment through `operator([]=)` follows [Evaluation order](docs/design.md#evaluation-order).
   `g[index()] = value();` called `index()` first; a multiple assignment such as
   `key, names[key] = "new", 8;` passed the key the earlier write had replaced, and

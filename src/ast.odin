@@ -373,6 +373,10 @@ Expr_Binary :: struct {
 	// `a > b` and `a <= b` through a user `<`, called as `b < a`. `lhs` and `rhs`
 	// stay as written, so they are still evaluated in that order.
 	swapped:    bool,
+	// A compound assignment's fallback written out (`lower_compound_view`):
+	// `rhs` is evaluated before `lhs`, which reads the destination (design.md
+	// "Evaluation order").
+	right_first: bool,
 }
 
 @(private = "file", rodata)
@@ -381,10 +385,11 @@ SWAPPED_OPERANDS := [2]int{1, 0}
 // A user operator's operands in parameter order, and those slots in evaluation
 // order where the two differ, as `Expr_Call.bound_order` holds them.
 binary_operator_operands :: proc(v: ^Expr_Binary) -> (bound: [2]Expr, order: []int) {
-	if v.swapped {
-		return {v.rhs, v.lhs}, SWAPPED_OPERANDS[:]
+	bound = v.swapped ? {v.rhs, v.lhs} : {v.lhs, v.rhs}
+	if v.swapped != v.right_first {
+		order = SWAPPED_OPERANDS[:]
 	}
-	return {v.lhs, v.rhs}, nil
+	return
 }
 
 // `a ..= b` and `a ..< b`, kept apart from Expr_Binary.
