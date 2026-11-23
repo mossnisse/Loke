@@ -35,6 +35,19 @@ item_named_twice :: proc() -> Kept {
 	return Kept{item, count_items({item = 1})};
 }
 
+// A union argument expansion checks its receiver's literal only in the calls it
+// expands to, where the key names `item`, so `item` is still copied.
+Target :: struct { n: int }
+Event :: union { tick: int }
+impl Target {
+	read :: proc(self, tick: int) -> int { return self.n + tick; }
+}
+target :: proc(m: map[Tracked]int) -> Target { return Target{m.len()}; }
+item_named_in_expansion :: proc(ev: Event) -> Kept {
+	item := Tracked{5};
+	return Kept{item, target({item = 1}).read(..ev)};
+}
+
 @(move_only) Handle :: struct { id: int }
 Options :: struct { h: int, item: int }
 Wrapped :: struct { h: Handle, n: int }
@@ -59,12 +72,23 @@ item_in_variant :: proc() -> Option(Tracked) {
 	return .some(item) if width({item = 1}) > 0 else .none;
 }
 
+// A transferred operand has no copy to cost, though a copy of it would be large.
+Large :: struct { text: string, pad: [512]u8 }
+Held :: struct { item: Large, n: int }
+large_named_once :: proc() -> Held {
+	item := Large{text = strings.repeat("ab", 3)};
+	return Held{item, width({item = 2})};
+}
+
 main :: proc() {
 	p := named_twice();
 	fmt.println(p.s, p.n);
 	fmt.println("twice");
 	k := item_named_twice();
 	fmt.println(k.item.id, k.n);
+	fmt.println("expanded");
+	e := item_named_in_expansion(.tick(1));
+	fmt.println(e.item.id, e.n);
 	w := named_once();
 	fmt.println(w.h.id, w.n);
 	fmt.println("once");
@@ -75,5 +99,7 @@ main :: proc() {
 		got := item_in_variant() or_else Tracked{0};
 		fmt.println(got.id);
 	}
+	held := large_named_once();
+	fmt.println(held.item.text, held.n);
 	fmt.println("end");
 }

@@ -419,9 +419,11 @@ check_returned_value :: proc(k: ^Checker, value: ^Return_Value) -> (ok: bool) {
 	// In a generic body the two payloads may be one type in some instance, so a
 	// value meant as the error would become the success there.
 	wraps := payload != TYPE_VOID && !(k.result_generic && failure != TYPE_VOID)
-	unsettled := mark_returned_value(k, e, result if !wraps || target == .Result else payload)
+	expected := result if !wraps || target == .Result else payload
+	unsettled := mark_returned_value(k, e, expected)
+	written := e
 	defer if ok && unsettled {
-		settle_returned_value(k, value.expr)
+		settle_returned_value(k, written, expected)
 	}
 	if !wraps || target == .Result {
 		errors := k.c.error_count

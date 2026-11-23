@@ -5,12 +5,20 @@ twice
   drop 1
   drop 1
 1 1
+expanded
+  copy 5
+  copy 5
+  drop 5
+  drop 5
+5 2
 7 2
 once
 2 3
 variant
 4
   drop 4
+ababab 2
 end
   drop 2
+  drop 5
   drop 1

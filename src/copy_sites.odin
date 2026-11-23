@@ -78,31 +78,73 @@ transfer_returned_local :: proc(k: ^Checker, e: Expr) -> Expr {
 // and as a key as well, for `settle_returned_value` to decide once checked.
 mark_returned_value :: proc(k: ^Checker, e: Expr, expected: Type_Id) -> (unsettled: bool) {
 	mark_returned(e)
-	names := make([dynamic]^Expr_Ident, context.temp_allocator)
-	keys := make([dynamic]^Expr_Ident, context.temp_allocator)
-	walk := Returned_Names{k, &names, &keys}
-	collect_returned_names(&walk, e, expected)
-	counts := make(map[string]int, context.temp_allocator)
+	names, uses := returned_name_uses(k, e, expected, checked = false)
 	for name in names {
-		counts[name.name] += 1
-	}
-	key_names := make(map[string]bool, context.temp_allocator)
-	for key in keys {
-		key_names[key.name] = true
-	}
-	for name in names {
-		name.return_uses = counts[name.name] != 1 ? .Many : key_names[name.name] ? .Once_Or_Key : .Once
+		name.return_uses = uses[name.name]
 		unsettled ||= name.return_uses == .Once_Or_Key
+	}
+	return
+}
+
+// design.md "Returned constructions": a name the returned value writes once,
+// beside a bare key that may name it too, is copied as it is checked. Once the
+// whole value `e` is checked against `expected`, a literal checked as a record
+// has field names for keys, so a name only they shared is written once after
+// all, and its copy becomes the transfer. A literal checking left untyped, as
+// one a union argument expansion checks only in its copies, still may name it.
+settle_returned_value :: proc(k: ^Checker, e: Expr, expected: Type_Id) {
+	Settle :: struct {
+		k:    ^Checker,
+		uses: map[string]Return_Uses,
+	}
+	settle := Settle{k = k}
+	_, settle.uses = returned_name_uses(k, e, expected, checked = true)
+	each_cloned_operand(e, &settle, proc(data: rawptr, operand: Operand_Site) {
+		settle := (^Settle)(data)
+		if operand.ident.return_uses != .Once_Or_Key || settle.uses[operand.ident.name] != .Once {
+			return
+		}
+		moved := transfer_returned_local(settle.k, operand.ident)
+		if moved == operand.ident {
+			return
+		}
+		operand.ident.copied_as = INVALID_TYPE
+		operand.clone^ = false
+		operand.site^ = moved
+		if operand.also != nil {
+			operand.also^ = moved
+		}
+	})
+}
+
+// Each name the returned value `e` writes, and by name how often: `.Many`, `.Once`,
+// or `.Once_Or_Key` when a key may name it too.
+@(private = "file")
+returned_name_uses :: proc(k: ^Checker, e: Expr, expected: Type_Id, checked: bool) -> (names: [dynamic]^Expr_Ident, uses: map[string]Return_Uses) {
+	names = make([dynamic]^Expr_Ident, context.temp_allocator)
+	keys := make([dynamic]^Expr_Ident, context.temp_allocator)
+	walk := Returned_Names{k, &names, &keys, checked}
+	collect_returned_names(&walk, e, expected)
+	uses = make(map[string]Return_Uses, context.temp_allocator)
+	for name in names {
+		uses[name.name] = name.name in uses ? .Many : .Once
+	}
+	for key in keys {
+		if uses[key.name] == .Once {
+			uses[key.name] = .Once_Or_Key
+		}
 	}
 	return
 }
 
 @(private = "file")
 Returned_Names :: struct {
-	k:     ^Checker,
-	names: ^[dynamic]^Expr_Ident,
+	k:       ^Checker,
+	names:   ^[dynamic]^Expr_Ident,
 	// Bare keys of literals whose type is not known yet.
-	keys:  ^[dynamic]^Expr_Ident,
+	keys:    ^[dynamic]^Expr_Ident,
+	// The value is checked, so a literal checking typed has that type.
+	checked: bool,
 }
 
 // `collect_local_names` ahead of checking. Whether a literal's bare key is a
@@ -151,7 +193,9 @@ collect_returned_literal_names :: proc(w: ^Returned_Names, v: ^Expr_Composite, e
 	collect_returned_names(w, v.type_expr, INVALID_TYPE)
 	collect_returned_names(w, v.via, INVALID_TYPE)
 	type := expected
-	if v.type_expr != nil {
+	if w.checked && v.type != INVALID_TYPE {
+		type = v.type
+	} else if v.type_expr != nil {
 		probe := begin_probe(c)
 		type = resolve_type_syntax(w.k, v.type_expr)
 		end_probe(c, probe)
@@ -199,44 +243,6 @@ literal_field_type :: proc(c: ^Compiler, info: ^Type_Info, key: Expr, index: int
 		}
 	}
 	return INVALID_TYPE
-}
-
-// design.md "Returned constructions": a name the returned value writes once,
-// beside a bare key that may name it too, is copied as it is checked. Once the
-// whole value is checked, a key that is a field's name names no local, so the
-// name is written once after all, and its copy becomes the transfer.
-settle_returned_value :: proc(k: ^Checker, e: Expr) {
-	Settle :: struct {
-		k:     ^Checker,
-		names: [dynamic]^Expr_Ident,
-	}
-	settle := Settle{k, make([dynamic]^Expr_Ident, context.temp_allocator)}
-	collect_local_names(e, &settle.names)
-	each_cloned_operand(e, &settle, proc(data: rawptr, operand: Operand_Site) {
-		settle := (^Settle)(data)
-		if operand.ident.return_uses != .Once_Or_Key {
-			return
-		}
-		count := 0
-		for name in settle.names {
-			if name.symbol == operand.ident.symbol {
-				count += 1
-			}
-		}
-		if count != 1 {
-			return
-		}
-		moved := transfer_returned_local(settle.k, operand.ident)
-		if moved == operand.ident {
-			return
-		}
-		operand.ident.copied_as = INVALID_TYPE
-		operand.clone^ = false
-		operand.site^ = moved
-		if operand.also != nil {
-			operand.also^ = moved
-		}
-	})
 }
 
 // design.md "Returned constructions", "Last-use transfer": a local that a
@@ -594,7 +600,8 @@ COPY_SITE_TEXT := [Copy_Site]string {
 // (design.md "Last-use transfer"), or an adapter's copy of its source, which
 // `foreach` may yet peel and not make (design.md "Iteration adapters"). A copy
 // that may allocate waits either way; one costed by its bytes waits only for an
-// adapter, as last-use transfer moves only what clones.
+// adapter, as last-use transfer moves only what clones, or for a returned
+// operand that `settle_returned_value` may transfer.
 Held_Copy_Report :: struct {
 	decl:    ^Decl,
 	assign:  ^Stmt_Assign,
@@ -646,7 +653,11 @@ warn_copy_cost :: proc(
 	}
 	held := held
 	held.site, held.span, held.source, held.type, held.in_loop, held.inline = site, span, source, type, in_loop, !allocates
-	waits := held.adapter != nil || allocates && (held.decl != nil || held.assign != nil || held.operand_of != nil)
+	// design.md "Returned constructions": `settle_returned_value` may yet make an
+	// operand's copy a transfer, whatever the copy costs.
+	ident, is_ident := source.(^Expr_Ident)
+	settles := held.operand_of != nil && is_ident && ident.return_uses == .Once_Or_Key
+	waits := held.adapter != nil || settles || allocates && (held.decl != nil || held.assign != nil || held.operand_of != nil)
 	if !waits {
 		report_copy(k, held)
 		return

@@ -5,3 +5,10 @@ warning[L0507]: this aggregate literal clones `item`, which may allocate
     | 	            ^^^^
   = note: write `item.clone()` if the copy is intended
 
+warning[L0507]: this aggregate literal clones `item`, which may allocate
+  --> tests/run/returned_name_untyped_key.loke:48:14
+    |
+48 | 	return Kept{item, target({item = 1}).read(..ev)};
+    | 	            ^^^^
+  = note: write `item.clone()` if the copy is intended
+
