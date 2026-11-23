@@ -1,0 +1,24 @@
+@(public)
+package sink;
+
+import "core:log";
+import "core:sync";
+
+@(private)
+Tee :: struct { count: sync.Atomic(int) }
+
+impl Tee {
+	write :: proc(self: inout, level: log.Level, message: string_view) {
+		_ = self.count.add(1);
+		console := log.standard_logger();
+		console.write(level, message);
+	}
+}
+
+@(private)
+tee: static Tee = {};
+
+factory :: proc() -> log.Logger { return (log.Logger)(&mut tee); }
+
+/// How many records the selected sink has passed on.
+records :: proc() -> int { return tee.count.load(); }

@@ -83,3 +83,31 @@ main :: proc() {
 	c := Circle{1};
 	fmt.println(apply(clears), measure((dyn Shape)(&c)));
 }
+
+// A `@(synchronized)` variable's package vouches for every access to it, so a
+// call that writes or reads one conflicts with no borrow of it, through a `dyn`
+// slot as by name. A call that writes any other global still does.
+@(synchronized) vouched: int;
+plain: int;
+
+vouched_handle :: proc() -> ^mut int { return &mut vouched; }
+plain_handle :: proc() -> ^mut int { return &mut plain; }
+read_vouched :: proc() -> int { return vouched; }
+
+Counter :: struct {}
+impl Counter { area :: proc(self) -> int { vouched_handle()^ += 1; return vouched; } }
+
+across_vouched_calls :: proc(shape: dyn Shape) -> int {
+	first := vouched_handle();
+	second := vouched_handle();
+	n := read_vouched() + shape.area();
+	first^ += n;
+	second^ += n;
+	return n;
+}
+across_plain_calls :: proc() -> int {
+	first := plain_handle();
+	second := plain_handle();
+	first^ += 1;
+	return second^;
+}

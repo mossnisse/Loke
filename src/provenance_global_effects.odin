@@ -536,7 +536,7 @@ prov_copy_effects :: proc(graph: ^Flow_Graph, type: Type_Id, span: Span) -> (run
 		}
 		name := effect_call_description(c, Effect_Call{callee = hook}, "read", "", "", false)
 		for global in reads {
-			if !graph.task_effects || !global_is_thread_local(c, global) {
+			if prov_effect_is_access(graph, global) {
 				prov_access(graph, prov_root_for_symbol(graph, global), nil, .Read, span, name)
 			}
 		}
@@ -779,25 +779,31 @@ prov_effect_call :: proc(
 		graph.effect_name = name
 		defer graph.effect_name = ""
 		for global in writes {
-			// Not the parent's at the spawn; a pooled join counts them
-			// (`prov_pool_join_effects`).
-			if graph.task_effects && global_is_thread_local(c, global) {
-				continue
+			if prov_effect_is_access(graph, global) {
+				prov_access(graph, prov_root_for_symbol(graph, global), nil, .Invalidate, span, name)
 			}
-			root := prov_root_for_symbol(graph, global)
-			prov_access(graph, root, nil, .Invalidate, span, name)
 		}
 	}
 	if len(reads) > 0 {
 		name := effect_call_description(c, target, "read", dropped, described, unnamed)
 		for global in reads {
 			// A write above already conflicts with every loan a read would.
-			if slice.contains(writes, global) || graph.task_effects && global_is_thread_local(c, global) {
-				continue
+			if !slice.contains(writes, global) && prov_effect_is_access(graph, global) {
+				prov_access(graph, prov_root_for_symbol(graph, global), nil, .Read, span, name)
 			}
-			prov_access(graph, prov_root_for_symbol(graph, global), nil, .Read, span, name)
 		}
 	}
+}
+
+// design.md "Global write effects": whether a settled effect on `global` is an
+// access where the call or hook runs. A `@(synchronized)` variable's package
+// vouches for every access to it, so none is; and a task's `thread_local`
+// storage is not the parent's at the spawn, where a pooled join counts it
+// instead (`prov_pool_join_effects`).
+@(private = "file")
+prov_effect_is_access :: proc(graph: ^Flow_Graph, global: Symbol_Id) -> bool {
+	sym := symbol_of(graph.k.c, global)
+	return sym == nil || !sym.synchronized && !(graph.task_effects && sym.duration == .Thread_Local)
 }
 
 // A task of a pooled block: the procedure that runs it, and how diagnostics

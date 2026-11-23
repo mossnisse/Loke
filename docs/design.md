@@ -8654,6 +8654,22 @@ t := Tagged{&mut counter};
 u := t;                         // ERROR: `counter` cannot be read by its hook here
 ```
 
+A call is neither a write nor a read of a [`@(synchronized)`](#synchronized)
+variable, whose package vouches for every access to it. A borrow of one stays
+valid across a call that writes, reads, or borrows it again, as it does beside
+another thread's; what one body does to the variable by name is still checked.
+
+```loke
+@(synchronized) console: Console;   // file scope; `Console` serializes its own writes
+
+handle :: proc() -> ^mut Console { return &mut console; }
+
+first := handle();
+second := handle();             // allowed: no write of `console` where `first` is live
+first.put("a");
+second.put("b");
+```
+
 The write effect also warns about likely data races. Passing a named procedure that
 may write file-scope or `static` storage to a
 [`@(cross_thread)`](#cross_thread) parameter produces a warning. This applies to
@@ -11559,15 +11575,16 @@ checked](#what-is-not-checked). A constant holding a synchronized field is never
 [materialized](#materialization).
 
 On a variable it says that the package vouches for every access to the variable
-and through the carriers stored in it, so a spawned entry's write to it is not
-reported as a likely race (see [Global write effects](#global-write-effects)),
-and a `parallel` block's tasks may use it (see [Globals while tasks
+and through the carriers stored in it, so a call that writes or reads it
+conflicts with no borrow of it, a spawned entry's write to it is not reported as
+a likely race (see [Global write effects](#global-write-effects) for both), and
+a `parallel` block's tasks may use it (see [Globals while tasks
 run](#globals-while-tasks-run)). Since no variable is [public](#public), only
 the declaring package reaches one directly.
 
 `sync.Atomic(T).value`, `thread.Mutex(T).value`, and `thread.Monitor(T).value`
-are synchronized, and so is the variable through which `core:log` publishes the
-selected logging provider.
+are synchronized, and so are the variables through which `core:log` publishes
+the selected logging provider and hands out the standard logger.
 
 #### `@(move_only)`
 

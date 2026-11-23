@@ -212,6 +212,21 @@ borrowed one, where an atomic operation through another read-only loan may be
 writing it. It is an attribute, not a list of types, so `Monitor` and
 `Channel` needed no compiler change.
 
+On a variable the attribute also takes it out of what a call counts as writing
+or reading ([Global write effects](design.md#global-write-effects)). The package
+already vouches that another thread may hold a view of the variable while this
+one takes its own, so a callee taking one on the same thread adds no access the
+vouching does not cover, and holding the two apart rejected programs for nothing.
+The case that showed it was a logging sink passing each record on to the
+standard logger: `Sink.write` is a `dyn` slot, so the call through the logger
+may reach the sink itself, which takes a second `&mut` of the standard logger's
+storage while the first is in use. That storage has no fields, and the only way
+around the check was an address stripped of provenance through `rawptr`, which
+states less than the attribute does. What one body does to the variable by name
+is still checked: there the package is reading its own code, and the ordinary
+rule costs nothing. A copy hook still may not write one, since that rule is about
+how many copies run, not about borrows.
+
 ### Foreign threads attach as they enter
 
 A thread Loke did not start, such as an audio library's device thread, calls

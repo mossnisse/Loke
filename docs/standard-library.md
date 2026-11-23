@@ -3198,6 +3198,14 @@ A provider's factory returns `(log.Logger)(&mut sink)` over a `static` record
 with a `write` method, which is the process-lifetime storage design.md
 "Provider initialization" asks for.
 
+A sink may pass a record on to the standard logger, calling
+`log.standard_logger()` in its `write`: any number of handles to the standard
+logger may be in use at once, since its storage is
+[`@(synchronized)`](design.md#synchronized). A sink that forwards to a `static`
+sink of its own keeps that handle in a field the factory fills, or marks the
+storage `@(synchronized)` when the sink serializes its own records, as
+`Writer_Sink` does.
+
 ### Writer sink
 
 `Writer_Sink(W)` is a sink over an `io.Writer` it owns: an `fs.File`, a pipe,

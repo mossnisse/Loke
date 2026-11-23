@@ -475,6 +475,12 @@ checklist.
   its `[Level] ` prefix, the message, and the newline, straight to the error stream rather
   than five through the formatter. At `-opt=speed`, 30,000 records to a redirected error
   stream take 0.25 s, from 0.41, with the same bytes.
+- A call is neither a write nor a read of a [`@(synchronized)`](docs/design.md#synchronized)
+  variable ([Global write effects](docs/design.md#global-write-effects)), whose package vouches
+  for every access to it. A borrow of one live across a call that writes, reads, or borrows it
+  again was `L0512`, so a logging sink could not pass a record on to `log.standard_logger()`,
+  and two handles to the standard logger could not be in use together. What one body does to
+  such a variable by name is checked as before, and a copy hook still may not write one.
 - [`os.get_environment`](docs/standard-library.md#coreos-additions), `os.working_directory`,
   and `os.executable_path` read into a stack buffer first, so a short value needs no size query
   and no temporary heap buffer, and the runtime caches each [argument's](docs/standard-library.md#osargs)

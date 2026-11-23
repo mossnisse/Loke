@@ -28,3 +28,6 @@ L0512
 L0512
 @78:2
 `cache` cannot be modified by a procedure this call may reach here
+L0512
+@110:12
+`plain` cannot be modified by `plain_handle` here: a mutable pointer of it is still in use

@@ -79,7 +79,9 @@ Standard :: struct {}
 // this storage, and the one thing its records share, the error stream, is
 // serialized by `standard_lines`. Without the attribute, every logging thread's
 // `&mut standard` would count as a write to a shared global (design.md "Global
-// write effects") and warn at each `thread.spawn` of code that logs.
+// write effects") and warn at each `thread.spawn` of code that logs, and a sink
+// forwarding to `standard_logger()` would take a second view while the handle
+// its record came through may be one already.
 @(private, synchronized)
 standard: static Standard = {};
 
