@@ -450,19 +450,25 @@ prov_root_place :: proc(graph: ^Flow_Graph, place: Prov_Place) -> (Root_Id, []Pr
 }
 
 // Walks a place chain's index expressions; the place is one access, not one per
-// link. A store publishing map keys passes `through`, the carrier slots it read
-// that hold the place, if any (`prov_read_through_carrier`).
+// link. A call's `inout` result the chain starts in was walked as the call.
+// design.md "Maps": only `m[key] = elem` creates an entry, so a store whose
+// whole target is a map entry publishes its key, into `through` when the map is
+// reached through carriers (`prov_read_through_carrier`); a lookup on the way to
+// the target, as `m[key].n`, leaves none.
 @(private)
-prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := false, through: []int = nil) {
+prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_key := false, through: []int = nil) {
+	if prov_names_inout_result(graph, e) {
+		return
+	}
 	#partial switch v in e {
 	case ^Expr_Selector:
-		prov_walk_subscripts(graph, v.operand, publish_map_keys, through)
+		prov_walk_subscripts(graph, v.operand)
 	case ^Expr_Postfix:
 		if v.boxed {
-			prov_walk_subscripts(graph, v.operand, publish_map_keys, through)
+			prov_walk_subscripts(graph, v.operand)
 		}
 	case ^Expr_Index:
-		prov_walk_subscripts(graph, v.operand, publish_map_keys, through)
+		prov_walk_subscripts(graph, v.operand)
 		key_sources: []int
 		for index, position in v.indices {
 			loans := walk_flow_expr(graph, index)
@@ -473,7 +479,7 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_keys := fa
 		if len(v.bound) == 0 && underlying_kind(graph.k.c, prov_type(graph, v.operand)) == .Map {
 			// A map index hashes its key and compares it with the stored ones.
 			prov_key_effects(graph, prov_type(graph, v.operand), v.span)
-			if publish_map_keys && len(v.indices) == 1 {
+			if publish_map_key && len(v.indices) == 1 {
 				prov_publish_map_key(graph, v, key_sources, through)
 			}
 		}

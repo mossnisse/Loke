@@ -28,6 +28,27 @@ this pointer borrows `value`, which does not outlive `cell`: process-lifetime st
 L0647
 @83:2
 this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
+L0647
+@95:2
+this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
+L0647
+@101:2
+this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
+L0647
+@107:2
+this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
+L0647
+@112:2
+this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage
+L0647
+@118:2
+this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
+L0513
+@132:10
+this pointer is used after `value`, the local it borrows, has ended
+L0513
+@146:11
+this pointer is used after `value`, the local it borrows, has ended
 L0646
-@88:2
+@156:2
 this pointer borrows `value`, which is not written `@(escape=stored)`, so it cannot reach `holder`

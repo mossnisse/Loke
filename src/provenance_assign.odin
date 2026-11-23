@@ -412,10 +412,11 @@ prov_assign_destinations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, written: [
 	return destinations
 }
 
-// A store through a carrier, or into what an `inout` result names; false when
-// `target` is neither. design.md "Weakening and reborrows": the store reads each
-// carrier it goes through, so one read out of another, as `p^^.a` in
-// `p^^.a^.value = 3`, uses what a copy of it, as `node := p^^.a`, suspends.
+// A store through a carrier, or into what an `inout` result names, as
+// `get().value` does; false when `target` is neither. design.md "Weakening and
+// reborrows": the store reads each carrier it goes through, so one read out of
+// another, as `p^^.a` in `p^^.a^.value = 3`, uses what a copy of it, as
+// `node := p^^.a`, suspends.
 @(private = "file")
 prov_assign_through_carrier :: proc(
 	graph: ^Flow_Graph, s: ^Stmt_Assign, target, value: Expr, sources: []int, evaluated: Prov_Destination, permutes, replaces_read: bool,
@@ -427,7 +428,7 @@ prov_assign_through_carrier :: proc(
 	through, below, reached := destination.through, destination.below, destination.reached
 	walked := false
 	if !reached {
-		through, walked = prov_inout_result_place(graph, target)
+		through, below, walked = prov_inout_result_store(graph, target)
 	}
 	if reached && len(through) == 0 {
 		prov_walk_subscripts(graph, target, true)
@@ -441,9 +442,7 @@ prov_assign_through_carrier :: proc(
 		prov_write_through(graph, through, below, expr_span(target), "write", target)
 	}
 	prov_store_region(graph, prov_input_value(graph, target), prov_input_value(graph, value))
-	if !walked {
-		prov_walk_subscripts(graph, target, true, through)
-	}
+	prov_walk_subscripts(graph, target, true, through)
 	if len(through) > 0 {
 		prov_publish_store(graph, s, target, sources, through, below, permutes, replaces_read)
 	}

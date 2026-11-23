@@ -83,6 +83,74 @@ kept_through_result :: proc() {
 	keep(inout box_of(&mut holder)^, &value);
 }
 
+// A part of an `inout` result is in the place the result names.
+boxed: static thread.Mutex(Box) = {};
+items_of :: proc(box: inout Box) -> inout [dynamic]^int { return inout box.items; }
+Duo :: struct { value: Option(^int), first: Box }
+first_of :: proc(duo: inout Duo) -> inout Box { return inout duo.first; }
+
+guarded_field :: proc() {
+	value := 42;
+	guard := boxed.lock();
+	guard.get().value = .some(&value);
+}
+
+guarded_key :: proc() {
+	value := 42;
+	guard := boxed.lock();
+	guard.get().keys[&value] = 1;
+}
+
+guarded_append :: proc() {
+	value := 42;
+	guard := boxed.lock();
+	guard.get().items.append(&value);
+}
+
+appended_to_inout_result :: proc() {
+	value := 42;
+	items_of(inout cell).append(&value);
+}
+
+kept_in_guarded_field :: proc() {
+	value := 42;
+	guard := boxed.lock();
+	keep_option(inout guard.get().value, &value);
+}
+keep_option :: proc(destination: inout Option(^int), @(escape=stored) value: ^int) { destination = .some(value); }
+
+// A part of an `inout` result that is a field of its argument is somewhere in
+// that argument, not at the same path in it: `duo.value` is not `.value` of
+// `first_of(inout duo)`.
+ended_in_field_result :: proc() -> int {
+	duo: Duo = {};
+	{
+		value := 3;
+		first_of(inout duo).value = .some(&value);
+		duo.value = .none;
+	}
+	switch (duo.first.value) {
+	case .some(p): return p^;
+	case .none:
+	}
+	return 0;
+}
+
+ended_in_local_guard :: proc() -> int {
+	lock: thread.Mutex(Box) = {};
+	{
+		value := 3;
+		guard := lock.lock();
+		guard.get().value = .some(&value);
+	}
+	guard := lock.lock();
+	switch (guard.get().value) {
+	case .some(p): return p^;
+	case .none:
+	}
+	return 0;
+}
+
 // What a parameter's pointer leads to is the caller's storage too.
 left_in_caller :: proc(holder: ^Holder, value: ^int) {
 	holder.b.value = .some(value);
@@ -104,6 +172,51 @@ fine :: proc() {
 		inner := local.lock();
 		inner.get() = .some(&value);
 	}
+	{
+		guard_box := boxed.lock();
+		guard_box.get().value = .some(&kept);
+		guard_box.get().items.append(&kept);
+		guard_box.get().keys[&kept] = 2;
+	}
+}
+
+// design.md "Maps": only `m[key] = elem` creates an entry, so a lookup on the
+// way to a store leaves its key in no map.
+Owners :: struct { boxes: map[^int]^mut Counter }
+Counter :: struct { n: int }
+counted: static Counter = {};
+looked_up :: proc() {
+	local := 42;
+	own := Owners{};
+	own.boxes[&local] = &mut counted;
+	p := &mut own;
+	p.boxes[&local].n = 12;
+	tallies[&local].n = 3;
+}
+tallies: static map[^int]Counter = {};
+
+// An `inout` place lent through carriers is the destination, with what its own
+// carriers reach, not what lies beside it in the same pointee.
+Slot :: struct { slot: Option(^int) }
+Sibling :: struct { first: Slot, other: ^mut Slot }
+global_slot: static Slot = {};
+keep_slot :: proc(destination: inout Slot, @(escape=stored) value: ^int) { destination.slot = .some(value); }
+projected :: proc() {
+	n := 1;
+	pair := Sibling{other = &mut global_slot};
+	p := &mut pair;
+	keep_slot(inout p.first, &n);
+}
+
+// A thread-local write through an `inout` place leaves the place's read-only
+// pointer to static storage no destination.
+View :: struct { view: ^int }
+tls: thread_local int = 5;
+set :: proc(destination: inout View) { destination.view = &tls; }
+written_through :: proc() {
+	holder := View{view = &kept};
+	p := &mut holder;
+	set(inout p^);
 }
 
 main :: proc() {}

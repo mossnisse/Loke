@@ -152,13 +152,14 @@ checklist.
 - A store through carriers retains its borrow in what the innermost carrier names
   ([Retaining a borrow](docs/design.md#retaining-a-borrow)). `p^.b^.value = .some(&local)`,
   where `b` points at `static` storage, compiled: the store was checked against what `p` names,
-  not `b`. So did a store through a call's result, as `box_of(&mut holder).value = ...` or an
-  `inout` result's `value_of(inout holder) = ...`, an `append`, map key, or `@(escape=stored)`
-  argument's `inout p^.b^` destination reached either way, and a store through a lock's guard: `guard.get() = .some(&local)` on a `static`
-  `thread.Mutex(Option(^int))` or `thread.Monitor` left a pointer to a local in the lock. Each
-  is now `L0647`, or `L0646` for a parameter not written `@(escape=stored)`, as for the same
-  store into the named place. Upgrade by keeping what such a store names alive for as long as
-  its destination:
+  not `b`. So did a store through a call's result, as `box_of(&mut holder).value = ...`, into
+  an `inout` result or a field, element, or map entry of one, as `guard.get().value = ...`, and
+  an `append`, map key, or `@(escape=stored)` argument's `inout p^.b^` destination reached any
+  of these ways. Through a lock's guard, `guard.get().value = .some(&local)` on a `static`
+  `thread.Mutex` or `thread.Monitor` left a pointer to a local in the lock. Each is now
+  `L0647`, or `L0646` for a parameter not written `@(escape=stored)`, as for the same store
+  into the named place. Upgrade by keeping what such a store names alive for as long as its
+  destination:
 
   ```
   guard.get() = .some(&local);   // before: `local` ends while `cell` holds it
@@ -465,6 +466,10 @@ checklist.
 
 ### Fixed
 
+- A map lookup on the way to a store leaves its key in no map
+  ([Maps](docs/design.md#maps)). `tallies[&local].n = 3`, with `tallies` a `static`
+  `map[^int]Counter`, was `L0647`, as if it inserted `&local`, though only `m[key] = elem`
+  creates an entry.
 - An error in a generic instance names every instantiation back to the caller's call. A
   provenance error, such as `L0647`, `L0724`, or `L0726`, in an instance that another generic
   procedure had called named only that instance, at the library's line, with the caller's call

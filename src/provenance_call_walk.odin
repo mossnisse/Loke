@@ -98,6 +98,52 @@ prov_inout_result_place :: proc(graph: ^Flow_Graph, e: Expr) -> ([]int, bool) {
 	return graph.call_results[prov_call_node(graph, e)].place, true
 }
 
+// design.md "`inout` results": the place a store's target `e` is in when it
+// is a call's `inout` result, or a part of one with no carrier between, as
+// `.value` in `guard.get().value`: the place that result names, and below it,
+// for a part, somewhere in that place. The result's own paths are not the
+// place's, as when it is a field of an argument, so a part replaces nothing.
+// The call is walked unless it was already, as a call's receiver is.
+@(private)
+prov_inout_result_store :: proc(graph: ^Flow_Graph, e: Expr, walk := true) -> (place: []int, below: []Proj_Step, ok: bool) {
+	c := graph.k.c
+	at := e
+	for !prov_names_inout_result(graph, at) {
+		#partial switch v in at {
+		case ^Expr_Selector:
+			if v.resolution.kind != .Field || v.operand == nil || type_is_pointer(c, expr_base(v.operand).type) {
+				return
+			}
+			at = v.operand
+		case ^Expr_Postfix:
+			if v.op != .Caret || !v.boxed {
+				return
+			}
+			at = v.operand
+		case ^Expr_Index:
+			operand := expr_base(v.operand).type
+			if len(v.bound) > 0 || v.resolution.kind == .User_Operator || type_indexes_through_view(c, operand) {
+				return
+			}
+			#partial switch underlying_kind(c, operand) {
+			case .Array, .Dynamic_Array, .Map, .Simd:
+			case:
+				return
+			}
+			at = v.operand
+		case:
+			return
+		}
+	}
+	if at != e {
+		below = prov_extend(graph, nil, proj_wild())
+	}
+	if walk {
+		walk_flow_expr(graph, at)
+	}
+	return graph.call_results[prov_call_node(graph, at)].place, below, true
+}
+
 @(private)
 prov_names_inout_result :: proc(graph: ^Flow_Graph, e: Expr) -> bool {
 	call := prov_call_node(graph, e)

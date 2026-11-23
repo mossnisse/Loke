@@ -99,7 +99,12 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	prov_retain_escape(graph, receiver, stored, v.span)
 	root, path, ok := prov_place_of(graph, receiver)
 	if !ok {
-		through, _, _ := prov_read_through_carrier(graph, receiver, store = true)
+		through, _, reached := prov_read_through_carrier(graph, receiver, store = true)
+		if !reached {
+			// In an `inout` result, as `items(inout array).append(x)`, walked as
+			// the receiver.
+			through, _, _ = prov_inout_result_store(graph, receiver, walk = false)
+		}
 		prov_retain_into(graph, through, stored, v.span)
 		for part in parts[:count] {
 			prov_publish_contained(graph, through, part.actual, part.type, v.span)
