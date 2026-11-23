@@ -1,0 +1,56 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Temporaries and procedure boundaries": `x op= y` on a whole local
+// is the assignment `x = x op y`, so the binary fallback's result that `x`
+// views lives until the end of `x`'s block. design.md "Evaluation order": the
+// right operand is evaluated before the operation reads `x`.
+Tag :: struct { n: int }
+
+concat :: operator(+) proc(s: string_view, t: Tag) -> string {
+	return "three" if s.len() == 3 else "other";
+}
+
+pair :: operator(+) proc(s: []int, t: Tag) -> [2]int { return {t.n, t.n + 1}; }
+
+F :: dyn proc() -> int;
+
+one :: proc() -> int { return 1; }
+two :: proc() -> int { return 2; }
+pick :: operator(+) proc(f: F, t: Tag) -> proc() -> int { return two; }
+
+make_tag :: proc() -> Tag { return {4}; }
+
+rewrite :: proc(s: inout string_view) -> Tag {
+	s = "zzz";
+	return {1};
+}
+
+loud :: proc() -> Tag {
+	fmt.println("loud");
+	return {1};
+}
+
+viewed :: proc() -> int {
+	s: string_view = "a";
+	s += rewrite(inout s);
+	a: []int = {};
+	a += make_tag();
+	return s.len()*100 + a[0]*10 + a[1];
+}
+
+VIEWED :: viewed();
+
+main :: proc() {
+	s: string_view = "a";
+	s += Tag{1};
+	fmt.println(s);
+	s += loud();
+	a: []int = {};
+	a += Tag{7};
+	f: F = one;
+	f += Tag{1};
+	fmt.println(s, a, f());
+	fmt.println(VIEWED, viewed());
+}

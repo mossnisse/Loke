@@ -1,9 +1,12 @@
 L0417
-@19:4
-which a compound assignment cannot borrow as `string_view`
+@24:6
+`+` produces `string`, which a compound assignment cannot borrow as `string_view`
 L0417
-@21:4
-which a compound assignment cannot borrow as `[]int`
+@25:6
+`+` produces `[2]int`, which a compound assignment cannot borrow as `[]int`
 L0417
-@23:4
-which a compound assignment cannot borrow as `dyn proc() -> int`
+@26:6
+`+` produces `proc() -> int`, which a compound assignment cannot borrow as `dyn proc() -> int`
+L0417
+@30:4
+`+` produces `string`, which a compound assignment cannot borrow as `string_view`

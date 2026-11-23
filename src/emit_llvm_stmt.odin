@@ -387,7 +387,11 @@ declare_local :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 @(private = "file")
 emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	if s.lowered != nil {
-		emit_scoped_block(e, s.lowered)
+		if s.lowered_inline {
+			emit_statements(e, s.lowered.stmts)
+		} else {
+			emit_scoped_block(e, s.lowered)
+		}
 		return
 	}
 	if s.op != .Assign {

@@ -236,7 +236,7 @@ eval_destructure :: proc(ev: ^Evaluator, plan: ^Destructure, operand: Expr) -> (
 @(private = "file")
 eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	if s.lowered != nil {
-		return eval_block(ev, s.lowered)
+		return eval_stmts(ev, s.lowered.stmts, scope = !s.lowered_inline)
 	}
 	if s.op != .Assign {
 		return eval_compound_assign(ev, s)

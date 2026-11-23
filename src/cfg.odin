@@ -1243,7 +1243,11 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	held := len(graph.held_owners)
 	defer resize(&graph.held_owners, held)
 	if s.lowered != nil {
-		walk_flow_block(graph, s.lowered)
+		if s.lowered_inline {
+			walk_flow_stmts(graph, s.lowered.stmts)
+		} else {
+			walk_flow_block(graph, s.lowered)
+		}
 		return
 	}
 	// A provider moved into a local's storage goes on backing its owners there.

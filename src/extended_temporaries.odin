@@ -31,7 +31,6 @@ mark_extended_temporaries :: proc(c: ^Compiler, stmt: Stmt) {
 }
 
 // A procedure's own variable; a parameter, `static`, or global is not one.
-@(private = "file")
 extends_into_local :: proc(c: ^Compiler, id: Symbol_Id) -> bool {
 	sym := symbol_of(c, id)
 	return sym != nil && sym.kind == .Var && sym.duration == .None

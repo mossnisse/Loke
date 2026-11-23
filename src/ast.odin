@@ -977,6 +977,9 @@ Stmt_Assign :: struct {
 	// `grid[x, y] += v` through `operator([])` and `operator([]=)`: the checked
 	// block later phases run instead of this statement.
 	lowered:         ^Block,
+	// `lowered`'s statements run in the scope holding this one, not a scope of
+	// their own, so a temporary they extend lives to that scope's end.
+	lowered_inline:  bool,
 }
 
 // An `operator([]=)` call, its arguments bound in parameter order; `symbol` is

@@ -667,6 +667,52 @@ lower_compound_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index)
 	return true
 }
 
+// design.md "Temporaries and procedure boundaries": `x op= y` on a whole local
+// variable whose binary fallback produces a value `x` views, as a `string` for
+// a `string_view`, is the assignment `x = x op y` to that local, so the result
+// is extended to the end of its block. It is checked as
+//
+//     v0 := y; x = x op v0;
+//
+// run in the scope that holds it (`lowered_inline`), so the right operand is
+// evaluated before the operation reads `x` (design.md "Evaluation order"). A
+// right operand with nothing to order, or a constant, which keeps its unfixed
+// type for the operator to settle, is written where it is used.
+@(private = "file")
+lower_compound_view :: proc(k: ^Checker, s: ^Stmt_Assign) -> bool {
+	op := compound_operator(s.op)
+	if _, is_ident := s.lhs[0].(^Expr_Ident); !is_ident || op == .EOF {
+		return false
+	}
+	probe := begin_probe(k.c)
+	trial := synth_assign(k.c, {clone_expr(k.c, s.lhs[0])}, {clone_expr(k.c, s.rhs[0])}, s.op_span, s.span)
+	trial.op = s.op
+	type := check_assign_target(k, trial.lhs[0], INVALID_TYPE, inserts = false)
+	viewed := type != INVALID_TYPE && extends_into_local(k.c, trial.lhs[0].(^Expr_Ident).symbol) &&
+		!compound_applies(k.c, op, type) && check_user_compound(k, trial, op, type) == .Viewed
+	end_probe(k.c, probe)
+	if !viewed {
+		return false
+	}
+	span := s.span
+	stmts := make([dynamic]Stmt, 0, 2, k.c.semantic_allocator)
+	value := clone_expr(k.c, s.rhs[0])
+	if !lowered_constant(k, s.rhs[0]) && needs_temporary(k, s.rhs[0]) {
+		append(&stmts, synth_decl(k.c, .Var, "compound$value", value, span))
+		value = synth_ident(k.c, "compound$value", span)
+	}
+	combined := new(Expr_Binary, k.c.semantic_allocator)
+	combined.span = span
+	combined.op = op
+	combined.op_span = s.op_span
+	combined.lhs = clone_expr(k.c, s.lhs[0])
+	combined.rhs = value
+	append(&stmts, synth_assign(k.c, {clone_expr(k.c, s.lhs[0])}, {combined}, s.op_span, span))
+	check_lowered_block(k, s, stmts[:], new_scope(k.c, k.scope, .Local))
+	s.lowered_inline = true
+	return true
+}
+
 // `s` as the block that stands for it, checked in `scope`, which holds the
 // names of the types the lowering wrote.
 @(private = "file")
@@ -1063,6 +1109,9 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	if indexed, is_index := s.lhs[0].(^Expr_Index); is_index && lower_compound_setter(k, s, indexed) {
 		return
 	}
+	if lower_compound_view(k, s) {
+		return
+	}
 	// design.md "Maps": `m[key] += 1` reads and writes one element, so the entry
 	// must already be there; only `m[key] = elem` creates one.
 	type := check_assign_target(k, s.lhs[0], INVALID_TYPE, inserts = false)
@@ -1078,7 +1127,7 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	// The built-in compound operation wins where it is defined; otherwise a
 	// direct `+=` overload, and failing that the binary `+` fallback.
 	if !compound_applies(k.c, op, type) {
-		if !check_user_compound(k, s, op, type) {
+		if check_user_compound(k, s, op, type) == .Absent {
 			errorf(k.c, s.op_span, "L0318", "`%s` does not apply to `%s`", operator_text(op), type_name(k.c, type))
 		}
 		return
@@ -1091,7 +1140,7 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		if rhs_type == INVALID_TYPE {
 			return
 		}
-		if !simd_operand_is_builtin(k.c, type, rhs_type) && check_user_compound(k, s, op, type, rhs_type) {
+		if !simd_operand_is_builtin(k.c, type, rhs_type) && check_user_compound(k, s, op, type, rhs_type) != .Absent {
 			return
 		}
 		if materialize_value_expr(k, s.rhs[0], type, "assign") {
@@ -1110,17 +1159,26 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	constant_zero_divisor(k, op, s.op_span, s.rhs[0])
 }
 
+// What `check_user_compound` found: no user operator, one it checked, or a
+// binary fallback whose result the destination would view.
+@(private = "file")
+User_Compound :: enum u8 {
+	Absent,
+	Checked,
+	Viewed,
+}
+
 // A direct compound overload, or the binary operator plus an assignment.
 @(private = "file")
 check_user_compound :: proc(
 	k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: Type_Id,
 	prechecked_rhs: Type_Id = INVALID_TYPE,
-) -> bool {
+) -> User_Compound {
 	rhs_type := prechecked_rhs
 	if rhs_type == INVALID_TYPE {
 		rhs_type = check_single_expr(k, s.rhs[0])
 		if rhs_type == INVALID_TYPE {
-			return true // already reported; re-checking it would report a second time
+			return .Checked // already reported; re-checking it would report a second time
 		}
 	}
 	operands := []Type_Id{type, rhs_type}
@@ -1133,11 +1191,11 @@ check_user_compound :: proc(
 	if candidates_viable(direct.formed) {
 		chosen, bound := resolve_operator_set(k, s.op_span, direct, direct_args)
 		if chosen == INVALID_SYMBOL {
-			return true
+			return .Checked
 		}
 		s.lhs[0], s.rhs[0] = bound[0], bound[1]
 		s.operator, s.operator_direct = chosen, true
-		return true
+		return .Checked
 	}
 
 	binary := operator_text(op)
@@ -1148,17 +1206,17 @@ check_user_compound :: proc(
 	if !candidates_viable(set.formed) {
 		if operator_exists(k, direct.members, operands) {
 			resolve_operator_set(k, s.op_span, direct, direct_args)
-			return true
+			return .Checked
 		}
 		if operator_exists(k, set.members, operands) {
 			resolve_operator_set(k, s.op_span, set, args)
-			return true
+			return .Checked
 		}
-		return false
+		return .Absent
 	}
 	chosen, bound := resolve_operator_set(k, s.op_span, set, args)
 	if chosen == INVALID_SYMBOL {
-		return true
+		return .Checked
 	}
 	result := symbol_of(k.c, chosen)
 	if result.result == INVALID_TYPE || !assignable(k.c, result.result, type) {
@@ -1171,11 +1229,11 @@ check_user_compound :: proc(
 			result.result == INVALID_TYPE ? "no value" : type_name(k.c, result.result),
 			type_name(k.c, type),
 		)
-		return true
+		return .Checked
 	}
 	// The result is converted as a value (`compound_result_as`); a view or a
-	// `dyn proc` would borrow the operator's temporary, which the written
-	// assignment keeps alive and this one has no node to keep.
+	// `dyn proc` would borrow the operator's temporary, which only the written
+	// assignment to a whole local keeps alive (`lower_compound_view`).
 	erases := dyn_proc_signature(k.c, type) != INVALID_TYPE && !type_is_dyn(k.c, result.result)
 	if erases || type_views_as(k.c, result.result, type) {
 		errorf(
@@ -1183,12 +1241,12 @@ check_user_compound :: proc(
 			"`%s` produces `%s`, which a compound assignment cannot borrow as `%s`",
 			binary, type_name(k.c, result.result), type_name(k.c, type),
 		)
-		add_notef(k.c, NO_SPAN, "write the assignment out, as `x = x %s y`", binary)
-		return true
+		add_notef(k.c, NO_SPAN, "only a whole local variable keeps the result it views alive")
+		return .Viewed
 	}
 	s.lhs[0], s.rhs[0] = bound[0], bound[1]
 	s.operator, s.operator_direct = chosen, false
-	return true
+	return .Checked
 }
 
 // design.md "Destructuring": a destination takes a whole field, cloned or

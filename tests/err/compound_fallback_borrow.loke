@@ -1,9 +1,9 @@
 package main;
 
-// design.md "Operator declarations": a compound assignment converts its
-// binary operator's result as a value. A view or a `dyn proc` of that
-// temporary result is reported rather than left dangling; the written
-// assignment keeps its temporary.
+// design.md "Temporaries and procedure boundaries": a compound assignment's
+// binary fallback result that its destination would view is extended only for
+// a whole local variable. A field or a parameter keeps no temporary alive, so
+// the view is reported rather than left dangling.
 Tag :: struct { n: int }
 
 concat :: operator(+) proc(s: string_view, t: Tag) -> string { return "x"; }
@@ -14,15 +14,20 @@ F :: dyn proc() -> int;
 one :: proc() -> int { return 1; }
 pick :: operator(+) proc(f: F, t: Tag) -> proc() -> int { return one; }
 
-main :: proc() {
-	s: string_view = "a";
-	s += Tag{1};
-	a: []int = {};
-	a += Tag{1};
-	f: F = one;
-	f += Tag{1};
-	s = s + Tag{1};
-	_ = s;
-	_ = a;
-	_ = f;
+Holder :: struct {
+	s: string_view,
+	a: []int,
+	f: F,
 }
+
+fields :: proc(h: inout Holder) {
+	h.s += Tag{1};
+	h.a += Tag{1};
+	h.f += Tag{1};
+}
+
+parameter :: proc(s: inout string_view) {
+	s += Tag{1};
+}
+
+main :: proc() {}

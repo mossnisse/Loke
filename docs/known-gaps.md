@@ -7,25 +7,34 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A compound assignment cannot view its operator's result
+### A compound fallback reads its destination before the right operand
 
-[Operator declarations](design.md#operator-declarations) define `x op= y` as
-`x = x op y`. When the operator's result converts to the destination as a view
-or a `dyn proc`, the written assignment keeps the temporary result alive, but the
-compound form reports `L0417`.
+[Evaluation order](design.md#evaluation-order) evaluates a compound
+assignment's destination place, then its right operand, and only then performs
+the operation, which reads the destination. Through a binary operator
+fallback, compiled code reads the destination before the right operand.
 
 ```loke
 package main;
+import "core:fmt";
 
 Tag :: struct { n: int }
-concat :: operator(+) proc(s: string_view, t: Tag) -> string { return "x"; }
-
+V :: struct { n: int }
+add :: operator(+) proc(v: V, t: Tag) -> V { return {v.n + t.n}; }
+bump :: proc(v: inout V) -> Tag { v.n = 100; return {1}; }
+run :: proc() -> int {
+    v := V{1};
+    v += bump(inout v);
+    return v.n;
+}
+AT_COMPILE :: run();
 main :: proc() {
-    s: string_view = "a";
-    s += Tag{1};
-    _ = s;
+    fmt.println(AT_COMPILE, run());
 }
 ```
 
-`s = s + Tag{1};` compiles. Compound assignment needs the assignment's temporary
-extension. [Regression](../tests/err/compound_fallback_borrow.loke)
+The program prints `101 2`: compile-time evaluation reads `v` after `bump`, and
+the compiled code before it. `emit_operator_call` loads its `left_place` before
+it evaluates the other operands. A fallback whose result its local destination
+views is lowered to `v0 := y; x = x op v0;` and reads in the specified order.
+

@@ -8236,6 +8236,13 @@ does a field of a literal. A `for` update and a deferred statement extend
 nothing, since each runs again without leaving its scope. A loop body is a block
 of its own, so a temporary extended there ends with each iteration.
 
+A compound assignment to a whole local that falls back to its
+[binary operator](#operator-declarations) is an assignment to that local, and
+the operator's result is the value the local receives: `s += tag` with `s` a
+`string_view` keeps the `string` the operator returns. A field, an element, or a
+parameter keeps no temporary, so the same compound assignment to one is
+rejected.
+
 ```loke
 p := &Point{1, 2};                       // lives until the block ends
 items := [dynamic]int{1, 2, 3}[:];       // the dynamic array lives with `items`
