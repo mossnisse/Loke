@@ -1,0 +1,37 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Number literals": arithmetic on unfixed floats is exact, and a
+// destination rounds the result once.
+static_assert(9007199254740993.0 != 9007199254740992.0);
+DIFFERENCE: f64 : 9007199254740993.0 - 9007199254740992.0;
+static_assert(DIFFERENCE == 1.0);
+static_assert(0.1 + 0.2 == 0.3);
+static_assert(1.0 / 3.0 * 3.0 == 1.0);
+// Past the range of every float type, and back.
+static_assert(1e400 / 1e300 == 1e100);
+// An unfixed integer is exact beside a float, not rounded first.
+static_assert((1 << 53) + 1 == 9007199254740993.0);
+static_assert((1 << 53) + 1 != 9007199254740992.0);
+// An explicit conversion truncates the exact value.
+static_assert(int(7.0 / 2.0) == 3 && int(-7.0 / 2.0) == -3);
+
+// design.md "Floating-point operators": a division by zero and an infinity
+// follow IEEE-754, and so does the sign of a zero.
+INF :: 1.0 / 0.0;
+static_assert(INF > 1e400 && -INF < -1e400);
+NEGATIVE_ZERO :: -0.0 * 1.0;
+
+SUM: f64 : 0.1 + 0.2;
+HALF_ULP: f32 : 16777217.0 - 16777216.0 + 0.5;
+TINY: f32 : 1e-1000000 * 2.0;
+
+main :: proc() {
+	inferred := 0.1 + 0.2;
+	fmt.println(inferred, SUM, DIFFERENCE, HALF_ULP, TINY);
+	fmt.println(NEGATIVE_ZERO, 1.0 / NEGATIVE_ZERO, INF, 1.0 / INF, -1.0 / INF);
+	fmt.println(f32(1.0 / 3.0), 1.0 / 3.0, 1e300 * 1e10 / 1e20);
+	// The rounded sum, at the type the program names.
+	fmt.println(f64(0.1) + 0.2);
+}

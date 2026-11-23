@@ -7,15 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### Unfixed decimal literals round before constant folding
-
-`static_assert(9007199254740993.0 != 9007199254740992.0);` reports
-`L0387`. The compiler rounds both literals to `f64` before it compares
-them. A declaration `Difference: f64 : 9007199254740993.0 - 9007199254740992.0;`
-also gets zero instead of one. [Open questions](open-questions.md#compiler-source-audit-continuation)
-says what an exact representation needs.
-[Number literals](design.md#number-literals)
-
 ### A field's name in an argument literal can stop a returned transfer
 
 [Returned constructions](design.md#returned-constructions) transfers an

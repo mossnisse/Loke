@@ -10,7 +10,7 @@
 // `nil` can each take their meaning from where they are used.
 package lokec
 
-import "core:strconv"
+import "core:math"
 import "core:strings"
 import "core:unicode/utf8"
 
@@ -328,17 +328,20 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal) {
 		v.const_value = integer_const(value)
 
 	case .Float:
-		text, _ := strings.replace_all(v.text, "_", "", k.c.semantic_allocator)
-		value, ok := strconv.parse_f64(text)
+		text, _ := strings.remove_all(v.text, "_", context.temp_allocator)
+		value, status, ok := decimal_const(k.c, text)
 		if !ok {
 			errorf(k.c, v.span, "L0351", "`%s` is not a valid floating-point literal", v.text)
+			return
+		}
+		if status == .Too_Large {
+			errorf(k.c, v.span, "L0390", "`%s` is too large to fold exactly", v.text)
 			return
 		}
 		// design.md "Number literals": unfixed until a destination or a concrete
 		// operand converts it, which rounds the exact decimal value once.
 		v.type = TYPE_UNTYPED_FLOAT
-		v.const_value = float_const(value, 64)
-		v.const_value.text = text
+		v.const_value = value
 
 	case .Rune:
 		value, ok := decode_rune_literal(v.text)
@@ -1158,24 +1161,10 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 
 	v.type = operand
 	if base_is_const(operand_base) {
-		if folded, ok := fold_unary_const(k, v.op, v.op_span, operand_base.const_value, operand); ok {
+		if folded, ok := fold_unary(k.c, v.op, v.op_span, operand_base.const_value, operand); ok {
 			v.const_value = folded
 		}
 	}
-}
-
-// `fold_unary` for the checker, whose float constants keep a decimal spelling.
-// It follows the sign, so `-(-x)` still rounds once.
-fold_unary_const :: proc(k: ^Checker, op: Token_Kind, op_span: Span, value: Const_Value, type: Type_Id) -> (Const_Value, bool) {
-	folded, ok := fold_unary(k.c, op, op_span, value, type)
-	if ok && op == .Minus && value.kind == .Float && value.text != "" {
-		if value.text[0] == '-' {
-			folded.text = value.text[1:]
-		} else {
-			folded.text = strings.concatenate({"-", value.text}, k.c.semantic_allocator)
-		}
-	}
-	return folded, ok
 }
 
 @(private = "file")
@@ -1372,7 +1361,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	operand_type, unified := unify_operands(k, v.lhs, v.rhs, v.op_span, is_comparison)
+	operand_type, unified := unify_operands(k, v.lhs, v.rhs, v.op_span)
 	if !unified {
 		return
 	}
@@ -1688,9 +1677,8 @@ own_equalities_visible :: proc(k: ^Checker, owned: []Type_Id, compared: Type_Id,
 // One untyped operand takes the other's concrete type; two untyped operands
 // meet at the wider untyped kind (design.md "Arithmetic operators").
 @(private = "file")
-unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span, comparing := false) -> (Type_Id, bool) {
-	left, right := expr_base(lhs), expr_base(rhs)
-	lt, rt := left.type, right.type
+unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, bool) {
+	lt, rt := expr_base(lhs).type, expr_base(rhs).type
 	if lt == rt {
 		return lt, true
 	}
@@ -1709,12 +1697,6 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span, comparing := 
 		if !ok {
 			operand_mismatch(k, op_span, lt, rt)
 			return INVALID_TYPE, false
-		}
-		// A comparison needs no value of the merged type: an integer constant
-		// compares with a float one exactly, unrounded (design.md "Comparison
-		// operators").
-		if comparing && merged == TYPE_UNTYPED_FLOAT && (left.const_value.kind == .Integer || right.const_value.kind == .Integer) {
-			return merged, true
 		}
 		if !materialize(k, lhs, merged) || !materialize(k, rhs, merged) {
 			return INVALID_TYPE, false
@@ -2087,6 +2069,10 @@ report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 				k.c, base.span, "L0353", "a float does not convert implicitly to `%s`; an explicit `%s(...)` truncates it",
 				type_name(k.c, target), type_name(k.c, target),
 			)
+			return
+		}
+		if base.const_value.exact != nil && math.is_inf(base.const_value.float) {
+			errorf(k.c, base.span, "L0353", "the constant is too large for `%s`", type_name(k.c, target))
 			return
 		}
 		errorf(k.c, base.span, "L0353", "%v is not representable by `%s`", base.const_value.float, type_name(k.c, target))

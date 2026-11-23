@@ -377,6 +377,8 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 		cv.integer = bi_clone(storage, v.integer)
 	} else if v.kind == .String {
 		cv.text = strings.clone(v.text, storage)
+	} else if v.kind == .Float && v.exact != nil {
+		cv.exact = new_clone(Rational{bi_clone(storage, v.exact.numerator), bi_clone(storage, v.exact.denominator)}, storage)
 	}
 	if v.kind == .Aggregate {
 		elements, err := make([]Const_Value, len(v.elements), storage)

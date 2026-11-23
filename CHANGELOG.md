@@ -177,6 +177,20 @@ checklist.
   rng: random.Xoshiro256;                    // before: its first draw seeded it
   rng := random.Xoshiro256.from_entropy();   // after
   ```
+- Arithmetic on unfixed floating constants is exact, and only the conversion to a type rounds
+  ([Number literals](docs/design.md#number-literals)). Each step was rounded to `f64`, so
+  `9007199254740993.0 - 9007199254740992.0` was `0.0` and `static_assert(0.1 + 0.2 == 0.3)`
+  failed; now they are `1.0` and true, and `x := 0.1 + 0.2;` is `0.3`, not
+  `0.30000000000000004`. A finite result too large for its type, such as `a: f64 = 1e300 * 1e300;`,
+  was an infinity and is now `L0353`, and `(1 << 2000) + 1.5` stays exact until it converts.
+  A literal past the range of `f64`, such as `1e400`, is a valid unfixed constant rather than
+  `L0351`. A literal or result too large to hold exactly, past 2^20 bits, is `L0390`. Upgrade by
+  naming the type where the rounded steps are wanted:
+
+  ```
+  x := 0.1 + 0.2;        // before: 0.30000000000000004; now 0.3
+  x := f64(0.1) + 0.2;   // after: 0.30000000000000004
+  ```
 
 ### Added
 

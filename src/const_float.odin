@@ -283,20 +283,129 @@ bi_to_float :: proc(c: Value_Storage, v: Big_Int, bits: u16) -> (result: f64, ok
 	return result, !math.is_inf(result, 0)
 }
 
+// design.md "Number literals": an unfixed floating constant's exact value,
+// `numerator / denominator` in lowest terms over a positive denominator. Its
+// `float` view is the nearest `f64`, and a zero's sign is kept only there.
+Rational :: struct {
+	numerator, denominator: Big_Int,
+}
+
+// The most bits either part of a `Rational` may take, the cap an unfixed `<<`
+// has too (`fold_shift`).
+RATIONAL_BIT_LIMIT :: 1 << 20
+
+// A magnitude below 2^-TINY_EXPONENT is under half the smallest subnormal of
+// every float type, so it rounds to zero at every width; above
+// 2^TINY_EXPONENT it overflows every one.
+@(private = "file")
+TINY_EXPONENT :: 1100
+
+// What `exact_const` made of a value.
+Exact_Status :: enum {
+	Exact,
+	// Past `RATIONAL_BIT_LIMIT`, and not small enough to be zero at every width.
+	Too_Large,
+}
+
+// The unfixed float `numerator / denominator`, which takes both parts; the
+// denominator is nonzero. A zero is negative when `negative_zero` says so. Past
+// `RATIONAL_BIT_LIMIT`, a value that rounds to zero at every width is held as
+// that zero.
+exact_const :: proc(storage: Value_Storage, numerator, denominator: Big_Int, negative_zero := false) -> (Const_Value, Exact_Status) {
+	numerator, denominator := numerator, denominator
+	if bi_sign(denominator) < 0 {
+		negated_numerator, negated_denominator := bi_neg(storage, numerator), bi_neg(storage, denominator)
+		bi_release(numerator, denominator)
+		numerator, denominator = negated_numerator, negated_denominator
+	}
+	negative := bi_sign(numerator) < 0
+	if bi_is_zero(numerator) {
+		bi_release(denominator)
+		return exact_zero(storage, negative_zero), .Exact
+	}
+	// Lowest terms, unless a part is already 1, as an integer's denominator is.
+	if bi_magnitude_bits(numerator) > 1 && bi_magnitude_bits(denominator) > 1 {
+		common := bi_gcd(storage, numerator, denominator)
+		if bi_magnitude_bits(common) > 1 {
+			reduced_numerator, reduced_denominator := bi_quo(storage, numerator, common), bi_quo(storage, denominator, common)
+			bi_release(numerator, denominator)
+			numerator, denominator = reduced_numerator, reduced_denominator
+		}
+		bi_release(common)
+	}
+	if bi_magnitude_bits(numerator) > RATIONAL_BIT_LIMIT || bi_magnitude_bits(denominator) > RATIONAL_BIT_LIMIT {
+		tiny := bi_magnitude_bits(numerator) - bi_magnitude_bits(denominator) < -TINY_EXPONENT
+		bi_release(numerator, denominator)
+		if tiny {
+			return exact_zero(storage, negative), .Exact
+		}
+		return {}, .Too_Large
+	}
+	exact := new(Rational, storage_allocator(storage))
+	exact^ = Rational{numerator, denominator}
+	value := float_const(rational_to_float(storage, exact^, 64), 64)
+	value.exact = exact
+	return value, .Exact
+}
+
+@(private = "file")
+exact_zero :: proc(storage: Value_Storage, negative: bool) -> Const_Value {
+	exact := new(Rational, storage_allocator(storage))
+	exact^ = Rational{bi_zero(storage), bi_from_i64(storage, 1)}
+	value := float_const(negative ? math.copy_sign(f64(0), -1) : 0, 64)
+	value.exact = exact
+	return value
+}
+
+// The nearest float of `bits` width to `value`, ties to even, or an infinity
+// when it overflows that width; an exact zero is `+0`.
+rational_to_float :: proc(storage: Value_Storage, value: Rational, bits: u16) -> f64 {
+	if bi_is_zero(value.numerator) {
+		return 0
+	}
+	negative := bi_sign(value.numerator) < 0
+	magnitude := bi_abs(storage, value.numerator)
+	defer bi_release(magnitude)
+	// Decided by the magnitudes alone, so no quotient is built for them.
+	scale := bi_magnitude_bits(value.denominator) - bi_magnitude_bits(magnitude)
+	if scale > TINY_EXPONENT || scale < -TINY_EXPONENT {
+		result := scale > 0 ? 0 : math.inf_f64(1)
+		return negative ? -result : result
+	}
+	// `magnitude / denominator` with at least 55 quotient bits, two more than
+	// an `f64` keeps, and a sticky bit below them for the remainder, so
+	// `dyadic_to_float` rounds once wherever the result's last place falls.
+	scale = max(scale + 55, 0)
+	scaled := bi_shl(storage, magnitude, scale)
+	quotient, remainder := bi_quo_rem(storage, scaled, value.denominator)
+	sticky := bi_from_i64(storage, bi_is_zero(remainder) ? 0 : 1)
+	doubled := bi_shl(storage, quotient, 1)
+	marked := bi_or(storage, doubled, sticky)
+	defer bi_release(scaled, quotient, remainder, sticky, doubled, marked)
+	result := dyadic_to_float(storage, marked, -scale - 1, bits)
+	return negative ? -result : result
+}
+
+// `value` at `bits` width, rounding an unfixed float's exact value once.
+exact_to_float :: proc(storage: Value_Storage, value: Const_Value, bits: u16) -> f64 {
+	if value.exact == nil {
+		return value.float
+	}
+	result := rational_to_float(storage, value.exact^, bits)
+	// Zero carries its sign in the view.
+	return result == 0 && bi_is_zero(value.exact.numerator) ? value.float : result
+}
+
 // `digits[.digits][e[+-]digits]` as the digits alone, in the temp allocator, and
 // the power of ten they are scaled by; `ok` is false for any other spelling.
 @(private = "file")
-scan_decimal :: proc(text: string) -> (digits: string, exponent: int, negative, ok: bool) {
-	// Far past both bounds in `decimal_to_float`, and small enough that adding the
-	// fraction's digit count cannot overflow.
+scan_decimal :: proc(text: string) -> (digits: string, exponent: int, ok: bool) {
+	// Far past `RATIONAL_BIT_LIMIT`, and small enough that adding the fraction's
+	// digit count cannot overflow.
 	DECIMAL_EXPONENT_LIMIT :: 1 << 40
-	if text == "" {
-		return
-	}
-	negative = text[0] == '-'
 	kept := make([dynamic]u8, 0, len(text), context.temp_allocator)
 	point := false
-	for index := negative ? 1 : 0; index < len(text); index += 1 {
+	for index := 0; index < len(text); index += 1 {
 		ch := text[index]
 		switch {
 		case ch >= '0' && ch <= '9':
@@ -304,7 +413,7 @@ scan_decimal :: proc(text: string) -> (digits: string, exponent: int, negative, 
 			if point {
 				exponent -= 1
 			}
-		case ch == '.':
+		case ch == '.' && !point:
 			point = true
 		case ch == 'e' || ch == 'E':
 			// Saturated: any exponent this large already decides the result.
@@ -316,82 +425,59 @@ scan_decimal :: proc(text: string) -> (digits: string, exponent: int, negative, 
 				rest = rest[1:]
 			}
 			if rest == "" {
-				return "", 0, false, false
+				return "", 0, false
 			}
 			for digit in transmute([]u8)rest {
 				if digit < '0' || digit > '9' {
-					return "", 0, false, false
+					return "", 0, false
 				}
 				written = min(written * 10 + int(digit - '0'), DECIMAL_EXPONENT_LIMIT)
 			}
 			exponent += sign * written
 			index = len(text)
 		case:
-			return "", 0, false, false
+			return "", 0, false
 		}
 	}
-	return string(kept[:]), exponent, negative, true
+	return string(kept[:]), exponent, len(kept) > 0
 }
 
-// A decimal literal's spelling, as `scan_decimal` reads it, rounded once to a
-// 16- or 32-bit float. `ok` is false for any other width or spelling, where the
-// caller's binary64 value already is the single rounding.
-decimal_to_float :: proc(c: Value_Storage, text: string, bits: u16) -> (result: f64, ok: bool) {
-	if bits != 16 && bits != 32 {
-		return 0, false
-	}
-	digits, exponent, negative, scanned := scan_decimal(text)
-	if !scanned || digits == "" {
-		return 0, false
+// A decimal literal's spelling, without separators, as an unfixed float. `ok`
+// is false for a spelling `scan_decimal` refuses, and the status says whether
+// the value is too large to hold.
+decimal_const :: proc(storage: Value_Storage, text: string) -> (value: Const_Value, status: Exact_Status, ok: bool) {
+	digits, exponent, scanned := scan_decimal(text)
+	if !scanned {
+		return
 	}
 	// Zeroes at either end change no value: trimmed, a zero has no digits, and
-	// no big integer is built for an exponent the range checks decide.
+	// an exponent past the limit is decided before any power of ten is built.
 	digits = strings.trim_left(digits, "0")
 	significant := strings.trim_right(digits, "0")
 	exponent += len(digits) - len(significant)
 	digits = significant
-	zero := negative ? math.copy_sign(f64(0), -1) : 0
 	if digits == "" {
-		return zero, true
+		return exact_zero(storage, false), .Exact, true
 	}
-	// The value lies in [10^(top - 1), 10^top). Past 10^40 every 16- and 32-bit
-	// float overflows, and below 10^-50 every one rounds to zero, so no power
-	// of ten is built for an exponent outside that range.
-	top := len(digits) + exponent
-	if top > 40 {
-		return 0, false
-	}
-	if top < -50 {
-		return zero, true
-	}
-	significand, parsed := bi_parse_int_literal(c, digits)
-	defer bi_release(significand)
-	if !parsed {
-		return 0, false
-	}
-	power := bi_pow10(c, abs(exponent))
-	defer bi_release(power)
-	magnitude: f64
-	if exponent >= 0 {
-		product := bi_mul(c, significand, power)
-		defer bi_release(product)
-		magnitude, ok = bi_to_float(c, product, bits)
-		if !ok {
-			return 0, false
+	// 10^k takes about k log2(10) bits, and the value lies in
+	// [10^(top - 1), 10^top).
+	LOG2_10 :: 3.321928094887362
+	if f64(abs(exponent)) * LOG2_10 > RATIONAL_BIT_LIMIT + 64 {
+		top := len(digits) + exponent
+		if f64(top) * LOG2_10 < -TINY_EXPONENT {
+			return exact_zero(storage, false), .Exact, true
 		}
-	} else {
-		// `significand / power` with at least 28 quotient bits, more than a 32-bit
-		// float's 24, and a sticky bit below them for the remainder.
-		scale := max(28 + bi_magnitude_bits(power) - bi_magnitude_bits(significand), 0)
-		scaled := bi_shl(c, significand, scale)
-		quotient, remainder := bi_quo_rem(c, scaled, power)
-		sticky := bi_from_i64(c, bi_is_zero(remainder) ? 0 : 1)
-		doubled := bi_shl(c, quotient, 1)
-		marked := bi_or(c, doubled, sticky)
-		defer bi_release(scaled, quotient, remainder, sticky, doubled, marked)
-		magnitude = dyadic_to_float(c, marked, -scale - 1, bits)
+		return {}, .Too_Large, true
 	}
-	return negative ? -magnitude : magnitude, true
+	significand, _ := bi_parse_int_literal(storage, digits)
+	power := bi_pow10(storage, abs(exponent))
+	if exponent < 0 {
+		value, status = exact_const(storage, significand, power)
+		return value, status, true
+	}
+	defer bi_release(significand, power)
+	value, status = exact_const(storage, bi_mul(storage, significand, power), bi_from_i64(storage, 1))
+	return value, status, true
 }
 
 // The IEEE-754 encoding of `value` rounded to nearest at `bits`, ties to even,

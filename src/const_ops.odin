@@ -46,10 +46,11 @@ Const_Value :: struct {
 	// signalling NaN round-tripped through the f64 field comes back quiet, so
 	// `unsafe.transmute(u32, x)` would not answer the bits it was handed.
 	float_raw:  u64,
-	// A String's text, or an unfixed Float literal's decimal spelling, kept so
-	// a narrower destination rounds the exact value once (design.md "Number
-	// literals").
-	text:       string,
+	// A finite unfixed Float's exact value, so a destination rounds it once
+	// (design.md "Number literals"); `float` is its nearest `f64`. Nil for a
+	// typed Float, an infinity, or a NaN.
+	exact:      ^Rational,
+	text:       string, // a String's
 	aggregate:  ^Const_Aggregate,
 }
 
@@ -194,10 +195,16 @@ fold_arithmetic :: proc(
 	case a.kind == .String && b.kind == .String && op == .Plus:
 		joined, err := strings.concatenate({a.text, b.text}, value_allocator(c, allocator))
 		return string_const(joined), err == nil
+	case a.kind == .Float && b.kind == .Float && type_is_untyped(c, type):
+		if folded, status, ok := fold_unfixed_float(op, a, b, value_allocator(c, allocator)); ok {
+			if status == .Too_Large {
+				errorf(c, op_span, "L0390", "the unfixed result of `%s` is too large to fold exactly", operator_text(op))
+			}
+			return folded, status == .Exact
+		}
 	case a.kind == .Float && b.kind == .Float:
 		if result, ok := fold_float(op, a.float, b.float); ok {
-			bits := type_is_untyped(c, type) ? 64 : u16(type_bits(c, type))
-			return float_const(result, bits), true
+			return float_const(result, u16(type_bits(c, type))), true
 		}
 	case a.kind == .Boolean && b.kind == .Boolean:
 		// design.md "SIMD vectors": bitwise operators apply to `bool` lanes too.
@@ -235,6 +242,9 @@ fold_unary :: proc(
 	case .Minus:
 		if value.kind == .Float {
 			folded = float_const(-value.float, value.float_bits)
+			if value.exact != nil {
+				folded.exact = new_clone(Rational{bi_neg(storage, value.exact.numerator), value.exact.denominator}, storage)
+			}
 		} else {
 			folded = Const_Value{kind = value.kind, integer = bi_neg(storage, value.integer)}
 		}
@@ -265,6 +275,48 @@ fold_unary :: proc(
 @(private = "file")
 const_is_integral :: proc(value: Const_Value) -> bool {
 	return value.kind == .Integer || value.kind == .Rune
+}
+
+// design.md "Number literals": two unfixed floats, exactly while both are
+// finite and the result is. An infinity, a NaN, or a division by zero follows
+// IEEE-754, which reads only the class and sign of a finite operand, and so does
+// the sign of an exact zero. Not `ok` for an operator that does not apply.
+@(private = "file")
+fold_unfixed_float :: proc(op: Token_Kind, a, b: Const_Value, storage: mem.Allocator) -> (Const_Value, Exact_Status, bool) {
+	// A finite operand as IEEE-754 sees it.
+	class :: proc(value: Const_Value) -> f64 {
+		if value.exact == nil || bi_is_zero(value.exact.numerator) {
+			return value.float
+		}
+		return bi_sign(value.exact.numerator) < 0 ? -1 : 1
+	}
+	ieee, applies := fold_float(op, class(a), class(b))
+	if !applies {
+		return {}, .Exact, false
+	}
+	x, y := a.exact, b.exact
+	if x == nil || y == nil || (op == .Slash && bi_is_zero(y.numerator)) {
+		if ieee == 0 {
+			// A finite operand over an infinity.
+			value, _ := exact_const(storage, bi_zero(storage), bi_from_i64(storage, 1), math.sign_bit(ieee))
+			return value, .Exact, true
+		}
+		return float_const(ieee, 64), .Exact, true
+	}
+	numerator, denominator: Big_Int
+	#partial switch op {
+	case .Plus, .Minus:
+		left, right := bi_mul(storage, x.numerator, y.denominator), bi_mul(storage, y.numerator, x.denominator)
+		defer bi_release(left, right)
+		numerator = op == .Plus ? bi_add(storage, left, right) : bi_sub(storage, left, right)
+		denominator = bi_mul(storage, x.denominator, y.denominator)
+	case .Star:
+		numerator, denominator = bi_mul(storage, x.numerator, y.numerator), bi_mul(storage, x.denominator, y.denominator)
+	case .Slash:
+		numerator, denominator = bi_mul(storage, x.numerator, y.denominator), bi_mul(storage, x.denominator, y.numerator)
+	}
+	value, status := exact_const(storage, numerator, denominator, math.sign_bit(ieee))
+	return value, status, true
 }
 
 // design.md "Floating-point operators": IEEE-754, and no panic.
@@ -435,23 +487,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		if a.float != a.float || b.float != b.float {
 			return op == .Not_Eq, true
 		}
-		order = a.float < b.float ? -1 : (a.float > b.float ? 1 : 0)
-	case a.kind == .Float || b.kind == .Float:
-		// Integer against float, compared exactly.
-		float, integer := a, b
-		if b.kind == .Float {
-			float, integer = b, a
-		}
-		if !const_is_integral(integer) {
-			return false, false
-		}
-		if float.float != float.float {
-			return op == .Not_Eq, true
-		}
-		order = bi_cmp_float(storage, integer.integer, float.float)
-		if a.kind == .Float {
-			order = -order
-		}
+		order = float_order(storage, a, b)
 	case const_is_integral(a) && const_is_integral(b):
 		order = bi_cmp(a.integer, b.integer)
 	case a.kind == .Boolean:
@@ -497,6 +533,24 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		return order >= 0, true
 	}
 	return false, false
+}
+
+// Two floats that are not NaN; two unfixed finite ones by their exact values,
+// and an infinity before or after every exact value by its sign.
+@(private = "file")
+float_order :: proc(storage: mem.Allocator, a, b: Const_Value) -> int {
+	x, y := a.exact, b.exact
+	switch {
+	case x != nil && y != nil:
+		left, right := bi_mul(storage, x.numerator, y.denominator), bi_mul(storage, y.numerator, x.denominator)
+		defer bi_release(left, right)
+		return bi_cmp(left, right)
+	case x != nil:
+		return b.float > 0 ? -1 : 1
+	case y != nil:
+		return a.float > 0 ? 1 : -1
+	}
+	return a.float < b.float ? -1 : (a.float > b.float ? 1 : 0)
 }
 
 // Unknown while a part has no compile-time comparison, as a `typeid` awaiting its
@@ -770,8 +824,8 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			return value, true
 		}
 		if value.kind == .Integer || (value.kind == .Rune && explicit) {
-			converted, fits := bi_to_float(storage, value.integer, 64)
-			return fits ? float_const(converted, 64) : value, fits
+			converted, status := exact_const(storage, value.integer, bi_from_i64(storage, 1))
+			return status == .Exact ? converted : value, status == .Exact
 		}
 	case .Untyped_Bool, .Bool:
 		if value.kind == .Boolean {
@@ -817,16 +871,13 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		#partial switch value.kind {
 		case .Float:
 			// Kept as is, so a signalling NaN is not quieted.
-			if value.float_bits == info.bits {
+			if value.float_bits == info.bits && value.exact == nil {
 				return value, true
 			}
-			// design.md "Number literals": a finite constant may not round to an
-			// infinity. A literal's decimal value is rounded once, not through f64.
-			converted := float_const(value.float, info.bits)
-			if exact, exact_ok := decimal_to_float(storage, value.text, info.bits); exact_ok {
-				converted = float_const(exact, info.bits)
-			}
-			return converted, !math.is_inf(converted.float) || math.is_inf(value.float)
+			// design.md "Number literals": an unfixed value is rounded once, and a
+			// finite constant may not round to an infinity.
+			converted := float_const(exact_to_float(storage, value, info.bits), info.bits)
+			return converted, !math.is_inf(converted.float) || (value.exact == nil && math.is_inf(value.float))
 		case .Integer, .Rune:
 			// design.md "Implicit type conversions": a rune constant never
 			// becomes a float implicitly.
@@ -890,6 +941,14 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 truncate_float_const :: proc(storage: mem.Allocator, value: Const_Value, bits: int, signed: bool, kind: Const_Kind, explicit: bool) -> (Const_Value, bool) {
 	if !explicit {
 		return value, false
+	}
+	if value.exact != nil {
+		truncated := bi_quo(storage, value.exact.numerator, value.exact.denominator)
+		if !bi_fits(truncated, bits, signed) {
+			bi_release(truncated)
+			return value, false
+		}
+		return Const_Value{kind = kind, integer = truncated}, true
 	}
 	limit := power_of_two(bits - (signed ? 1 : 0))
 	if !(value.float >= (signed ? -limit : 0) && value.float < limit) {

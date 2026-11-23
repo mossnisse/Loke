@@ -304,7 +304,7 @@ check_simd_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) {
 	}
 	elements := make([]Const_Value, info.count, k.c.semantic_allocator)
 	for lane, index in operand_base.const_value.aggregate.elements {
-		folded, ok := fold_unary_const(k, v.op, v.op_span, lane, element)
+		folded, ok := fold_unary(k.c, v.op, v.op_span, lane, element)
 		if !ok {
 			v.type = INVALID_TYPE
 			return

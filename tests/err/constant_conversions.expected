@@ -1,9 +1,9 @@
 L0353
 @10:18
 a float does not convert implicitly to `int`
-L0351
+L0353
 @11:17
-`1e400` is not a valid floating-point literal
+the constant is too large for `f64`
 L0317
 @12:13
 `!` does not apply to `untyped int`

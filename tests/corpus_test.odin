@@ -974,6 +974,9 @@ UNPINNED :: []string {
 	"L0325",
 	"L0506",
 	"L0340",
+	// `check_literal`'s guard: the lexer has already refused every malformed
+	// spelling, and a float literal too large to hold is `L0390`.
+	"L0351",
 	// Invariant guards: an emission contract violation, and `unsupported_construct`
 	// — every arm that used to reach it was given an honest diagnostic in M7.
 	"L0405",

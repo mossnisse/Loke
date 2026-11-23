@@ -3538,14 +3538,27 @@ type exists, and the runtime one has to happen at some type. An integer-only
 operator at a float destination is an error rather than a silent `int` computation,
 so the two can never disagree in the other direction.
 
-### An unfixed integer compares with an unfixed float exactly
+### Unfixed float arithmetic is exact
 
-An unfixed constant is exact, so comparing two of them should give the
-mathematical answer. Rounding the integer to `f64` first made
-`(1 << 53) + 1 == 9007199254740992.0` true, while an integer past every float
-could not be rounded and already compared exactly, so the answer depended on the
-integer's size. One exact rule needs no `f64` value at all; a program that wants
-the rounded comparison converts the integer itself.
+An unfixed integer is exact, and an unfixed float is too, so one rule covers
+both: the constant expression is evaluated mathematically and rounded once, when
+a type is given. Rounding each step to `f64` made
+`9007199254740993.0 - 9007199254740992.0` zero, and rounding an integer to `f64`
+first made `(1 << 53) + 1 == 9007199254740992.0` true while an integer past
+every float already compared exactly, so the answer depended on the integer's
+size. The price is that a constant and the same runtime expression can differ:
+`0.1 + 0.2` is the `f64` nearest `0.3`, while adding two `f64` variables holding
+`0.1` and `0.2` gives `0.30000000000000004`. A program that wants the rounded
+steps names the type, `f64(0.1) + 0.2`.
+
+The value is a fraction, which `/` needs, kept in lowest terms. `lokec` holds a
+numerator and a denominator of up to 2^20 bits each, the size an unfixed `<<`
+may reach, and rejects a larger one as `L0390`. A literal such as
+`1e-99999999999` is past that limit but below half the smallest subnormal of
+every float type, where it rounds to zero at any width, so it is held as that
+zero rather than rejected; such literals compiled before the arithmetic was
+exact. An infinity or NaN has no fraction, and follows IEEE-754 as a runtime
+operation does.
 
 ## Standard-library API choices
 

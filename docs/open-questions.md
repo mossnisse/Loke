@@ -171,10 +171,6 @@ The divergences the audit led to that remain are in
 The per-file source reviews were removed from the repository; these points
 remain from them:
 
-- **Exact unfixed decimals.** Folding them exactly needs rationals for `/`, a
-  second representation through every consumer of `.float`, and a limit for
-  literals such as `1e-99999999999`. The spec does not yet say how precise
-  unfixed float arithmetic is. [Known gap](known-gaps.md#unfixed-decimal-literals-round-before-constant-folding)
 - **Measure first.** Batching later-read queries per block in `cfg.odin`,
   ranges per binding for callback arguments, stopping carrier-shape sibling
   walks after overflow, keyed precision for slices reached through a carrier,

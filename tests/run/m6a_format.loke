@@ -123,7 +123,7 @@ main :: proc() {
 
 	// A float prints the shortest spelling that reads back as itself, at its own
 	// width, in fixed notation from 1e-4 to below 1e17; NaN has one spelling.
-	fmt.println(0.1, 0.3 - 0.1, 10.0, 1.5e10, 1e17, 0.00001);
+	fmt.println(0.1, f64(0.3) - 0.1, 10.0, 1.5e10, 1e17, 0.00001);
 	fmt.println(f32(0.1), f32(1) / f32(3));
 	// Shortest, not nearest: at a power of two the gap below the value is half
 	// the gap above, so 2^-24 and 2^-96 read back from the spelling one up. And

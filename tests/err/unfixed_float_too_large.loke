@@ -1,0 +1,11 @@
+// design.md "Number literals": an unfixed float is exact, up to the compiler's
+// limit on the size of that value. A literal or result past it is an error,
+// unless it is too small for every float type and so is zero in each.
+package main;
+
+HUGE :: 1e1000000;
+LARGE :: 1e300000;
+SQUARE :: LARGE * LARGE;
+TINY: f64 : 1e-1000000;
+
+main :: proc() { _ = TINY; }

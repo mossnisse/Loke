@@ -1,8 +1,8 @@
 package main;
 
-// Constants that do not survive the type they are written for, a literal the
-// lexer accepts and the checker cannot value, an operator with no meaning for
-// its operand, and the two built-ins that need more than an argument list.
+// Constants that do not survive the type they are written for, an exact literal
+// too large for its default type, an operator with no meaning for its operand,
+// and the two built-ins that need more than an argument list.
 
 message :: proc() -> string_view { return "not a constant"; }
 

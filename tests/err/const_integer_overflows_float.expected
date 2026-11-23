@@ -1,9 +1,9 @@
-L0352
-@5:9
-is not representable by `untyped float`
-L0352
-@6:19
-is not representable by `untyped float`
-L0352
-@8:32
-is not representable by `untyped float`
+L0353
+@8:12
+the constant is too large for `f64`
+L0353
+@9:16
+the constant is too large for `f32`
+L0353
+@11:32
+the constant is too large for `f64`

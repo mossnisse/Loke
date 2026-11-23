@@ -14,8 +14,7 @@ Big_Int :: big.Int
 
 // The checker's semantic arena, or the evaluator's bounded scratch.
 Value_Storage :: union { ^Compiler, mem.Allocator }
-@(private = "file")
-arena :: proc(c: Value_Storage) -> mem.Allocator {
+storage_allocator :: proc(c: Value_Storage) -> mem.Allocator {
 	switch storage in c {
 	case ^Compiler:
 		init_semantic_stores(storage)
@@ -53,7 +52,7 @@ bi_zero :: proc(c: Value_Storage) -> Big_Int {
 
 // Copies a value out of evaluator scratch, keeping only the digits it uses.
 bi_clone :: proc(storage: Value_Storage, value: Big_Int) -> Big_Int {
-	context.allocator = arena(storage)
+	context.allocator = storage_allocator(storage)
 	value := value
 	result: Big_Int
 	big.int_copy(&result, &value, minimize = true)
@@ -65,7 +64,7 @@ bi_from_u64 :: proc(c: Value_Storage, v: u64) -> Big_Int { return bi_from_int(c,
 
 @(private = "file")
 bi_from_int :: proc(c: Value_Storage, v: $T) -> Big_Int where intrinsics.type_is_integer(T) {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	r: Big_Int
 	big.int_set_from_integer(&r, v)
 	bi_settle(c, &r)
@@ -73,7 +72,7 @@ bi_from_int :: proc(c: Value_Storage, v: $T) -> Big_Int where intrinsics.type_is
 }
 
 bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	r: Big_Int
 	big.power_of_two(&r, power)
 	bi_settle(c, &r)
@@ -81,7 +80,7 @@ bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
 }
 
 bi_pow10 :: proc(c: Value_Storage, power: int) -> Big_Int {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	r: Big_Int
 	big.int_pow_int(&r, 10, power)
 	bi_settle(c, &r)
@@ -92,7 +91,7 @@ bi_pow10 :: proc(c: Value_Storage, power: int) -> Big_Int {
 // `0x` prefix, `_` separators after the first character. `-define` also passes
 // a leading `-`, and reads `ok == false` as "this value is a string".
 bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int, ok: bool) {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	negative := strings.has_prefix(text, "-")
 	literal := negative ? text[1:] : text
 	if literal == "" || literal[0] == '_' {
@@ -128,7 +127,7 @@ bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int,
 
 bi_text :: proc(c: Value_Storage, v: Big_Int) -> string {
 	v := v
-	text, err := big.int_itoa_string(&v, 10, false, arena(c))
+	text, err := big.int_itoa_string(&v, 10, false, storage_allocator(c))
 	if err != nil {
 		return "<big>"
 	}
@@ -158,7 +157,7 @@ bi_binary :: proc(
 	a, b: Big_Int,
 	op: proc(dest, x, y: ^Big_Int, allocator := context.allocator) -> big.Error,
 ) -> Big_Int {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	a, b := a, b
 	r: Big_Int
 	op(&r, &a, &b)
@@ -179,7 +178,7 @@ bi_unary :: proc(
 	a: Big_Int,
 	op: proc(dest, src: ^Big_Int, allocator := context.allocator) -> big.Error,
 ) -> Big_Int {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	a := a
 	r: Big_Int
 	op(&r, &a)
@@ -209,13 +208,38 @@ bi_rem :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c,
 
 // Both, from one division.
 bi_quo_rem :: proc(c: Value_Storage, a, b: Big_Int) -> (quotient, remainder: Big_Int) {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	a, b := a, b
 	bi_school_div(&quotient, &remainder, &a, &b)
 	bi_settle(c, &quotient)
 	bi_settle(c, &remainder)
 	return
 }
+
+// The greatest common divisor of the magnitudes; 0 only when both are. Euclid's:
+// core:math/big's binary `int_gcd` takes a step per bit, too slow for the
+// denominator of a long decimal. A one-digit divisor, the usual one, takes a
+// single pass where the schoolbook remainder's grows with the square of the
+// dividend.
+bi_gcd :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
+	x, y := bi_abs(c, a), bi_abs(c, b)
+	for !bi_is_zero(y) {
+		r: Big_Int
+		if y.used == 1 {
+			context.allocator = storage_allocator(c)
+			digit, _ := big.int_mod_digit(&x, y.digit[0])
+			r = bi_from_u64(c, u64(digit))
+		} else {
+			r = bi_rem(c, x, y)
+		}
+		bi_release(x)
+		x, y = y, r
+	}
+	bi_release(y)
+	return x
+}
+
+bi_abs :: proc(c: Value_Storage, a: Big_Int) -> Big_Int { return bi_unary(c, a, big.int_abs) }
 
 // Whichever of `quotient` and `remainder` is not nil.
 @(private = "file")
@@ -242,7 +266,7 @@ bi_school_rem :: proc(dest, a, b: ^Big_Int, allocator := context.allocator) -> b
 }
 
 bi_shl :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	a := a
 	r: Big_Int
 	big.int_shl(&r, &a, count)
@@ -267,7 +291,7 @@ bi_shr :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 
 @(private = "file")
 bi_shr_logical :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	a := a
 	r: Big_Int
 	big.int_shr(&r, &a, count)
@@ -340,7 +364,7 @@ bi_pattern :: proc(v: Big_Int, bits: int) -> u128 {
 
 // The value a `bits`-wide two's-complement pattern holds.
 bi_from_pattern :: proc(c: Value_Storage, pattern: u128, bits: int, signed: bool) -> Big_Int {
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	r: Big_Int
 	if signed {
 		shift := uint(128 - bits)
@@ -356,7 +380,7 @@ bi_to_i64 :: proc(c: Value_Storage, v: Big_Int) -> (value: i64, ok: bool) {
 	if !bi_fits(v, 64, true) {
 		return 0, false
 	}
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	v := v
 	result, err := big.int_get_i64(&v)
 	return result, err == nil
@@ -366,23 +390,10 @@ bi_to_u64 :: proc(c: Value_Storage, v: Big_Int) -> (value: u64, ok: bool) {
 	if !bi_fits(v, 64, false) {
 		return 0, false
 	}
-	context.allocator = arena(c)
+	context.allocator = storage_allocator(c)
 	v := v
 	result, err := big.int_get_u64(&v)
 	return result, err == nil
-}
-
-// Orders an integer against a float that is not NaN, exactly.
-bi_cmp_float :: proc(c: Value_Storage, a: Big_Int, y: f64) -> int {
-	if math.is_inf(y, 0) {
-		return y > 0 ? -1 : 1
-	}
-	truncated, exact := bi_from_f64_trunc(c, y)
-	defer bi_release(truncated)
-	if order := bi_cmp(a, truncated); order != 0 || exact {
-		return order
-	}
-	return y > 0 ? -1 : 1
 }
 
 // Truncates a finite binary64 value towards zero. `exact` is false when a

@@ -319,6 +319,16 @@ y: f64 = 1;        // OK: integer constant rounded to `f64`
 z: f64 = 0.1;      // OK: rounded once to `f64`
 ```
 
+Arithmetic on unfixed floating constants is exact: `+`, `-`, `*`, and `/` give
+the mathematical result, an unfixed integer operand keeps its exact value, and
+only the conversion to a type rounds. So `0.1 + 0.2 == 0.3` holds, and
+`x := 0.1 + 0.2;` is the `f64` nearest `0.3`, where `f64(0.1) + 0.2` adds two
+rounded values. A division by zero, an infinite or NaN operand, and the sign of
+a zero result follow IEEE-754, as for [floating-point
+operators](#floating-point-operators). An implementation may reject an unfixed
+floating constant too large to hold exactly; one too small for every
+floating-point type may be held as a zero of its sign.
+
 ### Range literals
 
 A range is written with two endpoints: `low ..< high` excludes the high

@@ -284,15 +284,6 @@ bigint_to_float_rounds_once :: proc(t: ^testing.T) {
 			testing.expectf(t, value == k.want, "case %d: %v, expected %v", index, value, k.want)
 		}
 	}
-
-	testing.expect(t, bi_cmp_float(&c, two(&c, 53, 1), 9007199254740992.0) == 1, "2^53 + 1 > 2^53 exactly")
-	testing.expect(t, bi_cmp_float(&c, bi_from_i64(&c, -3), -2.5) == -1, "-3 < -2.5")
-	testing.expect(t, bi_cmp_float(&c, bi_from_i64(&c, -2), -2.5) == 1, "-2 > -2.5")
-	testing.expect(t, bi_cmp_float(&c, bi_from_i64(&c, 2), 2.5) == -1, "2 < 2.5")
-	testing.expect(t, bi_cmp_float(&c, bi_from_i64(&c, 5), 5.0) == 0, "5 == 5.0")
-	testing.expect(t, bi_cmp_float(&c, bi_pow2(&c, 1100), 0h7FEF_FFFF_FFFF_FFFF) == 1, "2^1100 > max f64")
-	testing.expect(t, bi_cmp_float(&c, bi_pow2(&c, 1100), 0h7FF0_0000_0000_0000) == -1, "2^1100 < +inf")
-	testing.expect(t, bi_cmp_float(&c, bi_neg(&c, bi_pow2(&c, 1100)), 0hFFF0_0000_0000_0000) == 1, "-2^1100 > -inf")
 }
 
 // Odin's f16 conversion rounds ties away from zero; LLVM's `half` rounds to even.
@@ -424,10 +415,26 @@ bigint_long_division_round_trips :: proc(t: ^testing.T) {
 	}
 }
 
+// A decimal spelling, negated by a leading `-` as `-x` folds, rounded once to
+// `bits`.
+@(private = "file")
+decimal_at :: proc(c: ^Compiler, text: string, bits: u16) -> (result: f64, status: Exact_Status, ok: bool) {
+	negative := strings.has_prefix(text, "-")
+	value: Const_Value
+	value, status, ok = decimal_const(c, negative ? text[1:] : text)
+	if !ok || status != .Exact {
+		return
+	}
+	if negative {
+		value, _ = fold_unary(c, .Minus, {}, value, TYPE_UNTYPED_FLOAT)
+	}
+	return exact_to_float(c, value, bits), status, true
+}
+
 // One rounding of the exact value, at the ties that a second rounding or a lost
 // sticky bit gets wrong, and below the normal range.
 @(test)
-decimal_to_float_rounds_once :: proc(t: ^testing.T) {
+decimal_const_rounds_once :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)
 
@@ -437,37 +444,44 @@ decimal_to_float_rounds_once :: proc(t: ^testing.T) {
 		{"1.000488281250000001", 16, 0x3FF0_0400_0000_0000},
 		{"1.000000059604644775390625", 32, 0x3FF0_0000_0000_0000},
 		{"1.000000059604644775390625000001", 32, 0x3FF0_0000_2000_0000},
+		{"9007199254740993", 64, 0x4340_0000_0000_0000},
+		{"9007199254740993.000000000000000001", 64, 0x4340_0000_0000_0001},
+		{"0.1", 64, 0x3FB9_9999_9999_999A},
 		// Half the smallest subnormal, the tie, and just past it.
 		{"2.98023223876953125e-08", 16, 0},
 		{"2.98023223876953126e-08", 16, 0x3E70_0000_0000_0000},
 		{"7.006492321624085e-46", 32, 0},
 		{"7.0064923216240854e-46", 32, 0x36A0_0000_0000_0000},
-		// An exponent that decides the result before any power is built.
+		{"2.4703282292062327208828439643411068618252990130716238221279284125033775363510437593264991818081799618989828234772285886546332835517796989819938739800539093906315035659515570226392290858392449105184435931802849936536152500319370457678249219365623669863658480757001585769269903706311928279558551332927834338409351978015531246597263579574622766465272827220056374006485499977096599470454020828166226237857393450736339007967761930577506740176324673600968951340535537458516661134223766678604162159680461914467291840300530057530849048765391711386591646239524912623653881879636239373280423891018672348497668235089863388587925628302755995657524455507255189313690836254779186948667994968324049705821028513185451396213837722826145437693412532098591327667236328125e-324", 64, 0},
+		{"2.47032822920623272088284396434110686182529901307162382212792841250337753635104375932649918180817996189898282347722858865463328355177969898199387398005390939063150356595155702263922908583924491051844359318028499365361525003193704576782492193656236698636584807570015857692699037063119282795585513329278343384093519780155312465972635795746227664652728272200563740064854999770965994704540208281662262378573934507363390079677619305775067401763246736009689513405355374585166611342237666786041621596804619144672918403005300575308490487653917113865916462395249126236538818796362393732804238910186723484976682350898633885879256283027559956575244555072551893136908362547791869486679949683240497058210285131854513962138377228261454376934125320985913276672363281251e-324", 64, 1},
+		// An exponent past the limit, decided before any power is built.
 		{"1e-99999999999", 32, 0},
-		{"-1e-99999999999", 32, 0x8000_0000_0000_0000},
+		{"-1e-99999999999", 64, 0x8000_0000_0000_0000},
 		{"-0.0", 16, 0x8000_0000_0000_0000},
 		{"-1.5", 32, 0xBFF8_0000_0000_0000},
 		{"125e-3", 32, 0x3FC0_0000_0000_0000},
 		{"12e3", 16, 0x40C7_7000_0000_0000},
-		// A fraction past the width's largest value is an infinity for the caller to see.
+		// A value past the width's largest is an infinity for the caller to see.
 		{"400000000000000000000000000000000000000.5", 32, 0x7FF0_0000_0000_0000},
+		{"1e400", 64, 0x7FF0_0000_0000_0000},
 	}
 	for k in cases {
-		value, ok := decimal_to_float(&c, k.text, k.bits)
-		testing.expectf(t, ok && transmute(u64)value == k.want, "%s as f%d: %v, ok %v", k.text, k.bits, value, ok)
+		value, status, ok := decimal_at(&c, k.text, k.bits)
+		testing.expectf(t, ok && status == .Exact && transmute(u64)value == k.want, "%s as f%d: %v, ok %v", k.text, k.bits, value, ok)
 	}
 
-	for text in ([]string{"", "-", "1e", "1e+", "1e5x", "0x10", "1_000.0", "1e39", "99e39"}) {
-		_, ok := decimal_to_float(&c, text, 32)
-		testing.expectf(t, !ok, "%q as f32 should fall to the caller", text)
+	for text in ([]string{"", "-", "1e", "1e+", "1e5x", "0x10", "1_000.0", "1.5.5"}) {
+		_, _, ok := decimal_at(&c, text, 32)
+		testing.expectf(t, !ok, "%q is no decimal spelling", text)
 	}
-	_, ok := decimal_to_float(&c, "1.5", 64)
-	testing.expect(t, !ok, "a 64-bit width is the caller's binary64 value")
+	for text in ([]string{"1e99999999999", "1e400000"}) {
+		_, status, ok := decimal_at(&c, text, 64)
+		testing.expectf(t, ok && status == .Too_Large, "%s is too large to hold", text)
+	}
 
 	zeros := strings.repeat("0", 20000, context.temp_allocator)
 	long := strings.concatenate({"1", zeros, "e-20000"}, context.temp_allocator)
-	value: f64
-	value, ok = decimal_to_float(&c, long, 32)
+	value, _, ok := decimal_at(&c, long, 32)
 	testing.expect(t, ok && value == 1, "1 spelled with 20,000 zeros and their exponent")
 }
 
@@ -486,12 +500,6 @@ bigint_evaluator_storage_keeps_only_results :: proc(t: ^testing.T) {
 	bi_to_float(alloc, wide, 64)
 	bi_to_float(alloc, small, 32)
 	testing.expect(t, storage.bytes == before, "bi_to_float keeps a temporary")
-	bi_cmp_float(alloc, wide, -2.5)
-	testing.expect(t, storage.bytes == before, "bi_cmp_float keeps a temporary")
-	for text in ([]string{"1.000000059604644775390625000001", "123456789e20", "1e39", "1e-60", "-0.0", "1e-40"}) {
-		decimal_to_float(alloc, text, 32)
-		testing.expectf(t, storage.bytes == before, "decimal_to_float keeps a temporary for %s", text)
-	}
 	bi_fits(wide, 300, true)
 	testing.expect(t, bi_wrap(alloc, small, 8, false).used != 0 && storage.bytes == before, "a value in range builds nothing")
 
@@ -505,6 +513,13 @@ bigint_evaluator_storage_keeps_only_results :: proc(t: ^testing.T) {
 		bi_release(result)
 	}
 	testing.expect(t, storage.bytes == before, "an integer operation keeps more than its result")
+	for text in ([]string{"1.000000059604644775390625000001", "123456789e20", "1e39", "1e-60", "0.0", "1e-40"}) {
+		value, _, _ := decimal_const(alloc, text)
+		held := storage.bytes
+		exact_to_float(alloc, value, 32)
+		exact_to_float(alloc, value, 64)
+		testing.expectf(t, storage.bytes == held, "rounding %s keeps a temporary", text)
+	}
 }
 
 // Constant folds the evaluator runs leave only their result charged to it, so a
@@ -576,6 +591,17 @@ evaluator_folds_keep_only_results :: proc(t: ^testing.T) {
 	exact_fma(alloc, -1.5, 3.25, 0.125, 64)
 	exact_fma(alloc, 0h0010_0000_0000_0001, -0.5, 1e-300, 32)
 	testing.expect(t, storage.bytes == before, "exact_fma keeps a temporary")
+
+	// An unfixed float result keeps its exact value and nothing else.
+	third, _, _ := decimal_const(alloc, "0.3")
+	tenth, _, _ := decimal_const(alloc, "0.1")
+	before = storage.bytes
+	for op in ([]Token_Kind{.Plus, .Minus, .Star, .Slash}) {
+		folded, _ := fold_arithmetic(&c, op, {}, third, tenth, TYPE_UNTYPED_FLOAT, alloc)
+		bi_release(folded.exact.numerator, folded.exact.denominator)
+		free(folded.exact, alloc)
+		testing.expectf(t, storage.bytes == before, "an unfixed `%v` keeps a temporary", op)
+	}
 }
 
 // A range `foreach`'s offsets are released: a step over a range, counting up or
