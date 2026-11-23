@@ -5857,7 +5857,11 @@ conditional expressions, expression evaluation is deterministic:
   `operator([])` returns. That write drops the storage the later destination
   was prepared in, so `d, d[1] = other, 9;` is an error, while `a, a[i] = b, 9;`
   writes the element of the fixed array `a` holds after its first write. Two
-  indices are taken as the same unless both are constants that differ.
+  indices are taken as the same unless both are constants that differ and the
+  index is built in; a user `operator([])` may return one place for different
+  arguments. Inserting a key with `m[key] = elem` may move every entry of `m`,
+  so `m[k], m[j].n = elem, 9;` is an error too. A place an `inout` result names
+  stays borrowed from when its destination is prepared until it is written.
 - A compound assignment evaluates its destination place once, then evaluates the
   right operand, then performs the operation and write.
 - A return expression is evaluated completely before it is moved into result

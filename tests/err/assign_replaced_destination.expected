@@ -19,3 +19,15 @@ L0512
 L0511
 @49:6
 this write of `d` is not compatible with the mutable pointer of it that is still in use
+L0512
+@56:2
+`p^` cannot be assigned here: the later destination `p.items[0]` is in storage this write replaces
+L0512
+@68:2
+`r[0]` cannot be assigned here: the later destination `r[1][0]` is in storage this write replaces
+L0512
+@76:2
+`m[2]` cannot be assigned here: the later destination `m[1].n` is in storage this write replaces
+L0512
+@85:2
+`d` cannot be assigned here: a mutable borrow of it is still in use

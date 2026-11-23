@@ -49,4 +49,40 @@ through_pointer :: proc() {
 	p^, d[1] = [dynamic]int{5, 6}, 9;
 }
 
+// An implicit dereference names the pointee as `p^` does.
+implicit_dereference :: proc() {
+	pair := Pair{[dynamic]int{1, 2}, 0};
+	p := &mut pair;
+	p^, p.items[0] = Pair{}, 8;
+}
+
+// A user `operator([])` may return one place for different constants.
+Rows :: struct { row: [dynamic]int }
+
+impl Rows {
+	at :: operator([]) proc(self: inout Rows, key: int) -> inout [dynamic]int { return inout self.row; }
+}
+
+same_operator_result :: proc() {
+	r := Rows{[dynamic]int{1, 2}};
+	r[0], r[1][0] = [dynamic]int{}, 8;
+}
+
+// Inserting a key may move every entry of the map.
+Cell :: struct { n: int }
+
+insertion :: proc() {
+	m := map[int]Cell{1 = Cell{}};
+	m[2], m[1].n = Cell{}, 8;
+}
+
+// An `inout` result's call is made when its destination is prepared, so the
+// place it names stays borrowed until that destination is written.
+pick :: proc(x: inout int) -> inout int { return inout x; }
+
+inout_result :: proc() {
+	d := [dynamic]int{1, 2};
+	d, pick(inout d[0]) = [dynamic]int{}, 8;
+}
+
 main :: proc() {}

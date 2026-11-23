@@ -196,8 +196,11 @@ checklist.
   `d, d[1] = [dynamic]int{5, 6}, 9;` compiled and stored `9` into the buffer the first write had
   just dropped; it is now `L0512`, as are a field of a box's payload, a map entry reached by a
   lookup, and a user `operator([])`'s place after an earlier write of what holds them. Written
-  through a pointer to the owner, `p^, d[1] = [dynamic]int{5, 6}, 9;` is `L0511`. A field or a
-  fixed array's element, as in `a, a[i] = b, 9;`, is part of its owner and stays allowed.
+  through a pointer to the owner, `p^, d[1] = [dynamic]int{5, 6}, 9;` is `L0511`. Also `L0512`
+  are `p^, p.items[0] = Pair{}, 8;`, `m[2], m[1].n = Cell{}, 8;` (the insertion may move every
+  entry), `r[0], r[1][0] = ...` through a user `operator([])`, which may return one place for
+  both, and `d, pick(inout d[0]) = ...` with an `inout` result. A field or a fixed array's
+  element, as in `a, a[i] = b, 9;`, is part of its owner and stays allowed.
   Upgrade by writing the element in a statement of its own, after the owner:
 
   ```

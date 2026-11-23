@@ -2218,7 +2218,6 @@ operand_mismatch :: proc(k: ^Checker, span: Span, lhs, rhs: Type_Id) {
 
 // ------------------------------------------------------------------ helpers --
 
-@(private = "file")
 pointee_of :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 	info := underlying_info(c, type)
 	if info == nil || info.kind != .Pointer {

@@ -5,9 +5,12 @@ import "core:fmt";
 // design.md "Evaluation order": a destination stored inline in an earlier
 // one keeps its place when that one is written, and a map's insertion goes
 // into the map the statement left, so neither is in storage the earlier write
-// replaces.
+// replaces. A place an `inout` result names is written before an earlier
+// destination's storage is dropped.
 Pair :: struct { items: [dynamic]int, n: int }
 Point :: struct { x: int, y: [2]int }
+
+pick :: proc(x: inout int) -> inout int { return inout x; }
 
 // design.md "Compile-time procedure evaluation" keeps the same places.
 inline_places :: proc() -> [3]int {
@@ -33,5 +36,10 @@ main :: proc() {
 	d := [dynamic]int{1, 2};
 	d[1], d = 9, [dynamic]int{5, 6};
 	fmt.println(a, rows, p.items, p.n, m["b"], m["c"], m.len(), d);
+	q := &mut p;
+	q^, q.n = Pair{[dynamic]int{3}, 1}, 8;
+	pick(inout d[0]), d = 8, [dynamic]int{4, 5};
+	m["d"], m["e"] = 4, 5;
+	fmt.println(p.items, p.n, d, m["d"], m["e"], m.len());
 	fmt.println(INLINE_PLACES, inline_places());
 }

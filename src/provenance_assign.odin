@@ -190,15 +190,29 @@ prov_destructure_index :: proc(c: ^Compiler, plan: ^Destructure, index: int) -> 
 	return index
 }
 
-// A destination of a multiple assignment stored through a carrier, read before
-// any target is written (`prov_assign`): what `prov_read_through_carrier`
-// returned, with each carrier another target redefines held as it was.
+// A destination of a multiple assignment stored through a carrier or into what
+// an `inout` result names, read before any target is written (`prov_assign`):
+// what `prov_destination_of` returned, with each carrier another target
+// redefines held as it was.
 @(private = "file")
 Prov_Destination :: struct {
 	through: []int,
 	below:   []Proj_Step,
 	reached: bool,
+	// `through` is the place an `inout` result names, whose call is walked.
+	walked:  bool,
 	read:    bool,
+}
+
+// The carriers a store to `target` goes through or, where it reaches none, the
+// place an `inout` result names, as `get().value` does; that call is walked.
+@(private = "file")
+prov_destination_of :: proc(graph: ^Flow_Graph, target: Expr) -> (destination: Prov_Destination) {
+	destination.through, destination.below, destination.reached = prov_read_through_carrier(graph, target, store = true)
+	if !destination.reached {
+		destination.through, destination.below, destination.walked = prov_inout_result_store(graph, target)
+	}
+	return
 }
 
 @(private)
@@ -415,18 +429,21 @@ prov_assign_destinations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, written: [
 			}
 			continue
 		}
-		through, below, reached := prov_read_through_carrier(graph, target, store = true)
-		if reached {
-			held := prov_capture_slots(graph, through, written, expr_span(target))
+		// An `inout` result's call is made then too, so the place it names
+		// stays borrowed until this destination is written.
+		destination := prov_destination_of(graph, target)
+		if destination.reached {
+			held := prov_capture_slots(graph, destination.through, written, expr_span(target))
 			// A diagnostic about the store names the carrier it went through.
 			for slot, at in held {
-				if slot != through[at] && graph.prov_slots[slot].name == "" {
-					graph.prov_slots[slot].name = graph.prov_slots[through[at]].name
+				if slot != destination.through[at] && graph.prov_slots[slot].name == "" {
+					graph.prov_slots[slot].name = graph.prov_slots[destination.through[at]].name
 				}
 			}
-			through = held
+			destination.through = held
 		}
-		destinations[index] = Prov_Destination{through, below, reached, true}
+		destination.read = true
+		destinations[index] = destination
 	}
 	return several ? destinations : nil
 }
@@ -440,15 +457,8 @@ prov_assign_destinations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, written: [
 prov_assign_through_carrier :: proc(
 	graph: ^Flow_Graph, s: ^Stmt_Assign, target, value: Expr, sources: []int, evaluated: Prov_Destination, permutes, replaces_read: bool,
 ) -> bool {
-	destination := evaluated
-	if !destination.read {
-		destination.through, destination.below, destination.reached = prov_read_through_carrier(graph, target, store = true)
-	}
-	through, below, reached := destination.through, destination.below, destination.reached
-	walked := false
-	if !reached {
-		through, below, walked = prov_inout_result_store(graph, target)
-	}
+	destination := evaluated.read ? evaluated : prov_destination_of(graph, target)
+	through, below, reached, walked := destination.through, destination.below, destination.reached, destination.walked
 	if reached && len(through) == 0 {
 		prov_walk_subscripts(graph, target, true)
 		return true

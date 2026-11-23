@@ -863,7 +863,8 @@ it safe but would quietly lose the write. Preparing a destination after the
 earlier writes would break the swap rule. Rejecting the statement matches
 `p := &mut d[1]; d = other; p^ = 9;`, which is `L0512` too. The check is by the
 written places, as `rows[i]` and `rows[1][0]` may be one row unless both
-indices are constants. An alias through a carrier, as `p^, d[1] = other, 9;`
+indices are constants; `p.items` reads `p^` as `p^.items` does. An alias
+through a carrier, or through the place an `inout` result names, as `p^, d[1] = other, 9;`
 with `p` pointing at `d`, is left to the borrow rules: a place in storage its
 owner may drop is accessed when it is prepared, and the carrier is used again
 by its write, so the two conflict as they would in separate statements. A
