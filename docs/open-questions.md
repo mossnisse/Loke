@@ -12,6 +12,16 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 2026-10-31, and the proposals from them not yet decided, are in
 [design-review-2026-10-31.md](design-review-2026-10-31.md).
 
+## Bounds before a setter index
+
+The [bounds-before-setter fixture](../tests/trap/destination_bounds_before_setter_index.loke)
+prints `key` if a later index runs before the bounds panic. The parent of
+`95582849` prints it and the reviewed commit leaves stdout empty. Both produce
+the expected panic on stderr. The [corpus runner](../tests/corpus_test.odin)
+compares stdout only when a sibling `.expected` file exists. An empty
+`destination_bounds_before_setter_index.expected` would make the fixture
+detect the [evaluation order](design.md#evaluation-order) regression.
+
 ## Provenance architecture
 
 A review of the root and region provenance checker on 2026-11-01 asked where its
