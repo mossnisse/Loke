@@ -422,10 +422,11 @@ secure_u64 :: proc() -> u64 ---;
 	`from_state(rng.state())` are the deliberate ways to get a second one.
 
 	The zero value is unseeded, and drawing from it panics: seed a generator
-	with `from_seed`, `from_entropy`, or `from_state` first. Only `from_entropy`
-	reads the operating system's generator, so a program that never calls it
-	never links it. xoshiro's state is never all zero once seeded, so a zero
-	state can only mean unseeded.
+	with `from_seed`, `from_entropy`, or `from_state` first. A draw never reads
+	the operating system's generator; only `from_entropy`, `fill_secure`, and
+	`secure_u64` do, so a program that calls none of them never links it.
+	xoshiro's state is never all zero once seeded, so a zero state can only
+	mean unseeded.
 */
 @(move_only)
 Xoshiro256 :: struct {

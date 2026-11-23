@@ -1,0 +1,11 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a draw from an unseeded `Pcg64`, restored here
+// from the zero snapshot. Its guard is apart from `advance`'s
+// (random_unseeded_pcg_advance), and without it the draw would quietly give
+// values from a zero state.
+main :: proc() {
+	rng := random.Pcg64.from_state(0, 0);
+	rng.next_u64();
+}
