@@ -323,7 +323,8 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Ty
 }
 
 // design.md "Retaining a borrow": whether the call borrows as its receiver a
-// record an atomic operation may store a borrow in, as `cell.store(value)` does.
+// record an atomic operation or a lock's guard may store a borrow in, as
+// `cell.store(value)` does.
 @(private = "file")
 prov_receiver_is_synchronized :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> bool {
 	input := prov_input_call(graph, v)
@@ -356,10 +357,12 @@ prov_retain_into_argument :: proc(
 	if synchronized {
 		_, _, place = prov_place_of(graph, argument)
 	}
+	if synchronized && !place {
+		prov_retain_into_receiver(graph, v, carrier, sources, retained, retained_mutable)
+		return
+	}
 	if !place {
-		// An atomic receiver no root names, as `target.store(...)` through
-		// `target: ^sync.Atomic(...)`, is what its carrier names.
-		prov_retain_through(graph, carrier, prov_parameter_type(graph, v, index), sources, v.span, retained, retained_mutable, names_place = synchronized)
+		prov_retain_through(graph, carrier, prov_parameter_type(graph, v, index), sources, v.span, retained, retained_mutable)
 		return
 	}
 	root, path, rooted := prov_place_of(graph, argument)
@@ -403,6 +406,27 @@ prov_retain_into_argument :: proc(
 	if retained {
 		prov_link_retained_places(graph, sources, slots, retained_mutable, v.span)
 	}
+}
+
+// A synchronized receiver no root names, as `target.store(...)` through
+// `target: ^sync.Atomic(...)`, is what the borrow of it names. What the
+// receiver holds (`receiver_content`), which the call lends beside that borrow,
+// leads on only where its own carriers do: a store replaces the pointer an
+// atomic holds rather than writing through it, but a `^mut` field beside the
+// atomic is written through.
+@(private = "file")
+prov_retain_into_receiver :: proc(graph: ^Flow_Graph, v: ^Expr_Call, carrier, sources: []int, retained, retained_mutable: bool) {
+	held := graph.receiver_content[v]
+	is_held := make(map[int]struct{}, graph.alloc)
+	for slot in held { is_held[slot] = {} }
+	place := make([dynamic]int, 0, len(carrier), graph.alloc)
+	for slot in carrier {
+		if slot not_in is_held {
+			append(&place, slot)
+		}
+	}
+	prov_retain_through(graph, place[:], INVALID_TYPE, sources, v.span, retained, retained_mutable, names_place = true)
+	prov_retain_through(graph, held, prov_type(graph, v.bound[0]), sources, v.span, retained, retained_mutable)
 }
 
 // What a call leaves of a `stored` argument in slots the walk can name, for the solve

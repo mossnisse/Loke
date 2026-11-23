@@ -61,3 +61,12 @@ this pointer borrows `value`, which does not outlive `shared`: process-lifetime 
 L0647
 @245:2
 this pointer borrows `value`, which does not outlive `shared`: process-lifetime storage
+L0647
+@269:2
+this pointer borrows `value`, which does not outlive `boxed`: process-lifetime storage
+L0647
+@274:2
+this pointer borrows `value`, which does not outlive `guarded_static`: process-lifetime storage
+L0647
+@289:2
+this pointer borrows `value`, which does not outlive `cell`: process-lifetime storage

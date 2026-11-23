@@ -112,9 +112,9 @@ materialization_of :: proc(c: ^Compiler, e: Expr) -> ^Materialized {
 
 // A `@(synchronized)` field that a value of `type` holds inline, such as an
 // `Atomic`'s `value`: what synchronizing operations write through a read-only
-// `^`. With `borrowing`, only one an atomic operation can store a borrow in: a
-// pointer, or an `Option` of one. A lock's value of any other type is written
-// only through its guard.
+// `^`. With `borrowing`, only one that can hold a borrow: an atomic's, which an
+// atomic operation stores, or a lock's, which its guard writes (design.md
+// "Retaining a borrow").
 synchronized_field_within :: proc(c: ^Compiler, type: Type_Id, borrowing := false) -> ^Symbol {
 	seen := make(Type_Walk, context.temp_allocator)
 	return synchronized_field_walk(c, type, &seen, borrowing)
@@ -141,7 +141,7 @@ synchronized_field_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^Type_Walk, b
 			if sym == nil {
 				continue
 			}
-			if sym.synchronized && (!borrowing || atomic_width_bits(c, sym.type) != 0 && type_carries_borrow(c, sym.type).any) {
+			if sym.synchronized && (!borrowing || type_carries_borrow(c, sym.type).any) {
 				return sym
 			}
 			if found := synchronized_field_walk(c, sym.type, seen, borrowing); found != nil {

@@ -251,4 +251,49 @@ kept_beside_read_only :: proc() -> int {
 	return holder.view^;
 }
 
+// A lock's guard writes what the lock holds through a read-only pointer, so a
+// lock that can hold a borrow is a destination there, as an atomic is.
+Locked :: struct { lock: ^thread.Mutex(Box) }
+keep_locked :: proc(destination: ^mut Locked, @(escape=stored) value: ^int) {}
+Guarded :: struct { lock: thread.Mutex(Option(^int)) }
+impl Guarded {
+	keep :: proc(self: ^, @(escape=stored) value: ^int) {
+		guard := self.lock.lock();
+		guard.get() = .some(value);
+	}
+}
+guarded_static: static Guarded = {};
+kept_behind_lock :: proc() {
+	value := 42;
+	holder := Locked{&boxed};
+	keep_locked(&mut holder, &value);
+}
+kept_in_lock_receiver :: proc() {
+	value := 42;
+	p := &guarded_static;
+	p.keep(&value);
+}
+
+// A synchronized receiver reached through a pointer is the storage that
+// pointer names, and what it holds leads on where its own carriers do: through
+// `mid` to the static `cell`, but not into what the atomic points at,
+// which a store replaces.
+Mid :: struct { slot: ^mut Box }
+Mixed :: struct { cell: sync.Atomic(Option(^int)), mid: ^Mid }
+impl Mixed { keep :: proc(self: ^, @(escape=stored) value: ^int) {} }
+kept_beside_atomic :: proc() {
+	value := 42;
+	mid := Mid{&mut cell};
+	mixed := Mixed{mid = &mid};
+	p := &mixed;
+	p.keep(&value);
+}
+replaced_in_local_atomic :: proc() -> int {
+	value := 3;
+	pointer: sync.Atomic(^int) = {value = &kept};
+	p := &pointer;
+	p.store(&value);
+	return p.load()^;
+}
+
 main :: proc() {}

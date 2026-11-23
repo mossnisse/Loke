@@ -9,6 +9,9 @@ L0731
 L0731
 @72:3
 `released` is written while this `parallel` block's tasks may be running, and each drops `cache` when its thread exits, whose hook `release` may read it
+L0511
+@81:3
+this write of `sent` may overlap the read-only slice of it that is still in use
 L0731
 @81:3
 `sent` is written while this `parallel` block's tasks may be running, and a task may read it through a borrow the program keeps

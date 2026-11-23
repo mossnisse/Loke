@@ -1660,7 +1660,7 @@ load_writable_through :: proc(
 		if type != INVALID_TYPE && !slot.content_truncated {
 			info := underlying_info(c, type)
 			pointee := info != nil ? info.element : INVALID_TYPE
-			destination = carrier_is_mutable(c, type) && type_carries_borrow(c, pointee).any || carrier_names_atomic(c, type)
+			destination = carrier_is_mutable(c, type) && type_carries_borrow(c, pointee).any || carrier_names_synchronized(c, type)
 			// design.md "Variadic parameters": a pack also carries its operands'
 			// loans, so a mutable operand's are destinations as well.
 			if info != nil && info.kind == .Slice {
