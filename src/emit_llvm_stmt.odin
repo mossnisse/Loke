@@ -394,10 +394,6 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		emit_compound_assign(e, s)
 		return
 	}
-	if s.checks_bounds {
-		emit_address(e, s.rhs[0])
-		return
-	}
 	if s.destructure.active {
 		emit_destructure_assign(e, s)
 		return
@@ -444,6 +440,9 @@ emit_destinations :: proc(e: ^Emitter, s: ^Stmt_Assign) -> Assign_Destinations {
 	targets := s.lhs
 	out := Assign_Destinations{make([]string, len(targets)), make([]Map_Assignment_Destination, len(targets))}
 	for target, index in targets {
+		for preparation in assign_preparations(s, index) {
+			emit_stmt(e, preparation)
+		}
 		if is_discard(target) || assign_setter(s, index) != nil {
 			continue
 		}

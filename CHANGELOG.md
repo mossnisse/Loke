@@ -664,7 +664,9 @@ checklist.
   ([Evaluation order](docs/design.md#evaluation-order)). In `s, g[0], s[1] = other, 7, 9;`, with
   `s` a slice, `s[1]` wrote into `other`, the slice the same statement had just stored in `s`,
   and in `g[0], a[i] = 7, 8;` the setter ran before `a[i]`'s bounds check panicked. Likewise
-  `a[i], g[key()] = 7, 8;` called `key()` before `a[i]`'s bounds check panicked. A borrow error
+  `a[i], g[key()] = 7, 8;` called `key()` before `a[i]`'s bounds check panicked, and
+  `h[1], g[key()] = 7, 8;`, with `h` indexed by an `operator([])` returning `inout`, called
+  `key()` before that operator. A borrow error
   at a setter's call now points at its destination rather than at the `=`.
 - An index takes its parameter's type as context when an `operator([])` with defaulted trailing
   parameters is a candidate ([Implicit selector expression](docs/design.md#implicit-selector-expression)):

@@ -1246,16 +1246,6 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		walk_flow_block(graph, s.lowered)
 		return
 	}
-	// Prepared as a destination is: its subscripts are evaluated, and its place
-	// is used but not accessed.
-	if s.checks_bounds {
-		if graph.mode == .Lifecycle {
-			walk_flow_expr(graph, s.rhs[0])
-		} else {
-			prov_walk_subscripts(graph, s.rhs[0])
-		}
-		return
-	}
 	// A provider moved into a local's storage goes on backing its owners there.
 	if s.op == .Assign && !s.destructure.active {
 		for target, index in s.lhs {
@@ -1324,6 +1314,7 @@ walk_flow_assign_lifecycle :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	// write. A write through a field or element is a use of its root.
 	revived := make([]bool, len(s.lhs), graph.alloc)
 	for target, index in s.lhs {
+		walk_flow_preparations(graph, s, index)
 		if s.op == .Assign {
 			if ident, is_ident := target.(^Expr_Ident); is_ident {
 				if _, tracked := graph.by_symbol[ident.symbol]; tracked {
@@ -1352,6 +1343,14 @@ walk_flow_assign_lifecycle :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			target = index,
 		})
 		note_required_write(graph, ident.symbol, index < len(s.rhs) && len(s.rhs) == len(s.lhs) ? s.rhs[index] : nil)
+	}
+}
+
+// What prepares destination `index` of `s`, in its turn (`Stmt_Assign.preparations`).
+@(private)
+walk_flow_preparations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, index: int) {
+	for preparation in assign_preparations(s, index) {
+		walk_flow_stmt(graph, preparation)
 	}
 }
 

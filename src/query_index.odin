@@ -149,6 +149,9 @@ index_query_stmt :: proc(index: ^Query_Index, stmt: Stmt) {
 	case ^Stmt_Assign:
 		for expr in v.lhs { index_query_expr(index, expr) }
 		for expr in v.rhs { index_query_expr(index, expr) }
+		for stmts in v.preparations {
+			for inner in stmts { index_query_stmt(index, inner) }
+		}
 		// Its operands were checked as clones in the block checking ran instead.
 		if v.lowered != nil {
 			enclosing := index.generated

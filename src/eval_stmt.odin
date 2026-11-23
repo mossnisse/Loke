@@ -241,10 +241,6 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	if s.op != .Assign {
 		return eval_compound_assign(ev, s)
 	}
-	if s.checks_bounds {
-		_, ok := eval_place(ev, s.rhs[0])
-		return ok ? .Normal : .Fail
-	}
 	if s.destructure.active {
 		values, ok := eval_destructure(ev, &s.destructure, s.rhs[0])
 		if !ok { return .Fail }
@@ -282,6 +278,11 @@ eval_write_targets :: proc(ev: ^Evaluator, s: ^Stmt_Assign, values: []Eval_Value
 	if err != nil { return .Fail }
 	defer delete(destinations, ev.alloc)
 	for target, index in s.lhs {
+		for preparation in assign_preparations(s, index) {
+			if flow := eval_stmt(ev, preparation); flow != .Normal {
+				return flow
+			}
+		}
 		if assign_setter(s, index) != nil {
 			continue
 		}

@@ -391,15 +391,18 @@ prov_assign_redefines :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) -> []int {
 // The destinations are evaluated all before the first write, so a store through a
 // carrier another target of this statement redefines, as `p^.head` in
 // `p, p^.head = &mut y, p^.tail`, goes where the carrier pointed then (design.md
-// "Values that contain borrows").
+// "Values that contain borrows"). A setter destination's `preparations` run in
+// its turn, with one destination too.
 @(private = "file")
 prov_assign_destinations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, written: []int) -> []Prov_Destination {
-	if len(s.lhs) == 1 || s.op != .Assign {
+	if s.op != .Assign {
 		return nil
 	}
+	several := len(s.lhs) > 1
 	destinations := make([]Prov_Destination, len(s.lhs), graph.alloc)
 	for target, index in s.lhs {
-		if _, is_ident := target.(^Expr_Ident); is_ident || assign_setter(s, index) != nil {
+		walk_flow_preparations(graph, s, index)
+		if _, is_ident := target.(^Expr_Ident); !several || is_ident || assign_setter(s, index) != nil {
 			continue
 		}
 		// design.md "Evaluation order": a place is prepared before the first
@@ -425,7 +428,7 @@ prov_assign_destinations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, written: [
 		}
 		destinations[index] = Prov_Destination{through, below, reached, true}
 	}
-	return destinations
+	return several ? destinations : nil
 }
 
 // A store through a carrier, or into what an `inout` result names, as

@@ -27,6 +27,15 @@ impl Names {
 	}
 }
 
+Cells :: struct { cells: [3]int }
+
+impl Cells {
+	at :: operator([]) proc(self: inout Cells, key: int) -> inout int {
+		fmt.println("at", key);
+		return inout self.cells[key];
+	}
+}
+
 Rec :: struct { v: int }
 
 index :: proc() -> int {
@@ -79,10 +88,16 @@ main :: proc() {
 	s := first[mut :];
 	s, g[0], s[1] = second[mut :], 7, 9;
 	fmt.println(first, second);
-	// An element checked in its turn, before `index()`, holds no borrow, so a
-	// mutable slice of its array may still be another destination.
+	// The last statement prepares each destination in its turn, holding no
+	// borrow until then, so a mutable slice of an array and the array may both
+	// be destinations.
 	whole := [2]int{};
 	part := whole[mut :];
 	part[1], whole[0], g[index()] = 5, 6, 7;
 	fmt.println(whole);
+	// A destination through an `operator([])` returning `inout` calls it in
+	// its turn, before the setter destination's index.
+	c := Cells{};
+	c[1], g[index()] = 7, 8;
+	fmt.println(c.cells[1]);
 }

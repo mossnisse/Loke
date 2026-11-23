@@ -970,9 +970,10 @@ Stmt_Assign :: struct {
 	// The lowering's own writes, whose setter destinations read only what it
 	// bound, so it is not lowered again.
 	prepared:        bool,
-	// The lowering's `_ = a[i0]`: it prepares the element's place, as a
-	// destination is prepared, checking its bounds in its turn, and reads nothing.
-	checks_bounds:   bool,
+	// Per destination of a `prepared` statement, nil when none: what binds a
+	// setter destination's receiver and indices, run in its turn as the
+	// destinations are prepared.
+	preparations:    [][]Stmt,
 	// `grid[x, y] += v` through `operator([])` and `operator([]=)`: the checked
 	// block later phases run instead of this statement.
 	lowered:         ^Block,
@@ -983,6 +984,11 @@ Stmt_Assign :: struct {
 Place_Setter :: struct {
 	symbol: Symbol_Id,
 	bound:  []Expr,
+}
+
+// What prepares destination `index` of `s` before its place.
+assign_preparations :: proc(s: ^Stmt_Assign, index: int) -> []Stmt {
+	return index < len(s.preparations) ? s.preparations[index] : nil
 }
 
 // The setter destination `index` of `s` calls, or nil for an ordinary place.

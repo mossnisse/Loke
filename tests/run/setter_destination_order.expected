@@ -16,3 +16,7 @@ set 0 7
 index
 set 1 7
 [6, 5]
+at 1
+index
+set 1 8
+7
