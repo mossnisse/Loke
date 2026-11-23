@@ -299,9 +299,29 @@ eval_write_targets :: proc(ev: ^Evaluator, s: ^Stmt_Assign, values: []Eval_Value
 		if !ok { return .Fail }
 		retyped := values[index]
 		retyped.type = slot.type != INVALID_TYPE ? slot.type : retyped.type
-		slot^ = retyped
+		store_in_place(ev.k.c, slot, retyped)
 	}
 	return .Normal
+}
+
+// design.md "Evaluation order": an inline element keeps its place when its
+// array or struct is written whole, so a later destination prepared inside it
+// still names the storage it writes.
+@(private = "file")
+store_in_place :: proc(c: ^Compiler, slot: ^Eval_Value, value: Eval_Value) {
+	elements := slot.elements
+	#partial switch underlying_kind(c, slot.type) {
+	case .Array, .Simd, .Struct:
+		if len(elements) == len(value.elements) {
+			for element, index in value.elements {
+				store_in_place(c, &elements[index], element)
+			}
+			slot^ = value
+			slot.elements = elements
+			return
+		}
+	}
+	slot^ = value
 }
 
 // A prepared assignment destination. `m[key] = elem` keeps its map and key and

@@ -670,6 +670,10 @@ checklist.
   `h[1], g[key()] = 7, 8;`, with `h` indexed by an `operator([])` returning `inout`, called
   `key()` before that operator. A borrow error
   at a setter's call now points at its destination rather than at the `=`.
+- During [compile-time evaluation](docs/design.md#compile-time-procedure-evaluation), a multiple
+  assignment that writes a fixed array or struct whole keeps a later destination inside it
+  ([Evaluation order](docs/design.md#evaluation-order)). `a, a[1] = [2]int{3, 4}, 9;` and
+  `p, p.x = Point{}, 5;` lost the later write, as did the same statement with a setter destination.
 - An index takes its parameter's type as context when an `operator([])` with defaulted trailing
   parameters is a candidate ([Implicit selector expression](docs/design.md#implicit-selector-expression)):
   `t[.North]` was `L0385` for `operator([]) proc(t: Table, d: Direction, j: int = 7) -> int`.
