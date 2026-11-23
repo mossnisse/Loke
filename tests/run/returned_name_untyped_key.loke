@@ -1,15 +1,27 @@
 // design.md "Returned constructions": an operand transfers when the returned
 // value names it once. A bare key of a literal whose type is known only once
 // checked, as a call's argument is, may be a map key naming the local or a
-// field's name.
+// field's name. The hooks print which copies ran.
 package main;
 
 import "core:fmt";
 import "core:strings";
 
+Tracked :: struct { id: int }
+
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		fmt.println("  copy", self.id);
+		return .ok(Tracked{self.id});
+	}
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("  drop", self.id); }
+}
+
 Pair :: struct { s: string, n: int }
+Kept :: struct { item: Tracked, n: int }
 
 count :: proc(m: map[string]int) -> int { return m.len(); }
+count_items :: proc(m: map[Tracked]int) -> int { return m.len(); }
 
 // The key names `s`, so `s` is copied into the result rather than moved.
 named_twice :: proc() -> Pair {
@@ -17,11 +29,17 @@ named_twice :: proc() -> Pair {
 	return Pair{s, count({s = 1})};
 }
 
+// So does a key naming `item`, whose copy runs its hook.
+item_named_twice :: proc() -> Kept {
+	item := Tracked{1};
+	return Kept{item, count_items({item = 1})};
+}
+
 @(move_only) Handle :: struct { id: int }
-Options :: struct { h: int }
+Options :: struct { h: int, item: int }
 Wrapped :: struct { h: Handle, n: int }
 
-width :: proc(o: Options) -> int { return o.h; }
+width :: proc(o: Options) -> int { return o.h + o.item; }
 
 // The key is a field's name, and a move-only local has no copy to make, so it
 // is still moved into the result.
@@ -30,9 +48,32 @@ named_once :: proc() -> Wrapped {
 	return Wrapped{h, width({h = 2})};
 }
 
+// A copyable local beside a field's name is named once too, and moves, though
+// the key is checked after it, or the local is a variant's payload.
+item_named_once :: proc() -> Kept {
+	item := Tracked{2};
+	return Kept{item, width({item = 3})};
+}
+item_in_variant :: proc() -> Option(Tracked) {
+	item := Tracked{4};
+	return .some(item) if width({item = 1}) > 0 else .none;
+}
+
 main :: proc() {
 	p := named_twice();
 	fmt.println(p.s, p.n);
+	fmt.println("twice");
+	k := item_named_twice();
+	fmt.println(k.item.id, k.n);
 	w := named_once();
 	fmt.println(w.h.id, w.n);
+	fmt.println("once");
+	once := item_named_once();
+	fmt.println(once.item.id, once.n);
+	fmt.println("variant");
+	{
+		got := item_in_variant() or_else Tracked{0};
+		fmt.println(got.id);
+	}
+	fmt.println("end");
 }

@@ -7,34 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### A field's name in an argument literal can stop a returned transfer
-
-[Returned constructions](design.md#returned-constructions) transfers an
-operand the returned value names once. The compiler counts the names before
-checking, when a literal passed to a call has no type yet, so its bare key
-`s` may name the local `s` as a map key or be a field's name. It counts such a
-key as a use, so `s` is copied:
-
-```loke
-package main;
-import "core:strings";
-
-Pair :: struct { s: string, n: int }
-Options :: struct { s: int }
-width :: proc(o: Options) -> int { return o.s; }
-
-make_pair :: proc() -> Pair {
-    s := strings.repeat("ab", 3);
-    return Pair{s, width({s = 2})};   // `s` is copied, though named once
-}
-main :: proc() { _ = make_pair(); }
-```
-
-The program runs, retaining and releasing the string where the specification
-moves it; a `hook(copy)` would run. A move-only local is moved, as specified.
-Counting after checking needs the transfer decided once the whole returned value
-is checked, not as each operand is.
-
 ### `caller_location()` in a computed default names the declaration
 
 [`caller_location()`](design.md#caller_location) names the call that omits a

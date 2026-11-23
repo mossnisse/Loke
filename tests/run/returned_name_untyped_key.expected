@@ -1,2 +1,16 @@
 ababab 1
+twice
+  copy 1
+  copy 1
+  drop 1
+  drop 1
+1 1
 7 2
+once
+2 3
+variant
+4
+  drop 4
+end
+  drop 2
+  drop 1

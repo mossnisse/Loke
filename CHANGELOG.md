@@ -569,6 +569,11 @@ checklist.
   map key ([Returned constructions](docs/design.md#returned-constructions)).
   `return Pair{s, count({s = 1})};` moved `s` into the result and then reported `L0500` at the
   key, since the names were counted before the literal's type was known.
+- A returned construction transfers a local that a call's literal argument writes only as a
+  field's name ([Returned constructions](docs/design.md#returned-constructions)).
+  `return Pair{s, width({s = 2})};`, with `width` taking a struct with a field `s`, copied `s`,
+  running its `hook(copy)`, since the key might have named it as a map key. The names are now
+  counted again once the literal's type is known.
 - A panic after a move in the same statement runs a pending `defer` or `errdefer` with the
   local moved ([defer statement](docs/design.md#defer-statement)).
   `errdefer fmt.println(item.value); eat(move(item), risky());` compiled, though `risky` runs

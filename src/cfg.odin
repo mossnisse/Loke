@@ -269,15 +269,6 @@ Last_Use :: struct {
 	also:  ^Expr,
 }
 
-// design.md "Last-use transfer": a local that a bound construction takes as an
-// operand, where the construction keeps it and the flag that it is cloned.
-Operand_Site :: struct {
-	ident: ^Expr_Ident,
-	site:  ^Expr,
-	clone: ^bool,
-	also:  ^Expr,
-}
-
 NO_BLOCK :: Block_Id(-1)
 
 // Built in the analysis arena, which the caller frees. Lifecycle mode returns
@@ -593,58 +584,16 @@ note_bound_operands :: proc(graph: ^Flow_Graph, value: Expr, decl: ^Decl, assign
 	resize(&graph.operands, kept)
 }
 
-// The operands of the construction `e`, as design.md "Returned constructions"
-// defines them: a variant's payload, a literal's elements, a conditional's arms,
-// and the operands of any of those that is itself a construction. A capture's
-// entries state their own modes, a designated array element may fill several
-// slots, and a map's key is not one.
+// One operand: a whole tracked local that is cloned at its own type, where the
+// clone may allocate, is a candidate.
 @(private = "file")
 collect_operand_sites :: proc(graph: ^Flow_Graph, e: Expr) {
-	#partial switch v in e {
-	case ^Expr_Composite:
-		if v.capture != nil {
-			return
+	each_cloned_operand(e, graph, proc(data: rawptr, operand: Operand_Site) {
+		graph := (^Flow_Graph)(data)
+		if operand.ident.symbol in graph.by_symbol && clone_may_allocate(graph.k.c, operand.ident.type) {
+			append(&graph.operands, operand)
 		}
-		for &element, index in v.elements {
-			if composite_element_designated(v, index) {
-				continue
-			}
-			note_operand_site(graph, &element.value, index < len(v.element_clones) ? &v.element_clones[index] : nil)
-		}
-	case ^Expr_Cond:
-		note_operand_site(graph, &v.then, &v.then_clone)
-		note_operand_site(graph, &v.otherwise, &v.else_clone)
-	case ^Expr_Call:
-		operation, constructs := &v.operation.(Call_Union_Construct)
-		if !constructs || len(v.bound) != 1 {
-			return
-		}
-		// The payload as written is the bound one until a transfer replaces both.
-		also: ^Expr
-		if len(v.args) == 1 && v.args[0].value == v.bound[0] {
-			also = &v.args[0].value
-		}
-		note_operand_site(graph, &v.bound[0], &operation.clone, also)
-	}
-}
-
-// One operand: a whole tracked local that is cloned at its own type, where the
-// clone may allocate, is a candidate. A converted operand is not the local itself.
-@(private = "file")
-note_operand_site :: proc(graph: ^Flow_Graph, site: ^Expr, clone: ^bool, also: ^Expr = nil) {
-	ident, is_ident := site^.(^Expr_Ident)
-	if !is_ident {
-		collect_operand_sites(graph, site^)
-		return
-	}
-	if clone == nil || !clone^ || ident.symbol not_in graph.by_symbol {
-		return
-	}
-	if conversion_source(&ident.base) != INVALID_TYPE || ident.copied_as != ident.type ||
-	   !clone_may_allocate(graph.k.c, ident.type) {
-		return
-	}
-	append(&graph.operands, Operand_Site{ident, site, clone, also})
+	})
 }
 
 // The `Use` just emitted reads `ident`: when a bound construction takes it as an

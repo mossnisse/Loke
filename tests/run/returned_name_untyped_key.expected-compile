@@ -1,0 +1,7 @@
+warning[L0507]: this aggregate literal clones `item`, which may allocate
+  --> tests/run/returned_name_untyped_key.loke:35:14
+    |
+35 | 	return Kept{item, count_items({item = 1})};
+    | 	            ^^^^
+  = note: write `item.clone()` if the copy is intended
+

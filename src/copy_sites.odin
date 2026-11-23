@@ -74,8 +74,9 @@ transfer_returned_local :: proc(k: ^Checker, e: Expr) -> Expr {
 // design.md "Returned constructions": `e` is the value a `return` returns, to be
 // checked against `expected`. Its constructions pass the mark on to their
 // operands as they check them, and each name it writes once is noted, since
-// only such an operand transfers.
-mark_returned_value :: proc(k: ^Checker, e: Expr, expected: Type_Id) {
+// only such an operand transfers. Reports whether a name may be written once
+// and as a key as well, for `settle_returned_value` to decide once checked.
+mark_returned_value :: proc(k: ^Checker, e: Expr, expected: Type_Id) -> (unsettled: bool) {
 	mark_returned(e)
 	names := make([dynamic]^Expr_Ident, context.temp_allocator)
 	keys := make([dynamic]^Expr_Ident, context.temp_allocator)
@@ -91,7 +92,9 @@ mark_returned_value :: proc(k: ^Checker, e: Expr, expected: Type_Id) {
 	}
 	for name in names {
 		name.return_uses = counts[name.name] != 1 ? .Many : key_names[name.name] ? .Once_Or_Key : .Once
+		unsettled ||= name.return_uses == .Once_Or_Key
 	}
+	return
 }
 
 @(private = "file")
@@ -198,6 +201,98 @@ literal_field_type :: proc(c: ^Compiler, info: ^Type_Info, key: Expr, index: int
 	return INVALID_TYPE
 }
 
+// design.md "Returned constructions": a name the returned value writes once,
+// beside a bare key that may name it too, is copied as it is checked. Once the
+// whole value is checked, a key that is a field's name names no local, so the
+// name is written once after all, and its copy becomes the transfer.
+settle_returned_value :: proc(k: ^Checker, e: Expr) {
+	Settle :: struct {
+		k:     ^Checker,
+		names: [dynamic]^Expr_Ident,
+	}
+	settle := Settle{k, make([dynamic]^Expr_Ident, context.temp_allocator)}
+	collect_local_names(e, &settle.names)
+	each_cloned_operand(e, &settle, proc(data: rawptr, operand: Operand_Site) {
+		settle := (^Settle)(data)
+		if operand.ident.return_uses != .Once_Or_Key {
+			return
+		}
+		count := 0
+		for name in settle.names {
+			if name.symbol == operand.ident.symbol {
+				count += 1
+			}
+		}
+		if count != 1 {
+			return
+		}
+		moved := transfer_returned_local(settle.k, operand.ident)
+		if moved == operand.ident {
+			return
+		}
+		operand.ident.copied_as = INVALID_TYPE
+		operand.clone^ = false
+		operand.site^ = moved
+		if operand.also != nil {
+			operand.also^ = moved
+		}
+	})
+}
+
+// design.md "Returned constructions", "Last-use transfer": a local that a
+// construction takes as an operand, where the construction keeps it and the
+// flag that it is cloned.
+Operand_Site :: struct {
+	ident: ^Expr_Ident,
+	site:  ^Expr,
+	clone: ^bool,
+	also:  ^Expr,
+}
+
+// Calls `visit` for each operand of the construction `e` that is a name cloned
+// at its own type, as design.md "Returned constructions" defines operands: a
+// variant's payload, a literal's elements, a conditional's arms, and the
+// operands of any of those that is itself a construction. A capture's entries
+// state their own modes, a designated array element may fill several slots, and
+// a map's key is not one. A converted operand is not the local itself.
+each_cloned_operand :: proc(e: Expr, data: rawptr, visit: proc(data: rawptr, operand: Operand_Site)) {
+	note :: proc(site: ^Expr, clone: ^bool, data: rawptr, visit: proc(data: rawptr, operand: Operand_Site), also: ^Expr = nil) {
+		ident, is_ident := site^.(^Expr_Ident)
+		if !is_ident {
+			each_cloned_operand(site^, data, visit)
+			return
+		}
+		if clone != nil && clone^ && conversion_source(&ident.base) == INVALID_TYPE && ident.copied_as == ident.type {
+			visit(data, Operand_Site{ident, site, clone, also})
+		}
+	}
+	#partial switch v in e {
+	case ^Expr_Composite:
+		if v.capture != nil {
+			return
+		}
+		for &element, index in v.elements {
+			if !composite_element_designated(v, index) {
+				note(&element.value, index < len(v.element_clones) ? &v.element_clones[index] : nil, data, visit)
+			}
+		}
+	case ^Expr_Cond:
+		note(&v.then, &v.then_clone, data, visit)
+		note(&v.otherwise, &v.else_clone, data, visit)
+	case ^Expr_Call:
+		operation, constructs := &v.operation.(Call_Union_Construct)
+		if !constructs || len(v.bound) != 1 {
+			return
+		}
+		// The payload as written is the bound one until a transfer replaces both.
+		also: ^Expr
+		if len(v.args) == 1 && v.args[0].value == v.bound[0] {
+			also = &v.args[0].value
+		}
+		note(&v.bound[0], &operation.clone, data, visit, also)
+	}
+}
+
 mark_returned :: proc(e: Expr) {
 	if base := expr_base(e); base != nil {
 		base.returned = true
@@ -235,9 +330,10 @@ transfer_sole_returned_name :: proc(k: ^Checker, e: Expr, type: Type_Id) -> Expr
 	if !is_ident || ident.type != type || conversion_source(&ident.base) != INVALID_TYPE {
 		return e
 	}
-	// A key that also names it makes a copy, unless there is no copy to make:
-	// then the move is right whatever the key turns out to be, as a second
-	// use of a move-only local is an error either way.
+	// A key that also names it makes a copy, which `settle_returned_value`
+	// makes the transfer once the key is known to be a field's name, unless
+	// there is no copy to make: then the move is right whatever the key turns
+	// out to be, as a second use of a move-only local is an error either way.
 	switch ident.return_uses {
 	case .Many:
 		return e

@@ -119,7 +119,8 @@ Return_Uses :: enum u8 {
 	Many,
 	Once,
 	// Once, and also as the bare key of a literal whose type is not known
-	// before checking, which may be a field's name or a map key naming it.
+	// before checking, which may be a field's name or a map key naming it
+	// (`settle_returned_value`).
 	Once_Or_Key,
 }
 
