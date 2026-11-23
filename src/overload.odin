@@ -444,9 +444,9 @@ rejection_text :: proc(k: ^Checker, cand: Candidate) -> string {
 
 // Places, ranks, and records why a rejected candidate is rejected.
 @(private = "file")
-build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> Candidate {
+build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info, site: Span) -> Candidate {
 	if template := generic_template_for(k, symbol_id); template != nil && template.kind == .Procedure {
-		return build_generic_candidate(k, template, args)
+		return build_generic_candidate(k, template, args, site)
 	}
 	cand := Candidate {
 		symbol = symbol_id,
@@ -565,11 +565,11 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 
 // Instantiates and ranks a generic signature without checking its body.
 @(private = "file")
-build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: []Arg_Info) -> Candidate {
+build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: []Arg_Info, site: Span) -> Candidate {
 	if template_rejected(k, template) {
 		return Candidate{symbol = template.symbol, args = args, template = template}
 	}
-	inference := infer_generic_arguments(k, template, args)
+	inference := infer_generic_arguments(k, template, args, site)
 	if !inference.ok {
 		return Candidate {
 			symbol       = template.symbol,
@@ -596,7 +596,7 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			scope    = inference.scope,
 		}
 	}
-	cand := build_candidate(k, instance.symbol, inference.runtime_args)
+	cand := build_candidate(k, instance.symbol, inference.runtime_args, site)
 	if cand.viable {
 		ordering := make([]int, len(args), context.temp_allocator)
 		runtime_index := 0
@@ -696,13 +696,14 @@ resolve_overload :: proc(
 	members: []Symbol_Id,
 	args: []Arg_Info,
 ) -> (Candidate, bool) {
-	return choose_candidate(k, span, description, members, form_candidates(k, members, args), args)
+	return choose_candidate(k, span, description, members, form_candidates(k, members, args, span), args)
 }
 
-form_candidates :: proc(k: ^Checker, members: []Symbol_Id, args: []Arg_Info) -> []Candidate {
+// `site` is the call's, which an omitted `$` default's `caller_location()` names.
+form_candidates :: proc(k: ^Checker, members: []Symbol_Id, args: []Arg_Info, site: Span) -> []Candidate {
 	all := make([]Candidate, len(members), context.temp_allocator)
 	for member, index in members {
-		all[index] = build_candidate(k, member, args)
+		all[index] = build_candidate(k, member, args, site)
 	}
 	return all
 }
@@ -808,14 +809,14 @@ report_no_match :: proc(
 			rejection_text(k, cand),
 		)
 	}
-	note_mutable_slice_arguments(k, args, members)
+	note_mutable_slice_arguments(k, span, args, members)
 }
 
 // design.md "Slices": a read-only `a[lo:hi]` passed where an overload wants a
 // `[]mut T` is the usual reason none applies, so say so when the mutable
 // slice would have selected one.
 @(private = "file")
-note_mutable_slice_arguments :: proc(k: ^Checker, args: []Arg_Info, members: []Symbol_Id) {
+note_mutable_slice_arguments :: proc(k: ^Checker, span: Span, args: []Arg_Info, members: []Symbol_Id) {
 	for arg, index in args {
 		sliced, is_slice := arg.expr.(^Expr_Slice)
 		if !is_slice || sliced.mutable || type_kind(k.c, arg.type) != .Slice || slice_is_mutable(k.c, arg.type) {
@@ -824,7 +825,7 @@ note_mutable_slice_arguments :: proc(k: ^Checker, args: []Arg_Info, members: []S
 		strengthened := slice.clone(args, context.temp_allocator)
 		strengthened[index].type = slice_of(k.c, type_of(k.c, arg.type).element, mutable = true)
 		for member in members {
-			if build_candidate(k, member, strengthened).viable {
+			if build_candidate(k, member, strengthened, span).viable {
 				note_mutable_slicing(k, arg.expr, arg.type, strengthened[index].type)
 				break
 			}

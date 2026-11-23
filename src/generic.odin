@@ -1657,6 +1657,8 @@ Inference_Walk :: struct {
 	constants: [dynamic]Unfixed_Binder,
 	// The signature ends in a pack, which takes the first spread and what follows.
 	spread_ends_fixed: bool,
+	// The call, when there is one, for an omitted `$` default.
+	caller: ^Caller_Site,
 }
 
 // An unfixed constant's type, and the `$` name its parameter's type is.
@@ -1706,13 +1708,16 @@ refuse :: proc(k: ^Checker, result: ^Inference, format: string, args: ..any) -> 
 // Walks a template's written signature left to right, binding every `$` name
 // as it goes, so a later parameter type may name an earlier binding. `$`
 // parameters are compile-time inputs and do not survive into the instance's
-// runtime signature.
-infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: []Arg_Info) -> Inference {
+// runtime signature. `site` is the call's, if there is one, which an omitted `$`
+// default's `caller_location()` names.
+infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: []Arg_Info, site: Span) -> Inference {
 	result := Inference{}
 	literal := decl_proc_literal(template.decl)
 	if literal == nil || literal.signature == nil {
 		return refuse(k, &result, "this name is not a procedure")
 	}
+	// Taken before the template's location replaces the caller's.
+	caller := caller_site(k, site)
 
 	scope := new_instance_scope(k, template)
 	result.scope = scope
@@ -1738,6 +1743,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		waits    = make([dynamic]Waiting_Argument, 0, 2, context.temp_allocator),
 		constants = make([dynamic]Unfixed_Binder, 0, 2, context.temp_allocator),
 		spread_ends_fixed = signature_is_variadic(literal.signature),
+		caller   = site == NO_SPAN ? nil : &caller,
 	}
 	result.compile_time = make([]bool, len(args), k.c.semantic_allocator)
 	result.compile_targets = make([]Type_Id, len(args), k.c.semantic_allocator)
@@ -1817,7 +1823,7 @@ infer_parameter_argument :: proc(
 			return ""
 		}
 		result.compile_omitted += 1
-		return bind_default_compile_time_argument(k, entry.name, parameter.default, parameter.type, walk.scope, &walk.bindings)
+		return bind_default_compile_time_argument(k, entry.name, parameter.default, parameter.type, walk, &walk.bindings)
 	}
 	arg := walk.args[index]
 	if arg.waiting {
@@ -2030,22 +2036,26 @@ claim_argument :: proc(
 }
 
 // The default of an omitted `$` parameter, checked in the declaration's own
-// scope and bound as if it had been written at the call. A default that is not
-// a constant is the same mistake a non-constant argument is, and says so in the
-// same words. Why not, or empty.
+// scope and bound as if it had been written at the call, whose site its
+// `caller_location()` names (design.md "`caller_location()`"). A default that is
+// not a constant is the same mistake a non-constant argument is, and says so in
+// the same words. Why not, or empty.
 @(private = "file")
 bind_default_compile_time_argument :: proc(
 	k: ^Checker,
 	name: Name,
 	default: Expr,
 	declared: Expr,
-	scope: ^Scope,
+	walk: ^Inference_Walk,
 	out: ^[dynamic]Generic_Binding,
 ) -> string {
+	scope := walk.scope
 	context_type := resolve_type_syntax(k, clone_expr(k.c, declared))
 	// Checked per call on a copy, as `twice(size_of(T))` resolves per `T`. A failure
 	// only makes the candidate inapplicable, so this is a speculation.
 	per_call := clone_expr(k.c, default)
+	outer_caller := k.body.caller
+	k.body.caller = walk.caller
 	probe := begin_probe(k.c)
 	type := check_expr(k, per_call, context_type)
 	folded, evaluated := Const_Value{}, false
@@ -2053,6 +2063,7 @@ bind_default_compile_time_argument :: proc(
 		folded, evaluated = require_const(k, per_call, "a `$` parameter's default", "L0432")
 	}
 	end_probe(k.c, probe)
+	k.body.caller = outer_caller
 	if type == INVALID_TYPE {
 		return "its omitted `$` argument's default does not check"
 	}

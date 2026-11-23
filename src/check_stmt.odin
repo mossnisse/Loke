@@ -1113,7 +1113,7 @@ check_user_compound :: proc(
 	direct_args := make([]Arg_Info, 2, context.temp_allocator)
 	direct_args[0] = arg_from_expr(s.lhs[0], .Inout)
 	direct_args[1] = arg_from_expr(s.rhs[0])
-	direct := form_operator_set(k, compound, operands, direct_args)
+	direct := form_operator_set(k, compound, operands, direct_args, s.op_span)
 	if candidates_viable(direct.formed) {
 		chosen, bound := resolve_operator_set(k, s.op_span, direct, direct_args)
 		if chosen == INVALID_SYMBOL {
@@ -1128,7 +1128,7 @@ check_user_compound :: proc(
 	args := make([]Arg_Info, 2, context.temp_allocator)
 	args[0] = arg_from_expr(s.lhs[0])
 	args[1] = arg_from_expr(s.rhs[0])
-	set := form_operator_set(k, binary, operands, args)
+	set := form_operator_set(k, binary, operands, args, s.op_span)
 	if !candidates_viable(set.formed) {
 		if operator_exists(k, direct.members, operands) {
 			resolve_operator_set(k, s.op_span, direct, direct_args)

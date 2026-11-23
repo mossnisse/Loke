@@ -688,7 +688,9 @@ checklist.
   each call that omits the argument, as a bare `caller_location()` default does; it named the
   declaration ([`caller_location()`](docs/design.md#caller_location)). So does a default that is
   not a constant, such as `line := base + caller_location().line` reading an earlier parameter,
-  at run time and at compile time.
+  at run time and at compile time, and one on a delegated operator or a `$` parameter. A
+  diagnostic the call's location gives, such as `L0319` for a divisor that is zero on that line,
+  is reported at the default with a note at the call.
 - `source_location(dependency.greet)` names an imported package's public procedure; it was
   `L0573`.
 - An associated procedure that computes a type, a procedure group, and `type_of` can be written

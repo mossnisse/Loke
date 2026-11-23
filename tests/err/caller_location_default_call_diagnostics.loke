@@ -1,0 +1,16 @@
+package main;
+import "core:fmt";
+
+// design.md "`caller_location()`": a default holding it is checked for each call
+// that omits it. A diagnostic only this call's location gives is reported at the
+// default, with a note at the call; one the declaration gave is not repeated.
+
+@(deprecated = "use another") same :: proc(n: int) -> int { return n; }
+read :: proc(n := same(caller_location().line)) -> int { return n; }
+divide :: proc(base: int, n := base + 10 / (caller_location().line - 14)) -> int { return n; }
+
+main :: proc() {
+	fmt.println(read(), read());
+	fmt.println(divide(100));
+	fmt.println(divide(100, 1));
+}

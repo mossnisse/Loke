@@ -316,7 +316,7 @@ operator_candidates_for_receiver :: proc(k: ^Checker, symbol: string, receiver: 
 @(private = "file")
 template_overload_for_receiver :: proc(k: ^Checker, id: Symbol_Id, receiver: Type_Id) -> Symbol_Id {
 	template := generic_template_for(k, id)
-	inference := infer_generic_arguments(k, template, template_arguments(k, template, receiver, 0))
+	inference := infer_generic_arguments(k, template, template_arguments(k, template, receiver, 0), NO_SPAN)
 	if inference.unbound_wait {
 		return id
 	}
@@ -540,9 +540,9 @@ Operator_Set :: struct {
 	formed:  []Candidate,
 }
 
-form_operator_set :: proc(k: ^Checker, symbol: string, operands: []Type_Id, args: []Arg_Info) -> Operator_Set {
+form_operator_set :: proc(k: ^Checker, symbol: string, operands: []Type_Id, args: []Arg_Info, site: Span) -> Operator_Set {
 	members := operator_candidates(k, symbol, operands)
-	return Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args)}
+	return Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args, site)}
 }
 
 // design.md "Operator declarations": what stands in for an operator that has no
@@ -571,7 +571,7 @@ operator_fallback :: proc(op: Token_Kind) -> (Operator_Fallback, bool) {
 // built-in `<` is that operation, whose other orderings are built in as well,
 // so it stands in for none of them: `a <= b` on a distinct float stays false
 // for a NaN, where `!(b < a)` would hold.
-form_fallback_set :: proc(k: ^Checker, symbol: string, operands: []Type_Id, args: []Arg_Info) -> Operator_Set {
+form_fallback_set :: proc(k: ^Checker, symbol: string, operands: []Type_Id, args: []Arg_Info, site: Span) -> Operator_Set {
 	members := operator_candidates(k, symbol, operands)
 	if symbol == "<" {
 		kept := 0
@@ -583,11 +583,11 @@ form_fallback_set :: proc(k: ^Checker, symbol: string, operands: []Type_Id, args
 		}
 		members = members[:kept]
 	}
-	return Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args)}
+	return Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args, site)}
 }
 
 resolve_operator :: proc(k: ^Checker, span: Span, symbol: string, members: []Symbol_Id, args: []Arg_Info) -> (Symbol_Id, []Expr) {
-	return resolve_operator_set(k, span, Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args)}, args)
+	return resolve_operator_set(k, span, Operator_Set{symbol = symbol, members = members, formed = form_candidates(k, members, args, span)}, args)
 }
 
 resolve_operator_set :: proc(k: ^Checker, span: Span, set: Operator_Set, args: []Arg_Info) -> (Symbol_Id, []Expr) {
@@ -1005,7 +1005,7 @@ template_instance_over :: proc(d: Delegation, id: Symbol_Id) -> Symbol_Id {
 @(private = "file")
 template_instance_at :: proc(d: Delegation, template: ^Generic_Template, position: int) -> Symbol_Id {
 	k := d.k
-	inference := infer_generic_arguments(k, template, template_arguments(k, template, d.underlying, position))
+	inference := infer_generic_arguments(k, template, template_arguments(k, template, d.underlying, position), NO_SPAN)
 	if !inference.ok {
 		return INVALID_SYMBOL
 	}

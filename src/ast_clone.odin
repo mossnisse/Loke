@@ -16,6 +16,10 @@ Clone_Rewrite :: struct {
 	// (`alias_view` in generic_alias.odin).
 	substitution: ^map[Identifier_Id]Expr,
 	alias_view:   ^Checker,
+	// A default copied for each call that omits it: a procedure literal in it is
+	// one value, the declaration's, so it is shared rather than copied
+	// (`substitute_caller_location`).
+	share_literals: bool,
 }
 
 @(private = "file")
@@ -372,6 +376,9 @@ clone_expr_with :: proc(c: ^Cloner, e: Expr) -> Expr {
 		return n
 
 	case ^Expr_Proc:
+		if c.share_literals {
+			return v
+		}
 		// A nested literal's body is its own: it captures nothing from this one
 		// unless its clause names it, and that clause is rewritten by the caller.
 		inner := without_capture(c)

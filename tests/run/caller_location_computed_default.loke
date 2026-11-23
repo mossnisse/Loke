@@ -3,9 +3,10 @@ import "core:fmt";
 import "core:mem";
 
 // design.md "`caller_location()`": a default the compiler cannot fold still names
-// the call that omits it, directly, by name, through a group, from a method, and
-// at compile time. Each call checks the default as written, so one holding a
-// procedure literal or calling a package's built-in works as the declared one does.
+// the call that omits it, directly, by name, through a group, from a method, a
+// delegated operator, a `$` parameter, and at compile time. Each call checks the
+// default as written, so one calling a package's built-in works as the declared
+// one does, and a procedure literal in it stays one value, its `static` shared.
 
 offset := 0;
 report :: proc(line := offset + caller_location().line) -> int { return line; }
@@ -16,11 +17,15 @@ Pick :: proc{label, both};
 T :: struct { n: int }
 impl T {
 	at :: proc(self, line := self.n + caller_location().line) -> int { return line; }
+	get :: operator([]) proc(t: T, i: int, line := offset + caller_location().line) -> int { return line; }
 }
+Sheet :: distinct T;
+impl Sheet { delegate([]); }
 
-apply :: proc(f: proc(v: int) -> int, v: int) -> int { return f(v); }
-doubled :: proc(line := apply(proc(v: int) -> int { return v * 2; }, caller_location().line)) -> int { return line; }
+counted :: proc(n := proc() -> int { i: static = 0; i += 1; return i; }() + 0 * caller_location().line) -> int { return n; }
 tag :: proc(text := fmt.to_string(mem.default_allocator(), "at", caller_location().line)) -> string { return text; }
+plus :: proc(n: int) -> int { return n + 7000; }
+fixed :: proc($N: int = plus(caller_location().line)) -> int { return N; }
 
 AT :: both(3000);
 
@@ -31,7 +36,10 @@ main :: proc() {
 	fmt.println(both(base = 2000));
 	fmt.println(Pick(4000));
 	fmt.println(AT);
-	fmt.println(T{n = 5000}.at());
-	fmt.println(doubled());
+	t := T{n = 5000};
+	fmt.println(t.at());
+	fmt.println(t[0], Sheet(t)[0]);
+	fmt.println(counted(), counted());
 	fmt.println(tag());
+	fmt.println(fixed());
 }

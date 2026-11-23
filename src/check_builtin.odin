@@ -1093,6 +1093,11 @@ source_location_const :: proc(k: ^Checker, type: Type_Id, span: Span, procedure:
 	return aggregate_const(k.c, type, elements)
 }
 
+// A call at `at` in the procedure being checked.
+caller_site :: proc(k: ^Checker, at: Span) -> Caller_Site {
+	return {at, proc_literal_name(k.c, k.proc_literal)}
+}
+
 @(private = "file")
 proc_literal_name :: proc(c: ^Compiler, literal: ^Expr_Proc) -> string {
 	if literal != nil && literal.symbol != INVALID_SYMBOL {
@@ -1139,7 +1144,7 @@ entity_declaration :: proc(k: ^Checker, e: Expr) -> (span: Span, procedure: stri
 // "`caller_location()`"); any other passes through untouched.
 substitute_caller_location :: proc(k: ^Checker, callee: ^Symbol, index: int, at: Span) -> Expr {
 	default := callee.param_defaults[index]
-	caller := Caller_Site{at, proc_literal_name(k.c, k.proc_literal)}
+	caller := caller_site(k, at)
 	if call, is_call := default.(^Expr_Call); is_call && call.type != INVALID_TYPE && is_caller_location(k.c, call) {
 		substituted := new(Expr_Call, k.c.semantic_allocator)
 		substituted^ = call^
@@ -1149,48 +1154,79 @@ substitute_caller_location :: proc(k: ^Checker, callee: ^Symbol, index: int, at:
 		return substituted
 	}
 	// Nested, as in `caller_location().line`, it has folded into what holds it,
-	// so a copy of the default as written is checked for this call, in the
-	// callee's scope.
+	// so a copy of the default as written is checked for this call, in the scope
+	// of the procedure that declares it: a delegated operator's target
+	// (design.md "Delegating operators").
 	written, kept := k.c.written_defaults[expr_base(default)]
-	if callee.decl == nil || !kept {
+	declared := callee
+	for declared != nil && declared.delegated {
+		declared = symbol_of(k.c, declared.delegate_target)
+	}
+	if !kept || declared == nil || declared.decl == nil {
 		return default
 	}
-	literal := decl_proc_literal(callee.decl)
+	literal := decl_proc_literal(declared.decl)
 	if literal == nil {
 		return default
 	}
 	saved := k.location
 	defer k.location = saved
-	enter_symbol_location(k, callee)
-	enter_procedure_body(k, literal, callee)
-	install_symbols(k.scope, k.c, callee.param_symbols[:index])
+	enter_symbol_location(k, declared)
+	enter_procedure_body(k, literal, declared)
+	install_symbols(k.scope, k.c, declared.param_symbols[:index])
 	k.body.caller = &caller
-	clone := clone_expr(k.c, written)
-	probe := begin_probe(k.c)
-	check_value_expr(k, clone, callee.params[index], "pass")
-	clean := len(k.c.diagnostics) == probe.diagnostics
-	end_probe(k.c, probe)
-	if !clean {
+	clone := clone_expr(k.c, written, {share_literals = true})
+	mark := len(k.c.diagnostics)
+	check_value_expr(k, clone, declared.params[index], "pass")
+	if !keep_call_diagnostics(k.c, mark, declared, index, at) {
 		return default
-	}
-	// A probe enrolls nothing for emission, which a copy computed at run time,
-	// unlike a constant, may need: a procedure literal it holds, say.
-	if !base_is_const(expr_base(clone)) {
-		clone = clone_expr(k.c, written)
-		check_value_expr(k, clone, callee.params[index], "pass")
 	}
 	expr_base(clone).default_copy = true
 	return clone
 }
 
+// The diagnostics checking a default's copy gave since `mark`, past those its
+// declaration gave already, are this call's, and say so. Whether none is an
+// error.
+@(private = "file")
+keep_call_diagnostics :: proc(c: ^Compiler, mark: int, declared: ^Symbol, index: int, at: Span) -> bool {
+	taken := take_diagnostics(c, mark, context.temp_allocator)
+	clean := true
+	for &d in taken {
+		clean &&= d.severity != .Error
+		if reported_already(c, d) {
+			destroy_diagnostic(c, &d)
+			continue
+		}
+		restore_diagnostics(c, {d})
+		parameter := symbol_of(c, declared.param_symbols[index])
+		add_notef(c, at, "in the default of `%s` for this call", parameter == nil ? "" : identifier_text(c, parameter.name))
+	}
+	return clean
+}
+
+@(private = "file")
+reported_already :: proc(c: ^Compiler, d: Diagnostic) -> bool {
+	for list in ([2][]Diagnostic{c.diagnostics[:], c.held_diagnostics[:]}) {
+		for earlier in list {
+			if earlier.severity == d.severity && earlier.span == d.span && earlier.code == d.code && earlier.message == d.message {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Keeps the written syntax of `literal`'s defaults that name `caller_location`
 // for `substitute_caller_location`, before its signature checks them. A default
-// whose name resolves elsewhere is only checked again to the same result.
+// whose name resolves elsewhere is only checked again to the same result. A
+// procedure literal stays the declaration's own, one value however many calls
+// copy the default.
 keep_written_location_defaults :: proc(c: ^Compiler, literal: ^Expr_Proc) {
 	for parameter in literal.signature.params {
 		default := parameter.default
 		if default != nil && expr_base(default) not_in c.written_defaults && names_caller_location(c, default) {
-			c.written_defaults[expr_base(default)] = clone_expr(c, default)
+			c.written_defaults[expr_base(default)] = clone_expr(c, default, {share_literals = true})
 		}
 	}
 }

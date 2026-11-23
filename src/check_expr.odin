@@ -1238,7 +1238,7 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bo
 	written[1] = arg_from_expr(v.rhs)
 	args := written
 	fallback: Operator_Fallback
-	set := form_operator_set(k, operator_text(v.op), operands[:], args)
+	set := form_operator_set(k, operator_text(v.op), operands[:], args, v.op_span)
 	if !candidates_viable(set.formed) {
 		base, falls_back := operator_fallback(v.op)
 		if base.swap {
@@ -1246,7 +1246,7 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) -> bo
 			args = make([]Arg_Info, 2, context.temp_allocator)
 			args[0], args[1] = written[1], written[0]
 		}
-		derived := falls_back ? form_fallback_set(k, base.symbol, operands[:], args) : Operator_Set{}
+		derived := falls_back ? form_fallback_set(k, base.symbol, operands[:], args, v.op_span) : Operator_Set{}
 		if !candidates_viable(derived.formed) {
 			// The operand types in either order: only whether one is mentioned.
 			if operator_exists(k, set.members, operands[:]) {

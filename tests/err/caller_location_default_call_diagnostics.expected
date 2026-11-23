@@ -1,0 +1,6 @@
+warning[L0611]: `same` is deprecated: use another
+@9:19
+L0319
+division by zero
+@10:42
+in the default of `n` for this call
