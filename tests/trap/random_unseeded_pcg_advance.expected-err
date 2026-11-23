@@ -1,0 +1,2 @@
+loke: panic: random.Pcg64.advance: the generator is unseeded
+loke: panicked

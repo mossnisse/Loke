@@ -1,0 +1,10 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": a draw from an unseeded generator, here through
+// `unit`, which is its `next_u64`. The zero value no longer seeds itself
+// ("Seeding").
+main :: proc() {
+	rng: random.Xoshiro256 = {};
+	_ = random.unit(inout rng);
+}

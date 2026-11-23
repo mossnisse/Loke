@@ -3674,16 +3674,20 @@ boundaries and API shapes follow a few common choices:
   takes a generator `inout`, as `core:io` takes a stream. A package-owned
   default would double the API with generator-free overloads and give the
   library hidden state. A program that wants a global declares
-  `rng: thread_local random.Xoshiro256;`.
+  `rng: thread_local random.Xoshiro256;` and seeds it on each thread.
 - **A generator is move-only.** Copying one copies its future: both copies
   draw the same values. The classic case is a generator handed to a thread and
   then used again by its spawner. `split` and `from_state(rng.state())` make the
   second stream explicit.
-- **An unseeded generator seeds itself.** The alternatives were a zero value
-  that acts as seed 0, which gives every `thread_local` generator the same
-  stream, and no zero value at all, which would take the zero value away from
-  every record that holds a generator. Reading entropy happens on a draw, never
-  on import. The cost is one predictable branch per draw: an all-zero
+- **An unseeded generator panics.** Drawing from a zero value is a missing
+  seed, not a request for entropy. Seeding it from the operating system, as the
+  zero value once did, kept the path to the system generator alive in every
+  draw, so a program that only ever seeded still linked `BCryptGenRandom`, and
+  a simulation that forgot to seed lost its replay without a sign. A zero value
+  that acts as seed 0 gives every `thread_local` generator the same stream, and
+  no zero value at all would take the zero value away from every record that
+  holds a generator. Entropy is read only where a program asks for it, with
+  `from_entropy`. The cost is one predictable branch per draw: an all-zero
   xoshiro state is otherwise unreachable.
 - **xoshiro256++ is the generator.** It is fast, passes BigCrush and
   PractRand, needs only 64-bit operations, and has jumps for disjoint parallel

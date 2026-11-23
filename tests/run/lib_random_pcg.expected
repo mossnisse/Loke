@@ -8,7 +8,7 @@ back one: true
 split child: 662883967030022725 5462562565445846432
 split parent: 14646677976196165843
 restored: true
-self-seeded: true
-zero state self-seeds: true
+from_entropy: true
+zero state is unseeded: true
 dice: 4 5
 compile time: true true

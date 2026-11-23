@@ -1,0 +1,15 @@
+package main;
+
+// standard-library "Seeding": only `from_entropy`, `fill_secure`, and
+// `secure_u64` read the operating system's generator. A program that only
+// seeds draws without calling `BCryptGenRandom`, so it does not import
+// `bcrypt.dll`; the zero value's self-seeding once kept that call in every draw.
+
+import "core:fmt";
+import "core:random";
+
+main :: proc() {
+	rng := random.Xoshiro256.from_seed(42);
+	other := random.Pcg64.from_seed(42);
+	fmt.println(random.unit(inout rng), random.unit(inout other));
+}

@@ -165,6 +165,18 @@ checklist.
   guard.get() = .some(&local);   // before: `local` ends while `cell` holds it
   guard.get() = .some(&kept);    // after: `kept` is `static`
   ```
+- A `random.Xoshiro256` or `random.Pcg64` zero value no longer seeds itself from the operating
+  system ([Seeding](docs/standard-library.md#seeding)). Drawing from one, or jumping, advancing,
+  or splitting it, now panics. Every draw kept the path to the system generator alive, so a
+  program that only ever called `from_seed` still linked `BCryptGenRandom` and imported
+  `bcrypt.dll`, and a simulation that forgot to seed lost its replay silently. Now only
+  `from_entropy`, `fill_secure`, and `secure_u64` read the system generator. Upgrade by seeding
+  a generator before its first draw:
+
+  ```
+  rng: random.Xoshiro256;                    // before: its first draw seeded it
+  rng := random.Xoshiro256.from_entropy();   // after
+  ```
 
 ### Added
 

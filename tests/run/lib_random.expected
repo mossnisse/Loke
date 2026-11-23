@@ -6,7 +6,6 @@
 [678511610814637056, 15850499779492529430, 6002989639035333134, 3559352929785830385] 13097851138432240629
 restored true true
 unseeded true
-self-seeded true true
 zero state is unseeded true
 from_entropy true
 secure_u64 true

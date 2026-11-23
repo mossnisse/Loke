@@ -16,9 +16,10 @@
 	    die := random.in_range(inout rng, 1 ..= 6);
 	    random.shuffle(inout rng, deck[mut :]);
 
-	There is no package-owned generator. A program that wants one declares its
-	own, `rng: thread_local random.Xoshiro256;`, whose zero value seeds itself
-	from the operating system on its first draw.
+	There is no package-owned generator, and none seeds itself: a generator's
+	zero value is unseeded, and drawing from it panics. A program reads the
+	operating system's generator only when it asks to, through `from_entropy`,
+	`fill_secure`, or `secure_u64`, so a seeded program never links it.
 */
 // standard-library "`core:random`", "Reproducibility".
 @(public)

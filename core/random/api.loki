@@ -49,9 +49,10 @@
 	    die := random.in_range(inout rng, 1 ..= 6);
 	    random.shuffle(inout rng, deck[mut :]);
 
-	There is no package-owned generator. A program that wants one declares its
-	own, `rng: thread_local random.Xoshiro256;`, whose zero value seeds itself
-	from the operating system on its first draw.
+	There is no package-owned generator, and none seeds itself: a generator's
+	zero value is unseeded, and drawing from it panics. A program reads the
+	operating system's generator only when it asks to, through `from_entropy`,
+	`fill_secure`, or `secure_u64`, so a seeded program never links it.
 
 	Choosing among indices: `Weighted`, an alias table for drawing indices in
 	proportion to weights, and `sample`, which draws elements without
@@ -209,9 +210,9 @@ impl Seed_Path {
 	that selects its stream. Move-only, as `Xoshiro256` is and for the same
 	reason.
 
-	The zero value is unseeded, and its first draw seeds it from the operating
-	system. A seeded increment is always odd, so a zero increment can only mean
-	that.
+	The zero value is unseeded, and drawing from or advancing it panics, as for
+	`Xoshiro256`. A seeded increment is always odd, so a zero increment can only
+	mean unseeded.
 */
 @(move_only)
 Pcg64 :: struct {
@@ -227,8 +228,8 @@ impl Pcg64 {
 	from_seed :: proc(seed: u64) -> Pcg64 ---;
 
 	/*
-		A generator seeded from the operating system's generator, as the zero
-		value seeds itself. Never reproducible.
+		A generator seeded from the operating system's generator. Never
+		reproducible.
 	*/
 	from_entropy :: proc() -> Pcg64 ---;
 
@@ -242,15 +243,16 @@ impl Pcg64 {
 	state :: proc(self) -> (state: u128, increment: u128) ---;
 
 	/*
-		The next 64 bits. This is the `Source` slot. DXSM mixes the state before
-		the step, as numpy does, so the multiply and the output overlap.
+		The next 64 bits. This is the `Source` slot. Panics if unseeded. DXSM
+		mixes the state before the step, as numpy does, so the multiply and the
+		output overlap.
 	*/
 	next_u64 :: proc(self: inout) -> u64 ---;
 
 	/*
 		Advances the state as `delta` draws would, in at most 128 steps (Brown,
 		"Random number generation with arbitrary strides", 1994). `delta` wraps,
-		so `advance(~u128(0))` steps back one draw.
+		so `advance(~u128(0))` steps back one draw. Panics if unseeded.
 	*/
 	advance :: proc(self: inout, delta: u128) ---;
 
@@ -419,9 +421,11 @@ secure_u64 :: proc() -> u64 ---;
 	to `thread.spawn` and then using it again would otherwise be. `split` and
 	`from_state(rng.state())` are the deliberate ways to get a second one.
 
-	The zero value is unseeded, and its first draw seeds it from the operating
-	system. xoshiro's state is never all zero once seeded, so a zero state can
-	only mean that.
+	The zero value is unseeded, and drawing from it panics: seed a generator
+	with `from_seed`, `from_entropy`, or `from_state` first. Only `from_entropy`
+	reads the operating system's generator, so a program that never calls it
+	never links it. xoshiro's state is never all zero once seeded, so a zero
+	state can only mean unseeded.
 */
 @(move_only)
 Xoshiro256 :: struct {
@@ -438,9 +442,9 @@ impl Xoshiro256 {
 	from_seed :: proc(seed: u64) -> Xoshiro256 ---;
 
 	/*
-		A generator seeded from the operating system's generator, as the zero
-		value seeds itself. Never reproducible; to replay a run, seed with
-		`from_seed(random.secure_u64())` and record that seed.
+		A generator seeded from the operating system's generator. Never
+		reproducible; to replay a run, seed with `from_seed(random.secure_u64())`
+		and record that seed.
 	*/
 	from_entropy :: proc() -> Xoshiro256 ---;
 
@@ -453,7 +457,7 @@ impl Xoshiro256 {
 	// The whole state, for `from_state` to restore later.
 	state :: proc(self) -> [4]u64 ---;
 
-	// The next 64 bits. This is the `Source` slot.
+	// The next 64 bits. This is the `Source` slot. Panics if unseeded.
 	next_u64 :: proc(self: inout) -> u64 ---;
 
 	/*

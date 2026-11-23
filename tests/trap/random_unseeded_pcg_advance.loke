@@ -1,0 +1,9 @@
+package main;
+import "core:random";
+
+// standard-library "Panics": advancing an unseeded `Pcg64`, restored here from
+// the zero snapshot. The zero value no longer seeds itself ("Seeding").
+main :: proc() {
+	rng := random.Pcg64.from_state(0, 0);
+	rng.advance(3);
+}

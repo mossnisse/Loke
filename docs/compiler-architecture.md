@@ -1639,8 +1639,8 @@ API:
   for rejection paths and float ends, and seeded statistical checks with
   generous bounds: moments for continuous distributions, and Pearson's
   chi-square against the exact mass function for counting ones. An
-  `.expected` file holds only seeded values and comparisons, never an unseeded
-  draw. `lib_random_ziggurat` checks the distribution tables against a
+  `.expected` file holds only seeded values and comparisons, never an
+  entropy-seeded draw. `lib_random_ziggurat` checks the distribution tables against a
   recomputation, and `lib_random_pcg` pins vectors from numpy's PCG64DXSM.
 - For `core:container`'s `Priority_Queue` and `Deque`: random operations checked
   against a sorted array and a plain array, crossing every wrap and growth boundary,

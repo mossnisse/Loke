@@ -17,9 +17,9 @@ import "core:math";
 	that selects its stream. Move-only, as `Xoshiro256` is and for the same
 	reason.
 
-	The zero value is unseeded, and its first draw seeds it from the operating
-	system. A seeded increment is always odd, so a zero increment can only mean
-	that.
+	The zero value is unseeded, and drawing from or advancing it panics, as for
+	`Xoshiro256`. A seeded increment is always odd, so a zero increment can only
+	mean unseeded.
 */
 @(move_only) Pcg64 :: struct {
 	@(private) lcg: u128,
@@ -37,8 +37,8 @@ impl Pcg64 {
 	}
 
 	/**
-		A generator seeded from the operating system's generator, as the zero
-		value seeds itself. Never reproducible.
+		A generator seeded from the operating system's generator. Never
+		reproducible.
 	*/
 	from_entropy :: proc() -> Pcg64 {
 		return pcg_from_words(entropy_words());
@@ -61,12 +61,13 @@ impl Pcg64 {
 	}
 
 	/**
-		The next 64 bits. This is the `Source` slot. DXSM mixes the state before
-		the step, as numpy does, so the multiply and the output overlap.
+		The next 64 bits. This is the `Source` slot. Panics if unseeded. DXSM
+		mixes the state before the step, as numpy does, so the multiply and the
+		output overlap.
 	*/
 	next_u64 :: proc(self: inout) -> u64 {
 		if (self.increment == 0) {
-			self = pcg_from_words(entropy_words());
+			panic("random.Pcg64.next_u64: the generator is unseeded");
 		}
 		high := math.wrap(u64, self.lcg >> 64);
 		low := math.wrap(u64, self.lcg) | 1;
@@ -81,11 +82,11 @@ impl Pcg64 {
 	/**
 		Advances the state as `delta` draws would, in at most 128 steps (Brown,
 		"Random number generation with arbitrary strides", 1994). `delta` wraps,
-		so `advance(~u128(0))` steps back one draw.
+		so `advance(~u128(0))` steps back one draw. Panics if unseeded.
 	*/
 	advance :: proc(self: inout, delta: u128) {
 		if (self.increment == 0) {
-			self = pcg_from_words(entropy_words());
+			panic("random.Pcg64.advance: the generator is unseeded");
 		}
 		remaining := delta;
 		multiplier := u128(PCG_CHEAP_MULTIPLIER);

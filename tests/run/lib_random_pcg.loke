@@ -72,20 +72,19 @@ main :: proc() {
 	fmt.println("split parent:", parent.next_u64());
 	// 14646677976196165843
 
-	// A snapshot restores exactly, and the zero value seeds itself.
+	// A snapshot restores exactly, and only `from_entropy` seeds from the
+	// operating system; an unseeded generator panics (tests/trap/random_unseeded_*).
 	original := random.Pcg64.from_seed(7);
 	original.next_u64();
 	s, i := original.state();
 	twin := random.Pcg64.from_state(s, i);
 	fmt.println("restored:", twin.next_u64() == original.next_u64());
-	unseeded: random.Pcg64 = {};
-	unseeded.next_u64();
-	_, unseeded_increment := unseeded.state();
-	fmt.println("self-seeded:", (unseeded_increment & 1) == 1);
+	entropy := random.Pcg64.from_entropy();
+	_, entropy_increment := entropy.state();
+	fmt.println("from_entropy:", (entropy_increment & 1) == 1);
 	empty := random.Pcg64.from_state(0, 0);
-	empty.next_u64();
-	_, empty_increment := empty.state();
-	fmt.println("zero state self-seeds:", empty_increment != 0);
+	empty_state, empty_increment := empty.state();
+	fmt.println("zero state is unseeded:", empty_state == 0 && empty_increment == 0);
 
 	// `Pcg64` is a `Source`, so the generic procedures take it.
 	dice := random.Pcg64.from_seed(2026);

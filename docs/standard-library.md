@@ -5017,10 +5017,12 @@ to get a second generator.
 
 - `from_seed(seed)` sets the state to the first four outputs of SplitMix64
   (Steele, Lea, and Flood, 2014) started at `seed`. The state is never all zero.
-- The zero value is unseeded. Its first draw seeds it from the operating system,
-  so `rng: thread_local random.Xoshiro256;` gives each thread its own stream,
-  and a record holding a generator needs no initializer.
-- `from_entropy()` seeds from the operating system at once.
+- The zero value is unseeded, so a record holding a generator needs no
+  initializer, but drawing from it panics: it must be replaced by a seeded
+  generator first.
+- `from_entropy()` seeds from the operating system. It is the only way a
+  generator reads the operating system's generator, so a program that never
+  calls it, `fill_secure`, or `secure_u64` never links that source.
 - `state()` returns the whole state and `from_state` restores it exactly.
   An all-zero state is the unseeded zero value, so an unseeded generator's
   snapshot restores to an unseeded generator.
@@ -5032,7 +5034,8 @@ to get a second generator.
   Giving each worker the current generator and then jumping divides one stream
   into blocks that cannot overlap.
 
-`jump`, `long_jump`, and `split` on an unseeded generator seed it first.
+`next_u64`, `jump`, `long_jump`, and `split` on an unseeded generator panic, so
+every procedure that draws from one does.
 
 `Pcg64` is seeded the same way, with these differences:
 
@@ -5050,9 +5053,9 @@ to get a second generator.
 - `split()` seeds a child from four draws through the SplitMix64 finalizer, as
   `from_seed` uses its four words.
 
-`advance` and `split` on an unseeded generator seed it first.
+`next_u64`, `advance`, and `split` on an unseeded generator panic.
 
-To make an unseeded run replayable, draw the seed with `secure_u64()`, record
+To make a run seeded from the operating system replayable, draw the seed with `secure_u64()`, record
 it, and construct the generator with `from_seed`, as
 [examples/dice.loke](../examples/dice.loke) does. Do not seed from the clock or a
 process ID: parallel runs started together share them.
@@ -5061,8 +5064,8 @@ Seeded generators, the procedures that compute on integers and floats, the
 [distributions](#distributions), and `fill`, `shuffle`, and `sample` can run
 during [compile-time evaluation](design.md#compile-time-procedure-evaluation),
 for example to build a table of random constants, and give the values a run
-would. `from_entropy`, a draw from an unseeded generator, `fill_secure`, and
-`secure_u64` cannot. Neither can `Weighted.from_weights`, which allocates from
+would. `from_entropy`, `fill_secure`, and `secure_u64` cannot, and a draw from an
+unseeded generator panics there as at run time. Neither can `Weighted.from_weights`, which allocates from
 a runtime allocator.
 
 ### Reproducibility
@@ -5092,7 +5095,7 @@ distribution's value. Each increments `SEQUENCE_VERSION`, the version of every
 value a seeded or restored generator gives here, which a replay or a lockstep
 peer records with `repro.RESULTS_VERSION`, `LOKE_VERSION`, and its own
 version; [examples/lockstep.loke](../examples/lockstep.loke) refuses a recording
-whose versions differ. An unseeded generator is not reproducible.
+whose versions differ. A generator from `from_entropy` is not reproducible.
 
 ### Distributions
 
@@ -5307,7 +5310,9 @@ These are programmer errors and panic, naming the procedure:
 - a `sample` count outside `0 ..= values.len()`;
 - a `Weighted` weight that is not finite or is negative, or weights whose sum
   is not finite and positive;
-- a `Pcg64.from_state` increment that is even, unless the state is zero too.
+- a `Pcg64.from_state` increment that is even, unless the state is zero too;
+- an unseeded generator's `next_u64`, so every draw, jump, and split from it,
+  and an unseeded `Pcg64`'s `advance`, each naming `next_u64` or `advance`.
 
 An endpoint type wider than 64 bits is rejected when `in_range` is
 instantiated.

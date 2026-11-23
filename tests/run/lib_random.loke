@@ -67,6 +67,7 @@ other_thread_draw: thread.Mutex(u64);
 handed_off_draw: thread.Mutex(u64);
 
 first_draw :: proc() {
+	rng_per_thread = random.Xoshiro256.from_entropy();
 	value := rng_per_thread.next_u64();
 	guard := other_thread_draw.lock();
 	guard.get() = value;
@@ -121,12 +122,10 @@ seeding :: proc() {
 	copy := random.Xoshiro256.from_state(rng.state());
 	fmt.println("restored", rng.next_u64() == copy.next_u64(), rng.state() == copy.state());
 
-	// The zero value is unseeded until its first draw, then seeded from the
-	// operating system, so two of them differ.
+	// The zero value is unseeded, and only `from_entropy` seeds it from the
+	// operating system; drawing from it panics (tests/trap/random_unseeded_*).
 	unseeded: random.Xoshiro256 = {};
 	fmt.println("unseeded", unseeded.state() == [4]u64{});
-	other: random.Xoshiro256 = {};
-	fmt.println("self-seeded", unseeded.next_u64() != other.next_u64(), unseeded.state() != [4]u64{});
 	restored := random.Xoshiro256.from_state([4]u64{});
 	fmt.println("zero state is unseeded", restored.state() == [4]u64{});
 
@@ -153,6 +152,7 @@ seeding :: proc() {
 	fmt.println("split takes four draws", counted.state() == parent_a.state());
 
 	// One `thread_local` generator per thread, each seeded on its own.
+	rng_per_thread = random.Xoshiro256.from_entropy();
 	here := rng_per_thread.next_u64();
 	worker := thread.spawn(first_draw);
 	worker.join();
