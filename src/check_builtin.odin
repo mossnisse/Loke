@@ -1145,13 +1145,14 @@ substitute_caller_location :: proc(k: ^Checker, callee: ^Symbol, index: int, at:
 		substituted^ = call^
 		substituted.span = at
 		substituted.const_value = source_location_const(k, call.type, at, caller.procedure)
+		substituted.default_copy = true
 		return substituted
 	}
 	// Nested, as in `caller_location().line`, it has folded into what holds it,
-	// so the default is checked again for this call. Only a constant one: any
-	// other is evaluated beside the callee's parameters, which only the default
-	// as declared is.
-	if callee.decl == nil || !base_is_const(expr_base(default)) || !holds_caller_location(k.c, default) {
+	// so a copy of the default as written is checked for this call, in the
+	// callee's scope.
+	written, kept := k.c.written_defaults[expr_base(default)]
+	if callee.decl == nil || !kept {
 		return default
 	}
 	literal := decl_proc_literal(callee.decl)
@@ -1164,12 +1165,44 @@ substitute_caller_location :: proc(k: ^Checker, callee: ^Symbol, index: int, at:
 	enter_procedure_body(k, literal, callee)
 	install_symbols(k.scope, k.c, callee.param_symbols[:index])
 	k.body.caller = &caller
-	clone := clone_expr(k.c, default)
+	clone := clone_expr(k.c, written)
 	probe := begin_probe(k.c)
 	check_value_expr(k, clone, callee.params[index], "pass")
 	clean := len(k.c.diagnostics) == probe.diagnostics
 	end_probe(k.c, probe)
-	return clean && base_is_const(expr_base(clone)) ? clone : default
+	if !clean {
+		return default
+	}
+	// A probe enrolls nothing for emission, which a copy computed at run time,
+	// unlike a constant, may need: a procedure literal it holds, say.
+	if !base_is_const(expr_base(clone)) {
+		clone = clone_expr(k.c, written)
+		check_value_expr(k, clone, callee.params[index], "pass")
+	}
+	expr_base(clone).default_copy = true
+	return clone
+}
+
+// Keeps the written syntax of `literal`'s defaults that name `caller_location`
+// for `substitute_caller_location`, before its signature checks them. A default
+// whose name resolves elsewhere is only checked again to the same result.
+keep_written_location_defaults :: proc(c: ^Compiler, literal: ^Expr_Proc) {
+	for parameter in literal.signature.params {
+		default := parameter.default
+		if default != nil && expr_base(default) not_in c.written_defaults && names_caller_location(c, default) {
+			c.written_defaults[expr_base(default)] = clone_expr(c, default)
+		}
+	}
+}
+
+// Whether `argument`, bound to `callee`'s parameter `index`, is that parameter's
+// default, as declared or copied for its call, which reads the parameters to its
+// left rather than the caller's names.
+is_default_argument :: proc(callee: ^Symbol, index: int, argument: Expr) -> bool {
+	if argument == nil {
+		return false
+	}
+	return expr_base(argument).default_copy || index < len(callee.param_defaults) && argument == callee.param_defaults[index]
 }
 
 @(private = "file")
@@ -1179,12 +1212,12 @@ is_caller_location :: proc(c: ^Compiler, call: ^Expr_Call) -> bool {
 }
 
 @(private = "file")
-holds_caller_location :: proc(c: ^Compiler, e: Expr) -> bool {
-	if call, is_call := e.(^Expr_Call); is_call && is_caller_location(c, call) {
+names_caller_location :: proc(c: ^Compiler, e: Expr) -> bool {
+	if ident, is_ident := e.(^Expr_Ident); is_ident && ident.name == "caller_location" {
 		return true
 	}
 	return expr_children(e, c, proc(data: rawptr, child: Expr) -> bool {
-		return child != nil && holds_caller_location((^Compiler)(data), child)
+		return child != nil && names_caller_location((^Compiler)(data), child)
 	})
 }
 

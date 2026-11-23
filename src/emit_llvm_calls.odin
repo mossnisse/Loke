@@ -736,8 +736,7 @@ begin_default_scope :: proc(e: ^Emitter, callee: ^Symbol) -> Default_Scope {
 // Selects the bindings that parameter `index`'s `argument` is evaluated under.
 @(private)
 enter_default_scope :: proc(e: ^Emitter, scope: ^Default_Scope, index: int, argument: Expr) {
-	is_default := scope.has_defaults && argument != nil && index < len(scope.callee.param_defaults) &&
-		argument == scope.callee.param_defaults[index]
+	is_default := scope.has_defaults && is_default_argument(scope.callee, index, argument)
 	e.param_values = is_default ? scope.own : scope.outer
 }
 

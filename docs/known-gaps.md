@@ -7,27 +7,6 @@ to match a bug, unless the rewording is the intended fix.
 
 ## Gaps
 
-### `caller_location()` in a computed default names the declaration
-
-[`caller_location()`](design.md#caller_location) names the call that omits a
-default. A default the compiler folds, such as `caller_location().line + 100`,
-does. One it cannot fold names the declaration.
-
-```loke
-package main;
-import "core:fmt";
-
-offset := 0;
-report :: proc(line := offset + caller_location().line) -> int { return line; }
-main :: proc() {
-    fmt.println(report());
-}
-```
-
-The program prints `5`, the declaration's line, instead of `7`. The emitter and
-evaluator find a default only by its identity with the declaration's syntax, so
-a call-site copy would need a per-call marker.
-
 ### A multiple assignment through a setter writes before its other destinations are prepared
 
 [Evaluation order](design.md#evaluation-order) prepares every destination before

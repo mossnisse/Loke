@@ -41,6 +41,10 @@ Expr_Base :: struct {
 	// The value a `return` returns, or an operand of a construction or
 	// conditional expression that is one (design.md "Returned constructions").
 	returned:    bool,
+	// A default argument copied for the call that omits it, which runs beside
+	// the callee's parameters as the declared default does
+	// (`substitute_caller_location`, `is_default_argument`).
+	default_copy: bool,
 }
 
 // Literals keep their spelling; the checker decides whether a value fits.

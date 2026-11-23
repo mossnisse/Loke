@@ -1244,6 +1244,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		is_foreign    = symbol.is_foreign,
 	}
 	saw_c_vararg := false
+	keep_written_location_defaults(k.c, literal)
 
 	for &parameter, position in literal.signature.params {
 		// design.md "`@(c_vararg)`": checker-only, never a lowered parameter.

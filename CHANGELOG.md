@@ -686,8 +686,9 @@ checklist.
   (`L0369`), where it was reported at the `defer`.
 - `caller_location()` inside a larger default, as in `line := caller_location().line`, names
   each call that omits the argument, as a bare `caller_location()` default does; it named the
-  declaration ([`caller_location()`](docs/design.md#caller_location)). A default that is not a
-  constant, such as one that also reads an earlier parameter, still names the declaration.
+  declaration ([`caller_location()`](docs/design.md#caller_location)). So does a default that is
+  not a constant, such as `line := base + caller_location().line` reading an earlier parameter,
+  at run time and at compile time.
 - `source_location(dependency.greet)` names an imported package's public procedure; it was
   `L0573`.
 - An associated procedure that computes a type, a procedure group, and `type_of` can be written

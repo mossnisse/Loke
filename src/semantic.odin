@@ -882,6 +882,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.private_reads_settled = make(map[Span]bool, c.semantic_allocator)
 	c.private_names_warned = make(map[Span]bool, c.semantic_allocator)
 	c.generic_impl_types = make(map[Span]bool, c.semantic_allocator)
+	c.written_defaults = make(map[^Expr_Base]Expr, c.semantic_allocator)
 	c.interfaces = make(map[Symbol_Id]^Interface_Info, c.semantic_allocator)
 	c.map_key_policies = make(map[Type_Id]Key_Policy, c.semantic_allocator)
 	c.order_policies = make(map[Type_Id]Policy_Kind, c.semantic_allocator)

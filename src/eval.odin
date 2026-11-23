@@ -1732,8 +1732,7 @@ eval_bind_arguments :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol: ^Symbol,
 			continue
 		}
 		argument := index < len(args) ? args[index] : Expr(nil)
-		is_default := argument != nil && symbol.param_defaults != nil && index < len(symbol.param_defaults) &&
-			argument == symbol.param_defaults[index]
+		is_default := is_default_argument(symbol, index, argument)
 
 		if !is_default {
 			pop(&ev.frames)

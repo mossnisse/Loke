@@ -142,6 +142,10 @@ Compiler :: struct {
 	// The names of generic `impl` members whose value is a type, which no symbol
 	// in the template records, so `check_private_names` reads them as type aliases.
 	generic_impl_types: map[Span]bool,
+	// A copy of the written syntax of each parameter default that names
+	// `caller_location`, kept before checking rewrites it in place, for each call
+	// that omits it to check afresh (`substitute_caller_location`).
+	written_defaults: map[^Expr_Base]Expr,
 
 	// Interface declarations (`src/interface.odin`), keyed by their symbol.
 	interfaces:            map[Symbol_Id]^Interface_Info,
