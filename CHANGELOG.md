@@ -191,6 +191,19 @@ checklist.
   x := 0.1 + 0.2;        // before: 0.30000000000000004; now 0.3
   x := f64(0.1) + 0.2;   // after: 0.30000000000000004
   ```
+- A multiple assignment may not write a destination in storage that an earlier destination
+  owns apart from its own place ([Evaluation order](docs/design.md#evaluation-order)).
+  `d, d[1] = [dynamic]int{5, 6}, 9;` compiled and stored `9` into the buffer the first write had
+  just dropped; it is now `L0512`, as are a field of a box's payload, a map entry reached by a
+  lookup, and a user `operator([])`'s place after an earlier write of what holds them. Written
+  through a pointer to the owner, `p^, d[1] = [dynamic]int{5, 6}, 9;` is `L0511`. A field or a
+  fixed array's element, as in `a, a[i] = b, 9;`, is part of its owner and stays allowed.
+  Upgrade by writing the element in a statement of its own, after the owner:
+
+  ```
+  d, d[1] = [dynamic]int{5, 6}, 9;     // before
+  d = [dynamic]int{5, 6}; d[1] = 9;    // after
+  ```
 
 ### Added
 

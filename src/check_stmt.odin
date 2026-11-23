@@ -468,6 +468,7 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		}
 		check_expr(k, s.rhs[0])
 		if check_assign_destructure(k, s) {
+			reject_replaced_destinations(k, s)
 			return
 		}
 	}
@@ -523,6 +524,7 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		}
 		check_value_expr(k, s.rhs[index], type, "assign")
 	}
+	reject_replaced_destinations(k, s)
 }
 
 // `a, b = record`, once the value is checked; false when it is no record.

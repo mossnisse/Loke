@@ -1,0 +1,52 @@
+package main;
+
+// design.md "Evaluation order": a destination may not lie in storage that an
+// earlier destination of the same statement owns apart from its own place,
+// since that write drops the storage the later destination was prepared in.
+Pair :: struct { items: [dynamic]int, n: int }
+
+Cells :: struct { cells: [3]int }
+
+impl Cells {
+	at :: operator([]) proc(self: inout Cells, key: int) -> inout int { return inout self.cells[key]; }
+}
+
+element :: proc() {
+	d := [dynamic]int{1, 2};
+	d, d[1] = [dynamic]int{5, 6}, 9;
+}
+
+field_element :: proc() {
+	p := Pair{[dynamic]int{1, 2}, 0};
+	p, p.items[0] = Pair{}, 6;
+}
+
+row :: proc(i: int) {
+	rows := [dynamic][dynamic]int{[dynamic]int{1}, [dynamic]int{2, 3}};
+	rows[i], rows[1][0] = [dynamic]int{7}, 8;
+}
+
+payload :: proc() {
+	b: Box(Pair) = box(Pair{});
+	b, b.n = box(Pair{}), 4;
+}
+
+entry :: proc() {
+	m := map[string]Pair{};
+	m, m["k"].n = map[string]Pair{}, 1;
+}
+
+operator_result :: proc() {
+	h := Cells{};
+	h, h[1] = Cells{}, 7;
+}
+
+// The same, written through a pointer to the owner: the place is prepared
+// while the pointer is still to be written through.
+through_pointer :: proc() {
+	d := [dynamic]int{1, 2};
+	p := &mut d;
+	p^, d[1] = [dynamic]int{5, 6}, 9;
+}
+
+main :: proc() {}

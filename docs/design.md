@@ -5851,7 +5851,13 @@ conditional expressions, expression evaluation is deterministic:
   written. This makes swaps well-defined and prevents a failed later clone from
   partially updating an earlier destination; side effects already performed
   while evaluating an earlier right-hand expression, including an explicit
-  `move`, are not rolled back.
+  `move`, are not rolled back. A destination may not lie in storage that an
+  earlier destination of the same statement owns apart from its own place: a
+  dynamic array's or map's elements, a box's payload, or the place a user
+  `operator([])` returns. That write drops the storage the later destination
+  was prepared in, so `d, d[1] = other, 9;` is an error, while `a, a[i] = b, 9;`
+  writes the element of the fixed array `a` holds after its first write. Two
+  indices are taken as the same unless both are constants that differ.
 - A compound assignment evaluates its destination place once, then evaluates the
   right operand, then performs the operation and write.
 - A return expression is evaluated completely before it is moved into result

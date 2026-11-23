@@ -39,30 +39,9 @@ The program prints `key` before `at 1`. The checker's lowering binds each
 setter destination's indices before its last statement prepares the other
 places. A built-in element is checked in its turn by a `checks_bounds`
 statement, but preparing this one twice would call `at` twice. Binding its
-address in its turn would hold a mutable borrow of `h` across the later
-destinations, so that `h, h[1], g[key()] = Cells{}, 7, 8;` would be `L0512`.
-
-### A multiple assignment writes an element of the buffer an earlier write replaced
-
-[Evaluation order](design.md#evaluation-order) prepares every destination
-before any write, so `d[1]` below names an element of the buffer `d` holds
-before the statement. The first write replaces `d` and drops that buffer, and
-the second stores into the dropped buffer. The program prints `[5, 6]`.
-
-```loke
-package main;
-import "core:fmt";
-
-main :: proc() {
-    d := [dynamic]int{1, 2};
-    d, d[1] = [dynamic]int{5, 6}, 9;
-    fmt.println(d);
-}
-```
-
-The same steps written apart, `p := &mut d[1]; d = [dynamic]int{5, 6}; p^ = 9;`,
-are `L0512`. A fixed array's element keeps its place when the array is
-replaced, so `a, a[i] = b, 9;` is sound.
+address in its turn would hold a mutable borrow of `h` while the later
+destinations' receivers and indices are evaluated, so a read of `h` among them
+would conflict with it.
 
 ### A compound assignment cannot view its operator's result
 

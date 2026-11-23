@@ -855,6 +855,21 @@ it clones or transfers each field: a consumed record's `string` would have no
 owner left for a `string_view` destination to borrow. Writing the field by name
 keeps the borrow on a place the rules can see.
 
+A multiple assignment prepares every destination before its first write, so
+that swaps are well-defined. A later destination in storage an earlier one
+owns, as `d[1]` in `d, d[1] = other, 9;`, would then be written after that
+storage is dropped. Delaying each drop to the end of the statement would make
+it safe but would quietly lose the write. Preparing a destination after the
+earlier writes would break the swap rule. Rejecting the statement matches
+`p := &mut d[1]; d = other; p^ = 9;`, which is `L0512` too. The check is by the
+written places, as `rows[i]` and `rows[1][0]` may be one row unless both
+indices are constants. An alias through a carrier, as `p^, d[1] = other, 9;`
+with `p` pointing at `d`, is left to the borrow rules: a place in storage its
+owner may drop is accessed when it is prepared, and the carrier is used again
+by its write, so the two conflict as they would in separate statements. A
+place inline in its owner is not accessed early, so a mutable slice of a fixed
+array and the array itself may both be destinations.
+
 ### Panics run lexical cleanup
 
 Managed resources need a defined answer when execution fails. Under `unwind`,

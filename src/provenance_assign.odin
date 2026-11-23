@@ -402,7 +402,14 @@ prov_assign_destinations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, written: [
 		if _, is_ident := target.(^Expr_Ident); is_ident || assign_setter(s, index) != nil {
 			continue
 		}
-		if _, _, place_ok := prov_place_of(graph, target); place_ok {
+		// design.md "Evaluation order": a place is prepared before the first
+		// write, so one in storage its owner may drop conflicts with a carrier
+		// an earlier destination writes through, as `p` in
+		// `p^, d[1] = other, 9;` with `p` pointing at `d` (`in_owned_storage`).
+		if root, path, place_ok := prov_place_of(graph, target); place_ok {
+			if in_owned_storage(graph.k.c, target) {
+				prov_access(graph, root, path, .Write, expr_span(target))
+			}
 			continue
 		}
 		through, below, reached := prov_read_through_carrier(graph, target, store = true)
@@ -458,6 +465,10 @@ prov_assign_through_carrier :: proc(
 	if walked {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = through, span = expr_span(target)})
 		prov_reach(graph, through, expr_span(target))
+	} else if evaluated.read && len(through) > 0 {
+		// Read when the destination was prepared, the carriers are used by
+		// this write too (`prov_assign_destinations`).
+		prov_emit(graph, Prov_Event{kind = .Live, sources = through, span = expr_span(target)})
 	}
 	return true
 }

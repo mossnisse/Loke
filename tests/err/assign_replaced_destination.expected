@@ -1,0 +1,21 @@
+L0512
+@16:2
+`d` cannot be assigned here: the later destination `d[1]` is in storage this write replaces
+L0512
+@21:2
+`p` cannot be assigned here: the later destination `p.items[0]` is in storage this write replaces
+L0512
+@26:2
+`rows[i]` cannot be assigned here: the later destination `rows[1][0]` is in storage this write replaces
+L0512
+@31:2
+`b` cannot be assigned here: the later destination `b.n` is in storage this write replaces
+L0512
+@36:2
+`m` cannot be assigned here: the later destination `m["k"].n` is in storage this write replaces
+L0512
+@41:2
+`h` cannot be assigned here: the later destination `h[1]` is in storage this write replaces
+L0511
+@49:6
+this write of `d` is not compatible with the mutable pointer of it that is still in use
