@@ -196,6 +196,9 @@ Flow_Graph :: struct {
 	// out discarded temporaries and staged operands while keeping what the
 	// returned value depends on.
 	held_owners:    [dynamic]Expr,
+	// A compound assignment's destination whose subscripts were walked when
+	// it was prepared, before its right operand (`prov_walk_subscripts`).
+	prepared_place: ^Expr_Base,
 	// Lifecycle counts temporary providers until their statement boundary;
 	// provenance keeps their region tokens in `temp_providers` instead.
 	temp_provider_count: int,
@@ -1279,7 +1282,13 @@ walk_flow_assign_provenance :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 			prov_call(graph, prov_synthetic_call(graph, s.operator, operands, TYPE_VOID, s.op_span))
 			return
 		}
-		// The binary operator, then a write of its result.
+		// design.md "Evaluation order": the destination is prepared, the right
+		// operand evaluated, and the binary operator reads the destination, whose
+		// result is written to the place prepared.
+		prov_walk_subscripts(graph, s.lhs[0])
+		outer := graph.prepared_place
+		graph.prepared_place = expr_base(s.lhs[0])
+		defer graph.prepared_place = outer
 		result := symbol_of(graph.k.c, s.operator).result
 		value_loans[0] = prov_call(graph, prov_synthetic_call(graph, s.operator, operands, result, s.op_span, order = order))
 		prov_assign(graph, s, value_loans)

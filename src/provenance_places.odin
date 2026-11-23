@@ -245,7 +245,8 @@ prov_place_hops :: proc(graph: ^Flow_Graph, place: Expr) -> []Place_Hop {
 // is not reached through a carrier. `walk`, when given, collects the events
 // reading the carriers (`Prov_Through_Borrow.walk_reads`). `again` reads the
 // carriers of a place already evaluated, where a call starts
-// (`prov_place_reservable`): no index is evaluated a second time.
+// (`prov_place_reservable`) or as a prepared compound destination
+// (`prepared_place`): no index is evaluated a second time.
 @(private)
 prov_read_through_carrier :: proc(
 	graph: ^Flow_Graph, place: Expr, reads_only := false, store := false, walk: ^[dynamic]Prov_Event_At = nil, reads := true,
@@ -255,7 +256,7 @@ prov_read_through_carrier :: proc(
 	if len(hops) == 0 {
 		return nil, nil, false
 	}
-	carriers := prov_reach_hop(graph, place, hops, 0, reads_only, store, walk, again)
+	carriers := prov_reach_hop(graph, place, hops, 0, reads_only, store, walk, again || prov_is_prepared(graph, place))
 	if !store && reads {
 		prov_read_through(graph, carriers, hops[0].path, expr_span(place), place)
 	}
@@ -450,14 +451,15 @@ prov_root_place :: proc(graph: ^Flow_Graph, place: Prov_Place) -> (Root_Id, []Pr
 }
 
 // Walks a place chain's index expressions; the place is one access, not one per
-// link. A call's `inout` result the chain starts in was walked as the call.
+// link. A call's `inout` result the chain starts in was walked as the call, and
+// a prepared compound destination's when it was prepared (`prepared_place`).
 // design.md "Maps": only `m[key] = elem` creates an entry, so a store whose
 // whole target is a map entry publishes its key, into `through` when the map is
 // reached through carriers (`prov_read_through_carrier`); a lookup on the way to
 // the target, as `m[key].n`, leaves none.
 @(private)
 prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_key := false, through: []int = nil) {
-	if prov_names_inout_result(graph, e) {
+	if prov_names_inout_result(graph, e) || prov_is_prepared(graph, e) {
 		return
 	}
 	#partial switch v in e {
@@ -484,6 +486,13 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_key := fal
 			}
 		}
 	}
+}
+
+// Whether `e` is the compound destination whose subscripts were walked when it
+// was prepared, before its right operand (`Flow_Graph.prepared_place`).
+@(private = "file")
+prov_is_prepared :: proc(graph: ^Flow_Graph, e: Expr) -> bool {
+	return graph.prepared_place != nil && expr_base(e) == graph.prepared_place
 }
 
 // Assigning through a map place may insert its key; an existing equal key stays,

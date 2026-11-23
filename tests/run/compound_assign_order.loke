@@ -3,7 +3,8 @@ package main; import "core:fmt";
 // design.md "Evaluation order": a compound assignment reads its destination
 // after the right operand, at compile time and at run time alike, whether the
 // operation is built in, a user operator it falls back to, or one a distinct
-// type delegates.
+// type delegates. The destination's place, its indices included, is prepared
+// before the right operand.
 bump :: proc(p: ^mut int) -> int { p^ = 100; return 1; }
 f :: proc() -> int { x := 5; p := &mut x; x += bump(p); return x; }
 C :: f();
@@ -31,7 +32,23 @@ fallbacks :: proc() -> int {
 }
 FALLBACKS :: fallbacks();
 
+grow :: operator(+) proc(v: V, p: ^int) -> V { return {v.n + p^}; }
+index :: proc(n: inout int) -> int { n += 1; return 0; }
+
+prepared :: proc() -> int {
+	n := 0;
+	vs := [1]V{{2}};
+	vs[index(inout n)] += &n;
+	p := &mut vs;
+	p^[index(inout n)] += &n;
+	ts := [1]Text{Text("a")};
+	ts[index(inout n)] += retext(inout ts[0]);
+	return vs[0].n * 100 + n * 10 + string(ts[0]).len();
+}
+PREPARED :: prepared();
+
 main :: proc() {
 	fmt.println(C, f());
 	fmt.println(FALLBACKS, fallbacks());
+	fmt.println(PREPARED, prepared());
 }
