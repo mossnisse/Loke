@@ -1508,7 +1508,7 @@ reclamation. The integration harness is in `tests/`:
 
 | Cases | Checks |
 | --- | --- |
-| `run/`, `trap/` | Stdout against `.expected`; failing processes against `.expected-err`. |
+| `run/`, `trap/` | Stdout against `.expected`, which a trap without one must leave empty; failing processes against `.expected-err`. |
 | `err/`, `pkg_err/` | Diagnostic counts, codes, fragments, optional spans, and source warnings. |
 | `syntax/`, `syntax_err/` | Valid syntax, AST goldens, and recovery with a surviving trailing sentinel. Valid syntax and parser fuzzing run in-process in `src/syntax_corpus_test.odin`. |
 | `ll/`, `layout/` | Required/forbidden LLVM shapes and LLVM acceptance; compiler/LLVM layout agreement. |

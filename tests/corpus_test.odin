@@ -13,8 +13,9 @@
 //                                  a `!`-prefixed line must *not* appear, and a
 //                                  `warning[...]` line is counted like a code
 //   tests/trap/*.loke              compile, run, expect a non-zero exit, and
-//     with .expected-err           compare the panic report; an optional
-//                                  .expected pins the stdout produced first
+//     with .expected-err           compare the panic report and stdout; an
+//                                  .expected pins what is printed first, and
+//                                  without one stdout must be empty
 //   tests/layout/*.loke            compile with -check-layout: the checker's
 //                                  size/alignment/offsets must agree with LLVM's
 //   tests/pkg/<case>/ with        a directory compiled as one root package, with
@@ -3018,7 +3019,9 @@ scratch_paths_leave_existing_data_alone :: proc(t: ^testing.T) {
 
 // One compiled-and-run case, a single file or a package directory. A program is
 // expected to exit 0 and must pin its stdout; a trap is expected to fail and
-// must pin its panic report, which an exit code alone cannot prove.
+// must pin its panic report, which an exit code alone cannot prove. A panic
+// report names no location, so a trap's stdout, empty unless a sibling
+// `.expected` says otherwise, shows how far the program ran.
 @(private)
 Program_Case :: struct {
 	path, expected_file, exe: string,
@@ -3081,7 +3084,7 @@ run_programs :: proc(t: ^testing.T, cases: []Program_Case, trap := false) {
 
 		expected, expected_err := os.read_entire_file(c.expected_file, context.temp_allocator)
 		testing.expectf(t, expected_err == nil || trap, "%s: missing .expected file", c.path)
-		if expected_err == nil {
+		if expected_err == nil || trap {
 			testing.expectf(
 				t,
 				normalise(string(run.stdout)) == normalise(string(expected)),
