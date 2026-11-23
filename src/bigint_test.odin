@@ -481,8 +481,15 @@ decimal_const_rounds_once :: proc(t: ^testing.T) {
 
 	zeros := strings.repeat("0", 20000, context.temp_allocator)
 	long := strings.concatenate({"1", zeros, "e-20000"}, context.temp_allocator)
-	value, _, ok := decimal_at(&c, long, 32)
+	value, status, ok := decimal_at(&c, long, 32)
 	testing.expect(t, ok && value == 1, "1 spelled with 20,000 zeros and their exponent")
+	// The limit is on lowest terms: 1 + 2^100 / 10^315675 has a 315,676-digit
+	// numerator and a denominator past 2^1048576 until both lose 2^100.
+	two_100 := "1267650600228229401496703205376"
+	padding := strings.repeat("0", 315675 - len(two_100), context.temp_allocator)
+	reducible := strings.concatenate({"1.", padding, two_100}, context.temp_allocator)
+	value, status, ok = decimal_at(&c, reducible, 64)
+	testing.expect(t, ok && status == .Exact && value == 1, "a long decimal is judged in lowest terms")
 }
 
 // What these build in evaluator storage goes back to it: only a result the

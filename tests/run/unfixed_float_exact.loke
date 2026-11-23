@@ -14,6 +14,8 @@ static_assert(1e400 / 1e300 == 1e100);
 // An unfixed integer is exact beside a float, not rounded first.
 static_assert((1 << 53) + 1 == 9007199254740993.0);
 static_assert((1 << 53) + 1 != 9007199254740992.0);
+// Compared, an integer is never made a float, so its size is not a float's.
+static_assert((1 << 1048576) > 1.0 && 1.5 < (1 << 1048576));
 // An explicit conversion truncates the exact value.
 static_assert(int(7.0 / 2.0) == 3 && int(-7.0 / 2.0) == -3);
 

@@ -79,12 +79,47 @@ bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
 	return r
 }
 
-bi_pow10 :: proc(c: Value_Storage, power: int) -> Big_Int {
+bi_pow :: proc(c: Value_Storage, base, power: int) -> Big_Int {
 	context.allocator = storage_allocator(c)
 	r: Big_Int
-	big.int_pow_int(&r, 10, power)
+	big.int_pow_int(&r, base, power)
 	bi_settle(c, &r)
 	return r
+}
+
+// The number of zero bits below the lowest one; 0 for zero.
+bi_trailing_zeros :: proc(v: Big_Int) -> int {
+	v := v
+	count, _ := big.internal_int_count_lsb(&v)
+	return count
+}
+
+// `v` with up to `most` factors of the small `factor` divided out, and how many
+// were. Each pass divides by one digit, by as high a power of `factor` as fits,
+// so it costs a pass over `v` per digit's worth of factors rather than per factor.
+bi_divide_out :: proc(c: Value_Storage, v: Big_Int, factor: int, most: int) -> (result: Big_Int, count: int) {
+	context.allocator = storage_allocator(c)
+	chunk, width := big.DIGIT(factor), 1
+	for chunk < (1 << big._DIGIT_BITS) / big.DIGIT(factor) {
+		chunk *= big.DIGIT(factor)
+		width += 1
+	}
+	result = bi_clone(c, v)
+	for step in ([2]struct{divisor: big.DIGIT, width: int}{{chunk, width}, {big.DIGIT(factor), 1}}) {
+		for count + step.width <= most && !bi_is_zero(result) {
+			quotient: Big_Int
+			remainder, _ := big.int_divmod_digit(&quotient, &result, step.divisor)
+			if remainder != 0 {
+				bi_release(quotient)
+				break
+			}
+			bi_settle(c, &quotient)
+			bi_release(result)
+			result = quotient
+			count += step.width
+		}
+	}
+	return
 }
 
 // An integer literal as the lexer spells it: decimal or a lower-case `0b`/`0o`/
@@ -115,14 +150,37 @@ bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int,
 			return bi_zero(c), false
 		}
 	}
-	r: Big_Int
-	if err := big.int_atoi(&r, digits, i8(radix)); err != nil {
+	r, parsed := bi_atoi(c, digits, radix)
+	if !parsed {
+		bi_release(r)
 		return bi_zero(c), false
 	}
 	if negative {
+		context.allocator = storage_allocator(c)
 		big.int_neg(&r, &r)
 	}
 	return r, true
+}
+
+// `digits` in `radix`, split in halves past a few hundred digits:
+// core:math/big's `int_atoi` takes in one digit at a time, quadratic in the
+// length, which a long decimal literal makes seconds.
+@(private = "file")
+bi_atoi :: proc(c: Value_Storage, digits: string, radix: int) -> (Big_Int, bool) {
+	if len(digits) <= 512 {
+		context.allocator = storage_allocator(c)
+		r: Big_Int
+		err := big.int_atoi(&r, digits, i8(radix))
+		bi_settle(c, &r)
+		return r, err == nil
+	}
+	half := len(digits) / 2
+	high, high_ok := bi_atoi(c, digits[:half], radix)
+	low, low_ok := bi_atoi(c, digits[half:], radix)
+	scale := bi_pow(c, radix, len(digits) - half)
+	shifted := bi_mul(c, high, scale)
+	defer bi_release(high, low, scale, shifted)
+	return bi_add(c, shifted, low), high_ok && low_ok
 }
 
 bi_text :: proc(c: Value_Storage, v: Big_Int) -> string {
@@ -320,9 +378,7 @@ bi_fits :: proc(v: Big_Int, bits: int, signed: bool) -> bool {
 	}
 	// Exactly `bits` magnitude bits fits only as the most negative value, whose
 	// one bit is the top one.
-	v := v
-	trailing, _ := big.internal_int_count_lsb(&v)
-	return bi_sign(v) < 0 && trailing == bits - 1
+	return bi_sign(v) < 0 && bi_trailing_zeros(v) == bits - 1
 }
 
 // The modulo-2^n projection every typed integer operation ends with

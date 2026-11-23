@@ -308,10 +308,10 @@ Exact_Status :: enum {
 }
 
 // The unfixed float `numerator / denominator`, which takes both parts; the
-// denominator is nonzero. A zero is negative when `negative_zero` says so. Past
-// `RATIONAL_BIT_LIMIT`, a value that rounds to zero at every width is held as
-// that zero.
-exact_const :: proc(storage: Value_Storage, numerator, denominator: Big_Int, negative_zero := false) -> (Const_Value, Exact_Status) {
+// denominator is nonzero, and `lowest_terms` says the caller has reduced them.
+// A zero is negative when `negative_zero` says so. Past `RATIONAL_BIT_LIMIT`, a
+// value that rounds to zero at every width is held as that zero.
+exact_const :: proc(storage: Value_Storage, numerator, denominator: Big_Int, negative_zero := false, lowest_terms := false) -> (Const_Value, Exact_Status) {
 	numerator, denominator := numerator, denominator
 	if bi_sign(denominator) < 0 {
 		negated_numerator, negated_denominator := bi_neg(storage, numerator), bi_neg(storage, denominator)
@@ -324,7 +324,7 @@ exact_const :: proc(storage: Value_Storage, numerator, denominator: Big_Int, neg
 		return exact_zero(storage, negative_zero), .Exact
 	}
 	// Lowest terms, unless a part is already 1, as an integer's denominator is.
-	if bi_magnitude_bits(numerator) > 1 && bi_magnitude_bits(denominator) > 1 {
+	if !lowest_terms && bi_magnitude_bits(numerator) > 1 && bi_magnitude_bits(denominator) > 1 {
 		common := bi_gcd(storage, numerator, denominator)
 		if bi_magnitude_bits(common) > 1 {
 			reduced_numerator, reduced_denominator := bi_quo(storage, numerator, common), bi_quo(storage, denominator, common)
@@ -459,24 +459,41 @@ decimal_const :: proc(storage: Value_Storage, text: string) -> (value: Const_Val
 	if digits == "" {
 		return exact_zero(storage, false), .Exact, true
 	}
-	// 10^k takes about k log2(10) bits, and the value lies in
-	// [10^(top - 1), 10^top).
+	// 10^k takes more than k log2(10) bits, and 5^k more than k log2(5), so a
+	// part past the limit is found before its power is built.
 	LOG2_10 :: 3.321928094887362
-	if f64(abs(exponent)) * LOG2_10 > RATIONAL_BIT_LIMIT + 64 {
-		top := len(digits) + exponent
-		if f64(top) * LOG2_10 < -TINY_EXPONENT {
+	LOG2_5 :: 2.321928094887362
+	if exponent >= 0 {
+		// At least 10^exponent, so never small enough to be zero.
+		if f64(exponent) * LOG2_10 > RATIONAL_BIT_LIMIT + 1 {
+			return {}, .Too_Large, true
+		}
+		significand, _ := bi_parse_int_literal(storage, digits)
+		power := bi_pow(storage, 10, exponent)
+		defer bi_release(significand, power)
+		value, status = exact_const(storage, bi_mul(storage, significand, power), bi_from_i64(storage, 1))
+		return value, status, true
+	}
+	// `digits / 2^k 5^k` in lowest terms: the significand's own factors of 2
+	// and 5 are the only ones it shares with the denominator.
+	k := -exponent
+	significand, _ := bi_parse_int_literal(storage, digits)
+	twos := min(bi_trailing_zeros(significand), k)
+	odd := bi_shr(storage, significand, twos)
+	numerator, fives := bi_divide_out(storage, odd, 5, k)
+	bi_release(significand, odd)
+	denominator_bits := f64(k - twos) + f64(k - fives) * LOG2_5
+	if denominator_bits > RATIONAL_BIT_LIMIT + 1 {
+		tiny := f64(bi_magnitude_bits(numerator)) - denominator_bits < -TINY_EXPONENT
+		bi_release(numerator)
+		if tiny {
 			return exact_zero(storage, false), .Exact, true
 		}
 		return {}, .Too_Large, true
 	}
-	significand, _ := bi_parse_int_literal(storage, digits)
-	power := bi_pow10(storage, abs(exponent))
-	if exponent < 0 {
-		value, status = exact_const(storage, significand, power)
-		return value, status, true
-	}
-	defer bi_release(significand, power)
-	value, status = exact_const(storage, bi_mul(storage, significand, power), bi_from_i64(storage, 1))
+	power := bi_pow(storage, 5, k - fives)
+	defer bi_release(power)
+	value, status = exact_const(storage, numerator, bi_shl(storage, power, k - twos), lowest_terms = true)
 	return value, status, true
 }
 

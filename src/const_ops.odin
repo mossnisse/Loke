@@ -488,6 +488,30 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 			return op == .Not_Eq, true
 		}
 		order = float_order(storage, a, b)
+	case a.kind == .Float || b.kind == .Float:
+		// An unfixed integer against an unfixed float, exactly, and without making
+		// the integer a float, whose size is limited (design.md "Comparison
+		// operators").
+		float, integer := a, b
+		if b.kind == .Float {
+			float, integer = b, a
+		}
+		if !const_is_integral(integer) {
+			return false, false
+		}
+		if float.float != float.float {
+			return op == .Not_Eq, true
+		}
+		if float.exact == nil {
+			order = float.float > 0 ? -1 : 1
+		} else {
+			scaled := bi_mul(storage, integer.integer, float.exact.denominator)
+			defer bi_release(scaled)
+			order = bi_cmp(scaled, float.exact.numerator)
+		}
+		if a.kind == .Float {
+			order = -order
+		}
 	case const_is_integral(a) && const_is_integral(b):
 		order = bi_cmp(a.integer, b.integer)
 	case a.kind == .Boolean:
@@ -943,12 +967,17 @@ truncate_float_const :: proc(storage: mem.Allocator, value: Const_Value, bits: i
 		return value, false
 	}
 	if value.exact != nil {
-		truncated := bi_quo(storage, value.exact.numerator, value.exact.denominator)
-		if !bi_fits(truncated, bits, signed) {
-			bi_release(truncated)
+		// The same interval, on the exact value: `numerator / denominator` against
+		// the bounds scaled by the positive denominator.
+		numerator, denominator := value.exact.numerator, value.exact.denominator
+		high := bi_pow2(storage, bits - (signed ? 1 : 0))
+		scaled_high := bi_mul(storage, high, denominator)
+		low := signed ? bi_neg(storage, scaled_high) : bi_zero(storage)
+		defer bi_release(high, scaled_high, low)
+		if bi_cmp(numerator, low) < 0 || bi_cmp(numerator, scaled_high) >= 0 {
 			return value, false
 		}
-		return Const_Value{kind = kind, integer = truncated}, true
+		return Const_Value{kind = kind, integer = bi_quo(storage, numerator, denominator)}, true
 	}
 	limit := power_of_two(bits - (signed ? 1 : 0))
 	if !(value.float >= (signed ? -limit : 0) && value.float < limit) {

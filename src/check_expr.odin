@@ -1361,7 +1361,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	operand_type, unified := unify_operands(k, v.lhs, v.rhs, v.op_span)
+	operand_type, unified := unify_operands(k, v.lhs, v.rhs, v.op_span, is_comparison)
 	if !unified {
 		return
 	}
@@ -1677,8 +1677,9 @@ own_equalities_visible :: proc(k: ^Checker, owned: []Type_Id, compared: Type_Id,
 // One untyped operand takes the other's concrete type; two untyped operands
 // meet at the wider untyped kind (design.md "Arithmetic operators").
 @(private = "file")
-unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, bool) {
-	lt, rt := expr_base(lhs).type, expr_base(rhs).type
+unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span, comparing := false) -> (Type_Id, bool) {
+	left, right := expr_base(lhs), expr_base(rhs)
+	lt, rt := left.type, right.type
 	if lt == rt {
 		return lt, true
 	}
@@ -1697,6 +1698,12 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, 
 		if !ok {
 			operand_mismatch(k, op_span, lt, rt)
 			return INVALID_TYPE, false
+		}
+		// A comparison needs no value of the merged type: an integer constant
+		// compares with a float one exactly, whatever its size (design.md
+		// "Comparison operators").
+		if comparing && merged == TYPE_UNTYPED_FLOAT && (left.const_value.kind == .Integer || right.const_value.kind == .Integer) {
+			return merged, true
 		}
 		if !materialize(k, lhs, merged) || !materialize(k, rhs, merged) {
 			return INVALID_TYPE, false

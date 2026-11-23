@@ -1,0 +1,14 @@
+// design.md "Type conversion": a float converting to an integer type is checked
+// against the type's interval before it is truncated, so a value just below
+// the lowest one fails though it would truncate into range. An unfixed float is
+// checked by its exact value.
+package main;
+
+UNSIGNED :: u32(-0.5);
+SIGNED :: i8(-128.5);
+ABOVE :: i8(128.0);
+
+// Inside the interval, the exact value truncates toward zero.
+static_assert(i8(127.9) == 127 && i8(-128.0) == -128 && u8(-0.0) == 0 && int(-7.5) == -7);
+
+main :: proc() {}

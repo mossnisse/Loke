@@ -1,0 +1,9 @@
+L0373
+@7:17
+`untyped float` cannot be converted to `u32`
+L0373
+@8:14
+`untyped float` cannot be converted to `i8`
+L0373
+@9:13
+`untyped float` cannot be converted to `i8`
