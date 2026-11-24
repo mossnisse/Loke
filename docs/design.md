@@ -9997,7 +9997,9 @@ region provenance. Result provenance follows these rules:
 - An owning result built with an allocator parameter derives its region
   provenance from that argument, and one built with a handle that a record or
   `Option` parameter holds, passed by value or `inout`, from the handles that
-  argument holds. A call whose body the checker follows is backed
+  argument holds. One built with a provider the callee was lent, through a
+  pointer or `inout`, alone or in a record, derives it from the region that
+  provider provides. A call whose body the checker follows is backed
   by exactly the allocators that body builds the result with, so an allocator
   argument the body never uses backs nothing. A call it cannot follow, through a
   procedure value or a `dyn` slot, is backed by every allocator argument, and

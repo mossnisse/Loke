@@ -570,6 +570,10 @@ checklist.
 
 ### Fixed
 
+- A result a callee allocates from an arena lent `inout` is in the arena's region
+  ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
+  It was given the region backing the arena, so `list = make_list(inout arena)` in a block
+  outlived the arena with no diagnostic; it is now `L0537`, as allocating in place is.
 - A parameter with attributes may follow a receiver written as a plain `self`
   ([Procedures](docs/grammar.md#procedures)). `proc(self, @(escape=none) scratch: []int)` was
   `L0237`, "expected a parameter name": the comma was read as continuing the names of `self`'s

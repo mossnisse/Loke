@@ -1575,6 +1575,11 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, form: Prov_Form_Call, summary
 		if !known {
 			part = prov_storage_region(graph, argument)
 		}
+		// A provider lent to the callee stands for the region it provides as well
+		// as the one backing it, as `arena.allocator()` there names it.
+		if type_carries_provider(graph.k.c, prov_value(graph, argument).type) {
+			region_merge(&part, prov_provided_region(graph, argument))
+		}
 		region_merge(&part, prov_provider_viewed_by(graph, argument))
 		region_read_through(&part, named)
 		region_merge(out, part)

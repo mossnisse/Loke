@@ -22,3 +22,9 @@ this uses `arena`'s allocator, which a running task reserves until this `paralle
 L0511
 @77:17
 this read of `arena` is not compatible with the mutable pointer of it that is still in use
+L0537
+@101:3
+cleaning up `arena` would end the region backing `list`
+L0537
+@106:3
+cleaning up `h` would end the region backing `held`

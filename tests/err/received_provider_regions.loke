@@ -89,3 +89,23 @@ use_allocator :: proc(allocator: Allocator) {
 }
 
 main :: proc() {}
+
+// A provider lent `inout`, alone or in a record, is reached as one lent through a
+// pointer is.
+build_inout :: proc(arena: inout mem.Arena) -> [dynamic]int { return make([dynamic]int, 0, 4, arena.allocator()); }
+build_held :: proc(h: inout Holder) -> [dynamic]int { return make([dynamic]int, 0, 4, h.arena.allocator()); }
+
+lent_inout :: proc() {
+	list: [dynamic]int;
+	{
+		arena := mem.Arena.init();
+		list = build_inout(inout arena);
+	}
+	held: [dynamic]int;
+	{
+		h := Holder{mem.Arena.init()};
+		held = build_held(inout h);
+	}
+	list.append(1);
+	held.append(1);
+}
