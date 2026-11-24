@@ -1,0 +1,11 @@
+package main;
+import "core:container";
+
+// A borrowed element takes the copying append, which checks room before it
+// clones.
+main :: proc() {
+	values: container.Small_Array(string, 1) = {};
+	first := "one";
+	values.append(first);
+	values.append(first);
+}

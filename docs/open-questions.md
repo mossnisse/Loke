@@ -531,6 +531,9 @@ a model can work on one part of a program without reading the rest.
   goes through variadic `dyn Formattable` formatting. Writing it with
   `writer.write(literal.bytes())` made formatting a 256-member `Enum_Array`
   about 10% faster (fastest of five runs, 70.5 ms to 63.0 ms at `-opt=speed`).
+  A review of `Small_Array` measured the same spelling, together with taking
+  the live view once, at a median of 331 ms to 262 ms over six runs formatting
+  64 integers 200,000 times.
   Should `core:fmt` make a single literal argument cheap, so every formatter
   gains without each spelling it differently?
 - `filled` builds its slots in a `Small_Array` rather than with a designated
@@ -553,30 +556,6 @@ a model can work on one part of a program without reading the rest.
   runs rose from 226 ms to 287 ms. A comparator dearer than an integer `<`,
   such as one over strings, might reverse that.
   [Pop heap](../core/slice/heap.loke#L62)
-
-## Small_Array simplifications and performance
-
-- Format one indexed walk of the live view and write punctuation directly to
-  the sink. Formatting 64 integers 200,000 times to a counting sink took a
-  median of 331 ms before and 262 ms after across six runs at `-opt=speed`.
-  Formatting each element individually preserves the current spelling of
-  strings and runes. [Format](../core/container/small_array.loke#L319)
-- Have `append_one_copied` and `append_moved` check capacity and call `put`
-  directly. Both write at `count`, so they can skip insertion index validation
-  and the shift loop. The copied path checks capacity before cloning.
-  [Copied append](../core/container/small_array.loke#L163),
-  [moved append](../core/container/small_array.loke#L236)
-- Share the three insertion index checks in `check_insert_index`. The check
-  accepts `index == count` and runs before the capacity check so an invalid
-  index still panics when the array is full.
-  [Insertion](../core/container/small_array.loke#L197)
-- Have `get` use fixed storage after `check_index`, as `get_mut` does. It can
-  clone directly from the checked slot and skip constructing a slice in
-  unoptimized builds. [Indexing](../core/container/small_array.loke#L87)
-- Put the starting index and step in both shift loop headers. The body can then
-  be just the move into the vacant slot, with each loop's direction visible in
-  its header. [Remove](../core/container/small_array.loke#L273),
-  [insert](../core/container/small_array.loke#L369)
 
 ## Constant tables in the front end
 

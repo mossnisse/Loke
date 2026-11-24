@@ -501,6 +501,8 @@ checklist.
   A `Priority_Queue.retain` that keeps every element leaves the heap as it is rather than
   rebuilding it, so 32 such passes over a million integers take 77 ms, from 246, at
   `-opt=speed`.
+  `Small_Array.append` writes behind the last element directly rather than through insertion,
+  and formatting a `Small_Array` borrows it rather than copying all `N` slots.
 - A [`core:checksum`](docs/standard-library.md#corechecksum) update no longer reverses the start
   value bit by bit each time it runs, so a default build checksums four million nine-byte
   pieces with `Crc32` in about a quarter of the time. The eight-byte path drops a branch per

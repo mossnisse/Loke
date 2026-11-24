@@ -1085,7 +1085,7 @@ impl Small_Array($T, $N) {
 	equal :: operator(==) proc(left, right: Small_Array(T, N)) -> bool where Equatable(T) ---;
 
 	// Prints as an array, in order.
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) ---;
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) ---;
 
 	release :: hook(drop) proc(self: inout) ---;
 

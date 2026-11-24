@@ -86,7 +86,7 @@ impl Small_Array($T, $N) {
 	// design.md "where clauses".
 	get :: operator([]) proc(self: ^, index: int) -> T where is_copyable(T) {
 		self.check_index(index);
-		return self.view()[index].clone();
+		return unsafe.storage(&self.items)[index].clone();
 	}
 
 	get_mut :: operator([]) proc(self: inout, index: int) -> inout T {
@@ -163,8 +163,8 @@ impl Small_Array($T, $N) {
 	append_one_copied :: proc(
 		self: inout, @(escape=stored) value: T,
 	) where is_copyable(T) {
-		index := self.count;
-		self.insert_copied(index, value);
+		self.check_room();
+		self.put(value.clone());
 	}
 
 	/// Nothing is written unless everything fits, which is the `try_` promise.
@@ -192,14 +192,10 @@ impl Small_Array($T, $N) {
 		Like `try_append_copied`, at `index`. Capacity failure leaves the array
 		untouched; a bad index panics even when the array is full.
 	*/
-	// The index is validated even when full: a bad index is always a programmer
-	// error.
 	try_insert_copied :: proc(
 		self: inout, index: int, @(escape=stored) value: T,
 	) -> Status(Capacity_Error) where is_copyable(T) {
-		if (index < 0 || index > self.count) {
-			panic("Small_Array index is out of range");
-		}
+		self.check_insert_index(index);
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
 		self.put_at(index, value.clone());
 		return .ok;
@@ -225,26 +221,22 @@ impl Small_Array($T, $N) {
 	try_insert_moved :: proc(
 		self: inout, index: int, @(escape=stored) value: move T,
 	) -> Status(Capacity_Error) {
-		if (index < 0 || index > self.count) {
-			panic("Small_Array index is out of range");
-		}
+		self.check_insert_index(index);
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
 		self.put_at(index, move(value));
 		return .ok;
 	}
 
 	append_moved :: proc(self: inout, @(escape=stored) value: move T) {
-		index := self.count;
-		self.insert_moved(index, move(value));
+		self.check_room();
+		self.put(move(value));
 	}
 
 	insert_moved :: proc(
 		self: inout, index: int, @(escape=stored) value: move T,
 	) {
-		if (index < 0 || index > self.count) {
-			panic("Small_Array index is out of range");
-		}
-		if (self.count == N) { panic("Small_Array is full"); }
+		self.check_insert_index(index);
+		self.check_room();
 		self.put_at(index, move(value));
 	}
 
@@ -274,10 +266,8 @@ impl Small_Array($T, $N) {
 		self.check_index(index);
 		slots := unsafe.storage(&mut self.items);
 		removed := unsafe.take(slots[index]);
-		at := index;
-		for (at + 1 < self.count) {
+		for (at := index; at + 1 < self.count; at += 1) {
 			unsafe.write(slots[at], unsafe.take(slots[at + 1]));
-			at += 1;
 		}
 		self.count -= 1;
 		return removed;
@@ -316,11 +306,14 @@ impl Small_Array($T, $N) {
 	}
 
 	/// Prints as an array, in order.
-	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+	// Each element is formatted on its own, which keeps strings and runes
+	// unquoted. The receiver borrows, as the queries do.
+	format :: proc(self: ^, writer: fmt.Writer, options: fmt.Options) {
+		items := self.view();
 		fmt.format_to(writer, "[");
-		foreach (i in 0 ..< self.count) {
+		foreach (i in 0 ..< items.len()) {
 			if (i > 0) { fmt.format_to(writer, ", "); }
-			fmt.format_to(writer, self.view()[i]);
+			fmt.format_to(writer, items[i]);
 		}
 		fmt.format_to(writer, "]");
 	}
@@ -347,6 +340,20 @@ impl Small_Array($T, $N) {
 		}
 	}
 
+	// An insertion may also land behind the last element. Callers check this
+	// before capacity: a bad index is a programmer error even when full.
+	@(private)
+	check_insert_index :: proc(self: ^, index: int) {
+		if (index < 0 || index > self.count) {
+			panic("Small_Array index is out of range");
+		}
+	}
+
+	@(private)
+	check_room :: proc(self: ^) {
+		if (self.count == N) { panic("Small_Array is full"); }
+	}
+
 	// Writes `value` behind the last element, which the caller has checked there
 	// is room for, and then lengthens.
 	@(private)
@@ -368,10 +375,8 @@ impl Small_Array($T, $N) {
 	@(private)
 	put_at :: proc(self: inout, index: int, @(escape=stored) value: move T) {
 		slots := unsafe.storage(&mut self.items);
-		at := self.count;
-		for (at > index) {
+		for (at := self.count; at > index; at -= 1) {
 			unsafe.write(slots[at], unsafe.take(slots[at - 1]));
-			at -= 1;
 		}
 		unsafe.write(slots[index], move(value));
 		self.count += 1;
