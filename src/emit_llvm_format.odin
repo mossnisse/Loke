@@ -72,7 +72,8 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 	} else {
 		value = emit_value(e, "call %s %s()%s", llvm_type(e, result), entry, attributes)
 	}
-	slot := emit_union_spill(e, under, value)
+	// The failure's payload, or the whole failure, starts at the result's address.
+	data := value_address(e, under, value)
 	failed := emit_union_failed(e, under, value)
 	status := alloca(e, "i32")
 	fmt.sbprintfln(&e.b, "  store i32 0, ptr %s", status)
@@ -84,10 +85,6 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_flush_stdout()")
 	writer := emit_stderr_writer(e)
 	emit_format_literal_to(e, writer, "error: ")
-	data := slot
-	if failure != result {
-		data = gep_field(e, llvm_type(e, under), slot, 0)
-	}
 	// A formatter that panics still drops the failure.
 	held := Deferred{}
 	if emit_lifecycle(e, failure).managed {
@@ -362,21 +359,24 @@ emit_format_integer :: proc(e: ^Emitter, under: Type_Id, value: string) {
 // `.name` or `.name(payload)` for the active variant, chained like enums. A
 // `Unit` payload prints as `.name`, as a payloadless variant does (standard-library.md
 // "Printed forms").
+//
+// The tag is read in place, and only the active payload is copied, before the
+// writer runs: a writer that reached the value could not then pair the printed
+// variant with another variant's bytes.
 @(private = "file")
 emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
-	value := load_place(e, under, address)
-	tag := emit_union_tag(e, under, value)
-	slot := emit_union_spill(e, under, value)
+	tag := emit_union_tag_at(e, under, address)
 	done := new_label(e, "fmt.union.done")
 	hits := variant_labels(e, info, "fmt.union.hit")
 	emit_union_switch(e, under, tag, hits, done)
 	for variant, index in info.variants {
 		place_label(e, hits[index])
+		printed := variant != TYPE_VOID && variant != e.c.unit_type
+		payload := printed ? value_address(e, variant, emit_union_payload(e, variant, address)) : ""
 		emit_format_literal(e, fmt.aprintf(".%s", identifier_text(e.c, info.variant_names[index])))
-		if variant != TYPE_VOID && variant != e.c.unit_type {
+		if printed {
 			emit_format_literal(e, "(")
-			payload := gep_field(e, llvm_type(e, under), slot, 0)
 			emit_format_nested(e, variant, payload)
 			emit_format_literal(e, ")")
 		}

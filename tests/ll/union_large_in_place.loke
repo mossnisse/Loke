@@ -1,0 +1,15 @@
+package main;
+
+// A large union is printed where it is stored: its tag is read in place, and
+// only the active payload is copied, once the tag has picked it. The whole
+// union is never copied.
+
+import "core:fmt";
+
+Big :: union { data: [8192]u8, code: int }
+
+big: Big = .code(42);
+
+main :: proc() {
+	fmt.println(big);
+}

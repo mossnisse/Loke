@@ -1,0 +1,2 @@
+not i64 8200
+call void @llvm.memcpy.p0.p0.i64(ptr %t*, ptr %data, i64 8192, i1 false)

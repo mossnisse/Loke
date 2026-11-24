@@ -1207,8 +1207,11 @@ copies a first-class value member by member and element by element, so a
 payload spelled in bytes costs an instruction per byte at every copy;
 `union_copies_move_words` guards the spelling. The bytes after the tag are
 LLVM's own padding, spelled nowhere: they hold no value, a copy need not carry
-them, and nothing may read them. Equality and hashing read the tag and the
-active payload, and an atomic union is one word with no tag.
+them, and nothing may read them. The payload starts at the union's own
+address, which its loads and stores use with no field address. Equality,
+hashing, widening, and formatting read the tag and the active payload where
+the union is stored, copying no more than that payload, and an atomic union is
+one word with no tag.
 
 Another niche changes `union_layout` and the tag reads and writes in
 `emit_llvm_union.odin`, and no specification text. Two constraints hold it. A

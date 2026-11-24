@@ -781,7 +781,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 		place = emit_address(e, s.subject)
 	}
 	value := place != "" ? load_place(e, union_type, place) : emit_expr(e, s.subject)
-	slot := emit_union_spill(e, union_type, value)
+	slot := value_address(e, union_type, value)
 	tag := emit_union_tag(e, union_type, value)
 	// A produced subject is the switch's to drop; a named place is borrowed.
 	consumes := !expression_is_borrowed_place(s.subject)
@@ -809,7 +809,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 		if len(entry.fields) > 0 {
 			emit_case_fields(e, entry, union_type, place, slot, consumes)
 		} else if place != "" && names_storage(e, entry.binding_symbol) {
-			bind_local(e, entry.binding_symbol, gep_field(e, llvm_type(e, union_type), place, 0))
+			bind_local(e, entry.binding_symbol, place)
 		} else {
 			emit_type_case_binding(e, entry, union_type, value, slot)
 		}
@@ -863,7 +863,7 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 		store(e, union_type, value, binding)
 		return
 	}
-	store(e, entry.binding_type, emit_union_payload(e, union_type, entry.binding_type, slot), binding)
+	store(e, entry.binding_type, emit_union_payload(e, entry.binding_type, slot), binding)
 }
 
 // A binding over a place names the subject's storage unless that storage is a

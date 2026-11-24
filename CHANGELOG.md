@@ -330,6 +330,11 @@ checklist.
 
 ### Changed
 
+- A union's tag is read where the union is stored, and only the active payload is copied.
+  Printing a union over 4096 bytes, such as `union { data: [8192]u8, code: int }`, copied all of
+  it twice before testing the tag, and comparing, hashing, widening, `or_else`, `or_return`, and a
+  type switch each copied it once more. Widening also copied a large payload through a
+  temporary. A generated `try_clone` builds a `Result` whose outcome it knows without a branch.
 - A `foreach` over a [range](docs/design.md#ranges) tests once whether it is empty, then
   compares each value with the last before stepping, counting down under `reversed()`. A step
   compared the value with both ends, which `-opt=speed` kept: a wrapping sum over a run-time

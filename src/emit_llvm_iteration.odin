@@ -565,7 +565,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	begin_step(e, loop)
 	payload := option_payload(e.c, option)
-	element := lent_yield_field(e, foreach_yielded_type(e, s), payload, emit_union_payload(e, option, payload, slot))
+	element := lent_yield_field(e, foreach_yielded_type(e, s), payload, emit_union_payload(e, payload, slot))
 	bind_foreach_element(e, s, loop, element)
 	finish_step(e, s, loop)
 	close_loop(e, loop)
@@ -579,7 +579,7 @@ emit_next_call :: proc(e: ^Emitter, next: Symbol_Id, iterator: string) -> (optio
 	option = symbol_of(e.c, next).result
 	produced := emit_call_result(e, option, callee_name(e, next), fmt.aprintf("ptr %s", iterator))
 	some = emit_union_tag_is(e, option, produced, union_index_of(e.c, option, "some"))
-	return option, some, emit_union_spill(e, option, produced)
+	return option, some, value_address(e, option, produced)
 }
 
 // What `next` hands over: an owned `Element` or part is the value, which the step
@@ -915,7 +915,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		branch_if(e, ok, yielded, stopped)
 		place_label(e, yielded)
 		handed := option_payload(e.c, inner_option)
-		payload := emit_union_payload(e, inner_option, handed, slot)
+		payload := emit_union_payload(e, handed, slot)
 		item := option_payload(e.c, symbol.result)
 		wrapped: string
 		if symbol.synth == .Indexed_Next {

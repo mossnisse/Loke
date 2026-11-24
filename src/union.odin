@@ -239,19 +239,22 @@ union_layout :: proc(c: ^Compiler, type: Type_Id, span := NO_SPAN) -> Union_Layo
 	if info == nil || info.kind != .Union {
 		return Union_Layout{align = 1, tag_bytes = 1, size = 1}
 	}
-	out := Union_Layout{align = 1}
+	out := Union_Layout{align = 1, tag_bytes = union_tag_bytes(len(info.variants))}
+	out.niche = union_niche_variant(c, type) >= 0
+	if info.layout_state == .Finite && info.size > 0 {
+		// The layout pass cached this answer's size and alignment. A niche
+		// union is its payload region; a tag fits in the alignment unit after it.
+		out.align, out.size = info.align, info.size
+		out.payload_size = out.niche ? out.size : out.size - out.align
+		return out
+	}
 	for variant in info.variants {
 		out.payload_size = max(out.payload_size, type_size(c, variant, span))
 		out.align = max(out.align, type_align(c, variant, span))
 	}
-	out.tag_bytes = union_tag_bytes(len(info.variants))
 	out.align = max(out.align, info.written_align, out.tag_bytes)
 	out.payload_size = align_to(out.payload_size, out.align)
-	out.size = align_to(out.payload_size + out.tag_bytes, out.align)
-	if union_niche_variant(c, type) >= 0 {
-		out.niche = true
-		out.size = out.payload_size
-	}
+	out.size = out.niche ? out.payload_size : align_to(out.payload_size + out.tag_bytes, out.align)
 	return out
 }
 

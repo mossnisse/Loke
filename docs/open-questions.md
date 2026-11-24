@@ -227,42 +227,13 @@ remain from them:
 
 ## Union compiler simplifications
 
-- **Read tags and payloads from storage already available.** Formatting a
-  `union { data: [8192]u8, code: int }` emits two 8,200-byte copies before
-  dispatch at `-opt=none`. Clang's standalone `-O2` pass over the
-  `-opt=speed` IR still copies 8,192 payload bytes before checking the tag.
-  Read the tag from the formatter's input and take any required snapshot
-  of the active payload before calling the writer. Equality, hashing,
-  and widening can use `value_address` for their already evaluated
-  operands. A borrowed switch can read from the subject's stable place
-  where alignment and binding rules allow. Consuming switches need writable
-  storage for their drops.
-  [Emitter spill](../src/emit_llvm_union.odin#L327),
-  [formatter](../src/emit_llvm_format.odin#L366),
-  [switch](../src/emit_llvm_stmt.odin#L773)
-- **Construct the known `Result` variant directly.** Generated clone
-  helpers pass literal `true` or `false` to `emit_alloc_result`, which
-  emits both arms and a join. Use `emit_union_value` when the outcome is
-  known and share the refusal retrieval with the runtime-condition path.
-  The [lifecycle fixture](../tests/run/union_lifecycle.loke) emits three
-  constant branches in `Boxed.try_clone` alone.
-  [Result builder](../src/emit_llvm_union.odin#L343)
-- **Read the union layout from the layout pass.** Emitting one tagged
-  variant test walks its payload types three times, for the tag load, the
-  member index, and the comparison width. Once layout is finite, the union's
-  cached size and alignment also give the payload region size: the whole
-  size for a niche, or size minus one alignment unit for a stored tag.
-  Compute layout once and pass its shape into the tag member calculation.
-  [Layout](../src/layout.odin#L122),
-  [tag emission](../src/emit_llvm_union.odin#L227)
-- **Use the union's base address for its payload.** The payload starts at
-  byte zero. LLVM's opaque pointers let payload loads and stores use that
-  address directly, removing the field-zero GEPs and allowing the payload
-  read helper to use the existing load operations. Widening can then copy
-  directly from the active payload's address into the fresh destination.
-  The 8 KiB payload arm currently copies through another 8 KiB temporary.
-  [Payload access](../src/emit_llvm_union.odin#L334),
-  [widening](../src/emit_llvm_union.odin#L117)
+- **Switch over a large union in its place.** A type switch over a named
+  place still snapshots the whole subject before reading its tag: 8,200
+  bytes for a `union { data: [8192]u8, code: int }`. A borrowed switch can
+  read from the subject's place where alignment and binding rules allow,
+  as formatting does. A consuming switch needs writable storage for its
+  drops, which its produced subject already is.
+  [Switch](../src/emit_llvm_stmt.odin#L783)
 - **Bound the cost of resolving generated variant lists.** Duplicate
   detection scans the preceding names for every variant, and widening
   scans the destination names for every source alternative. Use a
@@ -270,7 +241,7 @@ remain from them:
   small unions. Whole-process timings of synthetic declarations were too
   noisy to establish a crossover.
   [Variant resolution](../src/union.odin#L48),
-  [widening lookup](../src/union.odin#L396)
+  [widening lookup](../src/union.odin#L403)
 
 ## Package and import versioning
 

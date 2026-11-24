@@ -116,10 +116,10 @@ emit_clone_call :: proc(
 	returned := emit_call_result(
 		e, result, callee_name(e, hook), fmt.aprintf("%s %s, ptr %s", receiver_type, receiver, allocator),
 	)
-	slot := emit_union_spill(e, result, returned)
+	slot := value_address(e, result, returned)
 	failed = emit_union_failed(e, result, returned)
-	cloned = emit_union_payload(e, result, subject, slot)
-	error = emit_union_payload(e, result, TYPE_ALLOCATOR_ERROR, slot)
+	cloned = emit_union_payload(e, subject, slot)
+	error = emit_union_payload(e, TYPE_ALLOCATOR_ERROR, slot)
 	return
 }
 
@@ -529,7 +529,7 @@ emit_union_drop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, address: s
 			continue
 		}
 		place_label(e, hits[index])
-		emit_drop_place(e, variant, gep_field(e, llvm_type(e, type), address, 0))
+		emit_drop_place(e, variant, address)
 		branch(e, done)
 	}
 	place_label(e, done)

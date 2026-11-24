@@ -243,7 +243,7 @@ place_align_of :: proc(e: ^Emitter, address: string, type: Type_Id) -> u64 {
 }
 
 // `, align N` for a place known to be less aligned than its pointee.
-@(private = "file")
+@(private)
 align_suffix :: proc(e: ^Emitter, address: string, type: Type_Id) -> string {
 	if a, ok := e.place_align[address]; ok && a < type_align(e.c, type) {
 		return fmt.aprintf(", align %d", a)

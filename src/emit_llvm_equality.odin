@@ -230,8 +230,8 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	right_tag := emit_union_tag(e, union_type, rhs)
 	same_tag := emit_value(e, "icmp eq %s %s, %s", tag_llvm, left_tag, right_tag)
 
-	left_slot := emit_union_spill(e, union_type, lhs)
-	right_slot := emit_union_spill(e, union_type, rhs)
+	left_slot := value_address(e, union_type, lhs)
+	right_slot := value_address(e, union_type, rhs)
 
 	// The tag comparison is the answer unless an active payload overrides it.
 	answer := alloca(e, "i1")
@@ -248,8 +248,8 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 			continue
 		}
 		place_label(e, hits[index])
-		left := emit_union_payload(e, union_type, variant, left_slot)
-		right := emit_union_payload(e, union_type, variant, right_slot)
+		left := load_temporary(e, variant, left_slot)
+		right := load_temporary(e, variant, right_slot)
 		// The comparison may open blocks, so the store goes wherever it ends.
 		equal := emit_equal(e, variant, left, right)
 		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", equal, answer)
@@ -306,7 +306,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 		tag := emit_union_tag(e, under, value)
 		widened := emit_value(e, "zext %s %s to i64", union_tag_llvm(union_layout(e.c, under)), tag)
 		tagged := emit_hash_mix(e, seed, widened)
-		slot := emit_union_spill(e, under, value)
+		slot := value_address(e, under, value)
 		state := alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", tagged, state)
 		done := new_label(e, "unionhash.done")
@@ -317,7 +317,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 				continue
 			}
 			place_label(e, hits[index])
-			payload := emit_union_payload(e, under, variant, slot)
+			payload := load_temporary(e, variant, slot)
 			payload_hash := emit_hash_value(e, variant, payload, tagged)
 			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", payload_hash, state)
 			branch(e, done)

@@ -779,7 +779,7 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> string {
 	payload_type := payload_value_type(e.c, shape.success_type)
 
 	value := emit_expr(e, v.value)
-	slot := emit_union_spill(e, operand_type, value)
+	slot := value_address(e, operand_type, value)
 	failed := emit_union_failed(e, operand_type, value)
 	joined := temporary_slot(e, payload_type)
 	success_label := new_label(e, "orelse.success")
@@ -790,7 +790,7 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> string {
 	place_label(e, success_label)
 	taken := "zeroinitializer"
 	if !unit {
-		taken = emit_union_payload(e, operand_type, payload_type, slot)
+		taken = emit_union_payload(e, payload_type, slot)
 	}
 	if v.borrows && emit_lifecycle(e, payload_type).managed {
 		taken = emit_clone_value(e, payload_type, taken)
@@ -803,7 +803,7 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> string {
 	// a *temporary* is dropped here, before the fallback runs, since the operand's
 	// value is discarded on this path. A place still owns its own.
 	if !v.borrows && emit_lifecycle(e, shape.failure_type).managed {
-		emit_drop_place(e, shape.failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
+		emit_drop_place(e, shape.failure_type, slot)
 	}
 	// design.md "or_else expression": an exit leaves here, and only the success
 	// arm reaches the rest of the expression.
@@ -835,7 +835,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 	} else {
 		value = emit_expr(e, v.operand)
 	}
-	slot := emit_union_spill(e, operand_type, value)
+	slot := value_address(e, operand_type, value)
 	failed := emit_union_failed(e, operand_type, value)
 
 	fail_label := new_label(e, "orreturn.fail")
@@ -850,7 +850,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 		// does.
 		failure_type := shape.failure_type
 		if v.failure_maps {
-			error := emit_union_payload(e, operand_type, failure_type, slot)
+			error := emit_union_payload(e, failure_type, slot)
 			if v.borrows && emit_lifecycle(e, failure_type).managed {
 				error = emit_clone_value(e, failure_type, error)
 			}
@@ -858,14 +858,14 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 			// mapper is selected still drops it.
 			e.propagated_errors[v] = {error, hold_temporary_value(e, failure_type, error)}
 		} else if !v.borrows && failure_type != TYPE_VOID && emit_lifecycle(e, failure_type).managed {
-			emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
+			emit_drop_place(e, failure_type, slot)
 		}
 		emit_conditional_exit(e, v.failure_exit)
 	} else {
 		target, _ := fallible_of(e.c, e.result_type)
 		error := ""
 		if failure_type := shape.failure_type; failure_type != TYPE_VOID {
-			error = emit_union_payload(e, operand_type, failure_type, slot)
+			error = emit_union_payload(e, failure_type, slot)
 			failure_into := target.failure_type
 			if v.borrows && emit_lifecycle(e, failure_type).managed &&
 			   !failure_assignment_borrows(e.c, failure_type, failure_into) {
@@ -882,7 +882,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> string {
 	if shape.success_type == TYPE_VOID {
 		return "zeroinitializer"
 	}
-	out := emit_union_payload(e, operand_type, shape.success_type, slot)
+	out := emit_union_payload(e, shape.success_type, slot)
 	if v.borrows && emit_lifecycle(e, shape.success_type).managed {
 		out = emit_clone_value(e, shape.success_type, out)
 	}

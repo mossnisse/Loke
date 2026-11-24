@@ -80,8 +80,8 @@ union_members :: proc(shape: Union_Layout) -> Union_Members {
 
 // The storage member of `union_storage_definition` that holds the tag.
 @(private = "file")
-union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
-	members := union_members(union_layout(e.c, type))
+union_tag_member :: proc(shape: Union_Layout) -> int {
+	members := union_members(shape)
 	return int(members.head > 0) + int(members.padding > 0) + int(members.aligner)
 }
 
@@ -112,12 +112,13 @@ emit_option_value :: proc(e: ^Emitter, option_type: Type_Id, present, payload: s
 
 // design.md "Widening by label": each alternative keeps its payload under the
 // wider union's tag for its label. The layouts differ, so the payload is moved
-// into the wider storage, one arm per alternative.
+// into the wider storage, one arm per alternative. A large payload is copied
+// straight from the source, which is the value's own storage.
 @(private)
 emit_union_widen :: proc(e: ^Emitter, value: string, from, to: Type_Id) -> string {
 	source := type_of(e.c, from)
 	slot := zeroed_slot(e, to)
-	spilled := emit_union_spill(e, from, value)
+	address := value_address(e, from, value)
 	tag := emit_union_tag(e, from, value)
 	done := new_label(e, "widen.done")
 	hits := variant_labels(e, source, "widen.hit")
@@ -126,7 +127,7 @@ emit_union_widen :: proc(e: ^Emitter, value: string, from, to: Type_Id) -> strin
 		place_label(e, hits[index])
 		operand := ""
 		if payload != TYPE_VOID {
-			operand = emit_union_payload(e, from, payload, spilled)
+			operand = load_temporary(e, payload, address)
 		}
 		emit_union_write_variant(e, to, slot, widened_variant(e.c, from, to, index), operand)
 		branch(e, done)
@@ -184,8 +185,7 @@ emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) 
 		// The payload is read in place: it is stored or cloned before anything
 		// else runs.
 		payload_type := option_payload(e.c, as_type)
-		address := gep_field(e, llvm_type(e, subject), value_address(e, subject, value), 0)
-		payload = load_temporary(e, payload_type, address)
+		payload = load_temporary(e, payload_type, value_address(e, subject, value))
 		if emit_lifecycle(e, payload_type).managed {
 			payload = emit_clone_value(e, payload_type, payload)
 		}
@@ -198,12 +198,13 @@ emit_union_as :: proc(e: ^Emitter, v: ^Expr_Call, index: int, as_type: Type_Id) 
 
 // Writes a variant into zeroed storage. An empty `payload` means the caller has
 // nothing to write: the variant is payloadless, or its payload is zero-sized
-// and the zeroed slot is already the whole value.
+// and the zeroed slot is already the whole value. The payload starts at the
+// union's own address.
 @(private = "file")
 emit_union_write_variant :: proc(e: ^Emitter, union_type: Type_Id, slot: string, index: int, payload: string) {
 	if payload_type := union_variant_payload(e.c, union_type, index);
 	   payload != "" && payload_type != TYPE_VOID {
-		store(e, payload_type, payload, gep_field(e, llvm_type(e, union_type), slot, 0))
+		store(e, payload_type, payload, slot)
 	}
 	emit_union_store_tag(e, union_type, slot, index)
 }
@@ -212,35 +213,49 @@ emit_union_write_variant :: proc(e: ^Emitter, union_type: Type_Id, slot: string,
 // payloadless variant, and a written reference is never null.
 @(private = "file")
 emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag: int) {
-	llvm := llvm_type(e, union_type)
 	shape := union_layout(e.c, union_type)
 	if shape.niche {
 		return
 	}
-	address := gep_field(e, llvm, slot, union_tag_member(e, union_type))
+	address := gep_field(e, llvm_type(e, union_type), slot, union_tag_member(shape))
 	fmt.sbprintfln(&e.b, "  store %s %d, ptr %s", union_tag_llvm(shape), tag, address)
 }
 
 // The tag of a union *value*, which is what every extraction and type switch
-// tests.
+// tests. A large value is an address, read in place.
 @(private)
 emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
-	// One member of the value, which a large one holds in memory.
-	read_member :: proc(e: ^Emitter, union_type: Type_Id, value: string, member: int, type: string) -> string {
-		llvm := llvm_type(e, union_type)
-		return is_large_value(e, union_type) ? load(e, type, gep_field(e, llvm, value, member)) : extract(e, llvm, value, member)
+	if is_large_value(e, union_type) {
+		return emit_union_tag_at(e, union_type, value)
 	}
-
 	shape := union_layout(e.c, union_type)
+	llvm := llvm_type(e, union_type)
 	if shape.niche {
-		head := union_head_type(shape.align)
-		word := read_member(e, union_type, value, 0, head)
-		some := union_niche_variant(e.c, union_type)
-		present := icmp_zero(e, head, word, equal = false)
-		out := emit_value(e, "select i1 %s, i8 %d, i8 %d", present, some, 1 - some)
-		return out
+		return union_niche_tag(e, union_type, shape, extract(e, llvm, value, 0))
 	}
-	return read_member(e, union_type, value, union_tag_member(e, union_type), union_tag_llvm(shape))
+	return extract(e, llvm, value, union_tag_member(shape))
+}
+
+// The tag of the union stored at `address`, which may be under-aligned through
+// a packed field.
+@(private)
+emit_union_tag_at :: proc(e: ^Emitter, union_type: Type_Id, address: string) -> string {
+	shape := union_layout(e.c, union_type)
+	align := align_suffix(e, address, union_type)
+	if shape.niche {
+		return union_niche_tag(e, union_type, shape, load(e, union_head_type(shape.align), address, align))
+	}
+	member := gep_field(e, llvm_type(e, union_type), address, union_tag_member(shape))
+	return load(e, union_tag_llvm(shape), member, align)
+}
+
+// A niche union's tag from its payload's first word, which is null only for
+// the payloadless variant.
+@(private = "file")
+union_niche_tag :: proc(e: ^Emitter, union_type: Type_Id, shape: Union_Layout, word: string) -> string {
+	some := union_niche_variant(e.c, union_type)
+	present := icmp_zero(e, union_head_type(shape.align), word, equal = false)
+	return emit_value(e, "select i1 %s, i8 %d, i8 %d", present, some, 1 - some)
 }
 
 // Whether a union value's tag is `index`.
@@ -323,16 +338,10 @@ emit_union_switch :: proc(e: ^Emitter, union_type: Type_Id, tag: string, targets
 	}
 }
 
+// The payload of the union stored at `address`, which is where it starts.
 @(private)
-emit_union_spill :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
-	slot := temporary_slot(e, union_type)
-	store(e, union_type, value, slot)
-	return slot
-}
-
-@(private)
-emit_union_payload :: proc(e: ^Emitter, union_type, payload_type: Type_Id, slot: string) -> string {
-	return load_place(e, payload_type, gep_field(e, llvm_type(e, union_type), slot, 0))
+emit_union_payload :: proc(e: ^Emitter, payload_type: Type_Id, address: string) -> string {
+	return load_place(e, payload_type, address)
 }
 
 // `Result(T, Allocator_Error)` from a runtime failure flag. The error is the
@@ -341,15 +350,15 @@ emit_union_payload :: proc(e: ^Emitter, union_type, payload_type: Type_Id, slot:
 // the success payload, empty when success carries `Unit`.
 @(private)
 emit_alloc_result :: proc(e: ^Emitter, result: Type_Id, failed: string, value := "", error := "") -> string {
-	refused := error
-	if refused == "" && failed != "false" {
-		refused = emit_take_refusal(e)
+	err, ok := union_index_of(e.c, result, "err"), union_index_of(e.c, result, "ok")
+	if failed == "false" {
+		return emit_union_value(e, result, ok, value)
 	}
-	return emit_union_either(
-		e, result, failed,
-		union_index_of(e.c, result, "err"), refused,
-		union_index_of(e.c, result, "ok"), value,
-	)
+	refused := error != "" ? error : emit_take_refusal(e)
+	if failed == "true" {
+		return emit_union_value(e, result, err, refused)
+	}
+	return emit_union_either(e, result, failed, err, refused, ok, value)
 }
 
 // The size the runtime's note holds for the last refused allocation, which it
