@@ -120,8 +120,9 @@ position_of :: proc(member: $E) -> int {
 	when (counts_from_zero(E)) {
 		return int(member);
 	} else {
-		foreach (declared, index in E.values().indexed()) {
-			if (declared == member) { return index; }
+		members :: E.values();
+		foreach (index in 0 ..< members.len()) {
+			if (members[index] == member) { return index; }
 		}
 		// design.md "Enumerations": safe enum values always name a variant. Keep a
 		// defensive check for invalid representations supplied across unsafe boundaries.

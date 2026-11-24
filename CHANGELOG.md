@@ -246,6 +246,12 @@ checklist.
   d = [dynamic]int{5, 6}; d[1] = 9;    // after
   ```
 
+- `Enum_Array`'s indexing read, `get`, takes a `self: ^` receiver, as `Small_Array.get` does
+  ([Receiver forms](docs/design.md#receiver-forms)), so a read no longer copies every slot.
+  Indexing and method calls are unchanged; a call through the type now passes an address.
+  Upgrade by writing `Enum_Array(E, T).get(&array, member)` for
+  `Enum_Array(E, T).get(array, member)`.
+
 ### Added
 
 - `@(concurrent_regions)` on a parameter promises that the argument's allocator regions accept
@@ -485,6 +491,10 @@ checklist.
   two-fifths of the time at `-opt=speed`. A `Deque.try_append` of several copies that must grow
   makes them in the new ring before moving the elements in, so a failed copy no longer moves
   every element there and back.
+  Reading an `Enum_Array` slot borrows the array rather than copying it, so a million reads of
+  a 256-slot `Enum_Array(E, int)` take 81 ms, from 115, at `-opt=speed`, and about half the
+  time at `-opt=none`. On an enum whose values do not count up from zero, `Bit_Set` and
+  `Enum_Array` find a member's slot in half the time at `-opt=speed`.
 - A [`core:checksum`](docs/standard-library.md#corechecksum) update no longer reverses the start
   value bit by bit each time it runs, so a default build checksums four million nine-byte
   pieces with `Crc32` in about a quarter of the time. The eight-byte path drops a branch per

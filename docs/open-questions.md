@@ -525,6 +525,54 @@ a model can work on one part of a program without reading the rest.
   could do the reading back; a shortest-spelling algorithm in Loke, such as
   Ryu or Schubfach, would remove the rest. Is that worth its code and tables?
 
+## Enum_Array simplifications
+
+- Container formatters write their punctuation with `fmt.format_to`, which
+  goes through variadic `dyn Formattable` formatting. Writing it with
+  `writer.write(literal.bytes())` made formatting a 256-member `Enum_Array`
+  about 10% faster (fastest of five runs, 70.5 ms to 63.0 ms at `-opt=speed`).
+  Should `core:fmt` make a single literal argument cheap, so every formatter
+  gains without each spelling it differently?
+- `filled` builds its slots in a `Small_Array` rather than with a designated
+  range initializer, `{0..<N = value}`, because [design.md "Fixed
+  arrays"](design.md#fixed-arrays) does not say what each slot of a range is
+  copied from. Today the compiler clones later slots from the first copy: with
+  a copy hook that increments its source ID, filling three slots from ID 100
+  gives `101 102 102`, where cloning the given value each time gives
+  `101 101 101`. Should every slot of a range be a clone of the written value?
+  If so, `filled` could use the initializer once the compiler agrees.
+  [Constructor](../core/container/enum_array.loke#L36)
+
+## Index set simplifications and performance
+
+- [Storage sizing](../core/container/index_set.loke#L64) spells the
+  overflow-safe word count twice. Use `[words_for_bits(N)]u64` for the fixed
+  array bound. The compile-time call passed the index-set fixture, including
+  `N == 0` and the largest `int`.
+- [Byte serialization](../core/container/index_set.loke#L632) can use
+  `core:endian` in little-endian order for full words, with byte shifts and
+  masking confined to the partial word. Keep the final-byte padding check
+  before any write and preserve the caller's padding when loading that word.
+  In a prototype with 2,000 calls on a 262,147-bit set at `-opt=speed`, store
+  fell from 101.7 ms to 1.9 ms and load from 71.3 ms to 1.9 ms. Each figure
+  is the fastest of five runs.
+- [Owner clear](../core/container/index_set.loke#L293) can zero its words
+  directly. Assign `{}` to the fixed array and use `slice.fill` on the
+  dynamic owner's existing storage. Mutable views still need to preserve
+  the caller's padding. Clearing the dynamic set in the same benchmark fell
+  from 9.2 ms to 0.86 ms.
+- [Dynamic equality](../core/container/index_set.loke#L305) can compare
+  capacities and call `slice.equal` on the word slices, since both owners
+  keep their padding clear. Two comparisons per round, on equal sets and
+  sets that differ in the last word, fell from 12.3 ms to 5.9 ms.
+- [Single-result searches](../core/container/index_set.loke#L576) can scan
+  words directly and check the first candidate's index against `cap` once.
+  Padding follows every valid index, so a candidate in padding ends the
+  search. Scanning to the only member in the final word fell from 4.6 ms to
+  3.8 ms. The prototype agreed with the existing code for both search modes
+  at every starting index for capacities 0 through 193, including views
+  with caller-owned padding.
+
 ## Constant tables in the front end
 
 - A large array constant is slow to check. `core:strconv`'s table of powers
