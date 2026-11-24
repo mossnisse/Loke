@@ -623,58 +623,55 @@ emit_synth_map_lookup_value :: proc(e: ^Emitter, body: Container_Body) {
 }
 
 // The slot either way. A miss inserts the element, cloned as `try_insert`
-// clones it or moved in; a move-only element is dropped on a hit.
+// clones it or moved in; a moved element is dropped on a hit. An element that
+// needs no clone takes one probe, which inserts and says whether it did. A
+// borrowed managed element is cloned only on a miss, so a first probe decides.
 @(private = "file")
 emit_synth_map_find_or_insert :: proc(e: ^Emitter, body: Container_Body) {
-	symbol, element, ops := body.symbol, body.element, body.ops
-	moves, fallible := body.moves, body.fallible
+	symbol, element, ops, fallible := body.symbol, body.element, body.ops, body.fallible
 	key_slot := spill(e, container_key(e.c, body.container), "%arg1")
 	staged := alloca(e, body.element_llvm)
-	guard := Deferred{}
-	if moves {
+	if body.moves || !body.lifecycle.managed {
 		store(e, element, "%arg2", staged)
-		guard = guard_built_element(e, element, staged)
-	}
-	found := emit_map_find(e, "%arg0", ops, key_slot)
-	present := not_null(e, found)
-	hit_label, miss_label := new_label(e, "mfoi.hit"), new_label(e, "mfoi.miss")
-	branch_if(e, present, hit_label, miss_label)
-	place_label(e, hit_label)
-	if moves {
-		finish_temporary_drop(e, guard)
-		emit_drop_place(e, element, staged)
-	}
-	emit_map_slot_result(e, symbol.result, found, fallible)
+	} else {
+		found := emit_map_find(e, "%arg0", ops, key_slot)
+		hit_label, miss_label := new_label(e, "mfoi.found"), new_label(e, "mfoi.miss")
+		branch_if(e, not_null(e, found), hit_label, miss_label)
+		place_label(e, hit_label)
+		emit_map_slot_result(e, symbol.result, found, fallible)
 
-	place_label(e, miss_label)
-	cloned := "true"
-	if !moves && body.lifecycle.managed {
-		cloned = emit_try_clone_into(
+		place_label(e, miss_label)
+		cloned := emit_try_clone_into(
 			e, element, staged, spill(e, element, "%arg2"), emit_container_allocator(e, "%arg0"),
 		)
-	} else if !moves {
-		store(e, element, "%arg2", staged)
+		clone_ready, clone_failed := new_label(e, "mfoi.cloned"), new_label(e, "mfoi.clone_failed")
+		branch_if(e, cloned, clone_ready, clone_failed)
+		place_label(e, clone_failed)
+		emit_map_slot_failure(e, symbol.result, "%arg0", fallible)
+		place_label(e, clone_ready)
 	}
-	clone_ready, clone_failed := new_label(e, "mfoi.cloned"), new_label(e, "mfoi.clone_failed")
-	branch_if(e, cloned, clone_ready, clone_failed)
-	place_label(e, clone_failed)
-	emit_map_slot_failure(e, symbol.result, "%arg0", fallible)
 
-	place_label(e, clone_ready)
-	if !moves {
-		guard = guard_built_element(e, element, staged)
-	}
-	place := emit_map_entry(e, ops, "%arg0", key_slot, alloca(e, "i32"))
-	missing := is_null(e, place)
+	// The staged element is this body's until it is stored or dropped.
+	guard := guard_built_element(e, element, staged)
+	inserted := alloca(e, "i32")
+	place := emit_map_entry(e, ops, "%arg0", key_slot, inserted)
 	finish_temporary_drop(e, guard)
 	entry_failed, entry_ok := new_label(e, "mfoi.failed"), new_label(e, "mfoi.ok")
-	branch_if(e, missing, entry_failed, entry_ok)
+	branch_if(e, is_null(e, place), entry_failed, entry_ok)
 	place_label(e, entry_failed)
 	emit_drop_place(e, element, staged)
 	emit_map_slot_failure(e, symbol.result, "%arg0", fallible)
 
 	place_label(e, entry_ok)
-	// The key was absent a moment ago, so the slot is new and inert.
+	is_new := icmp_zero(e, "i32", load(e, "i32", inserted), equal = false)
+	fresh_label, hit_label := new_label(e, "mfoi.new"), new_label(e, "mfoi.hit")
+	branch_if(e, is_new, fresh_label, hit_label)
+	place_label(e, hit_label)
+	emit_drop_place(e, element, staged)
+	emit_map_slot_result(e, symbol.result, place, fallible)
+
+	place_label(e, fresh_label)
+	// A new slot holds inert bytes, so storing over them drops nothing.
 	store(e, element, load_temporary(e, element, staged), place)
 	emit_map_slot_result(e, symbol.result, place, fallible)
 }

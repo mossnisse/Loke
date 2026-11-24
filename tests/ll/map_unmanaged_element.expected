@@ -1,4 +1,4 @@
-call ptr @loke_rt_v1_map_find(
+not call ptr @loke_rt_v1_map_find(
 call ptr @loke_rt_v1_map_entry(
 .find_or_insert(ptr %arg0
 .try_insert(ptr %arg0

@@ -289,8 +289,9 @@ typedef struct loke_rt_container_ops_v1 {
  * the table algorithm can change without changing `map[K]V`'s layout.
  *
  * One block holds the header, then `slot_count` control bytes, then the key
- * array, then the value array. Offsets are stored rather than recomputed so the
- * reader and the allocator agree byte for byte. */
+ * array, then the value array. The controls start right after the header; the
+ * other offsets are stored rather than recomputed so the reader and the
+ * allocator agree byte for byte. The live-entry count is the owner's `len`. */
 enum {
 	LOKE_RT_MAP_EMPTY = 0,
 	LOKE_RT_MAP_TOMBSTONE = 1,
@@ -302,15 +303,15 @@ enum {
 
 typedef struct loke_rt_map_table_v1 {
 	int64_t slot_count; /* a power of two */
-	int64_t occupied;
 	int64_t tombstones;
 	uint64_t seed;
-	uint64_t controls_offset;
 	uint64_t keys_offset;
 	uint64_t values_offset;
 	uint64_t block_size;
 	uint64_t block_align;
 } loke_rt_map_table_v1;
+
+LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_map_table_v1) % 8 == 0, map_table_header_size);
 
 /* Every one of these returns 1 on success. On failure the container is
  * bit-for-bit unchanged, which is what m6b-plan decision "Atomic mutation"

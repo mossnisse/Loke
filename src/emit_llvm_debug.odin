@@ -626,7 +626,7 @@ NATVIS_MAP :: `  <Type Name="@MAP@">
       <CustomListItems Condition="table != 0">
         <Variable Name="slot" InitialValue="0"/>
         <Loop Condition="slot &lt; table->slot_count">
-          <If Condition="*((unsigned char*)table + table->controls_offset + slot) == 2">
+          <If Condition="((unsigned char*)(table + 1))[slot] == 2">
             <Item Name="[{*(@MAP@$key*)((char*)table + table->keys_offset + slot * @KEY_SIZE@)}]">*(@MAP@$value*)((char*)table + table->values_offset + slot * @VALUE_SIZE@)</Item>
           </If>
           <Exec>slot++</Exec>
@@ -644,8 +644,8 @@ debug_natvis_type :: proc(d: ^Debug_Info, name: string, type: Type_Id) {
 
 // A map's header, named `map$<type>` for natvis to match, and a rule listing
 // its occupied slots. The table is `loke_rt_map_table_v1` in
-// runtime/loke_rt.h: a header, then control bytes, keys, and values, each at
-// an offset the header stores.
+// runtime/loke_rt.h: a header, then control bytes right after it, then keys and
+// values at offsets the header stores.
 @(private = "file")
 debug_map :: proc(d: ^Debug_Info, id: int, type: Type_Id) {
 	c := d.c
@@ -654,13 +654,13 @@ debug_map :: proc(d: ^Debug_Info, id: int, type: Type_Id) {
 		d.map_table = d.count
 		d.count += 1
 		header: strings.Builder
-		for field, index in ([]string{"slot_count", "occupied", "tombstones"}) {
+		for field, index in ([]string{"slot_count", "tombstones"}) {
 			debug_member(d, &header, field, TYPE_INT, u64(index) * 8)
 		}
-		for field, index in ([]string{"seed", "controls_offset", "keys_offset", "values_offset", "block_size", "block_align"}) {
-			debug_member(d, &header, field, TYPE_U64, u64(index + 3) * 8)
+		for field, index in ([]string{"seed", "keys_offset", "values_offset", "block_size", "block_align"}) {
+			debug_member(d, &header, field, TYPE_U64, u64(index + 2) * 8)
 		}
-		debug_composite(d, d.map_table, "loke_rt_map_table_v1", 9 * 64, strings.to_string(header))
+		debug_composite(d, d.map_table, "loke_rt_map_table_v1", 7 * 64, strings.to_string(header))
 	}
 	name := fmt.aprintf("map$%d", u32(type))
 	members: strings.Builder

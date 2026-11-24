@@ -252,6 +252,7 @@ main :: proc() {
 	inout_slots();
 	distinct_keys();
 	shrink_floor();
+	reused_tombstone();
 }
 
 bump :: proc(n: inout int) { n += 1; }
@@ -491,4 +492,17 @@ shrink_floor :: proc() {
 	before = holed.cap();
 	holed.shrink(100);
 	fmt.println(holed.cap() == before, holed[2]);
+}
+
+// Reinserting a removed key at the load limit reuses its tombstone, which
+// leaves the nonempty slots as they were, so the table does not grow.
+reused_tombstone :: proc() {
+	full: map[int]int = {};
+	for (i := 0; i < 7; i += 1) { full[i] = i; }
+	before := full.cap();
+	for (round := 0; round < 3; round += 1) {
+		full.remove(3);
+		full[3] = round;
+	}
+	fmt.println(before, full.cap() == before, full.len(), full[3]);
 }

@@ -529,7 +529,7 @@ int32_t loke_rt_v1_dyn_shrink(
 /* ------------------------------------------------------------------- map -- */
 
 static uint8_t *map_controls(const loke_rt_map_table_v1 *t) {
-	return (uint8_t *)t + t->controls_offset;
+	return (uint8_t *)(t + 1);
 }
 
 static void *map_key_at(const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, int64_t slot) {
@@ -619,10 +619,7 @@ static int32_t map_block_shape(
 		align = 8; /* the header itself is eight-aligned */
 	}
 
-	if (!checked_round_up(sizeof(loke_rt_map_table_v1), 8, &cursor)) {
-		return 0;
-	}
-	shape->controls_offset = cursor;
+	cursor = sizeof(loke_rt_map_table_v1);
 	if (!loke_rt_v1_checked_bytes(slots, 1, &bytes) || bytes > UINT64_MAX - cursor) {
 		return 0;
 	}
@@ -650,7 +647,6 @@ static int32_t map_block_shape(
 		return 0;
 	}
 	shape->slot_count = slots;
-	shape->occupied = 0;
 	shape->tombstones = 0;
 	shape->block_align = align;
 	return 1;
@@ -660,59 +656,75 @@ static void map_free_block(const loke_rt_allocator_v1 *a, loke_rt_map_table_v1 *
 	loke_rt_v1_free(a, t, t->block_size, t->block_align);
 }
 
-/* Relocation within a rehash is a compiler-known move of initialized
- * representations: m6b-plan decision "Element lifecycle" is explicit that it
- * does not call user clone or drop hooks. */
-static void map_place_moved(
-	loke_rt_map_table_v1 *dst, const loke_rt_container_ops_v1 *ops, const void *key, const void *value) {
-	uint64_t index = map_first_free(dst, ops, key);
-	memcpy(map_key_at(dst, ops, (int64_t)index), key, (size_t)ops->key_size);
-	memcpy(map_value_at(dst, ops, (int64_t)index), value, (size_t)ops->elem_size);
-	map_controls(dst)[index] = LOKE_RT_MAP_OCCUPIED;
-	dst->occupied += 1;
+/* A fresh table of `slots` slots holding `old`'s live entries, or NULL when it
+ * cannot be laid out or allocated. `old`, if any, is left as it was: its
+ * entries are only aliased until `map_replace` releases it, so a caller that
+ * fails after this frees the fresh block and nothing else.
+ *
+ * Relocation is a compiler-known move of initialized representations: m6b-plan
+ * decision "Element lifecycle" is explicit that it does not call user clone or
+ * drop hooks. Only the header and controls are initialized, since a payload is
+ * read only behind an occupied control byte. */
+static loke_rt_map_table_v1 *map_rebuild(
+	const loke_rt_allocator_v1 *a, const loke_rt_container_ops_v1 *ops,
+	const loke_rt_map_table_v1 *old, int64_t slots) {
+	loke_rt_map_table_v1 shape;
+	loke_rt_map_table_v1 *fresh;
+	if (!map_block_shape(ops, slots, &shape)) {
+		return 0;
+	}
+	fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc(a, shape.block_size, shape.block_align);
+	if (fresh == 0) {
+		return 0;
+	}
+	*fresh = shape;
+	fresh->seed = map_next_seed(fresh);
+	memset(map_controls(fresh), LOKE_RT_MAP_EMPTY, (size_t)slots);
+	if (old != 0) {
+		const uint8_t *controls = map_controls(old);
+		int64_t slot;
+		for (slot = 0; slot < old->slot_count; slot += 1) {
+			if (controls[slot] == LOKE_RT_MAP_OCCUPIED) {
+				const void *key = map_key_at(old, ops, slot);
+				uint64_t index = map_first_free(fresh, ops, key);
+				memcpy(map_key_at(fresh, ops, (int64_t)index), key, (size_t)ops->key_size);
+				memcpy(map_value_at(fresh, ops, (int64_t)index), map_value_at(old, ops, slot), (size_t)ops->elem_size);
+				map_controls(fresh)[index] = LOKE_RT_MAP_OCCUPIED;
+			}
+		}
+	}
+	return fresh;
+}
+
+/* Releases the bound table, whose entries `fresh` has taken over. */
+static void map_replace(loke_rt_map_v1 *self, loke_rt_map_table_v1 *fresh) {
+	if (self->table != 0) {
+		map_free_block(self->allocator, (loke_rt_map_table_v1 *)self->table);
+	}
+	self->table = fresh;
+	self->cap = map_capacity_of(fresh->slot_count);
 }
 
 int32_t loke_rt_v1_map_reserve(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
-	loke_rt_map_table_v1 shape;
 	loke_rt_map_table_v1 *fresh;
-	loke_rt_map_table_v1 *old = (loke_rt_map_table_v1 *)self->table;
-	int64_t slots, want;
+	int64_t slots;
 
 	if (min_capacity < 0) {
 		loke_rt_v1_container_fault("a container capacity cannot be negative");
 	}
 	loke_rt_v1_map_bind(self);
-	if (min_capacity <= self->cap && (old != 0 || min_capacity == 0)) {
+	if (min_capacity <= self->cap && (self->table != 0 || min_capacity == 0)) {
 		return 1;
 	}
-	want = min_capacity < self->len ? self->len : min_capacity;
-	if (!map_slots_for(want, &slots)) {
+	if (!map_slots_for(min_capacity < self->len ? self->len : min_capacity, &slots)) {
 		return 0;
 	}
-	if (!map_block_shape(ops, slots, &shape)) {
-		return 0;
-	}
-	fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc_zeroed(
-		self->allocator, shape.block_size, shape.block_align);
+	fresh = map_rebuild(self->allocator, ops, (loke_rt_map_table_v1 *)self->table, slots);
 	if (fresh == 0) {
 		return 0; /* the old table is still live and unchanged */
 	}
-	*fresh = shape;
-	fresh->seed = map_next_seed(fresh);
-
-	if (old != 0) {
-		uint8_t *controls = map_controls(old);
-		int64_t slot;
-		for (slot = 0; slot < old->slot_count; slot += 1) {
-			if (controls[slot] == LOKE_RT_MAP_OCCUPIED) {
-				map_place_moved(fresh, ops, map_key_at(old, ops, slot), map_value_at(old, ops, slot));
-			}
-		}
-		map_free_block(self->allocator, old);
-	}
-	self->table = fresh;
-	self->cap = map_capacity_of(slots);
+	map_replace(self, fresh);
 	return 1;
 }
 
@@ -726,7 +738,6 @@ static void map_drop_entry(
 	uint8_t *controls = map_controls(t);
 	if (controls[slot] == LOKE_RT_MAP_OCCUPIED) {
 		controls[slot] = LOKE_RT_MAP_VALUE_OWED;
-		t->occupied -= 1;
 		t->tombstones += 1;
 		self->len -= 1;
 		if (ops->key_drop != 0) {
@@ -741,18 +752,23 @@ static void map_drop_entry(
 	}
 }
 
-/* design.md "What the unwind runs, and what it does not": the caller keeps the
- * map registered while this runs, so a panicking hook leaves the entries not
- * yet taken out to the unwind's second call. */
+/* Runs every entry's hooks; a trivial pair has none, and the caller resets the
+ * table without a walk. design.md "What the unwind runs, and what it does not":
+ * the caller keeps the map registered while this runs, so a panicking hook
+ * leaves the entries not yet taken out to the unwind's second call. */
+static void map_drop_entries(loke_rt_map_v1 *self, loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops) {
+	if (ops->key_drop != 0 || ops->elem_drop != 0) {
+		int64_t slot;
+		for (slot = 0; slot < t->slot_count; slot += 1) {
+			map_drop_entry(self, t, ops, slot);
+		}
+	}
+}
+
 void loke_rt_v1_map_drop(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops) {
 	loke_rt_map_table_v1 *t = (loke_rt_map_table_v1 *)self->table;
 	if (t != 0) {
-		if (ops->key_drop != 0 || ops->elem_drop != 0) {
-			int64_t slot;
-			for (slot = 0; slot < t->slot_count; slot += 1) {
-				map_drop_entry(self, t, ops, slot);
-			}
-		}
+		map_drop_entries(self, t, ops);
 		map_free_block(self->allocator, t);
 	}
 	memset(self, 0, sizeof *self);
@@ -891,22 +907,21 @@ LOKE_RT_SLOW_PATH static void *map_insert_missing(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, int64_t vacant,
 	int32_t *inserted) {
 	const loke_rt_allocator_v1 *allocator = self->allocator == 0 ? loke_rt_v1_selected_allocator() : self->allocator;
-	loke_rt_map_table_v1 shape;
 	loke_rt_map_table_v1 *fresh = 0;
 	loke_rt_map_table_v1 *old = (loke_rt_map_table_v1 *)self->table;
 	loke_rt_map_table_v1 *t = old;
-	uint8_t *controls;
-	uint64_t index;
+	void *stored_key;
 	int64_t slots;
-	int32_t replacing = 0, reusing;
+	/* Reusing a tombstone leaves the count of nonempty slots as it was, so
+	 * only the live entries need room. */
+	int32_t reusing = t != 0 && vacant >= 0 && map_controls(t)[vacant] == LOKE_RT_MAP_TOMBSTONE;
 
 	/* A growth is built off to the side. Its entries are representation moves
 	 * that still alias `old`, so failure can release the fresh raw block without
 	 * dropping anything and leave every old header/table byte untouched. Below
 	 * the load limit some slot is empty, so the probe found a vacancy; `vacant`
 	 * is checked anyway, since writing at -1 would corrupt memory. */
-	if (t == 0 || vacant < 0 || self->len + 1 > self->cap ||
-	    t->occupied + t->tombstones + 1 > t->slot_count - t->slot_count / 8) {
+	if (t == 0 || vacant < 0 || self->len + 1 + (reusing ? 0 : t->tombstones) > self->cap) {
 		if (!map_slots_for(self->len + 1, &slots)) {
 			return 0;
 		}
@@ -925,63 +940,40 @@ LOKE_RT_SLOW_PATH static void *map_insert_missing(
 			}
 			slots *= 2;
 		}
-		if (!map_block_shape(ops, slots, &shape)) {
-			return 0;
-		}
-		fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc_zeroed(
-			allocator, shape.block_size, shape.block_align);
+		fresh = map_rebuild(allocator, ops, old, slots);
 		if (fresh == 0) {
 			return 0;
 		}
-		*fresh = shape;
-		fresh->seed = map_next_seed(fresh);
-		if (old != 0) {
-			uint8_t *old_controls = map_controls(old);
-			int64_t old_slot;
-			for (old_slot = 0; old_slot < old->slot_count; old_slot += 1) {
-				if (old_controls[old_slot] == LOKE_RT_MAP_OCCUPIED) {
-					map_place_moved(
-						fresh, ops, map_key_at(old, ops, old_slot), map_value_at(old, ops, old_slot));
-				}
-			}
-		}
 		t = fresh;
-		replacing = 1;
+		reusing = 0;
 		/* The fresh table has its own seed, so the key's home moves. */
 		vacant = (int64_t)map_first_free(fresh, ops, key);
 	}
 
-	controls = map_controls(t);
-	index = (uint64_t)vacant;
-	reusing = controls[index] == LOKE_RT_MAP_TOMBSTONE;
 	/* The stored key is an independent clone: the caller's may be a borrow. */
+	stored_key = map_key_at(t, ops, vacant);
 	if (ops->key_clone != 0) {
-		if (!ops->key_clone(map_key_at(t, ops, (int64_t)index), key, allocator)) {
+		if (!ops->key_clone(stored_key, key, allocator)) {
 			if (fresh != 0) {
 				map_free_block(allocator, fresh);
 			}
 			return 0;
 		}
 	} else {
-		memcpy(map_key_at(t, ops, (int64_t)index), key, (size_t)ops->key_size);
+		memcpy(stored_key, key, (size_t)ops->key_size);
 	}
 	if (reusing) {
 		t->tombstones -= 1;
 	}
-	memset(map_value_at(t, ops, (int64_t)index), 0, (size_t)ops->elem_size);
-	controls[index] = LOKE_RT_MAP_OCCUPIED;
-	t->occupied += 1;
-	if (replacing) {
-		if (old != 0) {
-			map_free_block(allocator, old);
-		}
-		self->table = fresh;
-		self->cap = map_capacity_of(fresh->slot_count);
-	}
+	memset(map_value_at(t, ops, vacant), 0, (size_t)ops->elem_size);
+	map_controls(t)[vacant] = LOKE_RT_MAP_OCCUPIED;
 	self->allocator = allocator;
+	if (fresh != 0) {
+		map_replace(self, fresh);
+	}
 	self->len += 1;
 	*inserted = 1;
-	return map_value_at(t, ops, (int64_t)index);
+	return map_value_at(t, ops, vacant);
 }
 
 /* Finds or inserts the raw slot shared by inserting indexes and explicit map
@@ -1022,7 +1014,6 @@ int32_t loke_rt_v1_map_remove(
 		return 0;
 	}
 	map_controls(t)[slot] = LOKE_RT_MAP_VALUE_OWED;
-	t->occupied -= 1;
 	t->tombstones += 1;
 	self->len -= 1;
 	if (ops->key_drop != 0) {
@@ -1035,19 +1026,11 @@ int32_t loke_rt_v1_map_remove(
 
 void loke_rt_v1_map_clear(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops) {
 	loke_rt_map_table_v1 *t = (loke_rt_map_table_v1 *)self->table;
-	uint8_t *controls;
-	int64_t slot;
 	if (t == 0) {
 		return;
 	}
-	controls = map_controls(t);
-	for (slot = 0; slot < t->slot_count; slot += 1) {
-		/* Removed before its hooks run, so a panicking hook leaves only the
-		 * entries still owed a drop for the unwind. */
-		map_drop_entry(self, t, ops, slot);
-	}
-	memset(controls, LOKE_RT_MAP_EMPTY, (size_t)t->slot_count);
-	t->occupied = 0;
+	map_drop_entries(self, t, ops);
+	memset(map_controls(t), LOKE_RT_MAP_EMPTY, (size_t)t->slot_count);
 	t->tombstones = 0;
 	self->len = 0;
 }
@@ -1056,7 +1039,6 @@ void loke_rt_v1_map_clear(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *
  * count that still holds the live entries also clears every tombstone. */
 int32_t loke_rt_v1_map_shrink(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
-	loke_rt_map_table_v1 shape;
 	loke_rt_map_table_v1 *fresh;
 	loke_rt_map_table_v1 *old = (loke_rt_map_table_v1 *)self->table;
 	int64_t want = self->len < min_capacity ? min_capacity : self->len;
@@ -1079,28 +1061,11 @@ int32_t loke_rt_v1_map_shrink(
 	if (slots == old->slot_count && old->tombstones == 0) {
 		return 1;
 	}
-	if (!map_block_shape(ops, slots, &shape)) {
-		return 0;
-	}
-	fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc_zeroed(
-		self->allocator, shape.block_size, shape.block_align);
+	fresh = map_rebuild(self->allocator, ops, old, slots);
 	if (fresh == 0) {
 		return 0; /* the old table is still live and unchanged */
 	}
-	*fresh = shape;
-	fresh->seed = map_next_seed(fresh);
-	{
-		uint8_t *controls = map_controls(old);
-		int64_t slot;
-		for (slot = 0; slot < old->slot_count; slot += 1) {
-			if (controls[slot] == LOKE_RT_MAP_OCCUPIED) {
-				map_place_moved(fresh, ops, map_key_at(old, ops, slot), map_value_at(old, ops, slot));
-			}
-		}
-	}
-	map_free_block(self->allocator, old);
-	self->table = fresh;
-	self->cap = map_capacity_of(slots);
+	map_replace(self, fresh);
 	return 1;
 }
 

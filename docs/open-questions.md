@@ -198,40 +198,6 @@ remain from them:
 
 ## Map runtime review follow-ups
 
-- **Reuse tombstones at the load limit.** Insertion budgets one more nonempty
-  slot even when the probe found a reusable tombstone. A map with length and
-  capacity 7 grew to capacity 14 after removing and reinserting the same key
-  with `-opt=speed`. Apply the nonempty-slot limit only when insertion consumes
-  an empty slot. Keep the live-entry limit and the rebuild for probes that
-  run out of reusable slots. [Insertion check](../runtime/container.c#L908)
-- **Share the table rebuild.** Reserve, shrink, and inserting a missing key
-  each lay out, allocate, seed, and populate a fresh table. Extract a helper
-  that returns the fresh block, then let each caller decide when to replace
-  the old one. Insertion needs the old table through a successful key clone.
-  The helper can use `loke_rt_v1_alloc` and zero just the control bytes, since
-  only occupied slots expose their payloads. This avoids zeroing the entire
-  key and value storage on reserve and rebuild.
-  [Reserve](../runtime/container.c#L675), [insertion](../runtime/container.c#L928),
-  [shrink](../runtime/container.c#L1057)
-- **Keep one live-entry count.** The owner already maintains `len` on insertion,
-  removal, and unwind. Use it for the load calculation and delete the table's
-  `occupied` field and its updates, including one update per relocated entry.
-  `controls_offset` is also constant at the size of the aligned table header.
-  Removing it saves another word and a load at probe setup. Update the emitted
-  debug layout and map visualizer with the table layout.
-  [Table header](../runtime/loke_rt.h#L303), [debugger](../src/emit_llvm_debug.odin#L629)
-- **Skip the entry walk for trivial `clear`.** When both drop thunks are null,
-  resetting the controls and counters clears the map. Use the same guarded
-  entry walk for `clear` and `drop`; managed entries still go through the
-  unwind-aware drop path. [Clear](../runtime/container.c#L1036),
-  [drop](../runtime/container.c#L747)
-- **Probe once in `find_or_insert` when the value needs no clone.** Today a
-  miss calls both `map_find` and `map_entry`. For a moved or trivial value,
-  use `map_entry` directly and use its `inserted` flag to decide whether to
-  store the staged value or discard it. A borrowed managed value still needs
-  a read probe before cloning on a miss. Measure miss-heavy workloads before
-  changing the runtime interface to reuse that probe across a copy hook.
-  [Emitter](../src/emit_llvm_containers.odin#L628)
 - **Filter equality checks with a hash fingerprint.** A probe calls key
   equality for every occupied slot it visits. Try storing a few bits of the
   mixed hash in each occupied control byte, using bits outside the slot mask
@@ -239,7 +205,7 @@ remain from them:
   This can skip key loads and equality on mismatches with no extra bytes per
   slot. Measure integer, string, and structural keys before adopting it, and
   update the debugger's occupied-slot test if it pays off.
-  [Probe](../runtime/container.c#L845), [debugger](../src/emit_llvm_debug.odin#L629)
+  [Probe](../runtime/container.c#L861), [debugger](../src/emit_llvm_debug.odin#L629)
 
 ## LLVM source review follow-ups
 
@@ -258,6 +224,37 @@ remain from them:
   live. Passing `x` as the callee's result needs the unwind never to read `x`
   before the call returns. The two rules are what is open; until they are
   settled a program has the fast form with an `inout` parameter.
+
+## Foreach review follow-ups
+
+- **Decode compile-time text one rune at a time.** The evaluator counts and
+  materializes every rune before the first step. A constant initialized by
+  `first("aaa…")`, where `first` immediately returns the first rune in a
+  `foreach`, hits the 64 MiB scratch limit with a 1 MiB ASCII literal. Feed
+  each rune directly to the existing step evaluator and count ordinals
+  separately from byte offsets. This removes the decoded array and lets
+  `break` and `return` stop decoding immediately.
+  [Evaluator](../src/eval_stmt.odin#L543)
+- **Check range emptiness once and stop after the last value.** Clang 22.1.8
+  with the `-opt=speed` optimization flags keeps both an equality test and a
+  signed bound test in the scalar loop for a wrapping sum over a run-time
+  inclusive `i64` range. After the entry check, use `high` as the last value
+  for a closed range and `high - 1` for an open range. In reverse, start
+  there and count down to `low`. The post block can compare the cursor with
+  the terminal value before advancing, including after `continue`. This
+  handles integer extrema and removes the mirrored value calculation.
+  [Range lowering](../src/emit_llvm_iteration.odin#L391)
+- **Walk named fields once when emitting a destructuring header.** The
+  emitter calls `named_field_slot` for every binding, and each call scans
+  the record again from its first field. Walk the fields once, skipping
+  padding and advancing the binding position only at a named field. This
+  makes field selection linear and lets the emitter delete the helper.
+  [Pattern emission](../src/emit_llvm_iteration.odin#L183)
+- **Fold the already checked static iterable.** The outer expression check
+  visits slice operands and adapter receivers, then `fold_static_iterable`
+  checks those subtrees again during its own descent. Check the header once
+  and have the recursive fold use the resolved types and adapter symbols.
+  [Static iterable folding](../src/expand.odin#L277)
 
 ## Package and import versioning
 

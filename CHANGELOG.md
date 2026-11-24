@@ -595,6 +595,10 @@ checklist.
 
 ### Fixed
 
+- Removing a map key and inserting it again no longer grows a full map
+  ([Maps](docs/design.md#maps)). A map whose `len()` and `cap()` were 7 grew to capacity 14
+  after `m.remove(k); m[k] = v`; the insertion now reuses the removed entry's slot, so the
+  capacity stays 7.
 - A result a callee allocates from an arena lent `inout` is in the arena's region
   ([Allocator regions and region provenance](docs/design.md#allocator-regions-and-region-provenance)).
   It was given the region backing the arena, so `list = make_list(inout arena)` in a block
