@@ -31,6 +31,21 @@ saturated :: proc() -> int {
 	return packed;
 }
 
+// The low end of a type: counting down to `min` ends there rather than
+// stepping below it, an empty range at `min` yields nothing, and `continue`
+// still ends a closed range at `max`.
+floor :: proc() -> int {
+	packed := 0;
+	foreach (b in (i8(-128) ..= i8(-126)).reversed()) { packed = packed * 1000 - int(b); }
+	foreach (b in i8(-128) ..< i8(-128)) { packed += int(b); }
+	foreach (b in (u8(0) ..< u8(2)).reversed()) { packed = packed * 10 + int(b); }
+	foreach (b in u8(254) ..= u8(255)) {
+		if (b == 254) { continue; }
+		packed += int(b);
+	}
+	return packed;
+}
+
 // A high endpoint far below the low one yields nothing, even when the
 // distance between them does not fit in an i64.
 backwards :: proc(lo, hi: u128) -> int {
@@ -130,6 +145,7 @@ tagged :: proc() -> int {
 SUM_TO    :: sum_to(6);
 DIGITS    :: digits(3);
 SATURATED :: saturated();
+FLOOR     :: floor();
 BACKWARDS :: backwards(1267650600228229401496703205376, 0);
 EARLY     :: early();
 DOUBLED   :: doubled();
@@ -152,6 +168,7 @@ main :: proc() {
 	fmt.println(SUM_TO, sum_to(6));
 	fmt.println(DIGITS, digits(3));
 	fmt.println(SATURATED, saturated());
+	fmt.println(FLOOR, floor());
 	fmt.println(BACKWARDS, backwards(1267650600228229401496703205376, 0));
 	fmt.println(EARLY, early());
 	fmt.println(DOUBLED, doubled());

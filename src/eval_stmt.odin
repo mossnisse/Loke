@@ -3,7 +3,6 @@
 package lokec
 
 import "core:slice"
-import "core:unicode/utf8"
 
 @(private)
 eval_block :: proc(ev: ^Evaluator, b: ^Block) -> Eval_Flow {
@@ -538,23 +537,22 @@ eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 	return .Normal
 }
 
-// design.md "String iteration": yields Unicode scalar values.
+// design.md "String iteration": yields Unicode scalar values, decoded as the
+// loop steps, so `break` and `return` stop decoding.
 @(private = "file")
 eval_text_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 	subject, ok := eval_expr(ev, s.iterable)
 	if !ok { return .Fail }
-	elements, allocated := eval_elements(ev, utf8.rune_count_in_string(subject.text))
-	if !allocated { return .Fail }
-	next := 0
+	index := 0
 	for point in subject.text {
-		elements[next] = Eval_Value{
-			kind    = .Rune,
-			type    = TYPE_RUNE,
-			integer = bi_from_i64(ev.alloc, i64(point)),
+		element := Eval_Value{kind = .Rune, type = TYPE_RUNE, integer = bi_from_i64(ev.alloc, i64(point))}
+		flow := eval_foreach_step(ev, s, &element, index)
+		if flow != .Normal {
+			return flow == .Break ? .Normal : flow
 		}
-		next += 1
+		index += 1
 	}
-	return eval_sequence_foreach(ev, s, elements)
+	return .Normal
 }
 
 @(private = "file")

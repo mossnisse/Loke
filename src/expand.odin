@@ -275,18 +275,21 @@ report_expr_branches :: proc(k: ^Checker, e: Expr) {
 
 @(private = "file")
 fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Type_Id, bool) {
-	if reject_type_iterable(k, iterable, "L0454") {
+	if reject_type_iterable(k, iterable, "L0454") || check_single_expr(k, iterable) == INVALID_TYPE {
 		return nil, INVALID_TYPE, false
 	}
+	return fold_checked_iterable(k, iterable)
+}
 
-	type := check_single_expr(k, iterable)
-	if type == INVALID_TYPE {
-		return nil, INVALID_TYPE, false
-	}
+// Checking the header checked its adapter receivers and slice operands too, so
+// the fold reads their resolved types.
+@(private = "file")
+fold_checked_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Type_Id, bool) {
+	type := expr_base(iterable).type
 	if call, is_call := iterable.(^Expr_Call); is_call {
 		if sym := symbol_of(k.c, call.resolution.chosen_overload); sym != nil && sym.synth == .Adapter_View {
 			call.adapter_peeled = true
-			elements, _, ok := fold_static_iterable(k, call.bound[0])
+			elements, _, ok := fold_checked_iterable(k, call.bound[0])
 			if !ok { return nil, INVALID_TYPE, false }
 			element_type := associated_type_of(k, type, "Element")
 			#partial switch type_of(k.c, type).adapter_kind {
@@ -354,7 +357,7 @@ fold_static_range :: proc(k: ^Checker, written: ^Expr_Range, type: Type_Id) -> (
 
 @(private = "file")
 fold_static_slice :: proc(k: ^Checker, written: ^Expr_Slice) -> ([]Const_Value, Type_Id, bool) {
-	elements, element, folded := fold_static_iterable(k, written.operand)
+	elements, element, folded := fold_checked_iterable(k, written.operand)
 	if !folded {
 		return nil, INVALID_TYPE, false
 	}

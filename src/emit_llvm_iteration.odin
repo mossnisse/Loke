@@ -181,13 +181,13 @@ bind_foreach_pattern :: proc(
 		return
 	}
 	parts := foreach_field_children(e, logical, source)
-	logical_info := underlying_info(e.c, logical)
-	for position in 0 ..< len(bindings) {
-		// A padding field fills no binding, so each binding takes its field's slot.
-		index := named_field_slot(e.c, logical_info, position)
-		field := symbol_of(e.c, logical_info.fields[index])
+	// A padding field fills no binding; each named one takes the next.
+	position := 0
+	for field_id, index in underlying_info(e.c, logical).fields {
+		if field_is_padding(e.c, field_id) { continue }
 		projected := foreach_projected_field(e.c, item, index)
-		bind_foreach_pattern(e, bindings[position:position + 1], field.type, projected, parts[index])
+		bind_foreach_pattern(e, bindings[position:][:1], symbol_of(e.c, field_id).type, projected, parts[index])
+		position += 1
 	}
 }
 
@@ -387,6 +387,9 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 }
 
 // A range: the cursor is its value, so `indexed()` needs a counter of its own.
+// Emptiness is tested once; each step then compares the cursor with the last
+// value it yields before moving, so `..= max` never needs `max + 1`, and
+// `reversed()` counts down from that last value.
 @(private = "file")
 emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	yielded := foreach_yielded_type(e, s)
@@ -404,39 +407,32 @@ emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		high = extract(e, range_type, value, RANGE_HIGH)
 		closed = extract(e, range_type, value, RANGE_CLOSED)
 	}
+	// A nonempty open range has `high > low`, so `high - 1` does not wrap.
+	open_last := emit_value(e, "sub %s %s, 1", element, high)
+	last := emit_value(e, "select i1 %s, %s %s, %s %s", closed, element, high, element, open_last)
+	first, final, step_op := low, last, "add"
+	if s.reversed {
+		first, final, step_op = last, low, "sub"
+	}
 	cursor := alloca(e, element)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, low, cursor)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, first, cursor)
 
 	loop := open_loop(e, s.indexed)
+	signed := type_signed(e.c, yielded) || type_is_rune(e.c, yielded)
+	branch_if(e, emit_range_live(e, signed, false, element, low, high, closed), loop.head, loop.done)
 	place_label(e, loop.head)
 	current := load(e, element, cursor)
-	signed := type_signed(e.c, yielded) || type_is_rune(e.c, yielded)
-	live := emit_range_live(e, signed, false, element, current, high, closed)
-	branch_if(e, live, loop.body, loop.done)
 
 	begin_step(e, loop)
-	at := current
-	if s.reversed {
-		// The cursor still counts up; the value is mirrored as
-		// `low + last - current`, where `last` is the final forward value.
-		open_high, last, sum, mirrored := temp(e), temp(e), temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", open_high, element, high)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %s, %s %s", last, closed, element, high, element, open_high)
-		fmt.sbprintfln(&e.b, "  %s = add %s %s, %s", sum, element, low, last)
-		fmt.sbprintfln(&e.b, "  %s = sub %s %s, %s", mirrored, element, sum, current)
-		at = mirrored
-	}
-	bind_foreach_element(e, s, loop, Foreach_Field{type = yielded, value = at})
+	bind_foreach_element(e, s, loop, Foreach_Field{type = yielded, value = current})
 	finish_step(e, s, loop)
 
-	// A closed range ending at the type's maximum cannot represent high+1, so
-	// it finishes right after yielding high.
-	at_high := emit_value(e, "icmp eq %s %s, %s", element, current, high)
-	finished := combine_and(e, closed, at_high)
+	finished := emit_value(e, "icmp eq %s %s, %s", element, current, final)
 	step := new_label(e, "foreach.step")
 	branch_if(e, finished, loop.done, step)
 	place_label(e, step)
-	step_counter(e, cursor, element)
+	next := emit_value(e, "%s %s %s, 1", step_op, element, current)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, next, cursor)
 	close_loop(e, loop)
 }
 

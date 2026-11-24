@@ -225,36 +225,52 @@ remain from them:
   before the call returns. The two rules are what is open; until they are
   settled a program has the fast form with an `inout` parameter.
 
-## Foreach review follow-ups
+## Union compiler simplifications
 
-- **Decode compile-time text one rune at a time.** The evaluator counts and
-  materializes every rune before the first step. A constant initialized by
-  `first("aaa…")`, where `first` immediately returns the first rune in a
-  `foreach`, hits the 64 MiB scratch limit with a 1 MiB ASCII literal. Feed
-  each rune directly to the existing step evaluator and count ordinals
-  separately from byte offsets. This removes the decoded array and lets
-  `break` and `return` stop decoding immediately.
-  [Evaluator](../src/eval_stmt.odin#L543)
-- **Check range emptiness once and stop after the last value.** Clang 22.1.8
-  with the `-opt=speed` optimization flags keeps both an equality test and a
-  signed bound test in the scalar loop for a wrapping sum over a run-time
-  inclusive `i64` range. After the entry check, use `high` as the last value
-  for a closed range and `high - 1` for an open range. In reverse, start
-  there and count down to `low`. The post block can compare the cursor with
-  the terminal value before advancing, including after `continue`. This
-  handles integer extrema and removes the mirrored value calculation.
-  [Range lowering](../src/emit_llvm_iteration.odin#L391)
-- **Walk named fields once when emitting a destructuring header.** The
-  emitter calls `named_field_slot` for every binding, and each call scans
-  the record again from its first field. Walk the fields once, skipping
-  padding and advancing the binding position only at a named field. This
-  makes field selection linear and lets the emitter delete the helper.
-  [Pattern emission](../src/emit_llvm_iteration.odin#L183)
-- **Fold the already checked static iterable.** The outer expression check
-  visits slice operands and adapter receivers, then `fold_static_iterable`
-  checks those subtrees again during its own descent. Check the header once
-  and have the recursive fold use the resolved types and adapter symbols.
-  [Static iterable folding](../src/expand.odin#L277)
+- **Read tags and payloads from storage already available.** Formatting a
+  `union { data: [8192]u8, code: int }` emits two 8,200-byte copies before
+  dispatch at `-opt=none`. Clang's standalone `-O2` pass over the
+  `-opt=speed` IR still copies 8,192 payload bytes before checking the tag.
+  Read the tag from the formatter's input and take any required snapshot
+  of the active payload before calling the writer. Equality, hashing,
+  and widening can use `value_address` for their already evaluated
+  operands. A borrowed switch can read from the subject's stable place
+  where alignment and binding rules allow. Consuming switches need writable
+  storage for their drops.
+  [Emitter spill](../src/emit_llvm_union.odin#L327),
+  [formatter](../src/emit_llvm_format.odin#L366),
+  [switch](../src/emit_llvm_stmt.odin#L773)
+- **Construct the known `Result` variant directly.** Generated clone
+  helpers pass literal `true` or `false` to `emit_alloc_result`, which
+  emits both arms and a join. Use `emit_union_value` when the outcome is
+  known and share the refusal retrieval with the runtime-condition path.
+  The [lifecycle fixture](../tests/run/union_lifecycle.loke) emits three
+  constant branches in `Boxed.try_clone` alone.
+  [Result builder](../src/emit_llvm_union.odin#L343)
+- **Read the union layout from the layout pass.** Emitting one tagged
+  variant test walks its payload types three times, for the tag load, the
+  member index, and the comparison width. Once layout is finite, the union's
+  cached size and alignment also give the payload region size: the whole
+  size for a niche, or size minus one alignment unit for a stored tag.
+  Compute layout once and pass its shape into the tag member calculation.
+  [Layout](../src/layout.odin#L122),
+  [tag emission](../src/emit_llvm_union.odin#L227)
+- **Use the union's base address for its payload.** The payload starts at
+  byte zero. LLVM's opaque pointers let payload loads and stores use that
+  address directly, removing the field-zero GEPs and allowing the payload
+  read helper to use the existing load operations. Widening can then copy
+  directly from the active payload's address into the fresh destination.
+  The 8 KiB payload arm currently copies through another 8 KiB temporary.
+  [Payload access](../src/emit_llvm_union.odin#L334),
+  [widening](../src/emit_llvm_union.odin#L117)
+- **Bound the cost of resolving generated variant lists.** Duplicate
+  detection scans the preceding names for every variant, and widening
+  scans the destination names for every source alternative. Use a
+  temporary label index for large lists and keep the linear lookup for
+  small unions. Whole-process timings of synthetic declarations were too
+  noisy to establish a crossover.
+  [Variant resolution](../src/union.odin#L48),
+  [widening lookup](../src/union.odin#L396)
 
 ## Package and import versioning
 

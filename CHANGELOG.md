@@ -330,6 +330,11 @@ checklist.
 
 ### Changed
 
+- A `foreach` over a [range](docs/design.md#ranges) tests once whether it is empty, then
+  compares each value with the last before stepping, counting down under `reversed()`. A step
+  compared the value with both ends, which `-opt=speed` kept: a wrapping sum over a run-time
+  `lo ..= hi` of `i64` was a vectorized loop with a two-test scalar tail, and is now a
+  closed-form expression.
 - A reset through an `@(allocator_reset)` parameter no longer counts an owner the default
   provider backs as live in the region being reset ([Allocator regions and region
   provenance](docs/design.md#allocator-regions-and-region-provenance)). No call may hand such a
@@ -595,6 +600,10 @@ checklist.
 
 ### Fixed
 
+- A compile-time `foreach` over a string decodes each code point as it steps
+  ([String iteration](docs/design.md#string-iteration)), so `break` and `return` stop the
+  decoding. It decoded the whole string first: a constant folding a procedure that returns the
+  first code point of a 1 MiB literal ran out of the evaluator's scratch memory, `L0342`.
 - Removing a map key and inserting it again no longer grows a full map
   ([Maps](docs/design.md#maps)). A map whose `len()` and `cap()` were 7 grew to capacity 14
   after `m.remove(k); m[k] = v`; the insertion now reuses the removed entry's slot, so the

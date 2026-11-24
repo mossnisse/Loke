@@ -270,22 +270,6 @@ named_field_count :: proc(c: ^Compiler, info: ^Type_Info) -> int {
 	return count
 }
 
-// The slot of a record's `position`-th named field, which a padding field
-// before it moves past its position.
-named_field_slot :: proc(c: ^Compiler, info: ^Type_Info, position: int) -> int {
-	seen := 0
-	for field, slot in info.fields {
-		if field_is_padding(c, field) {
-			continue
-		}
-		if seen == position {
-			return slot
-		}
-		seen += 1
-	}
-	return position
-}
-
 // Whether any component of this type never resolved. Told apart from
 // "unsupported" so an unsupported-type error is not reported for a component
 // that was already rejected where it was written.

@@ -1379,6 +1379,24 @@ nested_composite_arguments_parse_once :: proc(t: ^testing.T) {
 	testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count)
 }
 
+// A compile-time `foreach` over text decodes as it steps, so returning the first
+// rune of a 1 MiB literal stays far inside the evaluator's memory limit.
+@(test)
+compile_time_text_loop_decodes_as_it_steps :: proc(t: ^testing.T) {
+	source := strings.concatenate(
+		{
+			"package main;\n\nfirst :: proc(s: string) -> rune {\n\tforeach (r in s) { return r; }\n\treturn 0;\n}\n\nA :: first(\"",
+			strings.repeat("a", 1 << 20, context.temp_allocator),
+			"\");\n",
+		},
+		context.temp_allocator,
+	)
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, source)
+	testing.expectf(t, p.c.error_count == 0, "expected no diagnostics, got %d", p.c.error_count)
+}
+
 // A library path decodes as an import path does, so an escape cannot hide
 // `system:` from the linker's test.
 @(test)
