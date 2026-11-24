@@ -11,6 +11,22 @@ checklist.
 
 ### Breaking changes
 
+- A `@(cross_thread)` argument, one for `thread.spawn` included, may not be in an allocator
+  region the checker cannot name, such as an `Allocator` read from a global
+  ([Concurrency and the memory model](docs/design.md#concurrency-and-the-memory-model)). Only a
+  region the calling procedure received was rejected, though the callee trusts the argument's
+  regions and may pass them to a `@(concurrent_regions)` parameter. Such an argument is now
+  `L0726`. A lifecycle hook's parameters take no `@(allocator_reset)`, `@(cross_thread)`, or
+  `@(concurrent_regions)`, since the language calls a hook where nothing checks them
+  ([Lifecycle hooks and resource types](docs/design.md#lifecycle-hooks-and-resource-types));
+  one so marked is `L0488`. Upgrade by building what crosses with the default allocator, or
+  with one received through a `@(concurrent_regions)` parameter, and by unmarking the hook:
+
+  ```
+  handle := global_allocator;
+  thread.spawn(entry, move(handle));                     // before: L0726
+  thread.spawn(entry, mem.default_allocator());          // after
+  ```
 - An interface slot states its parameters' attributes, and a method meets it only when it asks
   no more of a call ([Interface bodies](docs/design.md#interface-bodies)). A slot kept only its
   parameters' types and modes, so a method that marked a parameter `@(cross_thread)`,
@@ -237,10 +253,13 @@ checklist.
   ([`@(concurrent_regions)`](docs/design.md#concurrent_regions)). A helper lent a queue could
   not send what the queue held (`L0726`), and a procedure given an allocator or a slice of slots
   could not use it from two tasks (`L0732`), since a received region may be an arena. Each call
-  checks the promise: an argument in a local provider's region, in one the caller received
-  unmarked, or in one the checker cannot name is `L0758`. The attribute is part of the procedure
-  type, and misplaced it is `L0757`. A task no longer reserves the regions of a `@(cross_thread)`
-  parameter either, which every call checked already.
+  checks the promise: an argument in a local provider's region, the one an arena lent `inout`
+  provides included, in one the caller received unmarked, or in one the checker cannot name, as
+  an allocator held in a global record or container is, is `L0758`. The attribute is part of the
+  procedure type, and misplaced it is `L0757`. A `call` method whose `self` carries it does not
+  meet a `dyn proc` view, which states nothing of its receiver (`L0444`). A task no longer
+  reserves the regions of a `@(cross_thread)` parameter either, which every call checked
+  already.
 
   ```
   send_all :: proc(send: ^thread.Sender(Job), @(concurrent_regions) queue: inout [dynamic]Job) {

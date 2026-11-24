@@ -902,6 +902,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.provider_carriers = make(map[Type_Id]bool, c.semantic_allocator)
 	c.has_region = make(map[Type_Id]bool, c.semantic_allocator)
 	c.holds_allocator = make(map[Type_Id]bool, c.semantic_allocator)
+	c.owns_allocator = make(map[Type_Id]bool, c.semantic_allocator)
 	c.view_reaches_provider = make(map[Type_Id]bool, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.may_hold_address = make(map[Type_Id]bool, c.semantic_allocator)
@@ -1483,10 +1484,16 @@ proc_type_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 // Whether parameter `index` of the method type `have` asks no more of a call
 // than parameter `wanted_index` of `wanted` states, so that a call through
 // `wanted` may run the method: a slot's member (design.md "Interface bodies")
-// and a view's `call` (design.md "Borrowed callable views"). A reset effect is
-// stated exactly, as between procedure types.
+// and a view's `call` (design.md "Borrowed callable views"). A nil `wanted`
+// states nothing, as a callable view of the receiver. A reset effect is stated
+// exactly, as between procedure types.
 parameter_effects_meet :: proc(c: ^Compiler, have: ^Type_Info, index: int, wanted: ^Type_Info, wanted_index: int) -> bool {
-	if padded_at(have.param_resets, index, false) != padded_at(wanted.param_resets, wanted_index, false) {
+	resets, level := false, Escape_Level.Result
+	if wanted != nil {
+		resets = padded_at(wanted.param_resets, wanted_index, false)
+		level = padded_at(wanted.param_escapes, wanted_index, Escape_Level.Result)
+	}
+	if padded_at(have.param_resets, index, false) != resets {
 		return false
 	}
 	// design.md "@(cross_thread)", "@(concurrent_regions)": a call through
@@ -1495,7 +1502,7 @@ parameter_effects_meet :: proc(c: ^Compiler, have: ^Type_Info, index: int, wante
 		return false
 	}
 	// design.md "@(escape=<level>)": it retains no argument further than allowed.
-	if padded_at(have.param_escapes, index, Escape_Level.Result) <= padded_at(wanted.param_escapes, wanted_index, Escape_Level.Result) {
+	if padded_at(have.param_escapes, index, Escape_Level.Result) <= level {
 		return true
 	}
 	// A level says nothing of a value that holds no borrow, and a generic

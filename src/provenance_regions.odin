@@ -408,6 +408,12 @@ prov_region_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_S
 			}
 		}
 	}
+	// An `Allocator` held in a global, which any body may have set, is one the
+	// analysis cannot name, as one read from the global itself is.
+	if kind := graph.roots[int(root)].kind; query == .All && region_is_empty(out) && (kind == .Static || kind == .Thread_Local) &&
+	   prov_owns_allocator(graph.k.c, prov_type_at(graph.k.c, prov_storage(graph, storage).type, path)) {
+		out.unknown = true
+	}
 	return out
 }
 
@@ -689,6 +695,13 @@ prov_holds_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return prov_record_holds(c, &c.holds_allocator, type, type_is_allocator)
 }
 
+// Whether a value of `type` holds an allocator handle anywhere it owns: as
+// `prov_holds_allocator`, and in its containers' and boxes' elements too.
+@(private = "file")
+prov_owns_allocator :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	return prov_record_holds(c, &c.owns_allocator, type, type_is_allocator, owned = true)
+}
+
 // Whether a value of `type` can depend on an allocator region: somewhere in it
 // is an owner, a view, an `Allocator`, or a provider (design.md "Allocator
 // regions and region provenance"). An `int` read out of a region-backed
@@ -701,7 +714,8 @@ prov_type_has_region :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 // Whether a `leaf` type is anywhere in a value of `type`, through record
-// fields, union payloads and array elements; a shape deeper than
+// fields, union payloads and array elements, and when `owned` through the
+// elements of containers and boxes; a shape deeper than
 // `REGION_SHAPE_DEPTH` may hold one. Only the queried type is cached in `cache`:
 // an intermediate one is answered at its depth.
 @(private = "file")
@@ -710,17 +724,18 @@ prov_record_holds :: proc(
 	cache: ^map[Type_Id]bool,
 	type: Type_Id,
 	leaf: proc(c: ^Compiler, type: Type_Id) -> bool,
+	owned := false,
 ) -> bool {
 	if cached, found := cache[type]; found {
 		return cached
 	}
-	holds := record_holds_walk(c, type, leaf, 0)
+	holds := record_holds_walk(c, type, leaf, owned, 0)
 	cache[type] = holds
 	return holds
 }
 
 @(private = "file")
-record_holds_walk :: proc(c: ^Compiler, type: Type_Id, leaf: proc(c: ^Compiler, type: Type_Id) -> bool, depth: int) -> bool {
+record_holds_walk :: proc(c: ^Compiler, type: Type_Id, leaf: proc(c: ^Compiler, type: Type_Id) -> bool, owned: bool, depth: int) -> bool {
 	if depth > REGION_SHAPE_DEPTH {
 		return true
 	}
@@ -734,18 +749,22 @@ record_holds_walk :: proc(c: ^Compiler, type: Type_Id, leaf: proc(c: ^Compiler, 
 	#partial switch info.kind {
 	case .Struct:
 		for field in info.fields {
-			if sym := symbol_of(c, field); sym != nil && record_holds_walk(c, sym.type, leaf, depth + 1) {
+			if sym := symbol_of(c, field); sym != nil && record_holds_walk(c, sym.type, leaf, owned, depth + 1) {
 				return true
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if variant != TYPE_VOID && record_holds_walk(c, variant, leaf, depth + 1) {
+			if variant != TYPE_VOID && record_holds_walk(c, variant, leaf, owned, depth + 1) {
 				return true
 			}
 		}
 	case .Array:
-		return record_holds_walk(c, info.element, leaf, depth + 1)
+		return record_holds_walk(c, info.element, leaf, owned, depth + 1)
+	case .Dynamic_Array, .Box:
+		return owned && record_holds_walk(c, info.element, leaf, owned, depth + 1)
+	case .Map:
+		return owned && (record_holds_walk(c, info.key, leaf, owned, depth + 1) || record_holds_walk(c, info.element, leaf, owned, depth + 1))
 	}
 	return false
 }
@@ -769,9 +788,9 @@ prov_region_of :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
 	#partial switch form in value.form {
 	case Prov_Form_Symbol:
 		set := prov_symbol_region(graph, form.symbol, value.type, id)
-		// An `Allocator` read from a global is one the analysis cannot name, as one
-		// read from a field no write named is below.
-		if sym := symbol_of(c, form.symbol); region_is_empty(set) && type_is_allocator(c, value.type) && sym != nil && symbol_outlives_bodies(sym) {
+		// An `Allocator` read from a global, or a value holding one, is one the
+		// analysis cannot name, as one read from a field no write named is below.
+		if sym := symbol_of(c, form.symbol); region_is_empty(set) && prov_owns_allocator(c, value.type) && sym != nil && symbol_outlives_bodies(sym) {
 			set.unknown = true
 		}
 		return set
@@ -1058,11 +1077,14 @@ prov_reached_regions :: proc(graph: ^Flow_Graph, argument: Value_Id, handles, lo
 }
 
 // design.md "@(concurrent_regions)": every region the promise for `argument`
-// covers: those of what it names, handles included, and of what its carriers lead
-// to at every load.
+// covers: those of what it names, handles included, those the providers it holds
+// provide, and those of what its carriers lead to at every load.
 @(private)
 prov_promised_regions :: proc(graph: ^Flow_Graph, argument: Value_Id) -> Region_Set {
 	out := prov_used_region(graph, argument)
+	if type_carries_provider(graph.k.c, prov_value(graph, argument).type) {
+		region_merge(&out, prov_provided_region(graph, argument))
+	}
 	region_merge(&out, prov_provider_viewed_by(graph, argument))
 	reached, _ := prov_reached_regions(graph, argument, handles = true, loaded = true)
 	region_merge(&out, reached)

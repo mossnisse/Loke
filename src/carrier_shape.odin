@@ -178,24 +178,32 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 			}
 			continue
 		}
-		info := underlying_info(c, path.type)
-		if info == nil {
-			continue
-		}
-		if path.mutable && (owners || type_carries_borrow(c, info.element).any) || !owners && dyn_keeps_arguments(c, info) {
-			return true
-		}
-		if pointee_reaches_destination(c, info.element, visited, owners) {
+		if carrier_reaches_destination(c, path.type, path.mutable, visited, owners) {
 			return true
 		}
 	}
 	return false
 }
 
+// Whether a carrier of `type` is a destination itself, or leads to one through
+// what it points at.
+@(private = "file")
+carrier_reaches_destination :: proc(c: ^Compiler, type: Type_Id, mutable: bool, visited: ^map[Type_Id]bool, owners: bool) -> bool {
+	info := underlying_info(c, type)
+	if info == nil {
+		return false
+	}
+	if mutable && (owners || type_carries_borrow(c, info.element).any) || !owners && dyn_keeps_arguments(c, info) {
+		return true
+	}
+	return pointee_reaches_destination(c, info.element, visited, owners)
+}
+
 // A truncated path names no carrier, so the value it cut is searched instead:
-// a mutable carrier in it is a destination, and a read-only one leads to one
-// as one on a whole path does (`pointee_reaches_destination`), as `ptr: ^Leaf`
-// does with `Leaf{out: ^mut ^int}` below the depth budget.
+// a mutable carrier in it is a destination, and a read-only one is one or leads
+// to one as one on a whole path does, as `ptr: ^Leaf` does with
+// `Leaf{out: ^mut ^int}` below the depth budget, and a view whose slot keeps an
+// argument does below it.
 @(private)
 truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited: ^map[Type_Id]bool, owners := false) -> bool {
 	if path.mutable {
@@ -205,8 +213,7 @@ truncated_reaches_destination :: proc(c: ^Compiler, path: Carrier_Path, visited:
 	walking := make(map[Type_Id]bool, context.temp_allocator)
 	carrier_leaves(c, path.cut, &leaves, &walking)
 	for leaf in leaves {
-		info := underlying_info(c, leaf)
-		if info != nil && pointee_reaches_destination(c, info.element, visited, owners) {
+		if carrier_reaches_destination(c, leaf, false, visited, owners) {
 			return true
 		}
 	}

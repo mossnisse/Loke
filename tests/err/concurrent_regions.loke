@@ -6,7 +6,11 @@
 // is a second, unmarked allocator. The attribute marks no foreign parameter,
 // `..` pack, or `@(allocator_reset)` parameter, adds nothing to
 // `@(cross_thread)`, and a procedure type with it does not convert to one
-// without.
+// without. The regions an argument holds include those its providers provide,
+// what a global holds, and what a `@(cross_thread)` argument holds: so an
+// arena lent `inout`, a record or container read from a global, and an
+// allocator the checker cannot name handed to a thread are rejected. A callable
+// view and a lifecycle hook check no receiver, so neither may mark one.
 package main;
 
 import "core:mem";
@@ -92,4 +96,45 @@ main :: proc() {
 
 converts :: proc() {
 	plain: Plain_Fan = fan_out;
+}
+
+need :: proc(@(concurrent_regions) allocator: mem.Allocator) {}
+
+with_arena :: proc(@(concurrent_regions) arena: inout mem.Arena) { need(arena.allocator()); }
+Holder :: struct { arena: mem.Arena, id: int }
+with_holder :: proc(@(concurrent_regions) holder: inout Holder) {}
+
+Handle :: struct { allocator: mem.Allocator }
+global_handle: Handle = {};
+global_handles: [dynamic]Handle = {};
+with_handle :: proc(@(concurrent_regions) handle: Handle) {}
+with_handles :: proc(@(concurrent_regions) handles: []Handle) {}
+forward :: proc(@(cross_thread, escape=static) allocator: move mem.Allocator) { need(allocator); }
+
+impl Handle {
+	call :: proc(@(concurrent_regions) self) { need(self.allocator); }
+}
+
+@(move_only) Guard :: struct { allocator: mem.Allocator }
+impl Guard {
+	release :: hook(drop) proc(@(concurrent_regions) self: inout) {}
+}
+
+provided :: proc() {
+	arena := mem.Arena.init();
+	with_arena(inout arena);
+	holder := Holder{arena = mem.Arena.init()};
+	with_holder(inout holder);
+	with_handle(global_handle);
+	copied := global_handle;
+	with_handle(copied);
+	with_handles(global_handles[:]);
+	allocator := global_allocator;
+	forward(move(allocator));
+}
+
+views :: proc() {
+	handle := Handle{allocator = mem.default_allocator()};
+	callback := (dyn proc())(&handle);
+	callback();
 }

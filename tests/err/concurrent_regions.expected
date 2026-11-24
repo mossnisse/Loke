@@ -1,47 +1,72 @@
 L0758
-@46:23
+@50:23
 `queue` may be in or name an allocator region that serves one thread at a time
 mark the parameter it arrived through `@(concurrent_regions)` too
 L0758
-@47:2
+@51:2
 `burst` may be in or name an allocator region
 L0758
-@48:10
+@52:10
 `allocator` may be in or name an allocator region
 L0758
-@50:6
+@54:6
 `allocator` may be in or name an allocator region
 L0726
-@57:33
+@61:33
 `job` is backed by an allocator region this procedure received
 L0732
-@66:3
+@70:3
 this task may use the allocator `other` was given
 L0757
-@70:14
+@74:14
 is implied by `@(cross_thread)`
 L0757
-@71:16
+@75:16
 cannot mark an `@(allocator_reset)` parameter
 L0757
-@72:14
+@76:14
 marks a parameter, not a `..` pack
 L0757
-@76:27
+@80:27
 cannot mark a foreign procedure's parameter
 L0758
-@83:10
+@87:10
 `global_allocator` may be in or name an allocator region
 its allocator is one the checker cannot name
 L0758
-@85:10
+@89:10
 `arena`'s allocator is such a region
 L0758
-@87:24
+@91:24
 `arena_queue` may be in or name an allocator region
 L0758
-@89:2
+@93:2
 `burst` may be in or name an allocator region
 L0310
-@94:21
+@98:21
 cannot initialise `proc(Allocator)` with `proc(@(concurrent_regions) Allocator)`
+L0488
+@120:2
+whose parameters take no `@(allocator_reset)`, `@(cross_thread)` or `@(concurrent_regions)`
+L0758
+@125:19
+`arena`'s allocator is such a region
+L0758
+@127:20
+`holder`'s allocator is such a region
+L0758
+@128:14
+`global_handle` may be in or name an allocator region
+its allocator is one the checker cannot name
+L0758
+@130:14
+`copied` may be in or name an allocator region
+L0758
+@131:15
+its allocator is one the checker cannot name
+L0726
+@133:10
+`allocator` is backed by an allocator region the checker cannot name
+L0444
+@138:14
+`Handle.call` is a `proc(@(concurrent_regions) Handle)`, whose parameter attributes, its receiver's included, do not meet `proc()`

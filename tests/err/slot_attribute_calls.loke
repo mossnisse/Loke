@@ -121,3 +121,9 @@ main :: proc() {
 	publishes();
 	calls();
 }
+
+// Below the depth a carrier's shape is followed to, a read-only view is still a
+// destination.
+Nested_Publishers :: [1][1][1][1][1]dyn Publisher;
+nested_pass :: proc(views: Nested_Publishers, @(escape=stored) value: ^int) { views[0][0][0][0][0].publish(value); }
+nested_relay :: proc(views: Nested_Publishers, value: ^int) { nested_pass(views, value); }

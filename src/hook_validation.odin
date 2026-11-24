@@ -186,6 +186,16 @@ require_hook_shape :: proc(k: ^Checker, sym: ^Symbol, subject: Type_Id) -> bool 
 		errorf(k.c, sym.span, "L0488", "`%s` has a fixed signature for `%s`: `%s`", hook_name(sym.hook), type_name(k.c, subject), shape)
 		return false
 	}
+	// design.md "Lifecycle hooks and resource types": the language calls a hook
+	// where no call checks a reset or a region, so its type marks neither.
+	if info := underlying_info(k.c, sym.proc_type); info != nil && (info.param_resets != nil || info.param_thread_checks != nil) {
+		errorf(
+			k.c, sym.span, "L0488",
+			"`%s` has a fixed signature for `%s`, whose parameters take no `@(allocator_reset)`, `@(cross_thread)` or `@(concurrent_regions)`: the language calls it where nothing checks them",
+			hook_name(sym.hook), type_name(k.c, subject),
+		)
+		return false
+	}
 	if sym.hook == .Copy && len(sym.param_defaults) > 1 {
 		if sym.param_defaults[1] != nil {
 			errorf(

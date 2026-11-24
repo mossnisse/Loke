@@ -1127,6 +1127,13 @@ callable_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) 
 	if callable_call_method(k, info, subject, signature) != INVALID_SYMBOL {
 		return {}, true
 	}
+	// The types name the attributes, which is all that keeps this method out.
+	if near := symbol_of(k.c, callable_call_method(k, info, subject, signature, effects = false)); near != nil {
+		return requirement_failuref(
+			k, at, "`%s.call` is a `%s`, whose parameter attributes, its receiver's included, do not meet `%s`",
+			type_name(k.c, subject), type_name(k.c, near.proc_type), type_name(k.c, signature),
+		)
+	}
 	if hidden := private_slot_member(k, subject, intern_identifier(k.c, "call")); hidden != nil {
 		return private_slot_failure(k, at, subject, hidden.name)
 	}
@@ -1136,10 +1143,11 @@ callable_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) 
 	)
 }
 
-// The `call` method of `subject` that meets `signature`, as `Callable` asks.
-callable_call_method :: proc(k: ^Checker, info: ^Interface_Info, subject, signature: Type_Id) -> Symbol_Id {
+// The `call` method of `subject` that meets `signature`, as `Callable` asks;
+// without `effects`, whatever its parameters' attributes.
+callable_call_method :: proc(k: ^Checker, info: ^Interface_Info, subject, signature: Type_Id, effects := true) -> Symbol_Id {
 	for candidate in slot_candidates(k, subject, intern_identifier(k.c, "call"), info.pkg) {
-		if call_method_matches(k.c, symbol_of(k.c, candidate), subject, signature) {
+		if call_method_matches(k.c, symbol_of(k.c, candidate), subject, signature, effects) {
 			return candidate
 		}
 	}
@@ -1148,15 +1156,17 @@ callable_call_method :: proc(k: ^Checker, info: ^Interface_Info, subject, signat
 
 // standard-library.md "Standard interface catalogue". The method matches the
 // rest of procedure type identity as a procedure converting to the signature
-// must, with its parameter `index + 1` as the signature's `index`.
-call_method_matches :: proc(c: ^Compiler, sym: ^Symbol, subject, signature: Type_Id) -> bool {
+// must, with its parameter `index + 1` as the signature's `index`, and asks
+// nothing of its receiver, which the signature does not state (design.md
+// "Borrowed callable views").
+call_method_matches :: proc(c: ^Compiler, sym: ^Symbol, subject, signature: Type_Id, effects := true) -> bool {
 	wanted := underlying_info(c, signature)
 	if sym == nil || sym.kind != .Proc || !sym.has_receiver || wanted == nil || wanted.kind != .Proc {
 		return false
 	}
 	have := underlying_info(c, sym.proc_type)
 	if have == nil || len(sym.params) != len(wanted.parameters) + 1 || sym.params[0] != subject ||
-	   proc_parameter_mode(c, sym.proc_type, 0) != .Value ||
+	   proc_parameter_mode(c, sym.proc_type, 0) != .Value || effects && !parameter_effects_meet(c, have, 0, nil, 0) ||
 	   sym.result != wanted.result || have.result_inout != wanted.result_inout ||
 	   have.convention != wanted.convention || have.c_vararg != wanted.c_vararg {
 		return false
@@ -1168,7 +1178,7 @@ call_method_matches :: proc(c: ^Compiler, sym: ^Symbol, subject, signature: Type
 		if sym.params[index + 1] != parameter ||
 		   param_mode_at(have, index + 1) != param_mode_at(wanted, index) ||
 		   flag_at(have.param_by_ptr, index + 1) != flag_at(wanted.param_by_ptr, index) ||
-		   !parameter_effects_meet(c, have, index + 1, wanted, index) {
+		   effects && !parameter_effects_meet(c, have, index + 1, wanted, index) {
 			return false
 		}
 	}

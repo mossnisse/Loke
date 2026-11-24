@@ -244,20 +244,23 @@ prov_materialize_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operati
 }
 
 // design.md "Concurrency and the memory model": an owner that crosses to another
-// thread is in no region this body received unchecked. design.md
-// "@(concurrent_regions)": an argument so promised is in none that serves one
-// thread at a time, nor in one the checker cannot name.
+// thread is in no region this body received unchecked, nor in one the checker
+// cannot name, since the callee trusts its regions (design.md
+// "@(concurrent_regions)"). An argument so promised is in none that serves one
+// thread at a time either.
 @(private = "file")
 prov_check_thread_regions :: proc(graph: ^Flow_Graph, op: Prov_Event_Thread_Regions) {
 	c := graph.k.c
 	if op.check == .Crosses {
-		if !prov_has_received_region(graph, prov_result_region(graph, op.value)) {
+		// A local region is the escape check's (`Prov_Event_Static_Escape`).
+		set := prov_unpromised_regions(graph, prov_result_region(graph, op.value))
+		received := region_is_parameter_backed(set)
+		if !received && !set.unknown {
 			return
 		}
 		errorf(
-			c, op.span, "L0726",
-			"%s is backed by an allocator region this procedure received, which another thread may not be allowed to use",
-			op.owner,
+			c, op.span, "L0726", "%s is backed by an allocator region %s, which another thread may not be allowed to use",
+			op.owner, received ? "this procedure received" : "the checker cannot name",
 		)
 		if prov_is_string_clone(c, prov_value(graph, op.value).origin) {
 			add_notef(c, op.span, "a string's `clone` shares its source's allocation; `copy()` makes one of its own")
@@ -404,12 +407,6 @@ prov_materialize_effect_use :: proc(graph: ^Flow_Graph, op: Prov_Event_Effect_Us
 @(private)
 prov_output :: proc(graph: ^Flow_Graph) -> ^Flow_Graph {
 	return graph.materialized != nil ? graph.materialized : graph
-}
-
-// Whether `set` names a region this body received and has not had checked.
-@(private)
-prov_has_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> bool {
-	return region_is_parameter_backed(prov_unpromised_regions(graph, set))
 }
 
 // `set` without the parameters whose regions accept concurrent use: what arrived

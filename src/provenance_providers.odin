@@ -302,24 +302,41 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, receiver: Value_Id
 	if call_provider_op(graph.k.c, v) != .Handle || len(v.bound) == 0 {
 		return Region_Set{}, false
 	}
-	id := receiver
-	receiver := prov_value(graph, id)
-	if ident, is_ident := receiver.form.(Prov_Form_Symbol); is_ident {
-		if set, found := graph.region_of[ident.symbol]; found {
-			return set, true
-		}
-	} else if receiver.temporary {
+	if prov_value(graph, receiver).temporary {
 		return prov_temp_provider_region(graph, v), true
-	} else if root, path, ok := prov_root_place(graph, receiver.place); ok {
+	}
+	return prov_provided_region(graph, receiver), true
+}
+
+// The regions the providers `id` holds provide, as `x.allocator()` names for a
+// provider `x`: a local's tokens, what a parameter received, or what a carrier
+// leads to; unknown unless they are named ones.
+@(private)
+prov_provided_region :: proc(graph: ^Flow_Graph, id: Value_Id) -> Region_Set {
+	c := graph.k.c
+	value := prov_value(graph, id)
+	by_place := true
+	if ident, is_ident := value.form.(Prov_Form_Symbol); is_ident {
+		sym := symbol_of(c, ident.symbol)
+		set, found := graph.region_of[ident.symbol]
+		if found && (type_is_region_provider(c, value.type) || sym != nil && sym.kind == .Parameter) {
+			return set
+		}
+		// A local record holding a provider is in its parent's region, which it
+		// does not provide, so its place names the tokens. A binding reaches its
+		// provider through a carrier.
+		by_place = found || provider_local(c, ident.symbol)
+	}
+	if root, path, ok := prov_root_place(graph, value.place); ok && by_place {
 		// A provider inside a local record or container: the token of its position.
 		if descriptor := graph.roots[int(root)]; descriptor.kind == .Local && descriptor.symbol != INVALID_SYMBOL {
-			return prov_provider_region_at(graph, descriptor.symbol, path), true
+			return prov_provider_region_at(graph, descriptor.symbol, path)
 		}
 	}
 	if set, known := prov_provider_through_carrier(graph, id); known {
-		return set, true
+		return set
 	}
-	return Region_Set{unknown = true}, true
+	return Region_Set{unknown = true}
 }
 
 // A provider reached through a carrier, when that names one: what a local pointer

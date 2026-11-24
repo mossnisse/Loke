@@ -4219,6 +4219,10 @@ with `hook(copy)` or `hook(drop)`, whose signatures are fixed:
 - `hook(drop)`: `proc(self: inout T)`
 - `hook(copy)`: `proc(self, allocator: Allocator) -> Result(T, Allocator_Error)`
 
+The language calls a hook where nothing checks a call, so its parameters carry
+none of the attributes that are part of a procedure type and that a call checks:
+`@(allocator_reset)`, `@(cross_thread)`, and `@(concurrent_regions)`.
+
 ```loke
 // A resource whose zero handle is valid carries a separate validity flag.
 @(move_only) File :: struct {
@@ -4943,7 +4947,9 @@ its declared [escape levels](#escapelevel) allow. Further rules are:
 - The calling convention is Loke, as for every `call` method;
   `dyn proc "c" (...)` is an error.
 - The view is read-only: `call` takes plain `self`, which may read captures and
-  write through a `&mut` capture. `dyn mut proc` is an error.
+  write through a `&mut` capture. `dyn mut proc` is an error. The signature
+  states nothing of the receiver, so a `call` whose `self` carries an attribute
+  a call would check, such as `@(concurrent_regions)`, does not meet it.
 - A `dyn proc` view satisfies `Callable` for its own signature and can therefore
   be passed to a generic callback API.
 
@@ -10244,7 +10250,8 @@ A value that crosses to another thread through a
   under either capability and wherever the conversion runs; a procedure a
   [callable view](#borrowed-callable-views) holds reaches nothing.
 - An owner in it is not backed by an allocator region the calling procedure
-  received, which may be one that does not accept use from another thread. The
+  received, which may be one that does not accept use from another thread, nor
+  by one the checker cannot name, such as an `Allocator` read from a global. The
   default provider accepts concurrent use; a value that arrived through the
   calling procedure's own `@(cross_thread)` or
   [`@(concurrent_regions)`](#concurrent_regions) parameter was checked where it
@@ -11759,8 +11766,9 @@ omits the attribute, such as a foreign one, crosses threads unchecked.
 
 Marks a parameter whose argument is in allocator regions that accept concurrent
 use, which a caller can know and a body cannot. The regions are those backing
-the owners the argument holds, those its `Allocator` handles name, and those of
-the storage its pointers and views lead to. It takes no value and marks a
+the owners the argument holds, those its `Allocator` handles name, those its
+providers provide, as an arena lent `inout` does, and those of the storage its
+pointers and views lead to. It takes no value and marks a
 parameter of any mode, a receiver included. It is part of the procedure type,
 as [`@(cross_thread)`](#cross_thread) is: a procedure converts to a type that
 marks more parameters, whose calls check more, but not to one that marks fewer.
@@ -11770,7 +11778,7 @@ provider's, the only one that accepts concurrent use, or one the calling
 procedure received through a parameter of its own that carries this attribute
 or `@(cross_thread)`. A region the caller created, one it received through any
 other parameter, and one the checker cannot name, such as an `Allocator` read
-from a global, are errors.
+from a global or held in one, are errors.
 
 In the body, a region of the parameter accepts concurrent use:
 

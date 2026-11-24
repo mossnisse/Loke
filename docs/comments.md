@@ -591,11 +591,20 @@ see [open-questions.md](open-questions.md#lent-storage-whose-owners-cross-thread
 unchecked. An owner backed by a caller's arena would then be freed on another
 thread while the caller allocates from it.
 
-**A region the checker cannot name is rejected.** The check at a
-`@(cross_thread)` parameter rules out what it can see, a region the caller
-received. Here the body relies on the promise with no later check, so an
-allocator read from a global does not meet it, as it does not meet
-`@(allocator_reset)`.
+**A region the checker cannot name is rejected.** The body relies on the
+promise with no later check, so an allocator read from a global, or held in
+one, does not meet it, as it does not meet `@(allocator_reset)`. The check at a
+`@(cross_thread)` parameter first ruled out only a region the caller received,
+leaving one it could not name to trust. Its callee trusts that parameter's
+regions as a promised one's, and may pass them to a `@(concurrent_regions)`
+parameter, so an unnamed region is rejected there too, `thread.spawn`
+included. A program that crossed with a global allocator passes the default
+one instead.
+
+**Not where no call checks it.** A lifecycle hook runs where the language
+drops or copies a value, and a `dyn proc` view's signature has no place for its
+receiver, so neither has a call that could check a marked parameter. Each
+rejects the mark rather than trust it.
 
 **One level in the procedure type.** A `@(cross_thread)` parameter's regions
 are checked already, so the two attributes are one ordered level, nothing, the

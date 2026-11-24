@@ -203,6 +203,7 @@ Compiler :: struct {
 	// The recursive region predicates of `src/provenance_regions.odin`.
 	has_region:         map[Type_Id]bool,
 	holds_allocator:    map[Type_Id]bool,
+	owns_allocator:     map[Type_Id]bool,
 	view_reaches_provider: map[Type_Id]bool,
 	carrier_shapes:     map[Type_Id][]Carrier_Path,
 	// `type_may_hold_address`, asked of each literal element's type during emission.

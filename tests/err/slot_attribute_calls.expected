@@ -28,3 +28,6 @@ this pointer is used after `n`
 L0513
 @111:14
 this slice is used after `numbers`
+L0646
+@129:63
+this pointer borrows `value`, which is not written `@(escape=stored)`, so it cannot reach `views`
