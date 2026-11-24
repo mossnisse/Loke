@@ -1,0 +1,88 @@
+// design.md "Interface bodies": a slot states its parameters' attributes as a
+// procedure type does, and a method meets it only when it asks no more of a
+// call. One that marks `@(cross_thread)`, `@(concurrent_regions)` or
+// `@(allocator_reset)` where the slot does not, or retains an argument further
+// than the slot's level, written or not, meets it for no `dyn` view and no
+// bound; a reset effect is stated exactly, so a slot's is not met without it.
+// An attribute its parameter's type does not admit is a requirement that does
+// not hold, and an unknown one is an error where the slot is written.
+package main;
+
+import "core:mem";
+import "core:thread";
+
+Job :: struct { values: [dynamic]int }
+entry :: proc(job: move Job) {}
+Holder :: struct { view: []int }
+
+Starter :: interface($Self: type) {
+	slot start: proc(self: ^, job: move Job);
+}
+Resetter :: interface($Self: type) {
+	slot release: proc(self: ^, allocator: mem.Allocator);
+}
+Marked_Resetter :: interface($Self: type) {
+	slot release: proc(self: ^, @(allocator_reset) allocator: mem.Allocator);
+}
+Keeper :: interface($Self: type) {
+	slot keep: proc(self: inout Self, values: []int);
+}
+Picker :: interface($Self: type) {
+	slot pick: proc(self: ^, input: []int, @(escape=none) scratch: []int) -> []int;
+}
+Fanner :: interface($Self: type) {
+	slot fan: proc(self: ^, allocator: mem.Allocator);
+}
+
+Plain :: struct {}
+impl Plain {
+	start :: proc(self: ^, @(cross_thread, escape=static) job: move Job) {
+		worker := thread.spawn(entry, move(job));
+		worker.join();
+	}
+	release :: proc(self: ^, @(allocator_reset) allocator: mem.Allocator) { free_all(allocator); }
+	pick :: proc(self: ^, input: []int, scratch: []int) -> []int { return input; }
+	fan :: proc(self: ^, @(concurrent_regions) allocator: mem.Allocator) {}
+}
+Quiet :: struct {}
+impl Quiet {
+	release :: proc(self: ^, allocator: mem.Allocator) {}
+}
+impl Holder {
+	keep :: proc(self: inout, @(escape=stored) values: []int) { self.view = values; }
+}
+
+Odd_Reset :: interface($Self: type) {
+	slot count: proc(self: ^, @(allocator_reset) n: int);
+}
+Odd_Thread :: interface($Self: type) {
+	slot count: proc(self: ^, @(cross_thread) n: int);
+}
+Unknown :: interface($Self: type) {
+	slot count: proc(self: ^, @(bogus) n: int);
+}
+Odd :: struct {}
+impl Odd {
+	count :: proc(self: ^, n: int) {}
+}
+
+bound :: proc(value: ^$T) where Starter(T) {}
+
+static_assert(!Starter(Plain));
+static_assert(Unknown(Odd));
+
+main :: proc() {
+	plain := Plain{};
+	quiet := Quiet{};
+	held := Holder{};
+	odd := Odd{};
+	starter := (dyn Starter)(&plain);
+	resetter := (dyn Resetter)(&plain);
+	marked := (dyn Marked_Resetter)(&quiet);
+	keeper := (dyn mut Keeper)(&mut held);
+	picker := (dyn Picker)(&plain);
+	fanner := (dyn Fanner)(&plain);
+	bound(&plain);
+	odd_reset := (dyn Odd_Reset)(&odd);
+	odd_thread := (dyn Odd_Thread)(&odd);
+}

@@ -199,8 +199,11 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 	members := make([]Symbol_Id, len(flattened), k.c.semantic_allocator)
 	type_of(k.c, dyn).members = members
 	for entry, index in flattened {
-		params, modes, result_type, result_inout, ok := slot_signature_for(k, interface_info_for(k, entry.owner), entry, dyn)
-		if !ok {
+		// The slot's own type, so a call through the view is checked as the slot
+		// states: its parameters' modes, reset effects, escape levels, and thread
+		// checks.
+		proc_type := slot_signature_for(k, interface_info_for(k, entry.owner), entry, dyn)
+		if proc_type == INVALID_TYPE {
 			continue
 		}
 		// A read-only view leaves a hole for an `inout` slot, so calling it is a
@@ -208,12 +211,14 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 		if !dyn_mutable && slot_mutates_receiver(entry) {
 			continue
 		}
+		slot := type_of(k.c, proc_type)
+		params := slot.parameters
 		// The slot's parameter names, so `(dyn I).slot(view, name = ...)` binds
 		// named arguments as `check_dyn_slot_call` does.
 		param_symbols := make([]Symbol_Id, len(params), k.c.semantic_allocator)
 		for written, position in slot_parameter_names(k, entry) {
 			if written != INVALID_IDENTIFIER && position < len(params) {
-				param_symbols[position] = new_parameter(k.c, written, params[position], modes[position])
+				param_symbols[position] = new_parameter(k.c, written, params[position], param_mode_at(slot, position))
 			}
 		}
 		id := new_symbol(k.c, Symbol {
@@ -223,14 +228,14 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 			public         = true,
 			owner_type     = dyn,
 			params         = params,
-			result         = result_type,
-			result_inout   = result_inout,
+			result         = slot.result,
+			result_inout   = slot.result_inout,
 			param_symbols  = param_symbols,
 			param_defaults = make([]Expr, len(params), k.c.semantic_allocator),
-			proc_type      = intern_proc_type(k.c, params, modes, result_type, result_inout, ""),
+			proc_type      = proc_type,
 			synth          = .Dyn_Forward,
 			has_receiver   = true,
-			receiver       = modes[0],
+			receiver       = param_mode_at(slot, 0),
 			index          = u32(index),
 		})
 		members[index] = id
@@ -259,20 +264,20 @@ install_dyn_call_slot :: proc(k: ^Checker, dyn, signature: Type_Id) {
 	modes := make([]Param_Mode, count, k.c.semantic_allocator)
 	resets := make([]bool, count, k.c.semantic_allocator)
 	escapes := make([]Escape_Level, count, k.c.semantic_allocator)
-	crosses := make([]bool, count, k.c.semantic_allocator)
+	thread_checks := make([]Thread_Check, count, k.c.semantic_allocator)
 	params[0], modes[0], escapes[0] = dyn, .Value, .Result
 	for parameter, index in wanted.parameters {
 		params[index + 1] = parameter
 		modes[index + 1] = proc_parameter_mode(k.c, signature, index)
 		resets[index + 1] = index < len(wanted.param_resets) && wanted.param_resets[index]
 		escapes[index + 1] = proc_param_escape(k.c, signature, index)
-		crosses[index + 1] = proc_param_crosses_thread(k.c, signature, index)
+		thread_checks[index + 1] = proc_param_thread_check(wanted, index)
 	}
 	proc_type := intern_proc_type(
 		k.c, params, modes, wanted.result, wanted.result_inout, "",
 		param_resets = resets, param_escapes = escapes,
 		proc_contract = receiver_contract(k.c, wanted.proc_contract),
-		param_cross_thread = crosses,
+		param_thread_checks = thread_checks,
 	)
 	member := new_symbol(k.c, Symbol {
 		name           = intern_identifier(k.c, "call"),
@@ -356,7 +361,7 @@ dyn_proc_source_signature :: proc(c: ^Compiler, from: Type_Id) -> Type_Id {
 		c, info.parameters[1:], info.param_modes[1:], info.result, info.result_inout, "",
 		param_resets = after_first(info.param_resets),
 		param_escapes = after_first(info.param_escapes),
-		param_cross_thread = after_first(info.param_cross_thread),
+		param_thread_checks = after_first(info.param_thread_checks),
 	)
 }
 
@@ -641,17 +646,10 @@ interface_witness_slots :: proc(k: ^Checker, info: ^Interface_Info, concrete: Ty
 		owner := interface_info_for(k, entry.owner)
 		// The slot's declaring package decides which extensions may supply it.
 		k.pkg, k.lookup_pkg = owner.pkg, owner.pkg
-		params, modes, result_type, result_inout, shape_ok := slot_signature_for(k, owner, entry, concrete)
-		target := INVALID_SYMBOL
-		if shape_ok {
-			target = matching_slot(
-				k, concrete, entry.name, owner.pkg,
-				params, modes, result_type, result_inout, entry.type.convention,
-			)
-		}
+		slot := slot_signature_for(k, owner, entry, concrete)
 		slots[index] = Witness_Slot {
 			name   = entry.name,
-			target = target,
+			target = slot == INVALID_TYPE ? INVALID_SYMBOL : matching_slot(k, concrete, entry.name, owner.pkg, slot),
 		}
 	}
 	return slots
@@ -686,18 +684,15 @@ witness_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id
 	return strings.to_string(b)
 }
 
-// One slot's signature for `receiver`, with its interface's parameters bound.
+// One slot's procedure type for `receiver`, with its interface's parameters
+// bound, or INVALID_TYPE.
 @(private = "file")
-slot_signature_for :: proc(
-	k: ^Checker,
-	owner: ^Interface_Info,
-	entry: Interface_Slot,
-	receiver: Type_Id,
-) -> ([]Type_Id, []Param_Mode, Type_Id, bool, bool) {
+slot_signature_for :: proc(k: ^Checker, owner: ^Interface_Info, entry: Interface_Slot, receiver: Type_Id) -> Type_Id {
 	saved := k.scope
 	k.scope = interface_scope(k, owner, entry.args)
 	defer k.scope = saved
-	return slot_signature(k, entry.type, receiver)
+	type, _ := slot_signature(k, entry.type, receiver)
+	return type
 }
 
 // The name each of a slot's parameters is written with, aligned with

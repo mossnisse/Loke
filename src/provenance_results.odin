@@ -71,19 +71,28 @@ prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 }
 
 // design.md "@(cross_thread)": @(escape=static) already rules out a thread_local
-// borrow; this checks thread affinity, erasure, and the allocator region. Only a
-// diagnosing walk does: a summary walk marks that there was something to check.
+// borrow; this checks thread affinity, erasure, and the allocator region.
+// design.md "@(concurrent_regions)": the regions alone. Only a diagnosing walk
+// does: a summary walk marks that there was something to check.
 @(private)
-prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+prov_call_thread_checks :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
-	if !committing(c) {
+	info := underlying_info(c, call_proc_type(c, v))
+	if !committing(c) || info == nil || len(info.param_thread_checks) == 0 {
 		return
+	}
+	if graph.mode != .Prov_Diagnose {
+		graph.summary_only = true
+		return
+	}
+	for argument, index in v.bound {
+		if argument != nil && proc_param_thread_check(info, index) == .Regions {
+			prov_event(graph, Prov_Event_Thread_Regions {
+				prov_input_value(graph, argument), expr_span(argument), prov_owner_name(graph, argument), .Regions,
+			})
+		}
 	}
 	crossings := call_cross_thread_operands(c, v, graph.alloc)
-	if graph.mode != .Prov_Diagnose {
-		graph.summary_only ||= len(crossings) > 0
-		return
-	}
 	// A procedure value carries no state, so only its writes are checked
 	// (`note_thread_spawn`).
 	for crossing in crossings {
@@ -98,7 +107,7 @@ prov_call_cross_thread :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		facts := transfer_facts(c, prov_transferred_type(c, argument), through_views = true)
 		span := expr_span(argument)
 		report_transfer_facts(c, base.type, facts, span)
-		prov_event(graph, Prov_Event_Received_Region{prov_input_value(graph, argument), span, prov_owner_name(graph, argument)})
+		prov_event(graph, Prov_Event_Thread_Regions{prov_input_value(graph, argument), span, prov_owner_name(graph, argument), .Crosses})
 	}
 }
 

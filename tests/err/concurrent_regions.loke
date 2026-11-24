@@ -1,0 +1,95 @@
+// design.md "@(concurrent_regions)": each call checks that the argument's
+// regions accept concurrent use, so a local provider's, one received without
+// the attribute, and one the checker cannot name are rejected, through a
+// procedure value too. The promise covers what the caller passed: an owner the
+// body builds with another allocator and stores there is still checked, and so
+// is a second, unmarked allocator. The attribute marks no foreign parameter,
+// `..` pack, or `@(allocator_reset)` parameter, adds nothing to
+// `@(cross_thread)`, and a procedure type with it does not convert to one
+// without.
+package main;
+
+import "core:mem";
+import "core:thread";
+
+Job :: struct { id: int, values: [dynamic]int }
+Burst :: struct { queue: [dynamic]Job }
+
+global_allocator: mem.Allocator = {};
+
+send_all :: proc(send: ^thread.Sender(Job), @(concurrent_regions) queue: inout [dynamic]Job) {
+	for (case .some(job) = queue.pop()) { _ = send.send(move(job)); }
+}
+
+impl Burst {
+	flush :: proc(@(concurrent_regions) self: inout, send: ^thread.Sender(Job)) {
+		send_all(send, inout self.queue);
+	}
+}
+
+allocate_work :: proc(allocator: mem.Allocator) {
+	values := make([dynamic]int, 4, allocator);
+	values.append(1);
+}
+
+fan_out :: proc(@(concurrent_regions) allocator: mem.Allocator) {
+	parallel {
+		spawn allocate_work(allocator);
+		spawn allocate_work(allocator);
+	}
+}
+
+Fan :: proc(@(concurrent_regions) allocator: mem.Allocator);
+Plain_Fan :: proc(allocator: mem.Allocator);
+
+unmarked :: proc(send: ^thread.Sender(Job), queue: inout [dynamic]Job, burst: inout Burst, allocator: mem.Allocator) {
+	send_all(send, inout queue);
+	burst.flush(send);
+	fan_out(allocator);
+	fan: Fan = fan_out;
+	fan(allocator);
+}
+
+// The promise is about what the caller passed.
+stores :: proc(send: ^thread.Sender(Job), @(concurrent_regions) queue: inout [dynamic]Job, other: mem.Allocator) {
+	queue.append(Job{id = 1, values = make([dynamic]int, 0, 4, other)});
+	switch (queue.pop()) {
+	case .some(job): _ = send.send(move(job));
+	case .none:
+	}
+}
+
+two :: proc(@(concurrent_regions) allocator: mem.Allocator, other: mem.Allocator) {
+	parallel {
+		spawn allocate_work(allocator);
+		spawn allocate_work(other);
+		spawn allocate_work(other);
+	}
+}
+
+both :: proc(@(concurrent_regions, cross_thread, escape=static) job: move Job) {}
+resets :: proc(@(concurrent_regions, allocator_reset) allocator: mem.Allocator) {}
+pack :: proc(@(concurrent_regions) jobs: ..Job) {}
+
+foreign import kernel32 "system:kernel32.lib";
+foreign kernel32 {
+	Sleep :: proc "stdcall" (@(concurrent_regions) milliseconds: u32) ---;
+}
+
+main :: proc() {
+	channel := thread.Channel(Job).init(8);
+	send, receive := channel.split();
+
+	fan_out(global_allocator);
+	arena := mem.Arena.init();
+	fan_out(arena.allocator());
+	arena_queue: [dynamic]Job via arena.allocator() = {};
+	send_all(&send, inout arena_queue);
+	burst := Burst{queue = make([dynamic]Job, 0, 4, arena.allocator())};
+	burst.flush(&send);
+	_ = receive;
+}
+
+converts :: proc() {
+	plain: Plain_Fan = fan_out;
+}

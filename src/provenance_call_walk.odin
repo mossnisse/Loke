@@ -474,7 +474,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		if mode != .Move { prov_hold_owner(graph, argument) }
 	}
 	prov_call_resets(graph, v)
-	prov_call_cross_thread(graph, v)
+	prov_call_thread_checks(graph, v)
 	prov_call_retention(graph, v, actuals)
 	{
 		prov_task_effects_scope(graph, spawned)

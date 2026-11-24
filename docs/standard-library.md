@@ -957,6 +957,10 @@ share the lock; a count that would overflow panics first. `close` before
   as `Job{id}` needs no marker, and a place is written `move(job)`, which ends
   it. A place the sender goes on using, such as a counter, is sent as a copy:
   `send.send(next.clone())`.
+- An item may own nothing backed by an allocator the sending procedure
+  received, so a helper that sends out of a queue it was lent marks that
+  parameter `@(concurrent_regions)`, and each caller's queue is checked instead
+  (design.md "@(concurrent_regions)").
 - `receive` waits while the queue is empty and the sending side is open, then
   takes one item; `.none` is the end of the stream. `try_receive` never waits
   for an item: `.empty` means more may come. Both `try_` operations still take

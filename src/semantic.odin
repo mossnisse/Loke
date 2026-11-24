@@ -212,9 +212,9 @@ Type_Info :: struct {
 	// through a type that hides it. Nil means every parameter is at the default.
 	param_resets: []bool,
 	param_escapes: []Escape_Level,
-	// design.md "@(cross_thread)": the parameters whose argument runs or travels
-	// on another thread, which every call checks, through a value too.
-	param_cross_thread: []bool,
+	// What every call checks of each argument another thread may use
+	// (`Thread_Check`), through a value too.
+	param_thread_checks: []Thread_Check,
 	// A compile-time reference to an inferred result contract; plain written
 	// signatures erase this bound.
 	proc_contract: Symbol_Id,
@@ -701,9 +701,9 @@ Symbol :: struct {
 	// design.md "`@(allocator_reset)`": a successful call may end this
 	// parameter's region. Verified in the body, carried in the procedure type.
 	allocator_reset: bool,
-	// design.md "@(cross_thread)": the argument runs or travels on another
-	// thread. Carried in the procedure type.
-	cross_thread:    bool,
+	// What a call checks of this parameter's argument for another thread's
+	// use. Carried in the procedure type.
+	thread_check:    Thread_Check,
 	// design.md `@(escape=...)`: what a call may leave behind that depends on
 	// this parameter. `.Result` unless written otherwise.
 	escape:          Escape_Level,
@@ -1200,7 +1200,7 @@ intern_proc_type :: proc(
 	c_vararg := false,
 	param_escapes: []Escape_Level = nil,
 	proc_contract := INVALID_SYMBOL,
-	param_cross_thread: []bool = nil,
+	param_thread_checks: []Thread_Check = nil,
 ) -> Type_Id {
 	init_semantic_stores(c)
 	hash := HASH_OFFSET_BASIS
@@ -1230,8 +1230,8 @@ intern_proc_type :: proc(
 			hash = hash_mix(hash, u64(index + 1) << 32 ~ u64(level))
 		}
 	}
-	for value, index in param_cross_thread {
-		if value { hash = hash_mix(hash, u64(index + 1) << 48) }
+	for check, index in param_thread_checks {
+		if check != .None { hash = hash_mix(hash, u64(index + 1) << 48 ~ u64(check)) }
 	}
 	bucket := c.proc_types[hash]
 	for candidate in bucket {
@@ -1244,7 +1244,7 @@ intern_proc_type :: proc(
 		   equal_padded(info.param_resets, param_resets, false) &&
 		   equal_padded(info.param_by_ptr, param_by_ptr, false) &&
 		   equal_padded(info.param_escapes, param_escapes, Escape_Level.Result) &&
-		   equal_padded(info.param_cross_thread, param_cross_thread, false) &&
+		   equal_padded(info.param_thread_checks, param_thread_checks, Thread_Check.None) &&
 		   info.proc_contract == proc_contract &&
 		   info.c_vararg == c_vararg {
 			return candidate
@@ -1257,7 +1257,7 @@ intern_proc_type :: proc(
 		param_modes   = slice.clone(param_modes, c.semantic_allocator),
 		param_resets  = clone_unless_default(param_resets, false, c.semantic_allocator),
 		param_escapes = clone_unless_default(param_escapes, Escape_Level.Result, c.semantic_allocator),
-		param_cross_thread = clone_unless_default(param_cross_thread, false, c.semantic_allocator),
+		param_thread_checks = clone_unless_default(param_thread_checks, Thread_Check.None, c.semantic_allocator),
 		proc_contract = proc_contract,
 		param_by_ptr  = clone_unless_default(param_by_ptr, false, c.semantic_allocator),
 		c_vararg      = c_vararg,
@@ -1465,9 +1465,9 @@ proc_type_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	for index in 0 ..< len(a.parameters) {
-		// design.md "@(cross_thread)": calls through the destination may check an
-		// argument the procedure does not need checked, never skip one it does.
-		if padded_at(a.param_cross_thread, index, false) && !padded_at(b.param_cross_thread, index, false) {
+		// design.md "@(cross_thread)", "@(concurrent_regions)": calls through the
+		// destination may check more of an argument than the procedure needs, never less.
+		if proc_param_thread_check(a, index) > proc_param_thread_check(b, index) {
 			return false
 		}
 		have, want := padded_at(a.param_escapes, index, Escape_Level.Result), padded_at(b.param_escapes, index, Escape_Level.Result)
@@ -1478,6 +1478,32 @@ proc_type_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		}
 	}
 	return b.proc_contract == INVALID_SYMBOL || a.proc_contract != INVALID_SYMBOL
+}
+
+// Whether parameter `index` of the method type `have` asks no more of a call
+// than parameter `wanted_index` of `wanted` states, so that a call through
+// `wanted` may run the method: a slot's member (design.md "Interface bodies")
+// and a view's `call` (design.md "Borrowed callable views"). A reset effect is
+// stated exactly, as between procedure types.
+parameter_effects_meet :: proc(c: ^Compiler, have: ^Type_Info, index: int, wanted: ^Type_Info, wanted_index: int) -> bool {
+	if padded_at(have.param_resets, index, false) != padded_at(wanted.param_resets, wanted_index, false) {
+		return false
+	}
+	// design.md "@(cross_thread)", "@(concurrent_regions)": a call through
+	// `wanted` checks no less.
+	if proc_param_thread_check(have, index) > proc_param_thread_check(wanted, wanted_index) {
+		return false
+	}
+	// design.md "@(escape=<level>)": it retains no argument further than allowed.
+	if padded_at(have.param_escapes, index, Escape_Level.Result) <= padded_at(wanted.param_escapes, wanted_index, Escape_Level.Result) {
+		return true
+	}
+	// A level says nothing of a value that holds no borrow, and a generic
+	// signature resolved before its records were finished still carries the one
+	// it wrote (`check_escape_attribute`).
+	type := have.parameters[index]
+	return (param_mode_at(have, index) == .Value || param_mode_at(have, index) == .Variadic) &&
+	       type_records_finished(c, type) && !type_carries_borrow(c, type).any
 }
 
 // design.md "Receiver forms": a `self: ^Self` method is the same procedure as
@@ -1503,11 +1529,26 @@ parameters_weaken_to :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
 	return true
 }
 
+// What a call checks of an argument another thread may use, weakest first: a
+// procedure converts to a type that checks no less of each parameter.
+Thread_Check :: enum u8 {
+	None,
+	// design.md "@(concurrent_regions)": its allocator regions accept concurrent use.
+	Regions,
+	// design.md "@(cross_thread)": it runs or travels on another thread, which
+	// checks its regions too.
+	Crosses,
+}
+
+// The check on parameter `index` of the procedure type `info`, which may be nil.
+proc_param_thread_check :: proc(info: ^Type_Info, index: int) -> Thread_Check {
+	return info == nil ? .None : padded_at(info.param_thread_checks, index, Thread_Check.None)
+}
+
 // design.md "@(cross_thread)": whether the argument for parameter `index` runs
 // or travels on another thread.
 proc_param_crosses_thread :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> bool {
-	info := underlying_info(c, proc_type)
-	return info != nil && index < len(info.param_cross_thread) && info.param_cross_thread[index]
+	return proc_param_thread_check(underlying_info(c, proc_type), index) == .Crosses
 }
 
 proc_param_resets :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> bool {

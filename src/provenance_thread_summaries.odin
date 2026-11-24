@@ -63,18 +63,18 @@ prov_tracks_allocator_use :: proc(graph: ^Flow_Graph) -> bool {
 // call's allocator use is what its task reserves, and any other is the
 // parent's, checked against the reservations of the tasks that may be running.
 // The default provider's region permits concurrent use, so it reserves
-// nothing.
+// nothing, and neither does one a parameter's caller promised
+// (design.md "@(concurrent_regions)").
 @(private)
 prov_note_window_allocator_use :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span) {
+	used := prov_unpromised_regions(graph, set)
+	used.default = false
 	if graph.task_effects {
 		reserve := &graph.task_reserve
 		if output := graph.materialized; output != nil { reserve = &output.task_sites[graph.task_index].reserve }
-		region_merge(reserve, set)
-		reserve.default = false
+		region_merge(reserve, used)
 		return
 	}
-	used := set
-	used.default = false
 	if region_is_empty(used) {
 		return
 	}

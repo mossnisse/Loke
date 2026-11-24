@@ -370,12 +370,19 @@ check_intrinsic_signature :: proc(k: ^Checker, d: ^Decl, signature: ^Type_Proc, 
 			return
 		}
 	}
-	params, modes, result, result_inout, resolved := slot_signature(k, signature, subject)
-	if !resolved {
+	written, problem := slot_signature(k, signature, subject)
+	if written == INVALID_TYPE {
+		// An ill-formed parameter; a type that does not resolve says nothing here.
+		if problem != "" {
+			errorf(c, d.names[0].span, "L0736", "%s", problem)
+		}
 		return
 	}
-	info := type_of(c, sym.proc_type)
-	same := slice.equal(params, sym.params) && slice.equal(modes, info.param_modes) && result == sym.result && result_inout == sym.result_inout
+	// The shapes are compared, not the types: the compiler's may state effects a
+	// description cannot write (`validate_intrinsic_attributes`).
+	wanted, info := type_of(c, written), type_of(c, sym.proc_type)
+	same := slice.equal(wanted.parameters, sym.params) && slice.equal(wanted.param_modes, info.param_modes) &&
+	        wanted.result == sym.result && wanted.result_inout == sym.result_inout
 	if !same {
 		errorf(
 			c, d.names[0].span, "L0736", "the compiler supplies `%s` as `%s`",

@@ -694,8 +694,10 @@ write_proc_type_name :: proc(w: ^Type_Name_Writer, info: ^Type_Info) {
 		if index < len(info.param_resets) && info.param_resets[index] {
 			type_name_text(w, "@(allocator_reset) ")
 		}
-		if index < len(info.param_cross_thread) && info.param_cross_thread[index] {
-			type_name_text(w, "@(cross_thread) ")
+		switch proc_param_thread_check(info, index) {
+		case .None:
+		case .Regions: type_name_text(w, "@(concurrent_regions) ")
+		case .Crosses: type_name_text(w, "@(cross_thread) ")
 		}
 		if index < len(info.param_escapes) && info.param_escapes[index] != .Result {
 			type_name_text(w, "@(escape=")

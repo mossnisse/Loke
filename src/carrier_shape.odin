@@ -182,7 +182,7 @@ type_reaches_destination :: proc(c: ^Compiler, type: Type_Id, visited: ^map[Type
 		if info == nil {
 			continue
 		}
-		if path.mutable && (owners || type_carries_borrow(c, info.element).any) {
+		if path.mutable && (owners || type_carries_borrow(c, info.element).any) || !owners && dyn_keeps_arguments(c, info) {
 			return true
 		}
 		if pointee_reaches_destination(c, info.element, visited, owners) {
@@ -235,11 +235,38 @@ path_names_destination :: proc(c: ^Compiler, path: Carrier_Path) -> bool {
 
 // Whether a carrier of `type` points at a synchronized field that can hold a
 // borrow, which an atomic operation or a lock's guard writes through a
-// read-only carrier.
+// read-only carrier. The subject a view hides may hold one, so a view whose
+// slot keeps an argument counts.
 @(private)
 carrier_names_synchronized :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	info := underlying_info(c, type)
-	return info != nil && synchronized_field_within(c, info.element, borrowing = true) != nil
+	return info != nil && (dyn_keeps_arguments(c, info) || synchronized_field_within(c, info.element, borrowing = true) != nil)
+}
+
+// design.md "Retaining a borrow": whether `info` is a `dyn` view with a slot
+// that may keep an argument in storage the caller owns, `@(escape=stored)` or
+// above. The subject is that storage, whatever its hidden type holds and
+// whichever capability the view has, since a `self: ^` method stores through
+// an atomic.
+@(private = "file")
+dyn_keeps_arguments :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+	if info.kind != .Dyn {
+		return false
+	}
+	for member in info.members {
+		// A read-only view leaves a hole for a slot it cannot call.
+		sym := symbol_of(c, member)
+		slot := sym == nil ? nil : type_of(c, sym.proc_type)
+		if slot == nil {
+			continue
+		}
+		for level in slot.param_escapes {
+			if level >= .Stored {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Whether what a carrier points at leads to a destination through it, read-only

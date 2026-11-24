@@ -706,7 +706,7 @@ Cross_Thread_Operand :: struct {
 call_cross_thread_operands :: proc(c: ^Compiler, call: ^Expr_Call, allocator: mem.Allocator) -> []Cross_Thread_Operand {
 	proc_type := call_proc_type(c, call)
 	info := underlying_info(c, proc_type)
-	if info == nil || len(info.param_cross_thread) == 0 {
+	if info == nil || len(info.param_thread_checks) == 0 {
 		return nil
 	}
 	out := make([dynamic]Cross_Thread_Operand, 0, len(call.bound), allocator)

@@ -31,7 +31,7 @@ result_needs_contract :: proc(c: ^Compiler, type: Type_Id, inout_result: bool) -
 @(private = "file")
 proc_type_with_contract :: proc(c: ^Compiler, info: ^Type_Info, contract: Symbol_Id) -> Type_Id {
 	return intern_proc_type(c, info.parameters, info.param_modes, info.result, info.result_inout, info.convention,
-		info.param_resets, info.param_by_ptr, info.c_vararg, info.param_escapes, contract, info.param_cross_thread)
+		info.param_resets, info.param_by_ptr, info.c_vararg, info.param_escapes, contract, info.param_thread_checks)
 }
 
 erase_proc_contract :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {

@@ -564,11 +564,11 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 	reported := k.c.error_count
 	validate_param_attributes(k, value.params)
 	builder := Signature_Builder {
-		params  = make([dynamic]Type_Id, 0, len(value.params), context.temp_allocator),
-		modes   = make([dynamic]Param_Mode, 0, len(value.params), context.temp_allocator),
-		resets  = make([dynamic]bool, 0, len(value.params), context.temp_allocator),
-		escapes = make([dynamic]Escape_Level, 0, len(value.params), context.temp_allocator),
-		crosses = make([dynamic]bool, 0, len(value.params), context.temp_allocator),
+		params        = make([dynamic]Type_Id, 0, len(value.params), context.temp_allocator),
+		modes         = make([dynamic]Param_Mode, 0, len(value.params), context.temp_allocator),
+		resets        = make([dynamic]bool, 0, len(value.params), context.temp_allocator),
+		escapes       = make([dynamic]Escape_Level, 0, len(value.params), context.temp_allocator),
+		thread_checks = make([dynamic]Thread_Check, 0, len(value.params), context.temp_allocator),
 	}
 	generic := in_generic_signature(k)
 	for parameter, position in value.params {
@@ -605,7 +605,7 @@ resolve_proc_type :: proc(k: ^Checker, value: ^Type_Proc) -> Type_Id {
 	type := intern_proc_type(
 		k.c, builder.params[:], builder.modes[:], result_type, result_inout, value.convention, builder.resets[:],
 		param_escapes = builder.escapes[:],
-		param_cross_thread = builder.crosses[:],
+		param_thread_checks = builder.thread_checks[:],
 	)
 	if k.c.error_count == reported {
 		value.denoted_type = type

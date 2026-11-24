@@ -1,0 +1,115 @@
+// design.md "@(concurrent_regions)": a parameter whose caller promises that
+// its regions accept concurrent use. A helper lent a queue sends what it holds,
+// a record that owns the queue is lent the same way, tasks share a given
+// allocator and fill the slots of a given slice, and the parent uses such a
+// region while they run. A procedure without the attribute stores in a type
+// with it, whose calls check more.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:thread";
+
+Job :: struct { id: int, values: [dynamic]int }
+Burst :: struct { queue: [dynamic]Job, sent: int }
+
+send_all :: proc(send: ^thread.Sender(Job), @(concurrent_regions) queue: inout [dynamic]Job) {
+	for (case .some(job) = queue.pop()) {
+		switch (send.send(move(job))) {
+		case .ok:
+		case .err(_): return;
+		}
+	}
+}
+
+impl Burst {
+	flush :: proc(@(concurrent_regions) self: inout, send: ^thread.Sender(Job)) {
+		send_all(send, inout self.queue);
+		self.sent += 1;
+	}
+}
+
+// Sends one job built with the allocator it was given.
+send_built :: proc(send: ^thread.Sender(Job), @(concurrent_regions) allocator: mem.Allocator, id: int) {
+	job := Job{id = id, values = make([dynamic]int, 0, 4, allocator)};
+	job.values.append(id);
+	_ = send.send(move(job));
+}
+
+allocate_work :: proc(allocator: mem.Allocator, n: int) -> int {
+	values := make([dynamic]int, 0, n, allocator);
+	foreach (i in 0 ..< n) { values.append(i); }
+	return values.len();
+}
+
+fan_out :: proc(@(concurrent_regions) allocator: mem.Allocator) -> int {
+	a, b, c: int;
+	parallel {
+		spawn a = allocate_work(allocator, 3);
+		spawn b = allocate_work(allocator, 4);
+		// The parent uses the region while the tasks run.
+		c = allocate_work(allocator, 5);
+	}
+	return a + b + c;
+}
+
+fill :: proc(n: int, slot: []mut Option([dynamic]int)) {
+	values: [dynamic]int = {};
+	values.append(n * n);
+	slot[0] = .some(move(values));
+}
+
+fill_all :: proc(@(concurrent_regions) slots: []mut Option([dynamic]int)) {
+	parallel {
+		foreach (slot, i in slots.chunks_mut(1).indexed()) { spawn fill(i, slot); }
+	}
+}
+
+Fan :: proc(@(concurrent_regions) allocator: mem.Allocator) -> int;
+
+unmarked_fan :: proc(allocator: mem.Allocator) -> int {
+	return allocate_work(allocator, 2);
+}
+
+main :: proc() {
+	channel := thread.Channel(Job).init(8);
+	send, receive := channel.split();
+
+	queue: [dynamic]Job = {};
+	queue.append(Job{id = 1});
+	queue.append(Job{id = 2});
+	send_all(&send, inout queue);
+
+	burst := Burst{};
+	burst.queue.append(Job{id = 3});
+	burst.flush(&send);
+	send_built(&send, mem.default_allocator(), 4);
+
+	total := 0;
+	foreach (_ in 0 ..< 4) {
+		switch (receive.receive()) {
+		case .some(job): total += job.id + job.values.len();
+		case .none:
+		}
+	}
+	fmt.println(total, burst.sent, queue.len());
+
+	fmt.println(fan_out(mem.default_allocator()));
+
+	slots: [dynamic]Option([dynamic]int) = {};
+	foreach (_ in 0 ..< 4) { slots.append(.none); }
+	fill_all(slots[mut :]);
+	sum := 0;
+	foreach (slot in slots) {
+		switch (slot) {
+		case .some(values): sum += values[0];
+		case .none:
+		}
+	}
+	fmt.println(sum);
+
+	fan: Fan = fan_out;
+	fmt.println(fan(mem.default_allocator()));
+	fan = unmarked_fan;
+	fmt.println(fan(mem.default_allocator()));
+}

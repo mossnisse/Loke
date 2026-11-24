@@ -11,6 +11,28 @@ checklist.
 
 ### Breaking changes
 
+- An interface slot states its parameters' attributes, and a method meets it only when it asks
+  no more of a call ([Interface bodies](docs/design.md#interface-bodies)). A slot kept only its
+  parameters' types and modes, so a method that marked a parameter `@(cross_thread)`,
+  `@(concurrent_regions)`, `@(allocator_reset)`, or `@(escape=stored)` met a slot that marked
+  nothing, and a call through the `dyn` view checked none of them, whether or not the slot was
+  marked: an owner in an arena reached another thread, a reset ended a live region, and a borrow
+  outlived what it was stored in, each with no diagnostic. Such a method now fails the interface
+  (`L0444`), and a call through a view is checked as the slot states (`L0726`, `L0537`, `L0538`,
+  `L0758`, `L0646`). A view whose slot marks a parameter `@(escape=stored)` is a destination the
+  argument may land in, and so is a `dyn proc` view whose signature does, through which a kept
+  borrow was unchecked too ([Retaining a borrow](docs/design.md#retaining-a-borrow)). A slot's
+  `@(escape=none)` keeps that argument out of the call's result, where it was ignored, and a
+  method meets it only by writing `@(escape=none)` itself. An attribute a slot parameter's type
+  does not admit fails the requirement, and an unknown one is `L0606`; both were accepted.
+  Upgrade by marking the slot as its methods are marked:
+
+  ```
+  Keeper :: interface($Self: type) {
+      slot keep: proc(self: inout Self, values: []int);                    // before
+      slot keep: proc(self: inout Self, @(escape=stored) values: []int);   // after
+  }
+  ```
 - An atomic retains a borrow it stores, and a value read back borrows what the atomic held
   ([Retaining a borrow](docs/design.md#retaining-a-borrow)). `cell.store(.some(&local))` on a
   `static` `sync.Atomic(Option(^int))` compiled, as did storing a pointer to a local in an
@@ -210,6 +232,21 @@ checklist.
 
 ### Added
 
+- `@(concurrent_regions)` on a parameter promises that the argument's allocator regions accept
+  concurrent use, so a procedure may share storage it was given
+  ([`@(concurrent_regions)`](docs/design.md#concurrent_regions)). A helper lent a queue could
+  not send what the queue held (`L0726`), and a procedure given an allocator or a slice of slots
+  could not use it from two tasks (`L0732`), since a received region may be an arena. Each call
+  checks the promise: an argument in a local provider's region, in one the caller received
+  unmarked, or in one the checker cannot name is `L0758`. The attribute is part of the procedure
+  type, and misplaced it is `L0757`. A task no longer reserves the regions of a `@(cross_thread)`
+  parameter either, which every call checked already.
+
+  ```
+  send_all :: proc(send: ^thread.Sender(Job), @(concurrent_regions) queue: inout [dynamic]Job) {
+      for (case .some(job) = queue.pop()) { _ = send.send(move(job)); }
+  }
+  ```
 - `math.count_ones`, `leading_zeros`, `trailing_zeros`, `bit_width`, `reverse_bits`,
   `rotate_left`, and `rotate_right` take a `Simd(T, N)` of integer lanes and answer lane by lane,
   in a vector of the same type
@@ -514,6 +551,11 @@ checklist.
 
 ### Fixed
 
+- A parameter with attributes may follow a receiver written as a plain `self`
+  ([Procedures](docs/grammar.md#procedures)). `proc(self, @(escape=none) scratch: []int)` was
+  `L0237`, "expected a parameter name": the comma was read as continuing the names of `self`'s
+  group, so the receiver had to be written `self: T`. The attributes now open the next
+  parameter, in a declaration, a procedure type, and a slot.
 - A `stored` argument is checked only against storage the callee can write
   ([Retaining a borrow](docs/design.md#retaining-a-borrow)). `keep(&mut holder, &local)`, with
   `holder.view: ^int` pointing at a `static`, was `L0647`, as if `keep` could store `&local`

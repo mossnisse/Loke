@@ -163,8 +163,8 @@ diagnostics would. A body is built again in `Prov_Diagnose` when:
 
 - it receives a callback, which a summary leaves to its callers to name and a
   diagnosis takes to be any procedure of its type;
-- it passes an argument to a `@(cross_thread)` parameter or spawns a task,
-  which only a diagnosing walk checks;
+- it passes an argument to a `@(cross_thread)` or `@(concurrent_regions)`
+  parameter or spawns a task, which only a diagnosing walk checks;
 - a round read a summary that was still to be made, which a caller reads
   otherwise than an empty one, and no growth brought the body back;
 - it has no summary to settle, having neither a result nor a parameter it may

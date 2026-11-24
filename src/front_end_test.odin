@@ -334,6 +334,7 @@ main :: proc() {
 	b := typeid_of(proc(p: ^int));
 	c := typeid_of(proc(@(cross_thread) f: proc()));
 	d := typeid_of(proc(f: proc()));
+	e := typeid_of(proc(@(concurrent_regions) p: ^int));
 }`,
 		`package main;
 main :: proc() {

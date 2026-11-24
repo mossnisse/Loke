@@ -409,9 +409,10 @@ write_shape_key :: proc(c: ^Compiler, b: ^strings.Builder, info: ^Type_Info, key
 		reset := index < len(info.param_resets) && info.param_resets[index]
 		by_ptr := index < len(info.param_by_ptr) && info.param_by_ptr[index]
 		escape := index < len(info.param_escapes) ? info.param_escapes[index] : Escape_Level.Result
-		crosses := index < len(info.param_cross_thread) && info.param_cross_thread[index]
+		// Spelled as the flag this was while `@(cross_thread)` was the only check.
+		thread := [Thread_Check]string{.None = "false", .Regions = "regions", .Crosses = "true"}
 		fmt.sbprintf(
-			b, ":p%d:%t:%t:%d:%t{{%s}}", mode, reset, by_ptr, int(escape), crosses,
+			b, ":p%d:%t:%t:%d:%s{{%s}}", mode, reset, by_ptr, int(escape), thread[proc_param_thread_check(info, index)],
 			typeid_sort_key_walk(c, parameter, keys),
 		)
 	}

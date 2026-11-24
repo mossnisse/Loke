@@ -108,6 +108,9 @@ check_interface_declaration :: proc(k: ^Checker, symbol_id: Symbol_Id) {
 			errorf(k.c, requirement.span, "L0442", "a `slot` requirement needs a procedure type")
 			continue
 		}
+		// What each attribute asks of its parameter's type waits for an
+		// application, which binds that type (`slot_signature`).
+		validate_param_attributes(k, signature.params)
 		if len(signature.params) == 0 || len(signature.params[0].names) == 0 ||
 		   signature.params[0].names[0].name.text != "self" {
 			errorf(
@@ -795,17 +798,21 @@ check_slot_requirement :: proc(
 	// subject's own member, which need not be public.
 	slot_pkg := k.lookup_pkg
 	k.lookup_pkg = application_pkg
-	wanted_params, wanted_modes, wanted_results, wanted_inout, shape_ok := slot_signature(k, signature, subject)
+	slot, problem := slot_signature(k, signature, subject)
 	k.lookup_pkg = slot_pkg
-	if !shape_ok {
-		return requirement_failuref(k, requirement.span, "its slot signature does not resolve")
+	if slot == INVALID_TYPE {
+		return requirement_failuref(k, requirement.span, "%s", problem == "" ? "its slot signature does not resolve" : problem)
 	}
 
-	if matching_slot(
-		k, subject, name, info.pkg,
-		wanted_params, wanted_modes, wanted_results, wanted_inout, signature.convention,
-	) != INVALID_SYMBOL {
+	if matching_slot(k, subject, name, info.pkg, slot) != INVALID_SYMBOL {
 		return {}, true
+	}
+	// The types name the attributes, which is all that keeps this method out.
+	if near := symbol_of(k.c, matching_slot(k, subject, name, info.pkg, slot, effects = false)); near != nil {
+		return requirement_failuref(
+			k, requirement.span, "`%s.%s` is a `%s`, whose parameter attributes do not meet this slot's `%s`",
+			type_name(k.c, subject), identifier_text(k.c, name), type_name(k.c, near.proc_type), type_name(k.c, slot),
+		)
 	}
 	if private_slot_member(k, subject, name) != nil {
 		return private_slot_failure(k, requirement.span, subject, name)
@@ -931,31 +938,36 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 	}
 }
 
-// The flattened parameter and result lists a slot's written signature asks for,
-// with the receiver's own type supplied by the subject.
-slot_signature :: proc(
-	k: ^Checker,
-	signature: ^Type_Proc,
-	subject: Type_Id,
-) -> ([]Type_Id, []Param_Mode, Type_Id, bool, bool) {
-	params := make([dynamic]Type_Id, 0, 4, k.c.semantic_allocator)
-	modes := make([dynamic]Param_Mode, 0, 4, k.c.semantic_allocator)
+// The procedure type a slot's written signature asks for, with the receiver's
+// own type supplied by the subject, or INVALID_TYPE when a type in it does not
+// resolve or, with the `problem` found, a parameter is ill-formed. Its
+// parameters are checked as a procedure type's are (design.md "Variadic
+// parameters"), so it states their attributes, and as a generic signature's,
+// since one slot serves every subject. Nothing is reported: an application whose
+// slot does not resolve is false.
+slot_signature :: proc(k: ^Checker, signature: ^Type_Proc, subject: Type_Id) -> (type: Type_Id, problem: string) {
+	unresolved :: proc(k: ^Checker, mark: int) -> (Type_Id, string) {
+		reason, _ := captured_reason(k, mark, "")
+		return INVALID_TYPE, reason
+	}
+	mark := len(k.c.diagnostics)
+	builder := Signature_Builder {
+		params        = make([dynamic]Type_Id, 0, len(signature.params), context.temp_allocator),
+		modes         = make([dynamic]Param_Mode, 0, len(signature.params), context.temp_allocator),
+		resets        = make([dynamic]bool, 0, len(signature.params), context.temp_allocator),
+		escapes       = make([dynamic]Escape_Level, 0, len(signature.params), context.temp_allocator),
+		thread_checks = make([dynamic]Thread_Check, 0, len(signature.params), context.temp_allocator),
+	}
 	for parameter, position in signature.params {
-		written := INVALID_TYPE
-		if parameter.type != nil {
-			written = resolve_type_syntax(k, parameter.type)
-			if written == INVALID_TYPE {
-				return nil, nil, INVALID_TYPE, false, false
-			}
+		written := parameter_is_bare_self(parameter, position) ? subject : resolve_type_syntax(k, parameter.type)
+		if written == INVALID_TYPE {
+			return unresolved(k, mark)
 		}
-		names := max(len(parameter.names), 1)
-		for index in 0 ..< names {
-			resolved, mode, _ := normalize_signature_parameter(k.c, parameter, position, index, written, receiver = subject)
-			if resolved == INVALID_TYPE {
-				return nil, nil, INVALID_TYPE, false, false
-			}
-			append(&params, resolved)
-			append(&modes, mode)
+		for name_index in 0 ..< max(len(parameter.names), 1) {
+			checked := check_signature_parameter(
+				k, signature.params, position, name_index, written, generic = true, in_foreign = false, receiver = subject,
+			)
+			append_signature_parameter(&builder, checked)
 		}
 	}
 	result_type := INVALID_TYPE
@@ -963,61 +975,51 @@ slot_signature :: proc(
 	if result := signature.result; result != nil {
 		result_type = resolve_type_syntax(k, result.type)
 		if result_type == INVALID_TYPE {
-			return nil, nil, INVALID_TYPE, false, false
+			return unresolved(k, mark)
 		}
 		result_inout = result.is_inout
 	}
-	return params[:], modes[:], result_type, result_inout, true
+	if errors_since(k.c, mark) {
+		return unresolved(k, mark)
+	}
+	return intern_proc_type(
+		k.c, builder.params[:], builder.modes[:], result_type, result_inout, signature.convention, builder.resets[:],
+		param_escapes = builder.escapes[:],
+		param_thread_checks = builder.thread_checks[:],
+	), ""
 }
 
-// One candidate against a slot's signature.
-slot_matches :: proc(
-	k: ^Checker,
-	sym: ^Symbol,
-	params: []Type_Id,
-	modes: []Param_Mode,
-	result: Type_Id,
-	result_inout: bool,
-	convention: string,
-) -> bool {
-	if len(sym.params) != len(params) || sym.result != result {
+// One candidate against a slot's procedure type (design.md "Interface bodies"),
+// or with `effects` false against its shape alone.
+slot_matches :: proc(c: ^Compiler, sym: ^Symbol, slot: Type_Id, effects := true) -> bool {
+	wanted, have := type_of(c, slot), type_of(c, sym.proc_type)
+	if have == nil || len(sym.params) != len(wanted.parameters) || sym.result != wanted.result ||
+	   have.convention != wanted.convention || have.result_inout != wanted.result_inout {
 		return false
 	}
-	info := type_of(k.c, sym.proc_type)
-	if info == nil || info.convention != convention || info.result_inout != result_inout {
-		return false
-	}
-	for want, index in params {
-		if sym.params[index] != want {
-			return false
-		}
-		have := proc_parameter_mode(k.c, sym.proc_type, index)
+	for want, index in wanted.parameters {
+		have_mode, want_mode := param_mode_at(have, index), param_mode_at(wanted, index)
 		// A `self: ^` slot is met by a value `self` too: the method only lends less.
-		if have != modes[index] && !(index == 0 && modes[index] == .Borrow && have == .Value) {
+		if sym.params[index] != want || effects && !parameter_effects_meet(c, have, index, wanted, index) ||
+		   have_mode != want_mode && !(index == 0 && want_mode == .Borrow && have_mode == .Value) {
 			return false
 		}
 	}
 	return true
 }
 
-// The method that meets a slot's signature, or INVALID_SYMBOL.
+// The method that meets a slot's procedure type, or INVALID_SYMBOL.
 matching_slot :: proc(
 	k: ^Checker,
 	subject: Type_Id,
 	name: Identifier_Id,
 	owner_pkg: Package_Id,
-	params: []Type_Id,
-	modes: []Param_Mode,
-	result: Type_Id,
-	result_inout: bool,
-	convention: string,
+	slot: Type_Id,
+	effects := true,
 ) -> Symbol_Id {
 	for candidate in slot_candidates(k, subject, name, owner_pkg) {
 		sym := symbol_of(k.c, candidate)
-		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
-			continue
-		}
-		if slot_matches(k, sym, params, modes, result, result_inout, convention) {
+		if sym != nil && sym.kind == .Proc && sym.has_receiver && slot_matches(k.c, sym, slot, effects) {
 			return candidate
 		}
 	}
@@ -1164,17 +1166,9 @@ call_method_matches :: proc(c: ^Compiler, sym: ^Symbol, subject, signature: Type
 	}
 	for parameter, index in wanted.parameters {
 		if sym.params[index + 1] != parameter ||
-		   proc_parameter_mode(c, sym.proc_type, index + 1) != proc_parameter_mode(c, signature, index) ||
-		   flag_at(have.param_resets, index + 1) != flag_at(wanted.param_resets, index) ||
-		   flag_at(have.param_by_ptr, index + 1) != flag_at(wanted.param_by_ptr, index) {
-			return false
-		}
-		// design.md "@(cross_thread)": a call through the view checks no less.
-		if flag_at(have.param_cross_thread, index + 1) && !flag_at(wanted.param_cross_thread, index) {
-			return false
-		}
-		// design.md "@(escape=<level>)": it retains no argument further than allowed.
-		if proc_param_escape(c, sym.proc_type, index + 1) > proc_param_escape(c, signature, index) {
+		   param_mode_at(have, index + 1) != param_mode_at(wanted, index) ||
+		   flag_at(have.param_by_ptr, index + 1) != flag_at(wanted.param_by_ptr, index) ||
+		   !parameter_effects_meet(c, have, index + 1, wanted, index) {
 			return false
 		}
 	}

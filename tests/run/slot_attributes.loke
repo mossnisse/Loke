@@ -1,0 +1,126 @@
+// design.md "Interface bodies", "Borrowed dynamic interface values": a slot
+// states its parameters' attributes, and a call through a view is checked as
+// the slot states. A job built with the default allocator crosses to a thread
+// through a view, a covered reset ends a region nothing lives in, a kept slice
+// outlives the view's subject, and a result does not borrow an
+// `@(escape=none)` scratch that ends before it is read. A method that asks
+// less than its slot meets it, a view meets its own interface, and a generic
+// method's level says nothing of an argument that holds no borrow. A plain
+// `self` is a parameter of its own before an attributed one.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:thread";
+
+Job :: struct { values: [dynamic]int }
+entry :: proc(job: move Job) {
+	total := 0;
+	foreach (value in job.values) { total += value; }
+	fmt.println("job", total);
+}
+
+Worker :: interface($Self: type) {
+	slot start: proc(self: ^, @(cross_thread, escape=static) job: move Job);
+	slot release: proc(self: ^, @(allocator_reset) allocator: mem.Allocator);
+	slot fan: proc(self: ^, @(concurrent_regions) allocator: mem.Allocator) -> int;
+}
+Keeper :: interface($Self: type) {
+	slot keep: proc(self: inout Self, @(escape=stored) values: []int);
+	slot pick: proc(self: ^, input: []int, @(escape=none) scratch: []int) -> []int;
+}
+
+Plain :: struct {}
+impl Plain {
+	start :: proc(self: ^, @(cross_thread, escape=static) job: move Job) {
+		worker := thread.spawn(entry, move(job));
+		worker.join();
+	}
+	release :: proc(self: ^, @(allocator_reset) allocator: mem.Allocator) { free_all(allocator); }
+	// It checks less than its slot: no task shares the allocator.
+	fan :: proc(self: ^, allocator: mem.Allocator) -> int {
+		values := make([dynamic]int, 0, 4, allocator);
+		values.append(7);
+		return values[0];
+	}
+}
+
+Holder :: struct { view: []int }
+impl Holder {
+	keep :: proc(self: inout, @(escape=stored) values: []int) { self.view = values; }
+	pick :: proc(self: ^, input: []int, @(escape=none) scratch: []int) -> []int {
+		return input[scratch.len():];
+	}
+}
+
+// It retains less than its slot allows.
+Lazy :: struct { kept: int }
+impl Lazy {
+	keep :: proc(self: inout, values: []int) { self.kept = values.len(); }
+	pick :: proc(self: ^, @(escape=none) input: []int, @(escape=none) scratch: []int) -> []int {
+		return {};
+	}
+}
+
+run :: proc(worker: dyn Worker, @(allocator_reset) scratch: mem.Allocator) {
+	job := Job{values = make([dynamic]int, 0, 4)};
+	job.values.append(3);
+	job.values.append(4);
+	worker.start(move(job));
+	worker.release(scratch);
+	fmt.println("fan", worker.fan(mem.default_allocator()));
+}
+
+Sizer :: interface($Self: type) {
+	slot size: proc(self, @(escape=none) scratch: []int) -> int;
+}
+impl Lazy {
+	size :: proc(self, @(escape=none) scratch: []int) -> int { return self.kept + scratch.len(); }
+}
+
+// The slot marks nothing: Pile(int).push keeps no borrow, though Pile(T).push
+// is written to keep what a T holds.
+Stack :: interface($Self: type, $T: type) {
+	slot push: proc(self: inout Self, value: T);
+}
+Pile :: struct($T: type) { items: [dynamic]T }
+impl Pile($T) {
+	push :: proc(self: inout, @(escape=stored) value: T) { self.items.append(value); }
+}
+
+// A view meets its own interface through its forwarding slots.
+keep_all :: proc(keeper: ^mut $T, @(escape=stored) values: []int) where Keeper(T) {
+	keeper^.keep(values);
+}
+
+main :: proc() {
+	plain := Plain{};
+	arena := mem.Arena.init();
+	run((dyn Worker)(&plain), arena.allocator());
+
+	numbers := [4]int{1, 2, 3, 4};
+	held: Holder = {};
+	keeper := (dyn mut Keeper)(&mut held);
+	keeper.keep(numbers[:]);
+	rest: []int = {};
+	{
+		scratch := [1]int{0};
+		rest = keeper.pick(numbers[:], scratch[:]);
+	}
+	fmt.println(rest.len(), rest[0]);
+	fmt.println(held.view.len());
+
+	lazy: Lazy = {};
+	lazy_keeper := (dyn mut Keeper)(&mut lazy);
+	keep_all(&mut lazy_keeper, numbers[1:]);
+	fmt.println(lazy_keeper.pick(numbers[:], numbers[:]).len());
+	fmt.println(lazy.kept);
+	sizer := (dyn Sizer)(&lazy);
+	fmt.println(sizer.size(numbers[:]));
+
+	pile: Pile(int) = {};
+	stack := (dyn mut Stack(int))(&mut pile);
+	stack.push(5);
+	stack.push(6);
+	fmt.println(pile.items.len(), pile.items[1]);
+}

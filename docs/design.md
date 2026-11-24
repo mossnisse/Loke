@@ -2864,7 +2864,8 @@ Procedure types are compatible only when the following match:
 - parameter and result types;
 - parameter modes and variadic shape;
 - type-level parameter effects, including `@(allocator_reset)`,
-  [`@(escape=<level>)`](#escapelevel), and [`@(cross_thread)`](#cross_thread);
+  [`@(escape=<level>)`](#escapelevel), [`@(cross_thread)`](#cross_thread), and
+  [`@(concurrent_regions)`](#concurrent_regions);
 - any inferred [result contract](#procedure-result-contracts) required by the
   destination.
 
@@ -4595,6 +4596,19 @@ package, and `Length` is applied to that `Unit`.
   exactly, and so must receiver and parameter modes, except that a `self: ^`
   slot is also met by a plain `self` method, which [lends
   less](#receiver-forms); default arguments do not participate.
+- A slot's parameters state their attributes as a procedure type's do:
+  [`@(allocator_reset)`](#allocator_reset), [`@(escape=<level>)`](#escapelevel),
+  [`@(cross_thread)`](#cross_thread), and
+  [`@(concurrent_regions)`](#concurrent_regions). A method meets the slot only
+  when it asks no more of a call than the slot states: it marks
+  `@(allocator_reset)` on the same parameters, retains no argument at a higher
+  escape level than the slot's, written or not, and marks a parameter
+  `@(cross_thread)` or `@(concurrent_regions)` only where the slot's mark
+  checks as much. It may retain less and check less.
+  Each attribute is checked against its parameter's type once the interface's
+  arguments are bound, as in a generic signature, and one that type does not
+  admit, such as `@(allocator_reset)` on a parameter that is not an
+  `Allocator`, is a requirement that does not hold.
 - An inherent method meets a slot when it is public, or when its type is not
   declared public or belongs to a `package main`. Such a type reaches another
   package only through its own package's declarations, and a public one that
@@ -4811,6 +4825,23 @@ viewer.bump();                 // ERROR: `bump` mutates its subject, so it needs
 The conversion allocates nothing and copies no value. The `dyn` view borrows the
 pointed-to source and follows the same lifetime rules as a slice. A view of a
 temporary is valid only for that complete expression.
+
+A slot call through a view is checked as a call of the slot's signature, with
+its parameter modes, reset effects, escape levels, and thread checks, since
+the method behind the view [asks no more](#interface-bodies) than the slot
+states. A method that marks a parameter `@(cross_thread)` is reached only
+through a slot that marks it too:
+
+```loke
+Starter :: interface($Self: type) {
+	slot start: proc(self: ^, @(cross_thread, escape=static) job: move Job);
+}
+
+run :: proc(starter: dyn Starter, allocator: Allocator) {
+	job := Job{values = make([dynamic]int, 0, 4, allocator)};
+	starter.start(move(job));   // ERROR: `job` is in a region this procedure received
+}
+```
 
 A `dyn Interface` always views a value, so it has no zero value, and a slot call
 needs no test. Copying one copies only the view when the borrow rules permit the
@@ -8518,6 +8549,13 @@ held: Holder = {};
 fmt.println(held.view[0]); // ERROR: `numbers` has ended
 ```
 
+A [`dyn` view](#borrowed-dynamic-interface-values) the call receives is such a
+destination when one of its slots, or the signature of a [callable
+view](#borrowed-callable-views), marks a parameter `stored` or `static`: the
+method behind the view may keep that argument in the view's subject. This holds
+for a read-only view too, since the subject's type is hidden and a `self: ^`
+method stores through an atomic. A view with no such slot is no destination.
+
 Writing a value into its own root, as `self.rest = self.rest[n:]` does, is not a
 retention. A root outlives itself.
 
@@ -10208,8 +10246,9 @@ A value that crosses to another thread through a
 - An owner in it is not backed by an allocator region the calling procedure
   received, which may be one that does not accept use from another thread. The
   default provider accepts concurrent use; a value that arrived through the
-  calling procedure's own `@(cross_thread)` parameter was checked where it was
-  passed.
+  calling procedure's own `@(cross_thread)` or
+  [`@(concurrent_regions)`](#concurrent_regions) parameter was checked where it
+  was passed.
 
 ```loke
 @(thread_affine) Window :: struct { handle: int }
@@ -10878,6 +10917,10 @@ fan_out :: proc(allocator: Allocator) {
 }
 ```
 
+A parameter marked [`@(concurrent_regions)`](#concurrent_regions) is in regions
+that accept concurrent use, which each call checks. Tasks reserve nothing of
+such an allocator, and nothing of slots received through such a parameter.
+
 #### What the task checks cover
 
 With the checks above, conflicting unsynchronized accesses through checked roots
@@ -11253,6 +11296,7 @@ written to its right.
 | `@(fieldwise_copy)` | struct types with a `hook(drop)` | [keeps the generated field-wise copy beside the hook](#fieldwise_copy) |
 | `@(positional)` | struct types | [the field order is public, for literals and destructuring in other packages](#positional) |
 | `@(cross_thread)` | `move` parameters that are also `@(escape=static)`, and parameters and `..` packs of procedure type | [the argument goes to another thread](#cross_thread) |
+| `@(concurrent_regions)` | parameters other than `..` packs | [the argument's regions accept concurrent use](#concurrent_regions) |
 | `@(packed)`, `@(align=N)` | struct types; `align` also union types | [record layout](#packed) |
 | `@(allocator_reset)` | `Allocator` parameters | [a call may reset the region](#allocator_reset) |
 | `@(escape=<level>)` | parameters whose type reaches a borrow | [bounds what a call may keep](#escapelevel) |
@@ -11710,6 +11754,60 @@ run_on_thread :: proc(
 `thread.spawn` marks its entry and its argument. A user-written thread wrapper
 or executor that marks its parameters is checked as `thread.spawn` is; one that
 omits the attribute, such as a foreign one, crosses threads unchecked.
+
+#### `@(concurrent_regions)`
+
+Marks a parameter whose argument is in allocator regions that accept concurrent
+use, which a caller can know and a body cannot. The regions are those backing
+the owners the argument holds, those its `Allocator` handles name, and those of
+the storage its pointers and views lead to. It takes no value and marks a
+parameter of any mode, a receiver included. It is part of the procedure type,
+as [`@(cross_thread)`](#cross_thread) is: a procedure converts to a type that
+marks more parameters, whose calls check more, but not to one that marks fewer.
+
+Each call checks the argument. Each of its regions must be the default
+provider's, the only one that accepts concurrent use, or one the calling
+procedure received through a parameter of its own that carries this attribute
+or `@(cross_thread)`. A region the caller created, one it received through any
+other parameter, and one the checker cannot name, such as an `Allocator` read
+from a global, are errors.
+
+In the body, a region of the parameter accepts concurrent use:
+
+- an owner backed by it may go to a `@(cross_thread)` parameter (see
+  [Concurrency and the memory model](#concurrency-and-the-memory-model)); and
+- a task that may operate on it reserves nothing, so other tasks and the parent
+  may use it meanwhile (see [Allocators and tasks](#allocators-and-tasks)).
+
+A `@(cross_thread)` parameter's regions were checked the same way, so both
+hold for it too. In every other respect the region stays a received one:
+[result provenance](#allocator-regions-and-region-provenance), owner escape,
+and the reset rules are unchanged. The promise covers what the caller passed.
+An owner the body builds with another allocator and stores in the argument
+keeps that allocator's region, in the body and in the caller after the call.
+
+```loke
+send_all :: proc(send: ^thread.Sender(Job), @(concurrent_regions) queue: inout [dynamic]Job) {
+	for (case .some(job) = queue.pop()) {
+		_ = send.send(move(job));        // `job` is in `queue`'s regions
+	}
+}
+
+fan_out :: proc(@(concurrent_regions) allocator: Allocator) {
+	parallel {
+		spawn allocate_work(allocator);
+		spawn allocate_work(allocator);  // nothing is reserved
+	}
+}
+
+arena := mem.Arena.init();
+fan_out(arena.allocator());              // ERROR: `arena` serves one thread at a time
+```
+
+The attribute is an error on a foreign procedure's parameter, whose body is not
+checked, and on a `..` pack. It is also an error beside `@(allocator_reset)`,
+since a region a call may reset serves one thread at a time, and beside
+`@(cross_thread)`, which checks the argument's regions already.
 
 #### `@(default_allocator=<string>)` and `@(default_logger=<string>)`
 

@@ -1,0 +1,30 @@
+L0726
+@37:15
+`job` is backed by an allocator region this procedure received
+L0538
+@38:2
+this call may reset `allocator`, so `allocator` must be marked `@(allocator_reset)`
+L0758
+@39:13
+`allocator` may be in or name an allocator region that serves one thread at a time
+L0537
+@48:2
+this reset would end the region backing `scratch`
+L0758
+@50:13
+`arena`'s allocator is such a region
+L0513
+@68:14
+this slice is used after `numbers`
+L0646
+@71:59
+this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `keeper`
+L0513
+@80:14
+this slice is used after `numbers`
+L0513
+@98:10
+this pointer is used after `n`
+L0513
+@111:14
+this slice is used after `numbers`

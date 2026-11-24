@@ -87,11 +87,13 @@ Prov_Event_Effect_Use :: struct {
 	span:   Span,
 }
 
-// An argument crossing to another thread backed by a received region.
-Prov_Event_Received_Region :: struct {
+// The regions of an argument for a parameter with a `Thread_Check`, which the
+// facts at hand decide.
+Prov_Event_Thread_Regions :: struct {
 	value: Value_Id,
 	span:  Span,
 	owner: string,
+	check: Thread_Check,
 }
 
 // A carrier written through a borrowed binding, published into the storage
@@ -107,7 +109,7 @@ Prov_Event_View_Publish :: struct {
 
 Prov_Event_Operation :: union {
 	Prov_Event_Reset, Prov_Event_Escape, Prov_Event_Region_Escape, Prov_Event_Static_Escape, Prov_Event_Key_Escape,
-	Prov_Event_Allocator_Use, Prov_Event_Call_Allocator_Use, Prov_Event_Effect_Use, Prov_Event_Received_Region,
+	Prov_Event_Allocator_Use, Prov_Event_Call_Allocator_Use, Prov_Event_Effect_Use, Prov_Event_Thread_Regions,
 	Prov_Event_View_Publish,
 }
 
@@ -229,19 +231,8 @@ prov_materialize_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operati
 		prov_materialize_effect_use(graph, op)
 	case Prov_Event_View_Publish:
 		prov_materialize_view_publish(graph, op)
-	case Prov_Event_Received_Region:
-		if prov_has_received_region(graph, prov_result_region(graph, op.value)) {
-			errorf(
-				graph.k.c, op.span, "L0726",
-				"%s is backed by an allocator region this procedure received, which another thread may not be allowed to use",
-				op.owner,
-			)
-			if prov_is_string_clone(graph.k.c, prov_value(graph, op.value).origin) {
-				add_notef(graph.k.c, op.span, "a string's `clone` shares its source's allocation; `copy()` makes one of its own")
-			} else {
-				add_notef(graph.k.c, op.span, "build it with the default allocator, or in the thread that uses it")
-			}
-		}
+	case Prov_Event_Thread_Regions:
+		prov_check_thread_regions(graph, op)
 	case Prov_Event_Static_Escape:
 		if region := prov_result_region(graph, op.value); region_has_local(region) {
 			prov_emit(graph, Prov_Event {
@@ -249,6 +240,50 @@ prov_materialize_event :: proc(graph: ^Flow_Graph, operation: Prov_Event_Operati
 				name = "storage that lasts for the whole process", region = region,
 			})
 		}
+	}
+}
+
+// design.md "Concurrency and the memory model": an owner that crosses to another
+// thread is in no region this body received unchecked. design.md
+// "@(concurrent_regions)": an argument so promised is in none that serves one
+// thread at a time, nor in one the checker cannot name.
+@(private = "file")
+prov_check_thread_regions :: proc(graph: ^Flow_Graph, op: Prov_Event_Thread_Regions) {
+	c := graph.k.c
+	if op.check == .Crosses {
+		if !prov_has_received_region(graph, prov_result_region(graph, op.value)) {
+			return
+		}
+		errorf(
+			c, op.span, "L0726",
+			"%s is backed by an allocator region this procedure received, which another thread may not be allowed to use",
+			op.owner,
+		)
+		if prov_is_string_clone(c, prov_value(graph, op.value).origin) {
+			add_notef(c, op.span, "a string's `clone` shares its source's allocation; `copy()` makes one of its own")
+		} else {
+			add_notef(c, op.span, "build it with the default allocator, or in the thread that uses it")
+		}
+		return
+	}
+	set := prov_unpromised_regions(graph, prov_promised_regions(graph, op.value))
+	if !region_has_local(set) && !region_is_parameter_backed(set) && !set.unknown {
+		return
+	}
+	errorf(
+		c, op.span, "L0758",
+		"%s may be in or name an allocator region that serves one thread at a time, which a `@(concurrent_regions)` parameter rules out",
+		op.owner,
+	)
+	switch local := prov_region_name(graph, Region_Set{locals = set.locals}); {
+	case local != "":
+		add_notef(c, op.span, "`%s`'s allocator is such a region", local)
+	case region_has_local(set):
+		add_notef(c, op.span, "an allocator made in this procedure is such a region")
+	case region_is_parameter_backed(set):
+		add_notef(c, op.span, "a region this procedure received may be one; mark the parameter it arrived through `@(concurrent_regions)` too")
+	case:
+		add_notef(c, op.span, "its allocator is one the checker cannot name, as one read from a global is")
 	}
 }
 
@@ -371,21 +406,25 @@ prov_output :: proc(graph: ^Flow_Graph) -> ^Flow_Graph {
 	return graph.materialized != nil ? graph.materialized : graph
 }
 
-// Whether `set` names a region this body received and has not had checked: an
-// owner that arrived through a `@(cross_thread)` `move` parameter was checked
-// at the call that passed it.
+// Whether `set` names a region this body received and has not had checked.
 @(private)
 prov_has_received_region :: proc(graph: ^Flow_Graph, set: Region_Set) -> bool {
+	return region_is_parameter_backed(prov_unpromised_regions(graph, set))
+}
+
+// `set` without the parameters whose regions accept concurrent use: what arrived
+// through a `@(cross_thread)` or `@(concurrent_regions)` parameter was checked
+// at the call that passed it.
+@(private)
+prov_unpromised_regions :: proc(graph: ^Flow_Graph, set: Region_Set) -> Region_Set {
+	out := set
 	if graph.literal.signature == nil {
-		return region_is_parameter_backed(set)
+		return out
 	}
 	for id, index in graph.param_symbols {
-		if !region_has_param(set, index) {
-			continue
-		}
-		if sym := symbol_of(graph.k.c, id); sym == nil || !sym.cross_thread || sym.mode != .Move {
-			return true
+		if sym := symbol_of(graph.k.c, id); sym != nil && sym.thread_check != .None {
+			region_remove_param(&out, index)
 		}
 	}
-	return false
+	return out
 }

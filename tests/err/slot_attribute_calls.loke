@@ -1,0 +1,123 @@
+// design.md "Borrowed dynamic interface values": a slot call through a view is
+// checked as a call of the slot's signature. An argument for a
+// `@(cross_thread)` parameter is checked as one handed to a thread, an
+// `@(allocator_reset)` one ends no live region and needs the caller's own
+// mark, and a `@(concurrent_regions)` one is in no region that serves one
+// thread. design.md "Retaining a borrow": a view whose slot marks a parameter
+// `@(escape=stored)` is a destination, so the argument must outlive the view's
+// subject, through a read-only view and through a procedure that passes the
+// view on as well, and a callable view's signature counts as a slot does.
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:sync";
+import "core:thread";
+
+Job :: struct { values: [dynamic]int }
+entry :: proc(job: move Job) {}
+
+Worker :: interface($Self: type) {
+	slot start: proc(self: ^, @(cross_thread, escape=static) job: move Job);
+	slot release: proc(self: ^, @(allocator_reset) allocator: mem.Allocator);
+	slot fan: proc(self: ^, @(concurrent_regions) allocator: mem.Allocator);
+}
+Plain :: struct {}
+impl Plain {
+	start :: proc(self: ^, @(cross_thread, escape=static) job: move Job) {
+		worker := thread.spawn(entry, move(job));
+		worker.join();
+	}
+	release :: proc(self: ^, @(allocator_reset) allocator: mem.Allocator) { free_all(allocator); }
+	fan :: proc(self: ^, allocator: mem.Allocator) {}
+}
+
+received :: proc(worker: dyn Worker, allocator: mem.Allocator) {
+	job := Job{values = make([dynamic]int, 0, 4, allocator)};
+	worker.start(move(job));
+	worker.release(allocator);
+	worker.fan(allocator);
+}
+
+resets :: proc() {
+	plain := Plain{};
+	worker := (dyn Worker)(&plain);
+	arena := mem.Arena.init();
+	scratch: [dynamic]u8 via arena.allocator() = {};
+	scratch.append(1);
+	worker.release(arena.allocator());
+	fmt.println(scratch[0]);
+	worker.fan(arena.allocator());
+}
+
+Holder :: struct { view: []int }
+Keeper :: interface($Self: type) {
+	slot keep: proc(self: inout Self, @(escape=stored) values: []int);
+}
+impl Holder {
+	keep :: proc(self: inout, @(escape=stored) values: []int) { self.view = values; }
+}
+
+keeps :: proc() {
+	held: Holder = {};
+	{
+		numbers := [3]int{1, 2, 3};
+		keeper := (dyn mut Keeper)(&mut held);
+		keeper.keep(numbers[:]);
+	}
+	fmt.println(held.view[0]);
+}
+
+unmarked :: proc(keeper: dyn mut Keeper, values: []int) { keeper.keep(values); }
+passes_on :: proc(keeper: dyn mut Keeper, @(escape=stored) values: []int) { keeper.keep(values); }
+
+passed :: proc() {
+	held: Holder = {};
+	{
+		numbers := [3]int{1, 2, 3};
+		passes_on((dyn mut Keeper)(&mut held), numbers[:]);
+	}
+	fmt.println(held.view[0]);
+}
+
+Publisher :: interface($Self: type) {
+	slot publish: proc(self: ^, @(escape=stored) value: ^int);
+}
+Latest :: struct { cell: sync.Atomic(Option(^int)) }
+impl Latest {
+	publish :: proc(self: ^, @(escape=stored) value: ^int) { self.cell.store(.some(value)); }
+}
+
+publishes :: proc() {
+	latest: Latest = {};
+	{
+		n := 4;
+		publisher := (dyn Publisher)(&latest);
+		publisher.publish(&n);
+	}
+	switch (latest.cell.load()) {
+	case .some(value): fmt.println(value^);
+	case .none:
+	}
+}
+
+calls :: proc() {
+	held: Holder = {};
+	{
+		numbers := [3]int{1, 2, 3};
+		keep: dyn proc(@(escape=stored) values: []int) = proc(@(escape=stored) values: []int) capture(&mut held) { held.view = values; };
+		keep(numbers[:]);
+	}
+	fmt.println(held.view[0]);
+}
+
+main :: proc() {
+	plain := Plain{};
+	arena := mem.Arena.init();
+	received((dyn Worker)(&plain), arena.allocator());
+	resets();
+	keeps();
+	passed();
+	publishes();
+	calls();
+}

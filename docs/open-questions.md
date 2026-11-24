@@ -14,6 +14,22 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 
 ## Provenance architecture
 
+The review of `b8499982` found two follow-ups to the
+[synchronized variable exemption](design.md#global-write-effects).
+
+- **Preserve the lifetime of interior borrows.** A caller can hold one mutex
+  across borrowing a slice of a synchronized dynamic array, calling a helper
+  that shrinks the array, and using the slice. All accesses are serialized.
+  If shrinking relocates or releases the allocation, the earlier slice loses
+  its backing storage. The compiler accepts the call today. How should the
+  write effect preserve that lifetime check while still allowing multiple
+  handles to the fieldless standard logger?
+- **Exercise the synchronized write through a slot.** In the
+  [global effects fixture](../tests/err/global_effects.loke), only `Circle`
+  is converted to `dyn Shape`. Converting `Counter` too would include its
+  write to `vouched` in the targets of `shape.area()`. With the attribute
+  removed, that call should then produce its own borrow conflict.
+
 A review of the root and region provenance checker on 2026-11-01 asked where its
 special cases come from, and which generalizations would remove classes of them
 rather than instances. One slot vector per root and per-block region sets were
@@ -422,62 +438,22 @@ concurrency](design.md#structured-concurrency) already answers it
 
 ## Lent storage whose owners cross threads
 
-A [channel](standard-library.md#channels)'s `send` checks its item as an
-argument crossing to another thread: it may own nothing backed by an allocator
-the sending procedure received (`L0726`,
-[`@(cross_thread)`](design.md#cross_thread)). A helper that is lent a queue and
-sends what it holds is therefore rejected, since the queue's elements may be in
-any region its caller chose:
+A helper lent a queue marks the parameter
+[`@(concurrent_regions)`](design.md#concurrent_regions) to send what the queue
+holds, and so does one that shares an allocator or a slice of slots among
+tasks ([reasons](comments.md#a-parameter-promises-its-regions)). Two questions
+about the attribute are open:
 
-```loke
-send_all :: proc(send: ^thread.Sender(Job), queue: inout [dynamic]Job) {
-	for (queue.len() > 0) {
-		job := queue.remove(0);
-		_ = send.send(move(job));   // L0726
-	}
-}
-```
-
-The rejection is right as the language stands, and so is the same loop over a
-queue in a record lent `inout`. Only a `move` parameter can carry the promise
-that its argument may cross: written
-`@(cross_thread, escape=static) queue: move [dynamic]Job`, the loop compiles,
-and each call checks the queue it hands over. On an `inout` or borrowed
-parameter the attribute is `L0723`. A program meeting this keeps the queue as a
-local of the procedure that sends, or gives the queue away. Raised on
-2026-11-12 by a worker library whose bursts each wanted a queue in a record
-that helpers are lent.
-
-What is open is whether a lent parameter may carry such a promise, and how it
-is spelled:
-
-- **`@(cross_thread)` on an `inout` or borrowed parameter.** It would mean that
-  what the argument owns may cross, and each call would check the argument's
-  regions and types as the `move` form does. It would not need
-  `@(escape=static)`: the container stays with its caller, and `send` still
-  checks each item's borrows. Like the `move` form it is part of the procedure
-  type and spreads up the call chain, every caller either owning the storage or
-  marking its own parameter. The attribute would then mean two things, an
-  argument that goes to another thread and one whose contents may.
-- **A bound on the argument's regions under its own name.** The promise is that
-  the argument is backed only by regions that accept concurrent use. Stated so,
-  it also answers two rejections under
-  [Allocators and tasks](design.md#allocators-and-tasks) that have no spelling
-  now: a received allocator used by two tasks, and tasks that each fill one
-  slot of a received slice (`L0732`). One attribute for the three would be
-  named for the regions, not for the crossing.
-- **A promise on a field.** A record field declared to hold only such storage
-  would let the record be lent with no mark on each helper. Every write to the
-  field would have to be checked, which is an invariant on storage where
-  [region provenance](design.md#allocator-regions-and-region-provenance) today
-  has only facts about values. It is the largest of the three.
-
-Not open: `send` taking its check on trust for a lent queue. An owner backed by
-a caller's arena would then be freed on another thread while the caller
-allocates from it.
-
-A second program that wants to lend a queue it sends from, or a helper that
-fans tasks out over storage it received, should decide between the first two.
+- **A provider that declares it accepts concurrent use.** Only the default
+  provider does, so the promise is that the default provider backs the
+  argument, and a program with a thread-safe provider of its own cannot say so.
+  Declaring one would also reopen the rule against `@(allocator_reset)` on the
+  same parameter, which costs nothing while no region is both.
+- **A large record.** Marking a receiver promises all of its storage, though a
+  helper may send from one queue in it. A promise on a field, a record field
+  declared to hold only such storage, would narrow that, at the price of
+  checking every write to the field. A program whose record holds both a queue
+  it sends from and an arena's owners should decide it.
 
 ## What a file-scope `when` waits on
 

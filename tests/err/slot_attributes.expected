@@ -1,0 +1,32 @@
+L0606
+@62:30
+unknown attribute `@(bogus)`
+L0444
+@79:13
+`Plain` does not satisfy `Starter(Plain)`
+`Plain.start` is a `proc(^Plain, @(cross_thread) @(escape=static) move Job)`, whose parameter attributes do not meet this slot's `proc(^Plain, move Job)`
+L0444
+@80:14
+`Plain.release` is a `proc(^Plain, @(allocator_reset) Allocator)`, whose parameter attributes do not meet this slot's `proc(^Plain, Allocator)`
+L0444
+@81:12
+`Quiet.release` is a `proc(^Quiet, Allocator)`, whose parameter attributes do not meet this slot's `proc(^Quiet, @(allocator_reset) Allocator)`
+L0444
+@82:12
+`Holder.keep` is a `proc(inout Holder, @(escape=stored) []int)`, whose parameter attributes do not meet this slot's `proc(inout Holder, []int)`
+L0444
+@83:12
+whose parameter attributes do not meet this slot's `proc(^Plain, []int, @(escape=none) []int) -> []int`
+L0444
+@84:12
+`Plain.fan` is a `proc(^Plain, @(concurrent_regions) Allocator)`, whose parameter attributes do not meet this slot's `proc(^Plain, Allocator)`
+L0444
+@85:2
+`Plain` does not satisfy `Starter(Plain)`
+while instantiating `bound(Plain)`
+L0444
+@86:15
+this requirement does not hold: `@(allocator_reset)` marks an `Allocator` parameter whose region a call may end, found `int`
+L0444
+@87:16
+this requirement does not hold: `@(cross_thread)` marks a `move` parameter, or a parameter or `..` pack of procedure type

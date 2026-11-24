@@ -319,7 +319,8 @@ type says so. The checks are inferred, as the borrow checks and the write
 effect are, so ordinary types need no annotation. The few declarations that
 remain say what inference cannot see: `@(thread_affine)` for a handle that
 must stay on its thread, `@(synchronized)` for state a package protects
-itself, and `@(cross_thread)` for a library procedure that starts a thread.
+itself, `@(cross_thread)` for a library procedure that starts a thread, and
+`@(concurrent_regions)` for one that shares storage it was given.
 The price is whole-program effects, so a change in one procedure's body can
 reject a block elsewhere, and the diagnostics name the procedure that
 contributed the effect.
@@ -557,6 +558,53 @@ tracking the caller. Primitive fields make the test coarse (a `[]mut int`
 may view a channel's counters, so it still conflicts with a sender), and a raw
 pointer or erased view keeps the old answer. Moving the voices in, which the
 check already accepted, stays the stronger shape when the loop owns them.
+
+### A parameter promises its regions
+
+Three rejections had one cause and no spelling: a helper lent a queue could not
+send what it held, a procedure given an allocator could not use it from two
+tasks, and tasks could not each fill one slot of a slice their procedure was
+given. In each, the body cannot know that a received region accepts concurrent
+use, though its caller does. A library could therefore offer no parallel helper
+over storage it was handed, and sending code had to live in the procedure that
+owned the queue.
+[`@(concurrent_regions)`](design.md#concurrent_regions) states that one fact on
+the parameter. Raised on 2026-11-12 by a worker library whose bursts each
+wanted a queue in a record that helpers are lent.
+
+**Named for the regions, not the crossing.** `@(cross_thread)` on an `inout` or
+borrowed parameter was the first candidate. The attribute would then mean two
+things, an argument that goes to another thread and one whose contents may, and
+each call would repeat the type checks `send` already makes where the item
+crosses. It would not cover the allocator or the slice of slots, where nothing
+is handed to another thread by the marked procedure itself.
+
+**On the parameter, not a field.** A record field declared to hold only such
+storage would let the record be lent with no mark on each helper. Every write
+to the field would then have to be checked, an invariant on storage where
+region provenance has only facts about values. The parameter attribute spreads
+up the call chain instead, as `@(cross_thread)` does: every caller either owns
+the storage or marks its own parameter. A field promise can be added over it;
+see [open-questions.md](open-questions.md#lent-storage-whose-owners-cross-threads).
+
+**Not taken on trust.** `send` could have accepted an item out of a lent queue
+unchecked. An owner backed by a caller's arena would then be freed on another
+thread while the caller allocates from it.
+
+**A region the checker cannot name is rejected.** The check at a
+`@(cross_thread)` parameter rules out what it can see, a region the caller
+received. Here the body relies on the promise with no later check, so an
+allocator read from a global does not meet it, as it does not meet
+`@(allocator_reset)`.
+
+**One level in the procedure type.** A `@(cross_thread)` parameter's regions
+are checked already, so the two attributes are one ordered level, nothing, the
+regions, the crossing, and a procedure converts to a type that checks no less.
+Writing both is an error rather than a synonym.
+
+**Any parameter type.** A generic signature serves types with and without
+regions, so a parameter whose type holds none is not an error: it promises
+nothing.
 
 ### A channel keeps its own queue and wakes every waiter
 
@@ -2102,6 +2150,48 @@ narrowing slots to the applying package's visibility, would have made every
 `package main` type mark its methods public before generic code could use them.
 What settled it was lowering `values.sort()` to `slice.sort`: the member had
 always sorted by a private `<`, and `slice.sort`'s `Ordered` bound had to agree.
+
+### A slot states its parameters' attributes
+
+A slot kept its parameters' types and modes and dropped their attributes. A
+method that marked a parameter `@(cross_thread)` therefore met a slot that
+marked nothing, and a call through the `dyn` view checked nothing, marked or
+not: an owner in an arena reached another thread, a reset ended a live region,
+and a kept borrow outlived its storage. [`@(cross_thread)`](design.md#cross_thread)
+is part of the procedure type so that a call through a procedure value cannot
+skip the check, and a slot is the same boundary: the caller sees a signature
+and not the body behind it. So [a slot states the attributes](design.md#interface-bodies)
+and a call through the view is checked against them.
+
+A method may ask less than its slot and never more, the direction a procedure
+converts to a procedure type. Three choices follow the callable view's `call`,
+so that a method is held to one rule whichever view reaches it:
+
+- A reset effect is stated exactly, as between procedure types. Letting a
+  method that resets nothing meet a slot that says it may would be sound, but
+  a slot should not accept what the same signature refuses as a procedure
+  type.
+- An unwritten level does not meet a slot's `@(escape=none)`, though a
+  procedure's inferred contract may meet a written `none` in a procedure type.
+  That exception is checked once inference settles, and whether a type meets
+  an interface is a compile-time fact overload resolution and `static_assert`
+  read before then.
+- An attribute a parameter's type does not admit is a requirement that does not
+  hold, reported with the application that needed it. The type is bound only
+  there, as a generic signature's is, and an application is allowed to be
+  false. An unknown attribute needs no type and is an error where it is
+  written.
+
+Honoring `@(escape=stored)` needed a destination. A method keeps the argument
+in its receiver, which a view hides, so [a view whose slot keeps an argument is
+a destination](design.md#retaining-a-borrow) for every call that receives it,
+whatever its capability: the subject may hold an atomic that a `self: ^` method
+stores through. A view with no such slot stays out, so the views that existed
+before lose no precision. The alternative was to make an interface with such a
+slot static-only, which would have taken `dyn` away from every sink that keeps
+what it is given. A callable view's signature is read the same way, which
+closed the same hole there: a capture literal that stored its argument through
+a `&mut` capture was called through a `dyn proc` with nothing recorded.
 
 ### Headless switch
 

@@ -3619,8 +3619,10 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 		}
 		entry.name = name_of(p, name)
 		append(&names, entry)
-		// A comma before `)` is the list's trailing comma, not another name.
-		if !at(p, .Comma) || peek_token(p, 1).kind == .Rparen {
+		// A comma before `)` is the list's trailing comma, not another name, and
+		// one before `@` ends the group: the attributes open the next parameter,
+		// as in `proc(self, @(escape=none) scratch: []int)`.
+		if !at(p, .Comma) || peek_token(p, 1).kind == .Rparen || peek_token(p, 1).kind == .At {
 			break
 		}
 		advance(p)

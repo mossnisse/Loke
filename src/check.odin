@@ -1110,7 +1110,7 @@ Signature_Parameter :: struct {
 	split_receiver: bool,
 	escape:         Escape_Level,
 	resets:         bool,
-	crosses:        bool,
+	thread_check:   Thread_Check,
 }
 
 // design.md "Variadic parameters": a parameter means the same in a procedure
@@ -1135,8 +1135,8 @@ check_signature_parameter :: proc(
 	result.escape = check_escape_attribute(k, parameter.attributes, written_type, parameter.span, result.mode, generic)
 	marked := has_attribute(parameter.attributes, "allocator_reset") && !result.split_receiver
 	result.resets = allocator_reset_ok(k, marked, written_type, parameter.span)
-	result.crosses = check_cross_thread_attribute(
-		k, parameter.attributes, written_type, result.mode, result.escape, in_foreign, parameter.span,
+	result.thread_check = check_thread_attributes(
+		k, parameter.attributes, written_type, result.mode, result.escape, in_foreign, result.resets, parameter.span,
 	)
 	if result.mode == .Variadic && result.type != INVALID_TYPE &&
 	   !variadic_position_ok(k, params, position, name_index, parameter.span) {
@@ -1192,7 +1192,7 @@ Signature_Builder :: struct {
 	modes:         [dynamic]Param_Mode,
 	resets:        [dynamic]bool,
 	escapes:       [dynamic]Escape_Level,
-	crosses:       [dynamic]bool,
+	thread_checks: [dynamic]Thread_Check,
 	by_ptr:        [dynamic]bool,
 	param_symbols: [dynamic]Symbol_Id,
 	param_names:   map[Identifier_Id]struct{},
@@ -1209,7 +1209,7 @@ append_signature_parameter :: proc(builder: ^Signature_Builder, checked: Signatu
 	append(&builder.modes, checked.mode)
 	append(&builder.resets, checked.resets)
 	append(&builder.escapes, checked.escape)
-	append(&builder.crosses, checked.crosses)
+	append(&builder.thread_checks, checked.thread_check)
 }
 
 // Builds the flattened signature a call site binds against and interns its
@@ -1237,7 +1237,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		modes         = make([dynamic]Param_Mode, 0, 4, context.temp_allocator),
 		resets        = make([dynamic]bool, 0, 4, context.temp_allocator),
 		escapes       = make([dynamic]Escape_Level, 0, 4, context.temp_allocator),
-		crosses       = make([dynamic]bool, 0, 4, context.temp_allocator),
+		thread_checks = make([dynamic]Thread_Check, 0, 4, context.temp_allocator),
 		by_ptr        = make([dynamic]bool, 0, 4, context.temp_allocator),
 		param_names   = make(map[Identifier_Id]struct{}, 4, context.temp_allocator),
 		receiver_mode = .Value,
@@ -1272,7 +1272,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		literal.signature.convention, builder.resets[:],
 		param_by_ptr = builder.by_ptr[:], c_vararg = saw_c_vararg,
 		param_escapes = builder.escapes[:],
-		param_cross_thread = builder.crosses[:],
+		param_thread_checks = builder.thread_checks[:],
 		proc_contract = !builder.is_foreign && literal.body != nil && result_needs_contract(k.c, result_type, result_inout) ? symbol_id : INVALID_SYMBOL,
 	)
 	symbol.params = builder.params[:]
@@ -1354,7 +1354,7 @@ append_signature_group :: proc(k: ^Checker, builder: ^Signature_Builder, literal
 			bound.immutable = bound.mode == .Value
 			bound.owner_proc = literal
 			bound.allocator_reset = checked.resets
-			bound.cross_thread = checked.crosses
+			bound.thread_check = checked.thread_check
 			bound.escape = checked.escape
 		}
 		if position == 0 && name_index == 0 && k.impl_type != INVALID_TYPE && name.text == "self" && checked.type == k.impl_type {

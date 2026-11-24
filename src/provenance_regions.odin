@@ -1057,6 +1057,18 @@ prov_reached_regions :: proc(graph: ^Flow_Graph, argument: Value_Id, handles, lo
 	return w.out, known
 }
 
+// design.md "@(concurrent_regions)": every region the promise for `argument`
+// covers: those of what it names, handles included, and of what its carriers lead
+// to at every load.
+@(private)
+prov_promised_regions :: proc(graph: ^Flow_Graph, argument: Value_Id) -> Region_Set {
+	out := prov_used_region(graph, argument)
+	region_merge(&out, prov_provider_viewed_by(graph, argument))
+	reached, _ := prov_reached_regions(graph, argument, handles = true, loaded = true)
+	region_merge(&out, reached)
+	return out
+}
+
 // design.md "@(allocator_reset)": an allocator read through a carrier of unknown
 // targets, which found nothing, is one the analysis cannot name.
 @(private = "file")

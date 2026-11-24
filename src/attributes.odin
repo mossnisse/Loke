@@ -101,8 +101,8 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "fieldwise_copy":
 		// What the record must be is `check_copy_decision`'.
 		return {{.Struct_Decl}, .None, {}}, true
-	case "cross_thread":
-		// What the parameter must be is `check_cross_thread_attribute`'.
+	case "cross_thread", "concurrent_regions":
+		// What the parameter must be is `check_thread_attributes`'.
 		return {{.Parameter}, .None, {}}, true
 	case "intrinsic":
 		// Bound by `src/intrinsic.odin`, which validates the declaration's other
@@ -684,33 +684,54 @@ attribute_escape_level :: proc(attributes: []Attribute) -> (level: Escape_Level,
 // `move` one must be keepable for the whole process, since nothing shorter
 // bounds an unstructured thread, and a procedure value carries no state of its
 // own. Foreign code crosses threads unchecked, so it cannot claim the checks.
-check_cross_thread_attribute :: proc(
+//
+// design.md "@(concurrent_regions)": an argument whose allocator regions accept
+// concurrent use, which its caller knows and a body cannot. A reset region serves
+// one thread at a time.
+check_thread_attributes :: proc(
 	k: ^Checker,
 	attributes: []Attribute,
 	type: Type_Id,
 	mode: Param_Mode,
 	escape: Escape_Level,
-	in_foreign: bool,
+	in_foreign, resets: bool,
 	span: Span,
-) -> bool {
-	if !has_attribute(attributes, "cross_thread") {
-		return false
+) -> Thread_Check {
+	crosses := has_attribute(attributes, "cross_thread")
+	if has_attribute(attributes, "concurrent_regions") {
+		problem := ""
+		switch {
+		case in_foreign:
+			problem = "cannot mark a foreign procedure's parameter: a foreign body is not checked"
+		case crosses:
+			problem = "is implied by `@(cross_thread)`, which checks the argument's regions too"
+		case resets:
+			problem = "cannot mark an `@(allocator_reset)` parameter: a region a call may reset serves one thread at a time"
+		case mode == .Variadic:
+			problem = "marks a parameter, not a `..` pack"
+		case:
+			return type == INVALID_TYPE ? .None : .Regions
+		}
+		errorf(k.c, span, "L0757", "`@(concurrent_regions)` %s", problem)
+	}
+	if !crosses {
+		return .None
 	}
 	problem := ""
 	switch {
 	case in_foreign:
 		problem = "cannot mark a foreign procedure's parameter: what foreign code hands to a thread is not checked"
 	case type == INVALID_TYPE || underlying_kind(k.c, type) == .Proc:
-		return type != INVALID_TYPE
+		return type == INVALID_TYPE ? .None : .Crosses
 	case mode == .Move && escape == .Static:
-		return true
+		return .Crosses
 	case mode == .Move:
 		problem = "on a `move` parameter needs `@(escape=static)` too: nothing shorter than the process bounds another thread"
 	case:
 		problem = "marks a `move` parameter, or a parameter or `..` pack of procedure type"
 	}
 	errorf(k.c, span, "L0723", "`@(cross_thread)` %s", problem)
-	return false
+	return .None
 }
 
 // design.md "@(align=N)": `@(align=4) Name :: union {...}`, or `struct {...}`.
