@@ -26,10 +26,11 @@
 // keeps a stored borrow tracked and an allocator reset in view.
 //
 // Every update writes and then lengthens, or shortens and then takes, so `count`
-// is accurate wherever a panic can unwind from.
+// is accurate wherever a panic can unwind from. Moves within and between rings
+// run no hook and cannot panic, so `slide` and `adopt` need no such order.
 //
 // A pointer or element rebuilt from raw storage has unknown provenance, so raw
-// pointer construction stays in `slots_of` and `ring_slots_of`, and every other
+// pointer construction stays in `slots_of` and `slots_mut_of`, and every other
 // access goes through the checked views they lend. A plain procedure type is what
 // ties a result to the deque: design.md "Procedure result contracts" derives it
 // from every borrowed argument. That is also why an element taken out keeps what
@@ -116,22 +117,18 @@ impl Deque($T) {
 
 	/// Adds all of the values, or none of them.
 	// design.md "Variadic parameters": the pack lends the values, so each is copied
-	// here, where a failure is returned. The copies have nowhere to wait but the grown
-	// ring, so the elements move into it first, and back into the old ring, at their
-	// old slots, if a copy fails.
+	// here, where a failure is returned. When the ring must grow, the copies wait in
+	// their final slots of the new ring, after room for the elements, which move in
+	// only once a copy has been made. As in a dynamic array (design.md "What the
+	// unwind runs, and what it does not"), the copies made before a copy hook panics
+	// join the deque, after its elements.
 	try_append_copied :: proc(self: inout, @(escape=stored) values: ..^T) -> Status(Allocator_Error) where is_copyable(T) {
 		wanted := self.count + values.len();
 		if (!self.must_grow(wanted)) { return self.try_put_back_clones(..values); }
 		ring := try_make([dynamic]T, 0, self.grown_capacity(wanted), self.storage.allocator()) or_return;
-		head := self.head;
-		previous := self.relocate(move(ring), 0);
-		switch (self.try_put_back_clones(..values)) {
-		case .ok:
-			return .ok;
-		case .err(failure):
-			_ = self.relocate(move(previous), head);
-			return .err(failure);
-		}
+		staged := Deque(T){storage = move(ring), head = self.count};
+		defer if (staged.count > 0) { self.adopt(exchange(inout staged, {})); }
+		return staged.try_put_back_clones(..values);
 	}
 
 	try_append_moved :: proc(self: inout, @(escape=stored) value: move T) -> Status(Allocator_Error) {
@@ -237,8 +234,7 @@ impl Deque($T) {
 		move-only element reads through `at`. An index out of range panics.
 	*/
 	get :: operator([]) proc(self: ^, index: int) -> T where is_copyable(T) {
-		self.check_index(index);
-		return self.slots()[self.wrap(index)].clone();
+		return self.at(index)^.clone();
 	}
 
 	get_mut :: operator([]) proc(self: inout, index: int) -> inout T {
@@ -262,19 +258,15 @@ impl Deque($T) {
 		if (index < 0 || index > self.count) { panic("Deque index is out of range"); }
 		wanted := self.count + 1;
 		self.grow(wanted);
-		// Every slot is live before the first swap, so nothing reads raw capacity
-		// as a value.
 		if (index < self.count - index) {
-			self.put_front(move(value));
-			foreach (i in 0 ..< index) { self.swap_positions(i, i + 1); }
+			self.head = self.wrap(self.storage.cap() - 1); // One slot back.
+			self.slide(0, index);
 		} else {
-			self.put_back(move(value));
-			at := self.count - 1;
-			for (at > index) {
-				self.swap_positions(at, at - 1);
-				at -= 1;
-			}
+			self.slide(self.count, index);
 		}
+		at := self.wrap(index);
+		unsafe.write(self.slots_mut()[at], move(value));
+		self.count += 1;
 	}
 
 	/// Inserts before `index`, moving whichever side is shorter. An index out of range panics.
@@ -283,16 +275,16 @@ impl Deque($T) {
 	/// Removes the element at `index`, moving whichever side is shorter. An index out of range panics.
 	remove :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
+		at := self.wrap(index);
+		removed := unsafe.take(self.slots_mut()[at]);
 		if (index < self.count - index - 1) {
-			at := index;
-			for (at > 0) {
-				self.swap_positions(at, at - 1);
-				at -= 1;
-			}
-			return self.pop_front() or_else panic("unreachable");
+			self.slide(index, 0);
+			self.head = self.wrap(1);
+		} else {
+			self.slide(index, self.count - 1);
 		}
-		foreach (i in index ..< self.count - 1) { self.swap_positions(i, i + 1); }
-		return self.pop() or_else panic("unreachable");
+		self.count -= 1;
+		return removed;
 	}
 
 	/// Keeps the order, and drops each element for which `keep(item)` is false, in O(n).
@@ -317,15 +309,14 @@ impl Deque($T) {
 	*/
 	reserve :: proc(self: inout, capacity: int) {
 		if (!self.must_grow(capacity)) { return; }
-		ring := make([dynamic]T, 0, capacity, self.storage.allocator());
-		_ = self.relocate(move(ring), 0);
+		self.adopt({storage = make([dynamic]T, 0, capacity, self.storage.allocator())});
 	}
 
 	/// As `reserve`, but a failure to allocate is returned and leaves the deque as it was.
 	try_reserve :: proc(self: inout, capacity: int) -> Status(Allocator_Error) {
 		if (!self.must_grow(capacity)) { return .ok; }
 		ring := try_make([dynamic]T, 0, capacity, self.storage.allocator()) or_return;
-		_ = self.relocate(move(ring), 0);
+		self.adopt({storage = move(ring)});
 		return .ok;
 	}
 
@@ -333,8 +324,7 @@ impl Deque($T) {
 	shrink :: proc(self: inout, minimum: int = 0) {
 		wanted := minimum if minimum > self.count else self.count;
 		if (wanted >= self.storage.cap()) { return; }
-		ring := make([dynamic]T, 0, wanted, self.storage.allocator());
-		_ = self.relocate(move(ring), 0);
+		self.adopt({storage = make([dynamic]T, 0, wanted, self.storage.allocator())});
 	}
 
 	/// As `shrink`, but a failure to allocate is returned and leaves the deque as it was.
@@ -342,7 +332,7 @@ impl Deque($T) {
 		wanted := minimum if minimum > self.count else self.count;
 		if (wanted >= self.storage.cap()) { return .ok; }
 		ring := try_make([dynamic]T, 0, wanted, self.storage.allocator()) or_return;
-		_ = self.relocate(move(ring), 0);
+		self.adopt({storage = move(ring)});
 		return .ok;
 	}
 
@@ -396,12 +386,11 @@ impl Deque($T) {
 			back := end - capacity;
 			to := self.head - back;
 			if (to > 0) {
+				slots := self.slots_mut();
 				at := back;
 				for (at > 0) {
 					at -= 1;
-					destination := to + at;
-					item := unsafe.take(self.slots_mut()[at]);
-					unsafe.write(self.slots_mut()[destination], move(item));
+					unsafe.write(slots[to + at], unsafe.take(slots[at]));
 				}
 			}
 			// `back` then `front` to `front` then `back`, by three reversals: every slot
@@ -464,8 +453,7 @@ impl Deque($T) {
 	// Clones in order into a new ring from the destination's allocator. What it has
 	// cloned so far is dropped with `out` if a later element fails.
 	duplicate :: hook(copy) proc(self, allocator: Allocator) -> Result(Deque(T), Allocator_Error) where is_copyable(T) {
-		out := Deque(T){storage = make([dynamic]T, 0, 0, allocator)};
-		out.try_reserve(self.count) or_return;
+		out := Deque(T).try_init(self.count, allocator) or_return;
 		foreach (i in 0 ..< self.count) {
 			item := self.slots()[self.wrap(i)].try_clone(allocator) or_return;
 			out.put_back(move(item));
@@ -490,19 +478,14 @@ impl Deque($T) {
 	}
 
 	@(private)
-	ring_slots_of :: proc(ring: ^mut [dynamic]T) -> []mut T {
-		return unsafe.raw_data(ring^)[0:ring^.cap()];
-	}
-
-	@(private)
-	ring_slots :: proc(ring: inout [dynamic]T) -> []mut T {
-		reach: proc(ring: ^mut [dynamic]T) -> []mut T = Deque(T).ring_slots_of;
-		return reach(&mut ring);
+	slots_mut_of :: proc(self: ^mut Deque(T)) -> []mut T {
+		return unsafe.raw_data(self^.storage)[0:self^.storage.cap()];
 	}
 
 	@(private)
 	slots_mut :: proc(self: inout) -> []mut T {
-		return Deque(T).ring_slots(inout self.storage);
+		reach: proc(self: ^mut Deque(T)) -> []mut T = Deque(T).slots_mut_of;
+		return reach(&mut self);
 	}
 
 	// The slot of the element `position` places after the first. `position` is at
@@ -566,6 +549,23 @@ impl Deque($T) {
 		self.count += 1;
 	}
 
+	// Moves each element between positions `filled` and `vacant` one step toward
+	// `vacant`, which holds no value, so that `filled` holds none. Both positions are
+	// below the capacity.
+	@(private)
+	slide :: proc(self: inout, vacant, filled: int) {
+		to := self.wrap(vacant);
+		forward := filled > vacant;
+		steps := filled - vacant if forward else vacant - filled;
+		slots := self.slots_mut();
+		foreach (_ in 0 ..< steps) {
+			from := to + 1 if forward else to - 1;
+			if (from == slots.len()) { from = 0; } else if (from < 0) { from = slots.len() - 1; }
+			unsafe.write(slots[to], unsafe.take(slots[from]));
+			to = from;
+		}
+	}
+
 	@(private)
 	swap_positions :: proc(self: inout, a, b: int) {
 		left := self.wrap(a);
@@ -576,41 +576,39 @@ impl Deque($T) {
 	// Copies each value in at the back, all or none, into room the ring already has.
 	@(private)
 	try_put_back_clones :: proc(self: inout, @(escape=stored) values: ..^T) -> Status(Allocator_Error) where is_copyable(T) {
-		added := 0;
+		start := self.count;
 		foreach (value in values) {
 			switch (value^.try_clone(self.storage.allocator())) {
 			case .ok(item):
 				self.put_back(move(item));
-				added += 1;
 			case .err(failure):
-				foreach (_ in 0 ..< added) { _ = self.pop(); }
+				for (self.count > start) { _ = self.pop(); }
 				return .err(failure);
 			}
 		}
 		return .ok;
 	}
 
-	// Moves the elements in order into `ring`, which has room for them, the first to
-	// slot `head`, and returns the ring it replaces. Moves cannot fail, so an
-	// allocation failure happened before this and left the deque as it was. Length
-	// zero is why dropping the old ring frees it and drops no element, and why it can
-	// take the elements back.
+	// Replaces the deque with `next`, whose ring is from the same allocator and has
+	// room, moving the elements in order into its first slots. Any elements `next`
+	// holds start at slot `self.count`, right after them. Moves cannot fail, so an
+	// allocation failure happened before this and left the deque as it was. The old
+	// deque is then empty, so dropping it frees its ring and drops no element.
 	@(private)
-	relocate :: proc(self: inout, @(escape=stored) ring: move [dynamic]T, head: int) -> [dynamic]T {
-		at := self.head;
-		to := head;
+	adopt :: proc(self: inout, @(escape=stored) next: move Deque(T)) {
 		count := self.count;
+		at := self.head;
 		from := self.slots_mut();
-		into := Deque(T).ring_slots(inout ring);
-		foreach (_ in 0 ..< count) {
+		into := next.slots_mut();
+		foreach (to in 0 ..< count) {
 			unsafe.write(into[to], unsafe.take(from[at]));
 			at += 1;
 			if (at == from.len()) { at = 0; }
-			to += 1;
-			if (to == into.len()) { to = 0; }
 		}
-		self.head = head;
-		return exchange(inout self.storage, move(ring));
+		self.count = 0;
+		next.head = 0;
+		next.count += count;
+		_ = exchange(inout self, move(next));
 	}
 
 	// The remaining live range is accurate before each user drop hook runs, and it

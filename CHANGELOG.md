@@ -480,7 +480,11 @@ checklist.
   `Enum_Array` find a member's slot from its value when the enum counts up from zero, rather
   than searching the members: `contains` on a 1,024-member enum is about twice as fast at
   `-opt=speed` and five times as fast at `-opt=none`. Growing a wrapped `Deque` moves its
-  elements about 25% faster.
+  elements about 25% faster. `Deque` insertion and removal move each element on the shorter
+  side once rather than swapping, so pairs of them near the middle of a 736-element deque take
+  two-fifths of the time at `-opt=speed`. A `Deque.try_append` of several copies that must grow
+  makes them in the new ring before moving the elements in, so a failed copy no longer moves
+  every element there and back.
 - A [`core:checksum`](docs/standard-library.md#corechecksum) update no longer reverses the start
   value bit by bit each time it runs, so a default build checksums four million nine-byte
   pieces with `Crc32` in about a quarter of the time. The eight-byte path drops a branch per

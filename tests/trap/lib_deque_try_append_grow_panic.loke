@@ -1,0 +1,30 @@
+// design.md "What the unwind runs, and what it does not": as in a dynamic array, a
+// copy a deque's `try_append` has made joins the deque before a later copy hook
+// panics, even when the copies wait in a grown ring. The deque then drops its
+// elements first to last, the copy after them.
+package main;
+import "core:container";
+import "core:fmt";
+
+Item :: struct { id: int }
+impl Item {
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Item, Allocator_Error) {
+        if (self.id == 99) { panic("copy failed"); }
+        return .ok(Item{self.id + 100});
+    }
+    release :: hook(drop) proc(self: inout Item) {
+        fmt.println("drop", self.id);
+    }
+}
+
+main :: proc() {
+    items: container.Deque(Item) = {};
+    items.reserve(2);
+    items.append(Item{2});
+    items.append(Item{3});
+    _ = items.pop_front();
+    items.append(Item{4});
+    first := Item{1};
+    second := Item{99};
+    _ = items.try_append(first, second);
+}
