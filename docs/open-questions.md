@@ -543,36 +543,6 @@ a model can work on one part of a program without reading the rest.
   If so, `filled` could use the initializer once the compiler agrees.
   [Constructor](../core/container/enum_array.loke#L36)
 
-## Index set simplifications and performance
-
-- [Storage sizing](../core/container/index_set.loke#L64) spells the
-  overflow-safe word count twice. Use `[words_for_bits(N)]u64` for the fixed
-  array bound. The compile-time call passed the index-set fixture, including
-  `N == 0` and the largest `int`.
-- [Byte serialization](../core/container/index_set.loke#L632) can use
-  `core:endian` in little-endian order for full words, with byte shifts and
-  masking confined to the partial word. Keep the final-byte padding check
-  before any write and preserve the caller's padding when loading that word.
-  In a prototype with 2,000 calls on a 262,147-bit set at `-opt=speed`, store
-  fell from 101.7 ms to 1.9 ms and load from 71.3 ms to 1.9 ms. Each figure
-  is the fastest of five runs.
-- [Owner clear](../core/container/index_set.loke#L293) can zero its words
-  directly. Assign `{}` to the fixed array and use `slice.fill` on the
-  dynamic owner's existing storage. Mutable views still need to preserve
-  the caller's padding. Clearing the dynamic set in the same benchmark fell
-  from 9.2 ms to 0.86 ms.
-- [Dynamic equality](../core/container/index_set.loke#L305) can compare
-  capacities and call `slice.equal` on the word slices, since both owners
-  keep their padding clear. Two comparisons per round, on equal sets and
-  sets that differ in the last word, fell from 12.3 ms to 5.9 ms.
-- [Single-result searches](../core/container/index_set.loke#L576) can scan
-  words directly and check the first candidate's index against `cap` once.
-  Padding follows every valid index, so a candidate in padding ends the
-  search. Scanning to the only member in the final word fell from 4.6 ms to
-  3.8 ms. The prototype agreed with the existing code for both search modes
-  at every starting index for capacities 0 through 193, including views
-  with caller-owned padding.
-
 ## Constant tables in the front end
 
 - A large array constant is slow to check. `core:strconv`'s table of powers

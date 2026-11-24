@@ -30,9 +30,11 @@
 @(public)
 package container;
 
+import "core:endian";
 import "core:fmt";
 import "core:math";
 import "core:mem";
+import "core:slice";
 
 /// The number of `u64` words that hold `cap` bits. A negative `cap` panics.
 words_for_bits :: proc(cap: int) -> int {
@@ -59,9 +61,7 @@ round_up_quotient :: proc(cap, divisor: int) -> int {
 
 /// The indices `0 ..< N`, held inline in `words_for_bits(N)` words.
 Index_Set :: struct($N: int) where N >= 0 {
-	// `words_for_bits(N)` as a constant: the remainder term is 0 or 1, so the
-	// sum cannot overflow.
-	@(private) words: [N/64 + (N%64 + 63)/64]u64,
+	@(private) words: [words_for_bits(N)]u64,
 }
 
 impl Index_Set($N) {
@@ -121,7 +121,7 @@ impl Index_Set($N) {
 	toggle :: proc(self: inout, index: int) { toggle_member(self.words[mut :], N, index); }
 
 	/// Removes every index.
-	clear :: proc(self: inout) { apply_range(self.words[mut :], N, 0, N, .Unset); }
+	clear :: proc(self: inout) { self.words = {}; }
 
 	/// Adds every index `0 ..< N`.
 	fill :: proc(self: inout) { apply_range(self.words[mut :], N, 0, N, .Set); }
@@ -290,7 +290,7 @@ impl Dynamic_Index_Set {
 	toggle :: proc(self: inout, index: int) { toggle_member(self.words[mut :], self.capacity, index); }
 
 	/// Removes every index and keeps the storage, which is how a visited set is reused.
-	clear :: proc(self: inout) { apply_range(self.words[mut :], self.capacity, 0, self.capacity, .Unset); }
+	clear :: proc(self: inout) { slice.fill(self.words[mut :], 0); }
 
 	fill :: proc(self: inout) { apply_range(self.words[mut :], self.capacity, 0, self.capacity, .Set); }
 	set_range :: proc(self: inout, low, high: int) { apply_range(self.words[mut :], self.capacity, low, high, .Set); }
@@ -302,7 +302,10 @@ impl Dynamic_Index_Set {
 	toggle_all :: proc(self: inout, other: Index_View) { combine(self.words[mut :], self.capacity, other, .Toggle); }
 
 	/// Equal capacities and equal members.
-	equal :: operator(==) proc(left, right: Dynamic_Index_Set) -> bool { return left.view() == right.view(); }
+	// Both owners keep the bits past the capacity clear, so whole words compare.
+	equal :: operator(==) proc(left, right: Dynamic_Index_Set) -> bool {
+		return left.capacity == right.capacity && slice.equal(left.words[:], right.words[:]);
+	}
 
 	/// `index in set`: whether `index` is present, as `contains`.
 	is_member :: operator(in) proc(index: int, set: Dynamic_Index_Set) -> bool { return has_member(set.words[:], set.capacity, index); }
@@ -570,21 +573,23 @@ apply_range :: proc(words: []mut u64, cap, low, high: int, op: Range_Op) {
 
 // The first index at or after `from` that is a member, or with `absent` the
 // first that is not. An absent index is a member of the complement, so the
-// scan inverts each word, and `word_of`'s mask keeps the bits past the
-// capacity out of it.
+// scan inverts each word. The bits past the capacity follow every index, so
+// the scan reads them unmasked and rejects a first candidate among them.
 @(private)
 next_bit :: proc(words: []u64, cap, from: int, absent: bool) -> Option(int) {
 	assert(0 <= from && from <= cap, "container: index set search starts out of range");
 	if (from == cap) { return .none; }
 	at := from/64;
 	flip := ~u64(0) if absent else u64(0);
-	candidates := ((words[at] ~ flip) & member_mask(cap, at)) &~ ((u64(1) << uint(from % 64)) - 1);
+	candidates := (words[at] ~ flip) &~ ((u64(1) << uint(from % 64)) - 1);
 	for (candidates == 0) {
 		at += 1;
 		if (at >= words.len()) { return .none; }
-		candidates = (words[at] ~ flip) & member_mask(cap, at);
+		candidates = words[at] ~ flip;
 	}
-	return at*64 + math.trailing_zeros(candidates);
+	index := at*64 + math.trailing_zeros(candidates);
+	if (index >= cap) { return .none; }
+	return index;
 }
 
 @(private)
@@ -626,28 +631,33 @@ combine :: proc(words: []mut u64, cap: int, other: Index_View, op: Combine_Op) {
 @(private)
 iterate :: proc(words: []u64, cap: int) -> Index_Iterator { return {words, cap, -1, 0}; }
 
-// Byte `at` of the serialized form: eight bits of one word, with the bits
-// past the capacity already dropped by `word_of`.
+// The serialized form is the words in little-endian order, cut short in the
+// final word, `cap/64`, when `cap` is not a multiple of 64: that partial word
+// is written byte by byte, with the bits past the capacity dropped by
+// `word_of`.
 @(private)
 store :: proc(words: []u64, cap: int, out: []mut u8) {
 	assert(out.len() == bytes_for_bits(cap), "container: an index set stores into exactly bytes_for_bits(cap) bytes");
-	foreach (at in 0 ..< out.len()) {
-		out[at] = math.wrap(u8, word_of(words, cap, at/8) >> uint(8*(at % 8)));
+	full := cap/64;
+	foreach (at in 0 ..< full) { endian.store(out[mut 8*at:], words[at], .Little); }
+	foreach (at in 8*full ..< out.len()) {
+		out[at] = math.wrap(u8, word_of(words, cap, full) >> uint(8*(at % 8)));
 	}
 }
 
+// Checks the final byte's padding before writing anything, and keeps the
+// caller's bits past the capacity in a partial final word.
 @(private)
 load :: proc(words: []mut u64, cap: int, bytes: []u8) -> bool {
 	assert(bytes.len() == bytes_for_bits(cap), "container: an index set loads from exactly bytes_for_bits(cap) bytes");
 	if (cap % 8 != 0 && bytes[bytes.len() - 1] >> uint(cap % 8) != 0) { return false; }
-	foreach (at in 0 ..< words.len()) {
+	full := cap/64;
+	foreach (at in 0 ..< full) { words[at] = endian.load(u64, bytes[8*at:], .Little); }
+	if (full < words.len()) {
 		loaded := u64(0);
-		foreach (part in 0 ..< 8) {
-			index := at*8 + part;
-			if (index < bytes.len()) { loaded |= u64(bytes[index]) << uint(8*part); }
-		}
-		mask := member_mask(cap, at);
-		words[at] = (words[at] &~ mask) | loaded;
+		foreach (at in 8*full ..< bytes.len()) { loaded |= u64(bytes[at]) << uint(8*(at % 8)); }
+		mask := member_mask(cap, full);
+		words[full] = (words[full] &~ mask) | loaded;
 	}
 	return true;
 }

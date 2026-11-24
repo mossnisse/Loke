@@ -248,6 +248,19 @@ main :: proc() {
 	}
 	fmt.println(words[1] == 0xFFFF_FFFF_FFFF_FFFE);
 
+	// A capacity that fills its last word is whole words, each little-endian.
+	wide := container.Index_Set(128).of(0, 15, 63, 64, 127);
+	wide_bytes: [16]u8 = {};
+	wide.store_bytes(wide_bytes[mut :]);
+	fmt.println(wide_bytes);
+	wide_back: container.Index_Set(128) = {};
+	fmt.println(wide_back.load_bytes(wide_bytes[:]), wide_back == wide);
+
+	// A search whose first candidate is a caller's padding bit finds nothing.
+	padded: [2]u64 = {0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFC};
+	padded_view := container.Index_View.over(padded[:], 66);
+	fmt.println(padded_view.next_member(64), padded_view.next_absent(0), padded_view.next_absent(65));
+
 	// A dynamic set round-trips through the same bytes as a fixed one.
 	h := container.Dynamic_Index_Set.init(20);
 	fmt.println(h.load_bytes(bytes[:]), h.view() == p.view());

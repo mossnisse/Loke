@@ -495,6 +495,9 @@ checklist.
   a 256-slot `Enum_Array(E, int)` take 81 ms, from 115, at `-opt=speed`, and about half the
   time at `-opt=none`. On an enum whose values do not count up from zero, `Bit_Set` and
   `Enum_Array` find a member's slot in half the time at `-opt=speed`.
+  Index sets store and load their byte form a word at a time, so either takes about a fiftieth
+  of the time on a 262,147-member set at `-opt=speed`, and an owner's `clear` zeroes its words
+  directly, about ten times as fast there.
 - A [`core:checksum`](docs/standard-library.md#corechecksum) update no longer reverses the start
   value bit by bit each time it runs, so a default build checksums four million nine-byte
   pieces with `Crc32` in about a quarter of the time. The eight-byte path drops a branch per
