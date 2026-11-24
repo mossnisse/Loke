@@ -15,6 +15,13 @@ static_assert(!interfaces.Equatable(container.Min_Queue(int)));
 static_assert(size_of(slice.Ascending(int)) == 0);
 static_assert(size_of(container.Min_Queue(int)) == size_of([dynamic]int));
 
+comparisons: int;
+
+counted_less :: proc(left, right: int) -> bool {
+	comparisons += 1;
+	return left < right;
+}
+
 // ------------------------------------------------------------- shortest path --
 
 Edge :: struct { to: int, cost: int }
@@ -326,6 +333,15 @@ main :: proc() {
 	view_total := 0;
 	foreach (item in q.view()) { view_total += item; }
 	fmt.println("total", total, view_total);
+
+	// A retain that keeps every element leaves the heap alone.
+	counted := container.priority_queue(int, counted_less);
+	foreach (value in [4]int{5, 3, 8, 1}) { counted.push(value); }
+	comparisons = 0;
+	counted.retain(proc(item: int) -> bool { return true; });
+	fmt.println("keep-all retain", comparisons);
+	counted.retain(proc(item: int) -> bool { return item != 1; });
+	fmt.println("retain", comparisons > 0, move(counted).into_sorted());
 
 	// A copy clones the elements.
 	copy := q.clone();

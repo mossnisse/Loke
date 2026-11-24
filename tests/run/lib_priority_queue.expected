@@ -3,6 +3,8 @@ peek 2
 [2, 5, 9]
 [4, 3, 2, 1]
 total 14 14
+keep-all retain 0
+retain true [3, 5, 8]
 3 2
 [1, 5, 8]
 [7]

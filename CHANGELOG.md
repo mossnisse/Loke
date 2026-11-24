@@ -498,6 +498,9 @@ checklist.
   Index sets store and load their byte form a word at a time, so either takes about a fiftieth
   of the time on a 262,147-member set at `-opt=speed`, and an owner's `clear` zeroes its words
   directly, about ten times as fast there.
+  A `Priority_Queue.retain` that keeps every element leaves the heap as it is rather than
+  rebuilding it, so 32 such passes over a million integers take 77 ms, from 246, at
+  `-opt=speed`.
 - A [`core:checksum`](docs/standard-library.md#corechecksum) update no longer reverses the start
   value bit by bit each time it runs, so a default build checksums four million nine-byte
   pieces with `Crc32` in about a quarter of the time. The eight-byte path drops a branch per

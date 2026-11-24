@@ -83,9 +83,9 @@ is_heap :: proc(values: []$T, less: $C) -> bool where Callable(C, proc(left, rig
 sift_down :: proc(values: []mut $T, start: int, less: $C) where Callable(C, proc(left, right: T) -> bool) {
 	at := start;
 	count := values.len();
-	for (;;) {
+	// Exactly the elements before `count / 2` have a child.
+	for (at < count / 2) {
 		child := 2 * at + 1;
-		if (child >= count) { break; }
 		if (child + 1 < count && less(values[child + 1], values[child])) { child += 1; }
 		if (!less(values[child], values[at])) { break; }
 		values.swap(at, child);

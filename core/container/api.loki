@@ -900,7 +900,10 @@ impl Priority_Queue($T, $C) {
 	*/
 	update_top :: proc(self: inout, change: $F) -> bool where Callable(F, proc(top: inout T)) ---;
 
-	// Drops each element for which `keep(item)` is false, then restores the order, in O(n).
+	/*
+		Drops each element for which `keep(item)` is false, then restores the order, in
+		O(n). Keeping every element leaves the queue as it was and calls no comparator.
+	*/
 	retain :: proc(self: inout, keep: $F) where Callable(F, proc(item: T) -> bool) ---;
 
 	reserve :: proc(self: inout, capacity: int) ---;

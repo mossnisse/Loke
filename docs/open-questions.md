@@ -543,6 +543,41 @@ a model can work on one part of a program without reading the rest.
   If so, `filled` could use the initializer once the compiler agrees.
   [Constructor](../core/container/enum_array.loke#L36)
 
+## Priority queue performance
+
+- Would a two-pass sift in `pop_heap` pay off with expensive comparators?
+  A swap-only prototype follows the preferred child to a leaf and then
+  reuses the push sift to move the replacement element back up. It reduced
+  the comparison count to drain 10,000 random integer keys from 216,515 to
+  120,203, but on one million integer keys at `-opt=speed` the median of five
+  runs rose from 226 ms to 287 ms. A comparator dearer than an integer `<`,
+  such as one over strings, might reverse that.
+  [Pop heap](../core/slice/heap.loke#L62)
+
+## Small_Array simplifications and performance
+
+- Format one indexed walk of the live view and write punctuation directly to
+  the sink. Formatting 64 integers 200,000 times to a counting sink took a
+  median of 331 ms before and 262 ms after across six runs at `-opt=speed`.
+  Formatting each element individually preserves the current spelling of
+  strings and runes. [Format](../core/container/small_array.loke#L319)
+- Have `append_one_copied` and `append_moved` check capacity and call `put`
+  directly. Both write at `count`, so they can skip insertion index validation
+  and the shift loop. The copied path checks capacity before cloning.
+  [Copied append](../core/container/small_array.loke#L163),
+  [moved append](../core/container/small_array.loke#L236)
+- Share the three insertion index checks in `check_insert_index`. The check
+  accepts `index == count` and runs before the capacity check so an invalid
+  index still panics when the array is full.
+  [Insertion](../core/container/small_array.loke#L197)
+- Have `get` use fixed storage after `check_index`, as `get_mut` does. It can
+  clone directly from the checked slot and skip constructing a slice in
+  unoptimized builds. [Indexing](../core/container/small_array.loke#L87)
+- Put the starting index and step in both shift loop headers. The body can then
+  be just the move into the vacant slot, with each loop's direction visible in
+  its header. [Remove](../core/container/small_array.loke#L273),
+  [insert](../core/container/small_array.loke#L369)
+
 ## Constant tables in the front end
 
 - A large array constant is slow to check. `core:strconv`'s table of powers
