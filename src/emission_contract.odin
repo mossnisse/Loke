@@ -246,6 +246,6 @@ semantic_extent :: proc(c: ^Compiler) -> Semantic_Extent {
 		registries = emission_registries(c),
 		symbols = len(c.symbols), types = len(c.types), procedure_instances = len(c.procedure_instances),
 		formatters = len(c.formatters), lifecycle = len(c.lifecycle_operations),
-		map_keys = len(c.map_key_policies), orders = len(c.order_policies),
+		map_keys = len(c.map_key_policies), orders = len(c.sortable_elements),
 	}
 }

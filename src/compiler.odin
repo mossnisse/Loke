@@ -152,8 +152,9 @@ Compiler :: struct {
 	// Checked map key operations, keyed by the underlying key type. Consumers
 	// must use these IDs rather than selecting members again.
 	map_key_policies:      map[Type_Id]Key_Policy,
-	// The `<` one `sort` uses, per element type (`src/container.odin`).
-	order_policies:        map[Type_Id]Policy_Kind,
+	// Whether `sort` finds a `<` for an element type (`src/container.odin`); a
+	// rejection is recorded only once reported.
+	sortable_elements:     map[Type_Id]bool,
 
 	// Compile-time reflection (`src/reflect.odin`, `src/typeid.odin`). The descriptor
 	// types are created on first use; `typeid` identity is symbolic during checking

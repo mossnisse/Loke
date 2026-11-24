@@ -82,8 +82,8 @@ container_key :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 // The element of a container or a slice, or INVALID_TYPE: what a sort orders.
 sequence_element :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	element := container_element(c, id)
-	return element != INVALID_TYPE ? element : slice_element(c, id)
+	info := underlying_info(c, id)
+	return info != nil && (info.kind == .Dynamic_Array || info.kind == .Map || info.kind == .Slice) ? info.element : INVALID_TYPE
 }
 
 // ------------------------------------------------------ contributed members --
@@ -244,26 +244,29 @@ ensure_dynamic_members :: proc(k: ^Checker, type: Type_Id, element: Type_Id) {
 	// Insertion clones.
 	contribute_lifecycle_members(k, element)
 
-	// Staging only: `add_members` copies them into the owner's members.
-	members := make([dynamic]Symbol_Id, 0, 17, context.temp_allocator)
-	none := INVALID_TYPE
-
+	none, status := INVALID_TYPE, k.c.alloc_result_type
 	pack := slice_of(k.c, element, mutable = false)
-	append_fallible_members(k, &members, type, "append", "try_append", .Append, {pack}, variadic = true)
-	append_fallible_members(k, &members, type, "insert", "try_insert", .Insert, {TYPE_INT, element})
-	append_lending_member(k, &members, type, "pop", .Pop, .Inout, nil, option_type(k, element))
-	append_lending_member(k, &members, type, "remove", .Remove, .Inout, {TYPE_INT}, element)
-	append_lending_member(k, &members, type, "remove_unordered", .Remove_Unordered, .Inout, {TYPE_INT}, element)
-	append(&members, container_member(k, type, "clear", .Clear, .Inout, nil, none))
-	append_fallible_members(k, &members, type, "resize", "try_resize", .Resize, {TYPE_INT})
-	append_fallible_members(k, &members, type, "reserve", "try_reserve", .Reserve, {TYPE_INT})
-	// `shrink()` is `shrink(0)`: the target is `max(len, min_capacity)`.
-	append_fallible_members(k, &members, type, "shrink", "try_shrink", .Shrink, {TYPE_INT}, defaults_zero = true)
-	append(&members, container_member(k, type, "sort", .Sort, .Inout, nil, none))
-	append(&members, container_member(k, type, "reverse_sort", .Reverse_Sort, .Inout, nil, none))
-	append(&members, container_member(k, type, "swap", .Swap, .Inout, {TYPE_INT, TYPE_INT}, none))
-	append(&members, allocator_member(k, type))
-	add_members(k.c, type, members[:])
+	add_members(k.c, type, []Symbol_Id{
+		container_member(k, type, "append", .Append, .Inout, {pack}, none, variadic = true),
+		container_member(k, type, "try_append", .Append, .Inout, {pack}, status, variadic = true),
+		container_member(k, type, "insert", .Insert, .Inout, {TYPE_INT, element}, none),
+		container_member(k, type, "try_insert", .Insert, .Inout, {TYPE_INT, element}, status),
+		container_member(k, type, "pop", .Pop, .Inout, nil, option_type(k, element), lends = true),
+		container_member(k, type, "remove", .Remove, .Inout, {TYPE_INT}, element, lends = true),
+		container_member(k, type, "remove_unordered", .Remove_Unordered, .Inout, {TYPE_INT}, element, lends = true),
+		container_member(k, type, "clear", .Clear, .Inout, nil, none),
+		container_member(k, type, "resize", .Resize, .Inout, {TYPE_INT}, none),
+		container_member(k, type, "try_resize", .Resize, .Inout, {TYPE_INT}, status),
+		container_member(k, type, "reserve", .Reserve, .Inout, {TYPE_INT}, none),
+		container_member(k, type, "try_reserve", .Reserve, .Inout, {TYPE_INT}, status),
+		// `shrink()` is `shrink(0)`: the target is `max(len, min_capacity)`.
+		container_member(k, type, "shrink", .Shrink, .Inout, {TYPE_INT}, none, defaults_zero = true),
+		container_member(k, type, "try_shrink", .Shrink, .Inout, {TYPE_INT}, status, defaults_zero = true),
+		container_member(k, type, "sort", .Sort, .Inout, nil, none),
+		container_member(k, type, "reverse_sort", .Reverse_Sort, .Inout, nil, none),
+		container_member(k, type, "swap", .Swap, .Inout, {TYPE_INT, TYPE_INT}, none),
+		allocator_member(k, type),
+	})
 }
 
 // design.md "Dynamic arrays", "Maps": `x.allocator()` is a handle on the provider
@@ -329,48 +332,55 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, key, value: Type_Id) {
 	contribute_lifecycle_members(k, key)
 	contribute_lifecycle_members(k, value)
 
-	members := make([dynamic]Symbol_Id, 0, 15, context.temp_allocator)
-	none := INVALID_TYPE
+	none, status := INVALID_TYPE, k.c.alloc_result_type
 	// design.md "Maps": a lookup takes the borrowed key form; insertion stores
 	// the owned key.
 	query := key
 	if key == TYPE_STRING {
 		query = TYPE_STRING_VIEW
 	}
-
-	// `inout`, because the returned pointer can mutate the stored value.
-	append_lending_member(k, &members, type, "find_mut", .Map_Find, .Inout, {query}, option_type(k, pointer_to(k.c, value, true)))
-	append_lending_member(k, &members, type, "find", .Map_Find, .Borrow, {query}, option_type(k, pointer_to(k.c, value, false)))
-	// The owning read, so the receiver is immutable.
-	append_lending_member(k, &members, type, "lookup_value", .Map_Lookup_Value, .Borrow, {query}, option_type(k, value))
 	slot := pointer_to(k.c, value, true)
-	try_slot := result_type(k, slot, TYPE_ALLOCATOR_ERROR)
-	append_lending_member(k, &members, type, "find_or_insert", .Map_Find_Or_Insert, .Inout, {key, value}, slot)
-	append_lending_member(k, &members, type, "try_find_or_insert", .Map_Find_Or_Insert, .Inout, {key, value}, try_slot)
-	append(&members, container_member(k, type, "try_insert", .Map_Try_Insert, .Inout, {key, value}, k.c.alloc_result_type))
-	append_lending_member(k, &members, type, "remove", .Map_Remove, .Inout, {query}, option_type(k, value))
-	append(&members, container_member(k, type, "clear", .Map_Clear, .Inout, nil, none))
-	append_fallible_members(k, &members, type, "reserve", "try_reserve", .Map_Reserve, {TYPE_INT})
-	append_fallible_members(k, &members, type, "shrink", "try_shrink", .Map_Shrink, {TYPE_INT}, defaults_zero = true)
-	// design.md "Iteration adapters": the views borrow through the receiver.
-	views := [3]struct{name: string, op: Container_Op, kind: View_Kind}{
-		{"entries", .Map_Entries, .Entries},
-		{"keys", .Map_Keys, .Keys},
-		{"values", .Map_Values, .Values},
-	}
-	for view in views {
-		result := container_view_type(k.c, type, view.kind)
-		ensure_iteration_members(k, result)
-		append_lending_member(k, &members, type, view.name, view.op, .Borrow, nil, result)
-	}
-	append(&members, allocator_member(k, type))
-	add_members(k.c, type, members[:])
+	add_members(k.c, type, []Symbol_Id{
+		// `inout`, because the returned pointer can mutate the stored value.
+		container_member(k, type, "find_mut", .Map_Find, .Inout, {query}, option_type(k, slot), lends = true),
+		container_member(k, type, "find", .Map_Find, .Borrow, {query}, option_type(k, pointer_to(k.c, value, false)), lends = true),
+		// The owning read, so the receiver is immutable.
+		container_member(k, type, "lookup_value", .Map_Lookup_Value, .Borrow, {query}, option_type(k, value), lends = true),
+		container_member(k, type, "find_or_insert", .Map_Find_Or_Insert, .Inout, {key, value}, slot, lends = true),
+		container_member(
+			k, type, "try_find_or_insert", .Map_Find_Or_Insert, .Inout, {key, value},
+			result_type(k, slot, TYPE_ALLOCATOR_ERROR), lends = true,
+		),
+		container_member(k, type, "try_insert", .Map_Try_Insert, .Inout, {key, value}, status),
+		container_member(k, type, "remove", .Map_Remove, .Inout, {query}, option_type(k, value), lends = true),
+		container_member(k, type, "clear", .Map_Clear, .Inout, nil, none),
+		container_member(k, type, "reserve", .Map_Reserve, .Inout, {TYPE_INT}, none),
+		container_member(k, type, "try_reserve", .Map_Reserve, .Inout, {TYPE_INT}, status),
+		container_member(k, type, "shrink", .Map_Shrink, .Inout, {TYPE_INT}, none, defaults_zero = true),
+		container_member(k, type, "try_shrink", .Map_Shrink, .Inout, {TYPE_INT}, status, defaults_zero = true),
+		map_view_member(k, type, "entries", .Map_Entries, .Entries),
+		map_view_member(k, type, "keys", .Map_Keys, .Keys),
+		map_view_member(k, type, "values", .Map_Values, .Values),
+		allocator_member(k, type),
+	})
+}
+
+// design.md "Iteration adapters": a view borrows through the receiver.
+@(private = "file")
+map_view_member :: proc(k: ^Checker, type: Type_Id, name: string, op: Container_Op, kind: View_Kind) -> Symbol_Id {
+	result := container_view_type(k.c, type, kind)
+	ensure_iteration_members(k, result)
+	return container_member(k, type, name, op, .Borrow, nil, result, lends = true)
 }
 
 // One operation: its receiver, by `receiver`, then by-value parameters of the
 // `trailing` types. design.md "Receiver forms": a read-only receiver is
 // `.Borrow`, taken by address like a written `self: ^`. `defaults_zero` lets a
-// call omit the first trailing parameter; `variadic` makes the last a pack.
+// call omit the first trailing parameter; `variadic` makes the last a pack. A
+// `lends` result borrows through the receiver, or is owned in its regions.
+//
+// Only a use enrolls the member for emission (calls, procedure values, and
+// witness slots each do), so an instantiation emits the operations it uses.
 @(private = "file")
 container_member :: proc(
 	k: ^Checker,
@@ -382,6 +392,7 @@ container_member :: proc(
 	result: Type_Id,
 	defaults_zero := false,
 	variadic := false,
+	lends := false,
 ) -> Symbol_Id {
 	params: [3]Type_Id
 	modes: [3]Param_Mode
@@ -391,7 +402,7 @@ container_member :: proc(
 	if variadic {
 		modes[count - 1] = .Variadic
 	}
-	id := synth_receiver_proc(k.c, name, .Container_Op, owner, params[:count], modes[:count], result)
+	id := synth_receiver_proc(k.c, name, .Container_Op, owner, params[:count], modes[:count], result, enroll = false)
 	sym := symbol_of(k.c, id)
 	sym.container_op = op
 	if defaults_zero {
@@ -402,41 +413,10 @@ container_member :: proc(
 	case .Map_Find, .Map_Find_Or_Insert, .Map_Lookup_Value, .Map_Try_Insert, .Map_Remove:
 		sym.param_symbols[1] = new_parameter(k.c, intern_identifier(k.c, "key"), trailing[0], .Value)
 	}
+	if lends {
+		set_synth_result_summary(k.c, id, 0)
+	}
 	return id
-}
-
-// A member whose result borrows through its receiver, or is owned in its regions.
-@(private = "file")
-append_lending_member :: proc(
-	k: ^Checker,
-	members: ^[dynamic]Symbol_Id,
-	owner: Type_Id,
-	name: string,
-	op: Container_Op,
-	receiver: Param_Mode,
-	trailing: []Type_Id,
-	result: Type_Id,
-) {
-	id := container_member(k, owner, name, op, receiver, trailing, result)
-	set_synth_result_summary(k.c, id, 0)
-	append(members, id)
-}
-
-// One signature's two spellings: the panicking one, and the `try_` form that
-// answers the allocation's result.
-@(private = "file")
-append_fallible_members :: proc(
-	k: ^Checker,
-	members: ^[dynamic]Symbol_Id,
-	owner: Type_Id,
-	name, try_name: string,
-	op: Container_Op,
-	trailing: []Type_Id,
-	defaults_zero := false,
-	variadic := false,
-) {
-	append(members, container_member(k, owner, name, op, .Inout, trailing, INVALID_TYPE, defaults_zero, variadic))
-	append(members, container_member(k, owner, try_name, op, .Inout, trailing, k.c.alloc_result_type, defaults_zero, variadic))
 }
 
 // -------------------------------------------------------------- ordering --
@@ -445,43 +425,37 @@ append_fallible_members :: proc(
 // own, whatever its visibility, or the built-in one. Resolving one asks nothing
 // about sorting, so unlike a map key's policy it needs no guard against being
 // asked again meanwhile. What a sort calls is `core:slice`'s instance. A
-// delegated `<` has no body, so it is followed to what it forwards to.
+// delegated `<` has no body, so it is followed to what it forwards to. The
+// answer is why the element has none, or "" when it has one.
 @(private = "file")
-resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Policy_Kind, string) {
+element_order_blocker :: proc(c: ^Compiler, element: Type_Id) -> string {
 	callable, _ := inherent_self_operator(c, element, "<")
-	if less, _ := operator_delegate_end(c, callable); less != INVALID_SYMBOL {
-		return .Inherent, ""
-	}
-	if type_is_ordered(c, element) {
-		return .Builtin, ""
+	if less, _ := operator_delegate_end(c, callable); less != INVALID_SYMBOL || type_is_ordered(c, element) {
+		return ""
 	}
 	if blocker := record_order_blocker(c, element); blocker != "" {
-		return .Unresolved, fmt.tprintf("does not satisfy `Ordered`: %s", blocker)
+		return fmt.tprintf("does not satisfy `Ordered`: %s", blocker)
 	}
-	return .Unresolved, "does not satisfy `Ordered`: it has no `<`"
+	return "does not satisfy `Ordered`: it has no `<`"
 }
 
-// The gate on `sort` and `reverse_sort`: it settles the element's `<`, and
-// reports an element that has none once, at its first sort.
+// The gate on `sort` and `reverse_sort`: it settles whether the element has a
+// `<`, and reports an element that has none once, at its first sort.
 @(private = "file")
-require_sort_order_policy :: proc(k: ^Checker, receiver: Type_Id, span: Span) -> bool {
-	element := sequence_element(k.c, receiver)
-	#partial switch k.c.order_policies[element] {
-	case .Builtin, .Inherent:
-		return true
-	case .Rejected:
-		return false // already reported, once, at this element
+require_sort_order :: proc(k: ^Checker, receiver, element: Type_Id, span: Span) -> bool {
+	if sortable, settled := k.c.sortable_elements[element]; settled {
+		return sortable // a rejection was already reported, once, at this element
 	}
 	// A distinct element inherits its underlying type's `<` (design.md "Distinct
 	// types").
 	settle_delegates(k, element)
-	policy, reason := resolve_element_order_policy(k.c, element)
+	reason := element_order_blocker(k.c, element)
 	if reason == "" {
-		k.c.order_policies[element] = policy
+		k.c.sortable_elements[element] = true
 		return true
 	}
 	if committing(k.c) {
-		k.c.order_policies[element] = .Rejected
+		k.c.sortable_elements[element] = false
 	}
 	errorf(
 		k.c, span, "L0651",
@@ -566,7 +540,7 @@ check_container_element :: proc(k: ^Checker, span: Span, chosen: ^Symbol, count:
 	if chosen.container_op == .None {
 		return
 	}
-	element := container_element(k.c, chosen.params[0])
+	element := sequence_element(k.c, chosen.params[0])
 	#partial switch chosen.container_op {
 	case .Resize:
 		// design.md "Zero values": growth fills new slots with the element's zero,
@@ -583,8 +557,8 @@ check_container_element :: proc(k: ^Checker, span: Span, chosen: ^Symbol, count:
 			)
 		}
 	case .Sort, .Reverse_Sort:
-		if require_sort_order_policy(k, chosen.params[0], span) {
-			request_sort_instance(k, sequence_element(k.c, chosen.params[0]), chosen.container_op, span)
+		if require_sort_order(k, chosen.params[0], element, span) {
+			request_sort_instance(k, element, chosen.container_op, span)
 		}
 	}
 }

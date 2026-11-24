@@ -196,6 +196,51 @@ remain from them:
 - **Unifying the LLVM naming and emission walks** around one procedure
   eligibility decision.
 
+## Map runtime review follow-ups
+
+- **Reuse tombstones at the load limit.** Insertion budgets one more nonempty
+  slot even when the probe found a reusable tombstone. A map with length and
+  capacity 7 grew to capacity 14 after removing and reinserting the same key
+  with `-opt=speed`. Apply the nonempty-slot limit only when insertion consumes
+  an empty slot. Keep the live-entry limit and the rebuild for probes that
+  run out of reusable slots. [Insertion check](../runtime/container.c#L908)
+- **Share the table rebuild.** Reserve, shrink, and inserting a missing key
+  each lay out, allocate, seed, and populate a fresh table. Extract a helper
+  that returns the fresh block, then let each caller decide when to replace
+  the old one. Insertion needs the old table through a successful key clone.
+  The helper can use `loke_rt_v1_alloc` and zero just the control bytes, since
+  only occupied slots expose their payloads. This avoids zeroing the entire
+  key and value storage on reserve and rebuild.
+  [Reserve](../runtime/container.c#L675), [insertion](../runtime/container.c#L928),
+  [shrink](../runtime/container.c#L1057)
+- **Keep one live-entry count.** The owner already maintains `len` on insertion,
+  removal, and unwind. Use it for the load calculation and delete the table's
+  `occupied` field and its updates, including one update per relocated entry.
+  `controls_offset` is also constant at the size of the aligned table header.
+  Removing it saves another word and a load at probe setup. Update the emitted
+  debug layout and map visualizer with the table layout.
+  [Table header](../runtime/loke_rt.h#L303), [debugger](../src/emit_llvm_debug.odin#L629)
+- **Skip the entry walk for trivial `clear`.** When both drop thunks are null,
+  resetting the controls and counters clears the map. Use the same guarded
+  entry walk for `clear` and `drop`; managed entries still go through the
+  unwind-aware drop path. [Clear](../runtime/container.c#L1036),
+  [drop](../runtime/container.c#L747)
+- **Probe once in `find_or_insert` when the value needs no clone.** Today a
+  miss calls both `map_find` and `map_entry`. For a moved or trivial value,
+  use `map_entry` directly and use its `inserted` flag to decide whether to
+  store the staged value or discard it. A borrowed managed value still needs
+  a read probe before cloning on a miss. Measure miss-heavy workloads before
+  changing the runtime interface to reuse that probe across a copy hook.
+  [Emitter](../src/emit_llvm_containers.odin#L628)
+- **Filter equality checks with a hash fingerprint.** A probe calls key
+  equality for every occupied slot it visits. Try storing a few bits of the
+  mixed hash in each occupied control byte, using bits outside the slot mask
+  and reserving the existing markers for empty, tombstone, and owed value.
+  This can skip key loads and equality on mismatches with no extra bytes per
+  slot. Measure integer, string, and structural keys before adopting it, and
+  update the debugger's occupied-slot test if it pays off.
+  [Probe](../runtime/container.c#L845), [debugger](../src/emit_llvm_debug.odin#L629)
+
 ## LLVM source review follow-ups
 
 - **Returning a large value.** A result over 4096 bytes is written through a
@@ -213,8 +258,6 @@ remain from them:
   live. Passing `x` as the callee's result needs the unwind never to read `x`
   before the call returns. The two rules are what is open; until they are
   settled a program has the fast form with an `inout` parameter.
-- **Container emission.** Measure miss-heavy `find_or_insert` before
-  changing the runtime ABI to reuse a probe across a user copy hook.
 
 ## Package and import versioning
 
