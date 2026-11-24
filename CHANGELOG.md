@@ -476,8 +476,11 @@ checklist.
   `Small_Array` insertion moves each later element once rather than swapping the new one down,
   so filling 64 slots from the front takes a fifteenth of the time at `-opt=speed`. `Bit_Set`
   stores its members in an `Index_Set` and iterates a word at a time: walking a two-member set
-  of a 1,024-member enum is over 100 times faster, and a full one 17% faster. Growing a wrapped
-  `Deque` moves its elements about 25% faster.
+  of a 1,024-member enum is over 100 times faster, and a full one 17% faster. `Bit_Set` and
+  `Enum_Array` find a member's slot from its value when the enum counts up from zero, rather
+  than searching the members: `contains` on a 1,024-member enum is about twice as fast at
+  `-opt=speed` and five times as fast at `-opt=none`. Growing a wrapped `Deque` moves its
+  elements about 25% faster.
 - A [`core:checksum`](docs/standard-library.md#corechecksum) update no longer reverses the start
   value bit by bit each time it runs, so a default build checksums four million nine-byte
   pieces with `Crc32` in about a quarter of the time. The eight-byte path drops a branch per

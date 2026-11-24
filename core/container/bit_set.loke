@@ -107,22 +107,34 @@ impl Bit_Set_Iterator($E) {
 
 	next :: proc(self: inout) -> Option(E) {
 		members :: E.values();
-		switch (next_index(self.held.words[:], members.len(), inout self.at, inout self.pending)) {
-		case .some(at): return members[at];
-		case .none:     return .none;
-		}
+		at := next_index(self.held.words[:], members.len(), inout self.at, inout self.pending) or_else return .none;
+		return members[at];
 	}
 }
 
-// A member's declaration position. Linear in the number of members, which is
-// what makes an enum with holes work at all; enums are small, and the search is
-// over a compile-time constant array.
+// A member's declaration position. For an enum that counts up from zero, the
+// position is the member's value. Any other enum, with holes or reordered values,
+// takes a linear search over its compile-time constant members.
 @(private)
 position_of :: proc(member: $E) -> int {
-	foreach (declared, index in E.values().indexed()) {
-		if (declared == member) { return index; }
+	when (counts_from_zero(E)) {
+		return int(member);
+	} else {
+		foreach (declared, index in E.values().indexed()) {
+			if (declared == member) { return index; }
+		}
+		// design.md "Enumerations": safe enum values always name a variant. Keep a
+		// defensive check for invalid representations supplied across unsafe boundaries.
+		panic("invalid enum representation");
 	}
-	// design.md "Enumerations": safe enum values always name a variant. Keep a
-	// defensive check for invalid representations supplied across unsafe boundaries.
-	panic("invalid enum representation");
+}
+
+// Whether every member's value is its declaration position. `from_int` compares
+// exactly, whatever the backing type.
+@(private)
+counts_from_zero :: proc($E: type) -> bool {
+	foreach (member, index in E.values().indexed()) {
+		if (E.from_int(index) != Option(E).some(member)) { return false; }
+	}
+	return true;
 }

@@ -16,6 +16,12 @@ Sparse :: enum{A, B = 4, C = 7};
 // keep its multiplication's low bits (design.md "Integer overflow").
 Wide :: enum{M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M40, M41, M42, M43, M44, M45, M46, M47, M48, M49, M50, M51, M52, M53, M54, M55, M56, M57, M58, M59, M60, M61, M62, M63, M64, M65};
 
+// A member's position is its value only when every member counts up from zero:
+// these must take the search, and a `u8` enum that counts takes the value.
+Reordered :: enum{A = 1, B = 0};
+Above_Int :: enum i128{A = 1 << 64, B};
+Small :: enum u8{X, Y, Z};
+
 Flags :: container.Bit_Set(Direction);
 Counts :: container.Enum_Array(Direction, int);
 
@@ -66,6 +72,13 @@ main :: proc() {
 	wide.unset(.M63);
 	fmt.println(wide.len(), container.Bit_Set(Wide).of(.M8).len());
 
+	reordered := container.Bit_Set(Reordered).of(.A);
+	fmt.println(reordered, reordered.contains(.A), reordered.contains(.B));
+	above := container.Bit_Set(Above_Int).of(.B);
+	fmt.println(above, above.contains(.A), above.contains(.B));
+	small := container.Bit_Set(Small).of(.Z);
+	fmt.println(small, small.contains(.Y), small.contains(.Z));
+
 	// ---------------------------------------------------------- Enum_Array --
 
 	counts: Counts = {};
@@ -84,4 +97,8 @@ main :: proc() {
 	labels := container.Enum_Array(Sparse, int).filled(-1);
 	labels[.B] = 4;
 	fmt.println(labels, labels.len());
+
+	ranks := container.Enum_Array(Reordered, int).filled(0);
+	ranks[.A] = 1;
+	fmt.println(ranks);
 }
