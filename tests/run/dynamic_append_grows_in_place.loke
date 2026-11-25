@@ -1,0 +1,29 @@
+// design.md "Dynamic array container operations": an append that grows an
+// array of plain bytes resizes its storage, so a region extends the newest
+// allocation where it stands instead of copying it out. Growth that has to move
+// keeps every element.
+package main;
+import "core:fmt";
+import "core:mem";
+
+main :: proc() {
+	buffer: [256]u8 = {};
+	arena := mem.Arena.from_buffer(buffer[mut :]);
+	bytes: [dynamic]u8 via arena.allocator() = {};
+	bytes.reserve(64);
+	bytes.resize(64);
+	bytes[63] = 7;
+	// Room for one block of 128 bytes past the first, not for a second copy.
+	fmt.println(bytes.try_append(9) == .ok);
+	fmt.println(bytes.len(), bytes.cap(), bytes[63], bytes[64]);
+
+	// Another allocation above the array makes the next growth move it.
+	room: [512]u8 = {};
+	region := mem.Arena.from_buffer(room[mut :]);
+	words: [dynamic]int via region.allocator() = {};
+	words.append(1, 2, 3, 4, 5, 6, 7, 8);
+	other: [dynamic]u8 via region.allocator() = {};
+	other.append(1);
+	words.append(9);
+	fmt.println(words[:], words.cap());
+}

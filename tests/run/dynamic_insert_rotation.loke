@@ -1,7 +1,6 @@
 // design.md "Dynamic array container operations": `insert` places its element
-// before the tail at every size, including elements too large to wait in the
-// runtime's small buffer while the tail moves, and an element copied out of the
-// array itself.
+// before the tail at every size, small and large, including an element copied
+// out of the array itself.
 package main;
 import "core:fmt";
 

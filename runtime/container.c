@@ -90,29 +90,43 @@ static int64_t dyn_growth_target(int64_t cap, int64_t min_capacity) {
 	return want < 8 ? 8 : want;
 }
 
+/* The bytes behind `count` elements, for a count no larger than a capacity
+ * this array already holds: every capacity is checked when it is set, so no
+ * product below one can wrap. */
+static uint64_t dyn_bytes(const loke_rt_container_ops_v1 *ops, int64_t count) {
+	return (uint64_t)count * ops->elem_size;
+}
+
+/* Gives back storage of `cap` elements. A zero-sized element, or a capacity of
+ * none, never has storage behind it. */
+static void dyn_release(
+	const loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, void *data, int64_t cap) {
+	if (data != 0 && dyn_bytes(ops, cap) != 0) {
+		loke_rt_v1_free(self->allocator, data, dyn_bytes(ops, cap), sane_container_align(ops->elem_align));
+	}
+}
+
 /* Moves the storage to hold exactly `target` elements, at least the length. */
 static int32_t dyn_set_capacity(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t target) {
-	uint64_t old_bytes, new_bytes;
+	uint64_t new_bytes;
 	void *storage;
 
-	if (!loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &old_bytes) ||
-	    !loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
+	if (!loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
 		return 0;
 	}
 	/* No element left, or a zero-sized element, whose capacity never has storage
 	 * behind it; `_aligned_realloc` of zero bytes would answer NULL and read as a
 	 * failure. */
 	if (new_bytes == 0) {
-		if (self->data != 0) {
-			loke_rt_v1_free(self->allocator, self->data, old_bytes, sane_container_align(ops->elem_align));
-		}
+		dyn_release(self, ops, self->data, self->cap);
 		self->data = 0;
 		self->cap = target;
 		return 1;
 	}
 	storage = loke_rt_v1_resize(
-		self->allocator, self->data, old_bytes, new_bytes, sane_container_align(ops->elem_align));
+		self->allocator, self->data, dyn_bytes(ops, self->cap), new_bytes,
+		sane_container_align(ops->elem_align));
 	if (storage == 0) {
 		return 0; /* the old allocation is still live and unchanged */
 	}
@@ -137,24 +151,29 @@ int32_t loke_rt_v1_dyn_reserve(
 	return dyn_set_capacity(self, ops, min_capacity);
 }
 
+/* design.md "Uninitialized capacity": a container shortens before it drops what
+ * it took, last element first, so a drop hook that panics leaves the length
+ * counting exactly the elements still owed a drop, and the unwind drops each
+ * of them once. */
+static void dyn_truncate(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len) {
+	if (ops->elem_drop == 0) {
+		self->len = new_len;
+		return;
+	}
+	while (self->len > new_len) {
+		self->len -= 1;
+		ops->elem_drop(dyn_at(self, ops, self->len));
+	}
+}
+
 /* design.md "What the unwind runs, and what it does not": the caller keeps the
- * array registered while this runs, and it shortens before each drop, last
- * element first, as `dyn_truncate` does. A panicking hook therefore leaves the
- * length counting exactly the elements still owed a drop, and the unwind's
- * second call drops each of them once and frees the storage. */
+ * array registered while this runs, and it shortens before each drop, as
+ * `dyn_truncate` does. A panicking hook therefore leaves the length counting
+ * exactly the elements still owed a drop, and the unwind's second call drops
+ * each of them once and frees the storage. */
 void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops) {
-	uint64_t bytes;
-	/* Not guarded by `data`: zero-sized elements are live without any storage,
-	 * and each still owes its drop hook. */
-	if (ops->elem_drop != 0) {
-		while (self->len > 0) {
-			self->len -= 1;
-			ops->elem_drop(dyn_at(self, ops, self->len));
-		}
-	}
-	if (self->data != 0 && loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes) && bytes != 0) {
-		loke_rt_v1_free(self->allocator, self->data, bytes, sane_container_align(ops->elem_align));
-	}
+	dyn_truncate(self, ops, 0);
+	dyn_release(self, ops, self->data, self->cap);
 	memset(self, 0, sizeof *self);
 }
 
@@ -176,13 +195,9 @@ int32_t loke_rt_v1_dyn_clone(
 		return 0;
 	}
 	if (ops->elem_clone == 0) {
-		uint64_t bytes;
-		if (!loke_rt_v1_checked_bytes(src->len, ops->elem_size, &bytes)) {
-			loke_rt_v1_dyn_drop(out, ops);
-			out->allocator = a;
-			return 0;
+		if (dyn_bytes(ops, src->len) != 0) {
+			memcpy(out->data, src->data, (size_t)dyn_bytes(ops, src->len));
 		}
-		memcpy(out->data, src->data, (size_t)bytes);
 		out->len = src->len;
 		return 1;
 	}
@@ -210,9 +225,10 @@ void loke_rt_v1_dyn_bind(loke_rt_dynamic_v1 *self) {
 	}
 }
 
-/* Growth that keeps the old block alive. A source slice pointing into that block
- * has to stay readable until the copy out of it is finished, which a plain
- * `resize` cannot promise. */
+/* Growth for elements that clone through a hook, which keeps the old block
+ * alive. A source slice pointing into that block has to stay readable until the
+ * last clone out of it is finished, and a clone that fails puts the old block
+ * back; a plain `resize` can promise neither. */
 typedef struct dyn_grow_undo {
 	void *old_data;
 	int64_t old_cap;
@@ -223,7 +239,7 @@ static int32_t dyn_regrow(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
 	int64_t need, dyn_grow_undo *undo) {
 	int64_t target;
-	uint64_t bytes, used;
+	uint64_t bytes;
 	void *fresh;
 
 	undo->grew = 0;
@@ -246,8 +262,8 @@ static int32_t dyn_regrow(
 	}
 	/* Relocation within an allocation change is a compiler-known move of
 	 * initialized representations: no user hook runs. */
-	if (loke_rt_v1_checked_bytes(self->len, ops->elem_size, &used) && used != 0) {
-		memcpy(fresh, self->data, (size_t)used);
+	if (dyn_bytes(ops, self->len) != 0) {
+		memcpy(fresh, self->data, (size_t)dyn_bytes(ops, self->len));
 	}
 	self->data = fresh;
 	self->cap = target;
@@ -257,145 +273,100 @@ static int32_t dyn_regrow(
 
 static void dyn_regrow_commit(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const dyn_grow_undo *undo) {
-	uint64_t bytes;
-	if (undo->grew && undo->old_data != 0 &&
-	    loke_rt_v1_checked_bytes(undo->old_cap, ops->elem_size, &bytes) && bytes != 0) {
-		loke_rt_v1_free(self->allocator, undo->old_data, bytes, sane_container_align(ops->elem_align));
+	if (undo->grew) {
+		dyn_release(self, ops, undo->old_data, undo->old_cap);
 	}
 }
 
 static void dyn_regrow_rollback(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const dyn_grow_undo *undo) {
-	uint64_t bytes;
-	if (!undo->grew) {
-		return;
-	}
-	if (loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes) && bytes != 0) {
-		loke_rt_v1_free(self->allocator, self->data, bytes, sane_container_align(ops->elem_align));
-	}
-	self->data = undo->old_data;
-	self->cap = undo->old_cap;
-}
-
-/* design.md "Uninitialized capacity": a container shortens before it drops what
- * it took, last element first, so a drop hook that panics leaves the length
- * counting exactly the elements still owed a drop, and the unwind drops each
- * of them once. */
-static void dyn_truncate(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len) {
-	if (ops->elem_drop == 0) {
-		self->len = new_len;
-		return;
-	}
-	while (self->len > new_len) {
-		self->len -= 1;
-		ops->elem_drop(dyn_at(self, ops, self->len));
+	if (undo->grew) {
+		dyn_release(self, ops, self->data, self->cap);
+		self->data = undo->old_data;
+		self->cap = undo->old_cap;
 	}
 }
 
-/* Appends `count` elements from `src` into capacity already reserved for them.
- * An element `owned` marks moves in, and its flag is cleared as it does; every
- * other one is cloned.
+/* Appends `count` elements whose clone is their bytes, to `need` in all. Only
+ * the growth can fail, so it resizes the block, in place when the provider can.
+ * A `src` within the live elements follows them when the block moves; every
+ * write lands past them. */
+static int32_t dyn_append_bytes(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	const void *src, uint8_t *owned, int64_t count, int64_t need) {
+	if (need > self->cap) {
+		uint64_t offset = (uint64_t)((uintptr_t)src - (uintptr_t)self->data);
+		int32_t inside = offset < dyn_bytes(ops, self->len);
+		if (!dyn_set_capacity(self, ops, dyn_growth_target(self->cap, need))) {
+			return 0;
+		}
+		if (inside) {
+			src = (const char *)self->data + offset;
+		}
+	}
+	if (dyn_bytes(ops, count) != 0) {
+		memcpy(dyn_at(self, ops, self->len), src, (size_t)dyn_bytes(ops, count));
+	}
+	if (owned != 0) {
+		memset(owned, 0, (size_t)count);
+	}
+	self->len = need;
+	return 1;
+}
+
+/* Appends `count` elements, to `need` in all. An element `owned` marks moves
+ * in, and its flag is cleared as it does; every other one is cloned.
  *
  * design.md "What the unwind runs, and what it does not": the length counts each
  * element as soon as it is complete, so when a clone hook panics the array's own
  * cleanup drops every element this call made or took, and the caller's cleanup
  * drops the owned elements still flagged. A clone that fails takes the new
- * elements back out, last first, by the shortening `dyn_truncate` does, and the
- * owned elements still flagged are the caller's to drop. `src` is only read, and
- * every write lands past the live elements, so it may point into them. */
-static int32_t dyn_fill(
+ * elements back out, last first, by the shortening `dyn_truncate` does, gives
+ * the storage back as it was, and leaves the owned elements still flagged to
+ * the caller. `src` is only read, and every write lands past the live elements,
+ * so it may point into them. */
+static int32_t dyn_append_clones(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
-	const void *src, uint8_t *owned, int64_t count) {
+	const void *src, uint8_t *owned, int64_t count, int64_t need) {
+	dyn_grow_undo undo;
 	int64_t start = self->len, i;
-	uint64_t bytes;
-	if (ops->elem_clone == 0) {
-		if (!loke_rt_v1_checked_bytes(count, ops->elem_size, &bytes)) {
-			return 0;
-		}
-		if (bytes != 0) {
-			memcpy(dyn_at(self, ops, start), src, (size_t)bytes);
-		}
-		if (owned != 0) {
-			memset(owned, 0, (size_t)count);
-		}
-		self->len = start + count;
-		return 1;
+
+	if (!dyn_regrow(self, ops, need, &undo)) {
+		return 0;
 	}
 	for (i = 0; i < count; i += 1) {
-		const void *from = (const char *)src + (uint64_t)i * ops->elem_size;
+		const void *from = (const char *)src + dyn_bytes(ops, i);
 		if (owned != 0 && owned[i]) {
 			memcpy(dyn_at(self, ops, self->len), from, (size_t)ops->elem_size);
 			owned[i] = 0;
 		} else if (!ops->elem_clone(dyn_at(self, ops, self->len), from, self->allocator)) {
 			dyn_truncate(self, ops, start);
+			dyn_regrow_rollback(self, ops, &undo);
 			return 0;
 		}
 		self->len += 1;
 	}
+	dyn_regrow_commit(self, ops, &undo);
 	return 1;
 }
 
-static void dyn_swap_bytes(char *a, char *b, uint64_t bytes) {
-	char buffer[256];
-	while (bytes != 0) {
-		size_t step = bytes < sizeof buffer ? (size_t)bytes : sizeof buffer;
-		memcpy(buffer, a, step);
-		memcpy(a, b, step);
-		memcpy(b, buffer, step);
-		a += step;
-		b += step;
-		bytes -= step;
-	}
-}
-
-/* Turns the `before` bytes at `base` and the `after` bytes that follow them
- * around, so those come first. Only bytes move: no hook runs. A short `after`
- * waits in a buffer while the rest shifts; a long one is the block swap that
- * puts one part in its final place on each step. */
-static void dyn_rotate(char *base, uint64_t before, uint64_t after) {
-	char buffer[256];
-	while (before != 0 && after != 0) {
-		if (after <= sizeof buffer) {
-			memcpy(buffer, base + before, (size_t)after);
-			memmove(base + after, base, (size_t)before);
-			memcpy(base, buffer, (size_t)after);
-			return;
-		}
-		if (before <= after) {
-			/* [A | B1 B2], |B2| = |A|  ->  [B2 B1 | A]: A is in place. */
-			dyn_swap_bytes(base, base + after, before);
-			after -= before;
-		} else {
-			/* [A1 A2 | B], |A1| = |B|  ->  [B | A2 A1]: B is in place. */
-			dyn_swap_bytes(base, base + before, after);
-			base += after;
-			before -= after;
-		}
-	}
-}
-
-/* Binds the provider, makes room for `count` more elements, and appends them
- * by `dyn_fill`. A failure gives the storage back as it was. Growth keeps the old
- * block until the copy is done, since `src` may point into it. */
+/* Binds the provider and appends `count` elements from `src`, which may point
+ * into the array's own elements. A failure leaves the array as it was. */
 static int32_t dyn_grow_fill(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
 	const void *src, uint8_t *owned, int64_t count) {
-	dyn_grow_undo undo;
 	int64_t need;
 
 	if (count == 0) {
 		return 1;
 	}
 	loke_rt_v1_dyn_bind(self);
-	if (!loke_rt_v1_checked_add(self->len, count, &need) || !dyn_regrow(self, ops, need, &undo)) {
+	if (!loke_rt_v1_checked_add(self->len, count, &need)) {
 		return 0;
 	}
-	if (!dyn_fill(self, ops, src, owned, count)) {
-		dyn_regrow_rollback(self, ops, &undo);
-		return 0;
-	}
-	dyn_regrow_commit(self, ops, &undo);
-	return 1;
+	return ops->elem_clone == 0
+		? dyn_append_bytes(self, ops, src, owned, count, need)
+		: dyn_append_clones(self, ops, src, owned, count, need);
 }
 
 /* One element whose clone is its bytes, into spare capacity of an array that
@@ -423,27 +394,25 @@ LOKE_RT_SLOW_PATH int32_t loke_rt_v1_dyn_append_owned(
 	return dyn_grow_fill(self, ops, src, owned, count);
 }
 
-/* The new elements are appended first, by the path `append` takes, and only
- * then turned around past the tail they precede: no element is out of place
- * while a clone hook runs. */
+/* The element is appended first, by the path `append` takes, so none is out of
+ * place while a clone hook runs. Only then does it wait in `slot` while the tail
+ * shifts up past the gap it fills. */
 int32_t loke_rt_v1_dyn_insert(
-	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
-	int64_t index, const void *src, int64_t count) {
-	int64_t tail;
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t index, void *slot) {
+	int64_t last;
 
 	if (index < 0 || index > self->len) {
 		loke_rt_v1_container_fault("this insert index is out of range");
 	}
-	if (count < 0) {
-		loke_rt_v1_container_fault("a container insert count cannot be negative");
-	}
-	tail = self->len - index;
-	if (!dyn_grow_fill(self, ops, src, 0, count)) {
+	if (!dyn_grow_fill(self, ops, slot, 0, 1)) {
 		return 0;
 	}
-	dyn_rotate(
-		(char *)dyn_at(self, ops, index),
-		(uint64_t)tail * ops->elem_size, (uint64_t)count * ops->elem_size);
+	last = self->len - 1;
+	if (index < last && ops->elem_size != 0) {
+		memcpy(slot, dyn_at(self, ops, last), (size_t)ops->elem_size);
+		memmove(dyn_at(self, ops, index + 1), dyn_at(self, ops, index), (size_t)dyn_bytes(ops, last - index));
+		memcpy(dyn_at(self, ops, index), slot, (size_t)ops->elem_size);
+	}
 	return 1;
 }
 
@@ -462,7 +431,6 @@ int32_t loke_rt_v1_dyn_pop(
 void loke_rt_v1_dyn_remove(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
 	int64_t index, void *out, int32_t unordered) {
-	uint64_t tail_bytes;
 	if (index < 0 || index >= self->len) {
 		loke_rt_v1_container_fault("this removal index is out of range");
 	}
@@ -475,8 +443,8 @@ void loke_rt_v1_dyn_remove(
 		memcpy(dyn_at(self, ops, index), dyn_at(self, ops, self->len), (size_t)ops->elem_size);
 		return;
 	}
-	if (loke_rt_v1_checked_bytes(self->len - index, ops->elem_size, &tail_bytes) && tail_bytes != 0) {
-		memmove(dyn_at(self, ops, index), dyn_at(self, ops, index + 1), (size_t)tail_bytes);
+	if (ops->elem_size != 0) {
+		memmove(dyn_at(self, ops, index), dyn_at(self, ops, index + 1), (size_t)dyn_bytes(ops, self->len - index));
 	}
 }
 
@@ -486,8 +454,6 @@ void loke_rt_v1_dyn_clear(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_
 
 int32_t loke_rt_v1_dyn_resize(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len) {
-	uint64_t bytes;
-
 	if (new_len < 0) {
 		loke_rt_v1_container_fault("a container length cannot be negative");
 	}
@@ -506,8 +472,8 @@ int32_t loke_rt_v1_dyn_resize(
 	}
 	/* Every Loke zero value is all-zero bits, so the new tail is one memset and
 	 * the drop of an untouched element is the no-op every hook already handles. */
-	if (loke_rt_v1_checked_bytes(new_len - self->len, ops->elem_size, &bytes) && bytes != 0) {
-		memset(dyn_at(self, ops, self->len), 0, (size_t)bytes);
+	if (ops->elem_size != 0) {
+		memset(dyn_at(self, ops, self->len), 0, (size_t)dyn_bytes(ops, new_len - self->len));
 	}
 	self->len = new_len;
 	return 1;

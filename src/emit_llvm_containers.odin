@@ -21,7 +21,7 @@ CONTAINER_DECLARATIONS := [?]Runtime_Declaration {
 	{"i32", "loke_rt_v1_dyn_reserve", "ptr, ptr, i64", ""},
 	{"i32", "loke_rt_v1_dyn_append", "ptr, ptr, ptr, i64", ""},
 	{"i32", "loke_rt_v1_dyn_append_owned", "ptr, ptr, ptr, ptr, i64", ""},
-	{"i32", "loke_rt_v1_dyn_insert", "ptr, ptr, i64, ptr, i64", ""},
+	{"i32", "loke_rt_v1_dyn_insert", "ptr, ptr, i64, ptr", ""},
 	{"i32", "loke_rt_v1_dyn_pop", "ptr, ptr, ptr", ""},
 	{"void", "loke_rt_v1_dyn_remove", "ptr, ptr, i64, ptr, i32", ""},
 	{"void", "loke_rt_v1_dyn_clear", "ptr, ptr", ""},
@@ -434,9 +434,11 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string, cons
 		status = emit_synth_append(e, body)
 
 	case .Insert:
+		// The helper reuses this private slot to shift the tail once it has
+		// appended the element; a failure leaves the slot as it was.
 		slot := spill(e, element, "%arg2")
 		guard := moves ? guard_built_element(e, element, slot) : Deferred{}
-		status = emit_value(e, "call i32 @loke_rt_v1_dyn_insert(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i64 1)", ops, slot)
+		status = emit_value(e, "call i32 @loke_rt_v1_dyn_insert(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s)", ops, slot)
 		// The helper takes the value only once nothing can panic.
 		finish_temporary_drop(e, guard)
 		if moves {

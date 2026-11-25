@@ -330,6 +330,12 @@ checklist.
 
 ### Changed
 
+- A `[dynamic]T` whose elements copy as bytes grows through its allocator's resize, so it can
+  extend its block in place. In a 256-byte `mem.Arena.from_buffer`, an array of 64 `u8` at
+  capacity 64 refused `try_append(9)`, since growth asked for a second block while the first
+  was still held; it now grows to capacity 128. At `-opt=speed`, appending 100,000 `int`s one
+  at a time, 200 times, takes 118 ms on the default heap, from 195. `insert` shifts the tail
+  once instead of rotating it into place.
 - A union's tag is read where the union is stored, and only the active payload is copied.
   Printing a union over 4096 bytes, such as `union { data: [8192]u8, code: int }`, copied all of
   it twice before testing the tag, and comparing, hashing, widening, `or_else`, `or_return`, and a

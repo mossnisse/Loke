@@ -332,9 +332,11 @@ void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v
  * NULL `elem_clone`: its caller handed the elements over, so the memcpy is the
  * move, and on failure the caller-side body still owns and drops them.
  *
- * `src` may point into the container's own storage: `xs.append(..xs[:])` is
- * ordinary source. Growth therefore never releases the old block until the copy
- * out of it is complete (m6b-plan decision "Dynamic-array operations").
+ * `src` may point into the container's own elements. Growth for a cloned
+ * element therefore keeps the old block until the last clone out of it is
+ * complete, and growth for a byte copy, which cannot fail part-way, resizes the
+ * block and reads `src` at the same offset in it (m6b-plan decision
+ * "Dynamic-array operations").
  *
  * design.md "What the unwind runs, and what it does not": the length counts
  * each new element as soon as it is complete, and an insert moves its elements
@@ -353,9 +355,10 @@ int32_t loke_rt_v1_dyn_append(
 int32_t loke_rt_v1_dyn_append_owned(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
 	const void *src, uint8_t *owned, int64_t count);
+/* Inserts the one element in `slot`, the caller's own storage, which holds
+ * other bytes once the insert succeeds and is left as it was when it fails. */
 int32_t loke_rt_v1_dyn_insert(
-	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
-	int64_t index, const void *src, int64_t count);
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t index, void *slot);
 /* Moves the last element to `out` and answers 0 when the container was empty. */
 int32_t loke_rt_v1_dyn_pop(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, void *out);
