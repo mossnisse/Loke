@@ -606,6 +606,19 @@ drops or copies a value, and a `dyn proc` view's signature has no place for its
 receiver, so neither has a call that could check a marked parameter. Each
 rejects the mark rather than trust it.
 
+**Not implied for a task or a thread's entry.** A worker moved its state in
+and could not reply with part of it, since the state arrived through a
+parameter. Taking every task parameter as promised would be unsound: a `spawn`
+statement does not check its arguments' regions but reserves them, so a task
+may be given an owner in an arena, and sending it on would free it on another
+thread while the task allocates there. The mark on the task's parameter states
+the difference, and the spawn checks it. `thread.spawn` does check its
+argument, so the promise is true of every entry, but taking it for granted
+would make a procedure's body mean one thing as an entry and another when
+called; its entry type marks the parameter instead, and an entry opts in with
+the same attribute. Raised on 2026-11-25 by a checkpoint writer that copied its
+index changes into every reply.
+
 **One level in the procedure type.** A `@(cross_thread)` parameter's regions
 are checked already, so the two attributes are one ordered level, nothing, the
 regions, the crossing, and a procedure converts to a type that checks no less.

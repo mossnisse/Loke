@@ -70,3 +70,13 @@ L0726
 L0444
 @138:14
 `Handle.call` is a `proc(@(concurrent_regions) Handle)`, whose parameter attributes, its receiver's included, do not meet `proc()`
+L0758
+@151:14
+mark the parameter it arrived through `@(concurrent_regions)` too
+L0758
+@152:14
+`arena`'s allocator is such a region
+L0726
+@157:27
+`job` is backed by an allocator region this procedure received
+!spawn$

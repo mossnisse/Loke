@@ -73,12 +73,14 @@ prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 // design.md "@(cross_thread)": @(escape=static) already rules out a thread_local
 // borrow; this checks thread affinity, erasure, and the allocator region.
 // design.md "@(concurrent_regions)": the regions alone. Only a diagnosing walk
-// does: a summary walk marks that there was something to check.
+// does: a summary walk marks that there was something to check. A spawn's
+// arguments are checked where the parent evaluates them, not in the call its
+// `run` makes, which receives every one of them through the frame.
 @(private)
 prov_call_thread_checks :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	c := graph.k.c
 	info := underlying_info(c, call_proc_type(c, v))
-	if !committing(c) || info == nil || len(info.param_thread_checks) == 0 {
+	if !committing(c) || info == nil || len(info.param_thread_checks) == 0 || v in c.spawn_calls {
 		return
 	}
 	if graph.mode != .Prov_Diagnose {

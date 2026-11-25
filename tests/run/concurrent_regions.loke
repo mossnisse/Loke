@@ -3,7 +3,10 @@
 // a record that owns the queue is lent the same way, tasks share a given
 // allocator and fill the slots of a given slice, and the parent uses such a
 // region while they run. A procedure without the attribute stores in a type
-// with it, whose calls check more.
+// with it, whose calls check more. A task's parameter carries the promise as
+// any other does, checked at the spawn, and so does the entry of a thread
+// `thread.spawn` starts: each sends on what its own state holds. A spawned call
+// hands an owner to a `@(cross_thread)` parameter as a plain call does.
 package main;
 
 import "core:fmt";
@@ -71,6 +74,50 @@ unmarked_fan :: proc(allocator: mem.Allocator) -> int {
 	return allocate_work(allocator, 2);
 }
 
+Keeper :: struct { kept: [dynamic]int }
+
+// A worker that replies with what its state holds, not a copy of it.
+serve :: proc(jobs: move thread.Receiver(int), replies: move thread.Sender([dynamic]int), @(concurrent_regions) keeper: move Keeper) {
+	foreach (job in jobs) {
+		keeper.kept.append(job);
+		_ = replies.send(exchange(inout keeper.kept, {}));
+	}
+}
+
+lend_kept :: proc(@(concurrent_regions) keeper: ^Keeper) -> int { return keeper.kept.len(); }
+
+worker_replies :: proc() -> int {
+	jobs := thread.Channel(int).init(1);
+	replies := thread.Channel([dynamic]int).init(1);
+	keeper := Keeper{};
+	lent := Keeper{};
+	lent.kept.append(7);
+	total := 0;
+	seen: int;
+	parallel {
+		send, take := jobs.split();
+		give, receive := replies.split();
+		spawn serve(move(take), move(give), move(keeper));
+		spawn seen = lend_kept(&lent);
+		foreach (job in 1 ..= 3) {
+			_ = send.send(move(job));
+			switch (receive.receive()) {
+			case .some(reply): total += reply[0];
+			case .none:
+			}
+		}
+		jobs.close();
+	}
+	return total + seen;
+}
+
+// What a channel's `send` does with an item: it goes to another thread.
+crosses :: proc(@(cross_thread, escape=static) values: move [dynamic]int) -> int { return values.len(); }
+
+entry :: proc(@(concurrent_regions) keeper: move Keeper) {
+	fmt.println(crosses(exchange(inout keeper.kept, {})));
+}
+
 main :: proc() {
 	channel := thread.Channel(Job).init(8);
 	send, receive := channel.split();
@@ -112,4 +159,17 @@ main :: proc() {
 	fmt.println(fan(mem.default_allocator()));
 	fan = unmarked_fan;
 	fmt.println(fan(mem.default_allocator()));
+
+	fmt.println(worker_replies());
+	started := Keeper{};
+	started.kept.append(1);
+	started.kept.append(2);
+	worker := thread.spawn(entry, move(started));
+	worker.join();
+
+	crossing: [dynamic]int = {};
+	crossing.append(1);
+	crossed: int;
+	parallel { spawn crossed = crosses(move(crossing)); }
+	fmt.println(crossed);
 }

@@ -111,7 +111,7 @@ impl Thread {
 @(private)
 Start :: struct($T: type) {
 	run:   proc(block: rawptr),
-	entry: proc(value: move T),
+	entry: proc(@(concurrent_regions) value: move T),
 	arg:   Uninit(T),
 }
 
@@ -140,11 +140,13 @@ thread_main :: proc "stdcall" (raw: rawptr) -> u32 {
 // Runs `entry(arg)` on a new thread. The argument is moved in, and any borrow it
 // carries must be of process-lifetime storage, so nothing the thread holds can
 // end under it. Both cross to the new thread, which is what makes the compiler
-// check them (design.md "@(cross_thread)"). Running out of memory or threads
-// panics.
+// check them (design.md "@(cross_thread)"). That check is the promise the
+// entry's own parameter states, so an entry may mark its parameter and send on
+// what the argument owns (design.md "@(concurrent_regions)"). Running out of
+// memory or threads panics.
 @(private)
 spawn_with :: proc(
-	@(cross_thread) entry: proc(value: move $T),
+	@(cross_thread) entry: proc(@(concurrent_regions) value: move $T),
 	@(cross_thread, escape=static) arg: move T,
 ) -> Thread {
 	block := (^mut Start(T))(unsafe.new(Start(T){run = Start(T).begin, entry = entry}));

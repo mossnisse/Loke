@@ -138,3 +138,21 @@ views :: proc() {
 	callback := (dyn proc())(&handle);
 	callback();
 }
+
+keep :: proc(@(concurrent_regions) values: move [dynamic]int) {}
+lend :: proc(@(concurrent_regions) values: ^[dynamic]int) {}
+crosses :: proc(@(cross_thread, escape=static) job: move Job) {}
+
+// A spawned call's arguments are checked once, where the parent evaluates them.
+spawned :: proc(received: move [dynamic]int) {
+	arena := mem.Arena.init();
+	local: [dynamic]int via arena.allocator() = {};
+	parallel {
+		spawn keep(move(received));
+		spawn lend(&local);
+	}
+}
+
+spawned_crossing :: proc(job: move Job) {
+	parallel { spawn crosses(move(job)); }
+}

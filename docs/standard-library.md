@@ -731,7 +731,7 @@ private part of this package, so a program with a `parallel` block depends on
 `spawn` below is for a thread that outlives the procedure starting it.
 
 ```loke
-spawn(entry: proc(value: move T), arg: move T) -> Thread
+spawn(entry: proc(@(concurrent_regions) value: move T), arg: move T) -> Thread
 spawn(entry: proc()) -> Thread
 Thread.join(self: inout)
 Mutex(T).lock(self: ^) -> Guard(T)
@@ -766,8 +766,11 @@ does not. Several values travel as one record. Both parameters are
 `@(cross_thread)`, so the argument is checked on its way: it may hold or reach
 nothing `@(thread_affine)`, reach no `dyn` view the call did not make, and own
 nothing backed by an allocator its caller received (design.md "Concurrency and
-the memory model"). Running out of memory or of threads panics; there is no
-`try_spawn` yet.
+the memory model"). That check is what the entry's `@(concurrent_regions)`
+parameter promises: an entry that marks its own parameter so may send on what
+the argument owns, and one that leaves it unmarked is passed as it is
+(design.md "@(concurrent_regions)"). Running out of memory or of threads
+panics; there is no `try_spawn` yet.
 
 `join` waits for the thread to return: its writes and its `thread_local` drops
 happen before `join` returns, and a second `join` does nothing. Dropping a
@@ -960,7 +963,9 @@ share the lock; a count that would overflow panics first. `close` before
 - An item may own nothing backed by an allocator the sending procedure
   received, so a helper that sends out of a queue it was lent marks that
   parameter `@(concurrent_regions)`, and each caller's queue is checked instead
-  (design.md "@(concurrent_regions)").
+  (design.md "@(concurrent_regions)"). A worker that replies with what its own
+  state holds marks the parameter the state arrived through in the same way,
+  whether a `spawn` statement or `spawn` above starts it.
 - `receive` waits while the queue is empty and the sending side is open, then
   takes one item; `.none` is the end of the stream. `try_receive` never waits
   for an item: `.empty` means more may come. Both `try_` operations still take

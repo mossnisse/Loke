@@ -16,9 +16,15 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	if !is_call {
 		return
 	}
+	// A spawn that failed to lower, which was reported, starts no task: its
+	// call's effects would be recorded for a task site that is never added.
+	if s.task == nil {
+		walk_flow_expr(graph, call)
+		return
+	}
 	outer, outer_held, outer_owned, outer_pooled := graph.spawning, graph.spawn_held, graph.spawn_owned, graph.spawning_pooled
 	graph.spawning, graph.spawn_held, graph.spawn_owned = call, nil, nil
-	graph.spawning_pooled = s.task != nil && s.task.pooled
+	graph.spawning_pooled = s.task.pooled
 	graph.task_reserve = {}
 	result := walk_flow_expr(graph, call)
 	kept := make([dynamic]int, 0, len(graph.spawn_held), graph.alloc)
@@ -30,9 +36,6 @@ prov_spawn :: proc(graph: ^Flow_Graph, s: ^Stmt_Spawn) {
 	held := kept[:]
 	graph.spawning, graph.spawn_held, graph.spawn_owned, graph.spawning_pooled = outer, outer_held, outer_owned, outer_pooled
 	task := s.task
-	if task == nil {
-		return
-	}
 	prov_spawn_transfers(graph, s, call, held, result)
 	if s.result != nil {
 		prov_store_value(graph, s.result, call, result, call.span)

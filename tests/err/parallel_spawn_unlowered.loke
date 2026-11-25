@@ -1,0 +1,21 @@
+// design.md "Spawn statements": a spawn whose call does not check starts no
+// task, so the walk records no task's effects for it. It once recorded them
+// for a task site that was never added, and the compiler stopped on the
+// missing site instead of reporting the error.
+package main;
+
+import "core:mem";
+
+work :: proc(values: move [dynamic]int) { values.append(1); }
+
+run :: proc(arena: inout mem.Arena) {
+	values := [dynamic]int.init(arena.allocator());
+	parallel {
+		spawn work(move(values));
+	}
+}
+
+main :: proc() {
+	arena := mem.Arena.init();
+	run(inout arena);
+}

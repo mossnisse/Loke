@@ -10472,6 +10472,10 @@ thread, or on a worker of the block's pool.
 - A bare spawn follows the ordinary rules for an unused result: a fallible
   result cannot be discarded, and a nonfallible one the call returns is dropped
   on the worker.
+- An argument for a parameter marked [`@(cross_thread)`](#cross_thread) or
+  [`@(concurrent_regions)`](#concurrent_regions) is checked at the statement,
+  against the procedure that spawns, as at any call. A task's parameters
+  promise nothing more than a called procedure's do.
 
 An ordinary `value: T` argument is **copied into the task** if copying needs
 neither `hook(copy)` nor allocation. This includes scalars, enums, borrow
@@ -11782,9 +11786,12 @@ run_on_thread :: proc(
 }
 ```
 
-`thread.spawn` marks its entry and its argument. A user-written thread wrapper
-or executor that marks its parameters is checked as `thread.spawn` is; one that
-omits the attribute, such as a foreign one, crosses threads unchecked.
+`thread.spawn` marks its entry and its argument. The entry's type marks its own
+parameter [`@(concurrent_regions)`](#concurrent_regions), which the checked
+argument meets, so an entry that marks its parameter may hand on what it was
+given, and one that does not converts to that type. A user-written thread
+wrapper or executor that marks its parameters is checked as `thread.spawn` is;
+one that omits the attribute, such as a foreign one, crosses threads unchecked.
 
 #### `@(concurrent_regions)`
 
@@ -11817,6 +11824,23 @@ hold for it too. In every other respect the region stays a received one:
 and the reset rules are unchanged. The promise covers what the caller passed.
 An owner the body builds with another allocator and stores in the argument
 keeps that allocator's region, in the body and in the caller after the call.
+
+A task's parameter, and that of a thread's entry, is a parameter like any
+other. Unmarked, its regions are received ones: a task may be given an owner in
+an arena, which it reserves (see [Allocators and
+tasks](#allocators-and-tasks)), and such an owner must not reach another
+thread. Marked, the argument is checked by the
+[spawn statement](#spawn-statements), or was checked as `thread.spawn`'s own
+`@(cross_thread)` argument, and the worker may send on what its state holds:
+
+```loke
+serve :: proc(jobs: move thread.Receiver(Job), replies: move thread.Sender([dynamic]Change), @(concurrent_regions) index: move Index) {
+	foreach (job in jobs) {
+		index.apply(job);
+		_ = replies.send(exchange(inout index.changes, {}));   // `index`'s own storage, not a copy
+	}
+}
+```
 
 ```loke
 send_all :: proc(send: ^thread.Sender(Job), @(concurrent_regions) queue: inout [dynamic]Job) {

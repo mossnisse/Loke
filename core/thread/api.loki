@@ -244,7 +244,7 @@ impl Thread {
 
 // Private to the package, but a public declaration names it.
 spawn_with :: proc(
-	@(cross_thread) entry: proc(value: move $T),
+	@(cross_thread) entry: proc(@(concurrent_regions) value: move $T),
 	@(cross_thread, escape=static) arg: move T,
 ) -> Thread ---;
 

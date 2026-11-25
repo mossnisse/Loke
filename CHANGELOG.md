@@ -294,7 +294,10 @@ checklist.
   procedure type, and misplaced it is `L0757`. A `call` method whose `self` carries it does not
   meet a `dyn proc` view, which states nothing of its receiver (`L0444`). A task no longer
   reserves the regions of a `@(cross_thread)` parameter either, which every call checked
-  already.
+  already. A `spawn` statement checks a marked parameter of its call, and `thread.spawn`'s
+  entry type is now `proc(@(concurrent_regions) value: move T)`, which its checked argument
+  meets, so a worker that marks the parameter its state arrived through may reply with what the
+  state holds instead of a copy. An unmarked entry is passed as before.
 
   ```
   send_all :: proc(send: ^thread.Sender(Job), @(concurrent_regions) queue: inout [dynamic]Job) {
@@ -654,6 +657,14 @@ checklist.
 
 ### Fixed
 
+- A `spawn` of a call with a `@(cross_thread)` parameter is checked where the parent evaluates
+  the argument ([Spawn statements](docs/design.md#spawn-statements)).
+  `spawn sender.send(move(item))` was `L0726` whatever backed `item`, naming a `spawn$owned`
+  temporary: the check ran again in the task's own call, where every argument counts as
+  received.
+- The compiler no longer stops with `Index 0 is out of range` on a `spawn` whose argument has a
+  type error, in a procedure that received the allocator the argument was built with. It
+  reports the error.
 - A dynamic array is indexed once its index is evaluated
   ([Evaluation order](docs/design.md#evaluation-order)). In `xs[add(inout xs)] += 1`, where `add`
   appends to `xs` and returns the new element's index, the index was checked against the length
