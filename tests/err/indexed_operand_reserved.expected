@@ -1,0 +1,69 @@
+L0512
+@20:51
+`self` cannot be modified here: a reserved borrow of it is still in use
+L0512
+@21:53
+`self` cannot be modified here: a reserved borrow of it is still in use
+L0512
+@22:63
+`self` cannot be modified here: a reserved borrow of it is still in use
+L0511
+@36:25
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@37:25
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@38:30
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@39:35
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@41:25
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@42:32
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@43:42
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0641
+@47:24
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@48:24
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@49:25
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@50:29
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@51:35
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0512
+@54:40
+`table` cannot be modified by `global_more` here: a reserved borrow of it is still in use
+L0511
+@57:31
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@58:38
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@59:31
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0641
+@60:30
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@61:37
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0511
+@64:58
+this write of `b` is not compatible with the reserved borrow of it that is still in use
+L0511
+@66:63
+this write of `m` is not compatible with the reserved borrow of it that is still in use

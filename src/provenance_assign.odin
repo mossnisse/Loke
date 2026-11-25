@@ -218,6 +218,9 @@ prov_destination_of :: proc(graph: ^Flow_Graph, target: Expr) -> (destination: P
 @(private)
 prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	value_loans := value_loans
+	// `prov_assign_destinations` prepares several destinations.
+	prepared := graph.prepared
+	defer graph.prepared = prepared
 	written := prov_assign_redefines(graph, s)
 	if len(written) > 0 && value_loans != nil {
 		captured := make([][]int, len(value_loans), graph.alloc)
@@ -230,10 +233,12 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	permutes := prov_assign_permutes(graph, s)
 	clones := s.destructure.active ? s.destructure.clones : s.rhs_clones
 	for target, index in s.lhs {
+		unwritten := prov_hold_unwritten(graph, s, index, destinations)
 		// design.md "Operator declarations": an `operator([]=)` destination's
 		// write is a call like any other, made in its turn.
 		if setter := assign_setter(s, index); setter != nil {
 			prov_call(graph, prov_synthetic_call(graph, setter.symbol, setter.bound, TYPE_VOID, expr_span(target), indexes = true))
+			prov_release_hold(graph, unwritten, expr_span(target))
 			continue
 		}
 		copies := index < len(clones) && clones[index]
@@ -289,6 +294,11 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			if index >= len(s.destination_live) || s.destination_live[index] != .Dead {
 				prov_drop_effects(graph, target_type, expr_span(target), region = prov_drop_region(graph, target))
 			}
+			// `_ = value` drops the value in its turn.
+			if is_discard(target) && !s.destructure.active {
+				prov_discarded_drop_effects(graph, value)
+			}
+			prov_release_hold(graph, unwritten, expr_span(target))
 			provider_assign_end(graph, target)
 			if root := provider_place_root(graph, target); root != INVALID_SYMBOL && value != nil {
 				_, path, _ := prov_place_of(graph, target)
@@ -407,45 +417,125 @@ prov_assign_redefines :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) -> []int {
 // `p, p^.head = &mut y, p^.tail`, goes where the carrier pointed then (design.md
 // "Values that contain borrows"). A setter destination's `preparations` run in
 // its turn, with one destination too.
+//
+// With several destinations each one's subscripts are walked here, in its turn
+// (`Flow_Graph.prepared`), and one in storage its owner may drop is held while
+// those after it are prepared (`prov_hold_place`): an index of theirs that
+// grows `xs`, as in `xs[0], ys[grow(inout xs)] = 4, 5;`, would free the storage
+// `xs[0]` was prepared in.
 @(private = "file")
 prov_assign_destinations :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, written: []int) -> []Prov_Destination {
 	if s.op != .Assign {
 		return nil
 	}
-	several := len(s.lhs) > 1
-	destinations := make([]Prov_Destination, len(s.lhs), graph.alloc)
+	if len(s.lhs) < 2 {
+		for _, index in s.lhs {
+			walk_flow_preparations(graph, s, index)
+		}
+		return nil
+	}
+	count := len(s.lhs)
+	destinations := make([]Prov_Destination, count, graph.alloc)
+	graph.prepared = make([]^Expr_Base, count, graph.alloc)
+	holds, later := make([][]int, count, graph.alloc), make([][]Expr, count, graph.alloc)
 	for target, index in s.lhs {
 		walk_flow_preparations(graph, s, index)
-		if _, is_ident := target.(^Expr_Ident); !several || is_ident || assign_setter(s, index) != nil {
+		if _, is_ident := target.(^Expr_Ident); is_ident || assign_setter(s, index) != nil {
 			continue
 		}
-		// design.md "Evaluation order": a place is prepared before the first
-		// write, so one in storage its owner may drop conflicts with a carrier
-		// an earlier destination writes through, as `p` in
-		// `p^, d[1] = other, 9;` with `p` pointing at `d` (`in_owned_storage`).
-		if root, path, place_ok := prov_place_of(graph, target); place_ok {
-			if in_owned_storage(graph.k.c, target) {
+		destination: Prov_Destination
+		if _, _, place_ok := prov_place_of(graph, target); place_ok {
+			prov_walk_subscripts(graph, target, true)
+		} else {
+			// An `inout` result's call is made then too, so the place it names
+			// stays borrowed until this destination is written.
+			destination = prov_destination_of(graph, target)
+			if destination.reached {
+				held := prov_capture_slots(graph, destination.through, written, expr_span(target))
+				// A diagnostic about the store names the carrier it went through.
+				for slot, at in held {
+					if slot != destination.through[at] && graph.prov_slots[slot].name == "" {
+						graph.prov_slots[slot].name = graph.prov_slots[destination.through[at]].name
+					}
+				}
+				destination.through = held
+			}
+			destination.read = true
+			destinations[index] = destination
+			// A destination in a temporary is walked whole when it is written.
+			if !destination.reached && !destination.walked {
+				continue
+			}
+			prov_walk_subscripts(graph, target, true, destination.through)
+		}
+		graph.prepared[index] = expr_base(target)
+		if in_owned_storage(graph.k.c, target) {
+			later[index] = prov_prepared_after(graph, s, index)
+			holds[index] = prov_hold_place(graph, target, later[index], destination.through)
+		}
+	}
+	for hold, index in holds {
+		prov_end_hold(graph, hold, later[index])
+	}
+	// design.md "Evaluation order": a place is prepared before the first
+	// write, so one in storage its owner may drop conflicts with a carrier
+	// an earlier destination writes through, as `p` in
+	// `p^, d[1] = other, 9;` with `p` pointing at `d` (`in_owned_storage`).
+	for target, index in s.lhs {
+		if graph.prepared[index] != nil && in_owned_storage(graph.k.c, target) {
+			if root, path, place_ok := prov_place_of(graph, target); place_ok {
 				prov_access(graph, root, path, .Write, expr_span(target))
 			}
-			continue
 		}
-		// An `inout` result's call is made then too, so the place it names
-		// stays borrowed until this destination is written.
-		destination := prov_destination_of(graph, target)
-		if destination.reached {
-			held := prov_capture_slots(graph, destination.through, written, expr_span(target))
-			// A diagnostic about the store names the carrier it went through.
-			for slot, at in held {
-				if slot != destination.through[at] && graph.prov_slots[slot].name == "" {
-					graph.prov_slots[slot].name = graph.prov_slots[destination.through[at]].name
-				}
-			}
-			destination.through = held
-		}
-		destination.read = true
-		destinations[index] = destination
 	}
-	return several ? destinations : nil
+	return destinations
+}
+
+// design.md "Evaluation order": every destination is prepared before the first
+// write, so the code write `index` of `s` runs, a setter's call or a `drop`
+// hook of what it replaces or discards, runs while the destinations after it
+// are prepared and unwritten. Each of those in storage its owner may drop is
+// held meanwhile (`prov_hold_found`), so that code may not write what owns it.
+// A write that runs nothing holds nothing: `xs[i], xs[j] = xs[j], xs[i];`
+// writes two places of one array.
+@(private = "file")
+prov_hold_unwritten :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, index: int, destinations: []Prov_Destination) -> (hold: []int) {
+	if len(destinations) == 0 || s.op != .Assign {
+		return nil
+	}
+	c := graph.k.c
+	target := s.lhs[index]
+	runs := assign_setter(s, index) != nil
+	if !runs && is_discard(target) {
+		runs = !s.destructure.active && index < len(s.rhs) && type_drop_runs_hook(c, prov_type(graph, s.rhs[index]))
+	} else if !runs {
+		runs = (index >= len(s.destination_live) || s.destination_live[index] != .Dead) && type_drop_runs_hook(c, prov_type(graph, target))
+	}
+	if !runs {
+		return nil
+	}
+	for at in index + 1 ..< len(s.lhs) {
+		if graph.prepared[at] != nil {
+			hold = prov_join(graph, hold, prov_hold_found(graph, s.lhs[at], destinations[at].through, .Destination))
+		}
+	}
+	return hold
+}
+
+// What is evaluated after destination `index` of `s` is prepared and before
+// the first write: the indices of each destination after it, and such a
+// destination whole where it is a setter's, whose preparations evaluate them.
+@(private = "file")
+prov_prepared_after :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, index: int) -> []Expr {
+	out := make([dynamic]Expr, graph.alloc)
+	for at in index + 1 ..< len(s.lhs) {
+		if assign_setter(s, at) != nil {
+			append(&out, s.lhs[at])
+		} else {
+			prov_segment_indices(s.lhs[at], nil, &out)
+		}
+	}
+	return out[:]
 }
 
 // A store through a carrier, or into what an `inout` result names, as

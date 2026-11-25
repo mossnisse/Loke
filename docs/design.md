@@ -5878,6 +5878,18 @@ conditional expressions, expression evaluation is deterministic:
 - A binary expression evaluates its left operand and then its right operand. An
   operator overload receives those already evaluated values and does not change
   their order.
+- An index expression evaluates its operand, then its index, and then finds the
+  element: the bounds check, a map's lookup, and the read of a dynamic array's
+  storage and length come after the index. An index that grows the dynamic
+  array it indexes therefore indexes the array as grown, so
+  `xs[add(inout xs)] = 1` writes the element `add` appended. A slice expression
+  evaluates its operand and then its bounds in the same way. An operand that
+  lies in storage a dynamic array, a map, or a box owns, as `rows[0].cells` does,
+  was found in that storage before the index is evaluated, so it is
+  [reserved](#weakening-and-reborrows) until the index or bounds are: they may
+  read it, and `rows[0].cells[add(inout rows)]` is an error, since growing
+  `rows` would free the storage `rows[0].cells` was found in. Bind such an index
+  to a local first.
 - Array, struct, union, map, and container literal elements are evaluated in
   source order. A named struct literal still uses source order rather than field
   declaration order.
@@ -5898,9 +5910,19 @@ conditional expressions, expression evaluation is deterministic:
   index is built in; a user `operator([])` may return one place for different
   arguments. Inserting a key with `m[key] = elem` may move every entry of `m`,
   so `m[k], m[j].n = elem, 9;` is an error too. A place an `inout` result names
-  stays borrowed from when its destination is prepared until it is written.
+  stays borrowed from when its destination is prepared until it is written. A
+  destination that lies in such storage is [reserved](#weakening-and-reborrows)
+  from when it is prepared until it is written, against what runs a program's
+  code meanwhile: the indices of the destinations after it, and an earlier
+  write's `operator([]=)` or `drop` hook. So `xs[0], ys[add(inout xs)] = 4, 5;`
+  is an error, since growing `xs` would free the storage `xs[0]` was prepared
+  in. The other writes themselves are no such code, so
+  `xs[i], xs[j] = xs[j], xs[i];` swaps two elements.
 - A compound assignment evaluates its destination place once, then evaluates the
-  right operand, then performs the operation and write.
+  right operand, then performs the operation and write. A destination that lies
+  in storage a dynamic array, a map, or a box owns is reserved while the right
+  operand is evaluated, as an indexed operand is while its index is, so
+  `xs[0] += add(inout xs)` is an error.
 - A return expression is evaluated completely before it is moved into result
   storage.
 

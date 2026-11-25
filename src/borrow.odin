@@ -162,15 +162,28 @@ loan_own_slots :: proc(graph: ^Flow_Graph, loan: Prov_Loan, root: Prov_Root) -> 
 
 // ---------------------------------------------------------------- loans --
 
+// What a read-only loan holds its place for (design.md "Weakening and
+// reborrows"), which a diagnostic says.
+Prov_Reservation :: enum u8 {
+	None,
+	// Until the call it is an argument of starts, which then takes the mutable loan.
+	Call,
+	// While what is evaluated between finding the place it is of and using it
+	// is: an index, a slice bound, or a compound assignment's right operand
+	// (design.md "Evaluation order", `prov_hold_place`).
+	Place,
+	// Until the destination it is of is written, while an earlier write of the
+	// same assignment runs a program's code (`prov_hold_unwritten`).
+	Destination,
+}
+
 // One borrow. A `mutable` one excludes every competing access; an immutable one
 // permits compatible reads.
 Prov_Loan :: struct {
 	root:    Root_Id,
 	path:    []Proj_Step,
 	mutable: bool,
-	// Read-only until the call it is an argument of starts, which then takes the
-	// mutable loan (design.md "Weakening and reborrows").
-	reserved: bool,
+	reserved: Prov_Reservation,
 	span:    Span,
 	what:    string,
 	// A `Param` loan of what the parameter already held when the call began, as
@@ -352,8 +365,7 @@ Prov_Reborrow :: struct {
 	derived: int,
 	span:    Span,
 	mutable: bool,
-	// Read-only until the call it is an argument of starts (`Prov_Loan.reserved`).
-	reserved: bool,
+	reserved: Prov_Reservation,
 	// Only extends the reborrow `source` belongs to: its copies do not suspend it.
 	passes_on: bool,
 	// Taken from a read-only carrier that may come to hold a reborrow of a mutable one,
@@ -387,8 +399,7 @@ Prov_Place_Loan :: struct {
 	paths:   [][]Proj_Step,
 	mutable: bool,
 	borrows: bool,
-	// Read-only until the call it is an argument of starts (`Prov_Loan.reserved`).
-	reserved: bool,
+	reserved: Prov_Reservation,
 	what:    string,
 	span:    Span,
 	place:   string,

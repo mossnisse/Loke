@@ -1,0 +1,67 @@
+// design.md "Evaluation order": a dynamic array is indexed once its index is
+// evaluated, so an index that grows the array, past its capacity too, indexes
+// it as grown, at compile time as at run time. A slice's bounds are evaluated
+// before the array is read as well.
+package main;
+import "core:fmt";
+
+Bag :: struct { items: [dynamic]int }
+
+impl Bag {
+	add :: proc(self: inout) -> int {
+		self.items.append(0);
+		return self.items.len() - 1;
+	}
+	// Grows past any capacity the array had, so its storage moves.
+	refill :: proc(self: inout) -> int {
+		foreach (i in 0 ..< 1000) { self.items.append(i); }
+		return 0;
+	}
+	bump :: proc(self: inout) { self.items[self.add()] += 1; }
+	set :: proc(self: inout, n: int) { self.items[self.add()] = n; }
+	last :: proc(self: inout) -> int { return self.items[self.add()]; }
+}
+
+grow :: proc(xs: inout [dynamic]int) -> int {
+	foreach (i in 0 ..< 1000) { xs.append(i); }
+	return 0;
+}
+extend :: proc(xs: inout [dynamic]int) -> int { xs.append(7); return 0; }
+
+through :: proc(bag: ^mut Bag) -> int {
+	bag^.items[bag^.refill()] = 5;
+	return bag^.items[0];
+}
+
+counted :: proc() -> int {
+	bag := Bag{};
+	bag.bump();
+	bag.set(4);
+	n := bag.last();
+	bag.items[bag.refill()] += 10;
+	return bag.items.len() * 1000 + bag.items[0] * 100 + bag.items[1] * 10 + n;
+}
+COUNTED :: counted();
+
+sliced :: proc() -> int {
+	ys := [dynamic]int{1};
+	s := ys[extend(inout ys) : ys.len()];
+	return s.len() * 10 + s[1];
+}
+SLICED :: sliced();
+
+main :: proc() {
+	fmt.println(COUNTED, counted());
+	fmt.println(SLICED, sliced());
+
+	xs := [dynamic]int{1};
+	xs[grow(inout xs)] = 9;
+	fmt.println(xs[0], xs.len());
+	p := &mut xs[grow(inout xs)];
+	p^ = 4;
+	fmt.println(xs[0], xs.len());
+
+	bag := Bag{};
+	bag.items.append(1);
+	fmt.println(through(&mut bag), bag.items.len());
+}

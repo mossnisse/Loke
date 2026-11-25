@@ -2,6 +2,8 @@
 // carrier hops a place is read through, and its subscripts.
 package lokec
 
+import "core:slice"
+
 // A loan of `place`, reached through `carriers`, at `path` below their
 // pointee (`Prov_Place_Loan`), as a switch over `h^.first` takes while a payload
 // binding is in use (design.md "Switch ownership"). The slot returned is the
@@ -9,7 +11,7 @@ package lokec
 @(private)
 prov_place_loan :: proc(
 	graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, mutable: bool, what: string, place: Expr, borrows := false,
-	reserved := false,
+	reserved := Prov_Reservation.None,
 ) -> []int {
 	if len(carriers) == 0 || graph.current == NO_BLOCK {
 		return nil
@@ -245,8 +247,8 @@ prov_place_hops :: proc(graph: ^Flow_Graph, place: Expr) -> []Place_Hop {
 // is not reached through a carrier. `walk`, when given, collects the events
 // reading the carriers (`Prov_Through_Borrow.walk_reads`). `again` reads the
 // carriers of a place already evaluated, where a call starts
-// (`prov_place_reservable`) or as a prepared compound destination
-// (`prepared_place`): no index is evaluated a second time.
+// (`prov_place_reservable`) or as a prepared destination
+// (`Flow_Graph.prepared`): no index is evaluated a second time.
 @(private)
 prov_read_through_carrier :: proc(
 	graph: ^Flow_Graph, place: Expr, reads_only := false, store := false, walk: ^[dynamic]Prov_Event_At = nil, reads := true,
@@ -338,11 +340,33 @@ prov_reach_hop :: proc(
 		if prov_indices_may_write(graph.k.c, indices[:]) {
 			slots = prov_capture(graph, slots, expr_span(inner), mutable = !reads_only)
 		}
-		for index in indices {
-			walk_flow_expr(graph, index)
-		}
+		prov_walk_segment(graph, inner, carrier, slots)
 	}
 	return prov_reach(graph, slots, expr_span(inner))
+}
+
+// Walks the index expressions from `from` down to the carrier `to`, in the
+// order they are evaluated (`prov_segment_indices`). `carriers` hold `to`, and
+// each indexed operand is held through them while its indices are walked
+// (`prov_hold_place`).
+@(private = "file")
+prov_walk_segment :: proc(graph: ^Flow_Graph, from, to: Expr, carriers: []int) {
+	if from == nil || expr_base(from) == expr_base(to) {
+		return
+	}
+	#partial switch v in from {
+	case ^Expr_Selector:
+		prov_walk_segment(graph, v.operand, to, carriers)
+	case ^Expr_Postfix:
+		prov_walk_segment(graph, v.operand, to, carriers)
+	case ^Expr_Index:
+		prov_walk_segment(graph, v.operand, to, carriers)
+		hold := prov_hold_place(graph, v.operand, v.indices, carriers)
+		for index in v.indices {
+			walk_flow_expr(graph, index)
+		}
+		prov_end_hold(graph, hold, v.indices)
+	}
 }
 
 // A carrier loaded through another, as `p^` for `p^^.count`, is named in
@@ -402,7 +426,7 @@ prov_reserved_carriers :: proc(graph: ^Flow_Graph, place: Expr) -> []Prov_Reserv
 
 // The index expressions from `from` down to the carrier `to`, or to the root
 // when `to` is nil, in the order they are evaluated.
-@(private = "file")
+@(private)
 prov_segment_indices :: proc(from, to: Expr, out: ^[dynamic]Expr) {
 	if from == nil || to != nil && expr_base(from) == expr_base(to) {
 		return
@@ -452,7 +476,7 @@ prov_root_place :: proc(graph: ^Flow_Graph, place: Prov_Place) -> (Root_Id, []Pr
 
 // Walks a place chain's index expressions; the place is one access, not one per
 // link. A call's `inout` result the chain starts in was walked as the call, and
-// a prepared compound destination's when it was prepared (`prepared_place`).
+// a prepared destination's when it was prepared (`Flow_Graph.prepared`).
 // design.md "Maps": only `m[key] = elem` creates an entry, so a store whose
 // whole target is a map entry publishes its key, into `through` when the map is
 // reached through carriers (`prov_read_through_carrier`); a lookup on the way to
@@ -464,13 +488,14 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_key := fal
 	}
 	#partial switch v in e {
 	case ^Expr_Selector:
-		prov_walk_subscripts(graph, v.operand)
+		prov_walk_subscripts(graph, v.operand, through = through)
 	case ^Expr_Postfix:
 		if v.boxed {
-			prov_walk_subscripts(graph, v.operand)
+			prov_walk_subscripts(graph, v.operand, through = through)
 		}
 	case ^Expr_Index:
-		prov_walk_subscripts(graph, v.operand)
+		prov_walk_subscripts(graph, v.operand, through = through)
+		hold := prov_hold_place(graph, v.operand, v.indices, through)
 		key_sources: []int
 		for index, position in v.indices {
 			loans := walk_flow_expr(graph, index)
@@ -478,6 +503,7 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_key := fal
 				key_sources = loans
 			}
 		}
+		prov_end_hold(graph, hold, v.indices)
 		if len(v.bound) == 0 && underlying_kind(graph.k.c, prov_type(graph, v.operand)) == .Map {
 			// A map index hashes its key and compares it with the stored ones.
 			prov_key_effects(graph, prov_type(graph, v.operand), v.span)
@@ -488,11 +514,68 @@ prov_walk_subscripts :: proc(graph: ^Flow_Graph, e: Expr, publish_map_key := fal
 	}
 }
 
-// Whether `e` is the compound destination whose subscripts were walked when it
-// was prepared, before its right operand (`Flow_Graph.prepared_place`).
+// design.md "Evaluation order": `place` is found before `later` is evaluated
+// and used after it: an indexed or sliced operand and its indices or bounds, a
+// compound assignment's destination and its right operand, or a multiple
+// assignment's destination and those prepared after it. One that lies in
+// storage a dynamic array, a map, or a box owns is reserved meanwhile, as an
+// argument's place is until its call starts (design.md "Weakening and
+// reborrows"): `later` may read it, and may not write it or what owns its
+// storage. `through` are the carriers the place is reached through, when it is.
+// Returns the hold, a read-only loan of the place that `prov_end_hold` ends;
+// none where nothing of `later` runs a program's code, since nothing else
+// writes.
+@(private)
+prov_hold_place :: proc(graph: ^Flow_Graph, place: Expr, later: []Expr, through: []int = nil) -> []int {
+	if !prov_indices_may_write(graph.k.c, later) {
+		return nil
+	}
+	return prov_hold_found(graph, place, through, .Place)
+}
+
+// The hold `prov_hold_place` takes, whatever runs meanwhile, which
+// `prov_release_hold` ends: none for a place no write can free the storage of.
+@(private)
+prov_hold_found :: proc(graph: ^Flow_Graph, place: Expr, through: []int, reserved: Prov_Reservation) -> []int {
+	if !in_owned_storage(graph.k.c, place) {
+		return nil
+	}
+	span := expr_span(place)
+	if root, path, named := prov_place_of(graph, place); named {
+		return prov_reserve_place(graph, root, path, .Read, span, "", span, "borrow", reserved)
+	}
+	if hops := prov_place_hops(graph, place); len(hops) > 0 {
+		return prov_place_loan(graph, through, hops[0].path, false, "borrow", place, borrows = true, reserved = reserved)
+	}
+	return nil
+}
+
+// What `prov_hold_place` held a place for, `later`, is evaluated. A conflict
+// names the first of it that runs a program's code as what the hold is for.
+@(private)
+prov_end_hold :: proc(graph: ^Flow_Graph, hold: []int, later: []Expr) {
+	for e in later {
+		if prov_expr_may_write(graph.k.c, e) {
+			prov_release_hold(graph, hold, expr_span(e))
+			return
+		}
+	}
+}
+
+// What a hold was taken for, at `span`, is done.
+@(private)
+prov_release_hold :: proc(graph: ^Flow_Graph, hold: []int, span: Span) {
+	if len(hold) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = hold, span = span, reads_only = true})
+	}
+}
+
+// Whether `e` is a destination whose subscripts were walked when it was
+// prepared (`Flow_Graph.prepared`).
 @(private = "file")
 prov_is_prepared :: proc(graph: ^Flow_Graph, e: Expr) -> bool {
-	return graph.prepared_place != nil && expr_base(e) == graph.prepared_place
+	base := expr_base(e)
+	return base != nil && slice.contains(graph.prepared, base)
 }
 
 // Assigning through a map place may insert its key; an existing equal key stays,

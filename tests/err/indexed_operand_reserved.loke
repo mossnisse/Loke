@@ -1,0 +1,84 @@
+package main;
+
+// design.md "Evaluation order": an indexed or sliced operand that lies in
+// storage a dynamic array, a map, or a box owns is reserved while its indices
+// are evaluated, since a write there could free the storage it was found in,
+// and so is such a destination of a compound assignment while its right
+// operand is.
+
+Value :: struct { n: int }
+
+impl Value {
+	add :: operator(+) proc(a, b: Value) -> Value { return Value{a.n + b.n}; }
+}
+
+Row :: struct { cells: [4]int, values: [4]Value, items: [dynamic]int }
+Table :: struct { rows: [dynamic]Row }
+
+impl Table {
+	more :: proc(self: inout) -> int { self.rows.append(Row{}); return 0; }
+	stored :: proc(self: inout) { self.rows[0].cells[self.more()] = 9; }
+	compound :: proc(self: inout) { self.rows[0].cells[self.more()] += 9; }
+	read :: proc(self: inout) -> int { return self.rows[0].cells[self.more()]; }
+}
+
+grow :: proc(xs: inout [dynamic]Row) -> int { xs.append(Row{}); return 0; }
+more :: proc(t: ^mut Table) -> int { t^.rows.append(Row{}); return 0; }
+replace :: proc(b: inout Box([4]int)) -> int { b = box([4]int{}); return 0; }
+insert :: proc(m: inout map[int]Row) -> int { m[2] = Row{}; return 0; }
+plain :: proc(n: int) -> int { return n; }
+
+table: Table;
+global_more :: proc() -> int { table.rows.append(Row{}); return 0; }
+
+local :: proc() -> int {
+	xs := [dynamic]Row{Row{}};
+	xs[0].cells[grow(inout xs)] = 9;
+	xs[0].cells[grow(inout xs)] += 9;
+	n := xs[0].cells[grow(inout xs)];
+	p := &mut xs[0].cells[grow(inout xs)];
+	p^ = n;
+	xs[0].items[grow(inout xs)] = n;
+	low := xs[0].cells[grow(inout xs) : 2].len();
+	return low + xs[0].items[1 : grow(inout xs)].len();
+}
+
+through_pointer :: proc(t: ^mut Table) -> int {
+	t^.rows[0].cells[more(t)] = 1;
+	t^.rows[0].cells[more(t)] += 1;
+	t^.rows[0].values[more(t)] += Value{1};
+	n := t^.rows[0].cells[more(t) : 2].len();
+	return n + t^.rows[0].cells[more(t)];
+}
+
+global :: proc() { table.rows[0].cells[global_more()] = 1; }
+
+right_operand :: proc(xs: inout [dynamic]Row, t: ^mut Table) {
+	xs[0].cells[0] += grow(inout xs);
+	xs[0].values[0] += Value{grow(inout xs)};
+	xs[0].items[0] += grow(inout xs);
+	t^.rows[0].cells[0] += more(t);
+	t^.rows[0].values[0] += Value{more(t)};
+}
+
+payload :: proc(b: inout Box([4]int)) { b^[replace(inout b)] = 1; }
+
+entry :: proc(m: inout map[int]Row) { m[1].cells[insert(inout m)] = 1; }
+
+// The array an index grows is indexed as grown, an index that only reads
+// writes nothing, and one that writes other storage frees none of this.
+accepted :: proc(t: ^mut Table, u: ^mut Table, xs: inout [dynamic]Row, m: inout map[int]Row) {
+	xs[grow(inout xs)].cells[0] = 1;
+	xs[0].cells[xs.len() - 1] = 1;
+	xs[0].cells[plain(xs.len())] = 1;
+	t^.rows[0].cells[more(u)] = 1;
+	m[1].cells[grow(inout xs)] = 1;
+	table.rows[0].cells[plain(1)] = 1;
+	xs[0].cells[0] += xs.len() + plain(xs[0].cells[1]);
+	xs[0].values[0] += Value{more(u)};
+	t^.rows[0].cells[0] += more(u);
+	cells := [4]int{};
+	cells[0] += grow(inout xs);
+}
+
+main :: proc() {}

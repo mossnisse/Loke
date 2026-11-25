@@ -1,0 +1,24 @@
+L0511
+@53:25
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0511
+@54:34
+this write of `xs` is not compatible with the reserved borrow of it that is still in use
+L0641
+@55:29
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0641
+@56:24
+`t` cannot be used here: a reserved reborrow of it is still in use
+L0512
+@62:2
+`log` cannot be modified by `dropped` here: a reserved borrow of it is still in use
+L0512
+@63:2
+`log` cannot be modified by `dropped` here: a reserved borrow of it is still in use
+L0512
+@64:2
+`log` cannot be modified by `set` here: a reserved borrow of it is still in use
+L0512
+@65:2
+`h` cannot be modified here: a reserved borrow of it is still in use

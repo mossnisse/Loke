@@ -32,7 +32,7 @@ prov_inout_receiver :: proc(
 		type := prov_type(graph, argument)
 		held, at, _ := prov_read_through_carrier(graph, argument, reads_only = true)
 		prov_load_content(graph, held, at, type, expr_span(argument), reads_only = true, place = argument)
-		hold = prov_place_loan(graph, held, at, false, "borrow", argument, borrows = true, reserved = true)
+		hold = prov_place_loan(graph, held, at, false, "borrow", argument, borrows = true, reserved = .Call)
 		watched = prov_reserved_carriers(graph, argument)
 		mark, reserving = prov_begin_reserve(graph), true
 		prov_reread_through(graph, argument)
@@ -389,7 +389,7 @@ prov_reserve_carriers :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -
 		}
 		deriving := prov_reborrows_deriving(graph, slot)
 		for reborrow in prov_next_reborrow(graph, &deriving) {
-			reborrow.reserved = true
+			reborrow.reserved = .Call
 		}
 	}
 	return hold
@@ -400,7 +400,7 @@ prov_reserve_carriers :: proc(graph: ^Flow_Graph, carriers: []int, span: Span) -
 @(private = "file")
 prov_mark_reserved :: proc(graph: ^Flow_Graph, made: int) {
 	for &reborrow in graph.reborrows[made:] {
-		reborrow.reserved = true
+		reborrow.reserved = .Call
 	}
 }
 

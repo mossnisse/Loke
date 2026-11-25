@@ -251,6 +251,35 @@ checklist.
   Indexing and method calls are unchanged; a call through the type now passes an address.
   Upgrade by writing `Enum_Array(E, T).get(&array, member)` for
   `Enum_Array(E, T).get(array, member)`.
+- An indexed or sliced operand that lies in storage a dynamic array, a map, or a box owns is
+  reserved while its index or bounds are evaluated, and so is such a destination of a compound
+  assignment while its right operand is
+  ([Evaluation order](docs/design.md#evaluation-order)): they may read it, not write it or what
+  owns its storage. `rows[0].cells[add(inout rows)] = 9` and `rows[0].n += add(inout rows)`,
+  where `add` appends to `rows`, compiled and wrote through the address the place had before
+  `rows` grew, into freed memory. Each is now `L0511`, or `L0512` or `L0641` as the write is
+  reached, whether the place is read, written, borrowed, or sliced, and so is an index or operand
+  that only might write, as a method call on the owner is. A field or a fixed array's element of
+  a variable, and an element of a slice, are not in such storage and stay allowed. Upgrade by
+  binding the index or operand to a local first:
+
+  ```
+  rows[0].cells[add(inout rows)] = 9;             // before
+  at := add(inout rows); rows[0].cells[at] = 9;   // after
+  ```
+- Such a destination of a multiple assignment is reserved from when it is prepared until it is
+  written, against the indices of the destinations after it and against an earlier write's
+  `operator([]=)` or `drop` hook ([Evaluation order](docs/design.md#evaluation-order)).
+  `xs[0], ys[add(inout xs)] = 4, 5;` compiled and wrote `4` into the storage `xs` had before it
+  grew, and so did `n, log[0] = Noisy{8}, 9;` where dropping the old `n` appends to the global
+  `log`. Both are now `L0511`, `L0512`, or `L0641`. Two places of one array, as in
+  `xs[i], xs[j] = xs[j], xs[i];`, stay allowed. Upgrade by writing the later destination, or the
+  one whose write runs the hook, in a statement of its own.
+- A compound assignment's right operand may not read what its destination's index moved, nor
+  move what the destination is in ([Evaluation order](docs/design.md#evaluation-order)). The
+  check for a use after a move read the right operand first, so `xs[take(move(t))] += t.n`
+  compiled and read `t` after it was moved. It is now `L0500`, as `t.n += weigh(move(t))` is.
+  Upgrade by reading the value into a local before the statement.
 
 ### Added
 
@@ -625,6 +654,13 @@ checklist.
 
 ### Fixed
 
+- A dynamic array is indexed once its index is evaluated
+  ([Evaluation order](docs/design.md#evaluation-order)). In `xs[add(inout xs)] += 1`, where `add`
+  appends to `xs` and returns the new element's index, the index was checked against the length
+  `xs` had before `add` ran, so it panicked with `index out of range`, and where the old length
+  covered the index the write went to the allocation `xs` had then, which growing it may have
+  freed. The array's storage and length are now read after the index, and after a slice's bounds,
+  so the statement writes the element `add` appended.
 - Destructuring a small `@(packed, align=N)` record emitted IR clang rejected, since its
   fields were taken out as the byte arrays that spell them for LLVM
   ([Destructuring](docs/design.md#destructuring)). They are now read at their declared types,

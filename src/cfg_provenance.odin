@@ -1778,7 +1778,7 @@ prov_borrow_through :: proc(
 		return nil, false
 	}
 	if bounds != nil && !again {
-		prov_walk_slice_bounds(graph, bounds)
+		prov_walk_slice_bounds(graph, bounds, carriers)
 	}
 	at, end := -1, -1
 	if mutable {
@@ -1855,11 +1855,11 @@ prov_reserve_borrow :: proc(graph: ^Flow_Graph, argument: Expr) -> (hold: []int,
 	}
 	carriers, below, _ := prov_read_through_carrier(graph, place, reads_only = true, reads = false)
 	if bounds != nil {
-		prov_walk_slice_bounds(graph, bounds)
+		prov_walk_slice_bounds(graph, bounds, carriers)
 	}
 	prov_reserve_through(graph, carriers, below, span, "mutable borrow", place)
 	prov_use_held(graph, carriers, below, prov_type(graph, place), span, true)
-	hold = prov_place_loan(graph, carriers, below, false, what, place, borrows = true, reserved = true)
+	hold = prov_place_loan(graph, carriers, below, false, what, place, borrows = true, reserved = .Call)
 	return hold, prov_reserved_carriers(graph, place), true
 }
 
@@ -1904,14 +1904,19 @@ prov_use_held :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step, ty
 	prov_emit(graph, Prov_Event{kind = .Load, slot = prov_temp_slot(graph), into = carriers, path = path, span = span, reads_only = reads_only})
 }
 
+// The bounds of `v`, evaluated after its operand, which is held meanwhile
+// (`prov_hold_place`), through the carriers `through` when it is reached
+// through any.
 @(private)
-prov_walk_slice_bounds :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) {
-	if v.lo != nil {
-		walk_flow_expr(graph, v.lo)
+prov_walk_slice_bounds :: proc(graph: ^Flow_Graph, v: ^Expr_Slice, through: []int = nil) {
+	bounds := []Expr{v.lo, v.hi}
+	hold := prov_hold_place(graph, v.operand, bounds, through)
+	for bound in bounds {
+		if bound != nil {
+			walk_flow_expr(graph, bound)
+		}
 	}
-	if v.hi != nil {
-		walk_flow_expr(graph, v.hi)
-	}
+	prov_end_hold(graph, hold, bounds)
 }
 
 @(private)

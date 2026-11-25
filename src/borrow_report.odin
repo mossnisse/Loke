@@ -780,23 +780,37 @@ add_borrow_notes :: proc(state: ^Prov_Solve, root: Prov_Root, loan: Prov_Loan, l
 	add_use_note(state, later, loan.reserved)
 }
 
-// How a diagnostic names a borrow's capability. One reserved for a call is
-// read-only until the call starts (design.md "Weakening and reborrows").
+// How a diagnostic names a borrow's capability. One reserved is read-only until
+// what it is reserved for (design.md "Weakening and reborrows").
 @(private = "file")
-capability_text :: proc(mutable, reserved: bool) -> string {
-	return reserved ? "reserved" : mutable ? "mutable" : "read-only"
+capability_text :: proc(mutable: bool, reserved: Prov_Reservation) -> string {
+	return reserved != .None ? "reserved" : mutable ? "mutable" : "read-only"
 }
 
 // The later use keeping a borrow live. One at a declaration is that local's
 // `drop` hook, run when its scope ends.
 @(private = "file")
-add_use_note :: proc(state: ^Prov_Solve, later: Span, reserved := false) {
+add_use_note :: proc(state: ^Prov_Solve, later: Span, reserved := Prov_Reservation.None) {
 	if later.file == NO_FILE {
 		return
 	}
-	// design.md "Weakening and reborrows": the use is the call it is reserved for.
-	if reserved {
+	// design.md "Weakening and reborrows": the use is what it is reserved for.
+	switch reserved {
+	case .None:
+	case .Call:
 		add_notef(state.k.c, later, "and is reserved until this call starts: its place may be read until then, not written")
+		return
+	case .Place:
+		add_notef(
+			state.k.c, later,
+			"and is reserved while this is evaluated, since a write could free the storage the place was found in: bind this to a local first",
+		)
+		return
+	case .Destination:
+		add_notef(
+			state.k.c, later,
+			"and is reserved until it is written, since this write runs code that could free the storage it was prepared in: write it in a statement of its own",
+		)
 		return
 	}
 	if later_is_task_hold(state, later) {

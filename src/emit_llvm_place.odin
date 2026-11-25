@@ -477,17 +477,28 @@ emit_borrowed_operand :: proc(e: ^Emitter, expr: Expr) -> string {
 // The checked i64 index of `v`, which must be below the runtime `length`.
 @(private = "file")
 emit_index_below :: proc(e: ^Emitter, v: ^Expr_Index, length: string) -> string {
-	written := v.indices[0]
-	if sum, summed := written.(^Expr_Binary); summed && index_sum_is_deferred(e, sum) {
-		return emit_index_sum_below(e, sum, length)
-	}
-	index := checked_index_to_i64(e, emit_expr(e, written), expr_base(written).type)
-	emit_bounds_check(e, index, length, "index out of range")
-	return index
+	return check_index_below(e, emit_index_operands(e, v), length)
 }
 
-// A signed built-in `a + b` or `a - b` evaluated at run time, which
-// `emit_index_sum_below` checks together with the bounds.
+// The index of an `Expr_Index`, evaluated and not yet checked. A signed
+// built-in `a + b` or `a - b` evaluated at run time, `sum`, is its two
+// operands, which `check_index_below` adds and checks together with the bounds.
+@(private = "file")
+Index_Operands :: struct {
+	type:     Type_Id,
+	sum:      ^Expr_Binary,
+	lhs, rhs: string,
+}
+
+@(private = "file")
+emit_index_operands :: proc(e: ^Emitter, v: ^Expr_Index) -> Index_Operands {
+	written := v.indices[0]
+	if sum, summed := written.(^Expr_Binary); summed && index_sum_is_deferred(e, sum) {
+		return {sum.type, sum, emit_expr(e, sum.lhs), emit_expr(e, sum.rhs)}
+	}
+	return {type = expr_base(written).type, lhs = emit_expr(e, written)}
+}
+
 @(private = "file")
 index_sum_is_deferred :: proc(e: ^Emitter, v: ^Expr_Binary) -> bool {
 	return (v.op == .Plus || v.op == .Minus) && v.resolution.kind == .Builtin_Operator &&
@@ -495,42 +506,57 @@ index_sum_is_deferred :: proc(e: ^Emitter, v: ^Expr_Binary) -> bool {
 		type_is_integer(e.c, v.type) && type_signed(e.c, v.type)
 }
 
-// The index `a + b` or `a - b`, with the overflow check of design.md "Integer
-// overflow" and the bounds check behind one branch, which leaves a loop over
-// it no branch of the addition's own for the optimizer to vectorize past. An
-// exact result above the type's range wraps to a negative index, which is out
-// of bounds. One below it comes only from a negative `a` with, for `+`, a
-// negative `b`, and for `-`, a `b` that is not negative; every such result is
-// negative, so it panics one way or the other. Both reach the failure block,
-// where the checked operation says which panic it is.
+// `index` as a checked i64 below `length`. A sum `a + b` or `a - b` has the
+// overflow check of design.md "Integer overflow" and the bounds check behind
+// one branch, which leaves a loop over it no branch of the addition's own for
+// the optimizer to vectorize past. An exact result above the type's range wraps
+// to a negative index, which is out of bounds. One below it comes only from a
+// negative `a` with, for `+`, a negative `b`, and for `-`, a `b` that is not
+// negative; every such result is negative, so it panics one way or the other.
+// Both reach the failure block, where the checked operation says which panic
+// it is.
 @(private = "file")
-emit_index_sum_below :: proc(e: ^Emitter, v: ^Expr_Binary, length: string) -> string {
-	llvm := llvm_type(e, v.type)
-	lhs, rhs := emit_expr(e, v.lhs), emit_expr(e, v.rhs)
-	wrapped := emit_value(e, "%s %s %s, %s", v.op == .Plus ? "add" : "sub", llvm, lhs, rhs)
-	added := v.op == .Plus ? rhs : emit_value(e, "xor %s %s, -1", llvm, rhs)
+check_index_below :: proc(e: ^Emitter, index: Index_Operands, length: string) -> string {
+	if index.sum == nil {
+		checked := checked_index_to_i64(e, index.lhs, index.type)
+		emit_bounds_check(e, checked, length, "index out of range")
+		return checked
+	}
+	op, llvm, lhs, rhs := index.sum.op, llvm_type(e, index.type), index.lhs, index.rhs
+	wrapped := emit_value(e, "%s %s %s, %s", op == .Plus ? "add" : "sub", llvm, lhs, rhs)
+	added := op == .Plus ? rhs : emit_value(e, "xor %s %s, -1", llvm, rhs)
 	signs := emit_value(e, "and %s %s, %s", llvm, lhs, added)
 	both_negative := emit_value(e, "icmp slt %s %s, 0", llvm, signs)
-	index := checked_index_to_i64(e, wrapped, v.type)
-	outside := emit_value(e, "icmp uge i64 %s, %s", index, length)
+	checked := checked_index_to_i64(e, wrapped, index.type)
+	outside := emit_value(e, "icmp uge i64 %s, %s", checked, length)
 
 	fail, ok := new_label(e, "bounds"), new_label(e, "ok")
 	branch_if_unlikely(e, combine_or(e, both_negative, outside), fail, ok)
 	place_label(e, fail)
-	emit_checked_integer(e, v.op, true, llvm, lhs, rhs)
+	emit_checked_integer(e, op, true, llvm, lhs, rhs)
 	emit_panic(e, "index out of range")
 	place_label(e, ok)
-	return index
+	return checked
+}
+
+// The current allocation and length of the dynamic array at `header`.
+@(private = "file")
+load_dynamic_parts :: proc(e: ^Emitter, header: string) -> (data, length: string) {
+	data = load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_STORAGE))
+	length = load(e, "i64", gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN))
+	return
 }
 
 // `xs[i]`: an address in the current allocation, valid only as long as it is.
+// design.md "Evaluation order": the array is indexed once its index is
+// evaluated, so its storage and length are read after an index that grows it.
 @(private = "file")
 emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	operand_type := expr_base(v.operand).type
 	header := emit_address(e, v.operand, lending = true)
-	data := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_STORAGE))
-	length := load(e, "i64", gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN))
-	index := emit_index_below(e, v, length)
+	operands := emit_index_operands(e, v)
+	data, length := load_dynamic_parts(e, header)
+	index := check_index_below(e, operands, length)
 	return gep_at(e, llvm_type(e, container_element(e.c, operand_type)), data, index)
 }
 
@@ -556,26 +582,41 @@ emit_base_address :: proc(e: ^Emitter, operand: Expr) -> (Type_Id, string) {
 	return type, emit_address(e, operand, lending = true)
 }
 
-// `lo` and `hi`, each evaluated once in order, checked as
-// `0 <= lo <= hi <= length` in one trap seam before any address is formed. With
-// no `length`, as over a C pointer, `hi` is required and only must not be
-// negative.
+// `lo` and `hi`, evaluated (`emit_slice_bound_values`) and checked against
+// `length` (`check_slice_bounds`).
 @(private = "file")
 emit_slice_bounds :: proc(e: ^Emitter, v: ^Expr_Slice, length, message: string) -> (low, high: string) {
+	low, high = emit_slice_bound_values(e, v)
+	return check_slice_bounds(e, low, high, length, message)
+}
+
+// `lo` and `hi`, each evaluated once in order: "0" without a `lo`, and ""
+// without a `hi`.
+@(private = "file")
+emit_slice_bound_values :: proc(e: ^Emitter, v: ^Expr_Slice) -> (low, high: string) {
 	low = "0"
 	if v.lo != nil {
 		low = checked_index_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
 	}
-	high = length
 	if v.hi != nil {
 		high = checked_index_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
 	}
+	return
+}
+
+// The bounds checked as `0 <= low <= high <= length` in one trap seam before
+// any address is formed, where a `high` not written is `length`. With no
+// `length`, as over a C pointer, `high` is required and only must not be
+// negative.
+@(private = "file")
+check_slice_bounds :: proc(e: ^Emitter, low, high, length, message: string) -> (string, string) {
+	high := high == "" ? length : high
 	reversed := emit_value(e, "icmp ugt i64 %s, %s", low, high)
 	past_end := length == "" \
 		? emit_value(e, "icmp slt i64 %s, 0", high) \
 		: emit_value(e, "icmp ugt i64 %s, %s", high, length)
 	panic_if(e, combine_or(e, reversed, past_end), "slice.bounds", message)
-	return
+	return low, high
 }
 
 // `data[low:high]`, of `element`s, as a pointer and length of LLVM `storage`.
@@ -592,7 +633,7 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> str
 	operand_type := expr_base(v.operand).type
 	info := underlying_info(e.c, operand_type)
 
-	data, length := "", ""
+	data, length, low, high: string
 	#partial switch info.kind {
 	case .String, .String_View:
 		return emit_text_subrange(e, v)
@@ -600,16 +641,20 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> str
 		return emit_c_pointer_slice(e, v, as_type)
 	case .Slice:
 		data, length = emit_slice_parts(e, v.operand)
+		low, high = emit_slice_bound_values(e, v)
 	case .Dynamic_Array:
-		value := emit_borrowed_operand(e, v.operand)
-		data = extract(e, CONTAINER_TYPE, value, CONTAINER_STORAGE)
-		length = extract(e, CONTAINER_TYPE, value, CONTAINER_LEN)
+		// design.md "Evaluation order": as an index does, the bounds come before
+		// the array's storage and length are read.
+		header := emit_address(e, v.operand, lending = true)
+		low, high = emit_slice_bound_values(e, v)
+		data, length = load_dynamic_parts(e, header)
 	case:
 		data = emit_lent_address(e, v.operand, operand_type)
 		length = fmt.aprintf("%d", info.count)
+		low, high = emit_slice_bound_values(e, v)
 	}
 
-	low, high := emit_slice_bounds(e, v, length, "slice bounds out of range")
+	low, high = check_slice_bounds(e, low, high, length, "slice bounds out of range")
 	return emit_subrange(e, llvm_type(e, as_type), llvm_type(e, info.element), data, low, high)
 }
 

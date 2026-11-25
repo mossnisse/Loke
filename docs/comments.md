@@ -2448,6 +2448,48 @@ method's receiver.
   arguments" in one position only, and would let an argument read a value the
   same expression gives away.
 
+### An indexed operand in owned storage is reserved while its index is evaluated
+
+`self.items[self.add()] += 1`, where `add` appends to `items`, used to check
+the index against the length `items` had before `add` ran, and to write through
+the allocation it had then, which `add` may have freed. The array's storage and
+length were read where the operand was written, before the index. They are now
+read once the index is a finished value, as a call starts after its arguments
+([Evaluation order](design.md#evaluation-order)), so the statement writes the
+element `add` appended.
+
+That leaves an operand found inside such storage, as `rows[0].cells` in
+`rows[0].cells[add(inout rows)]`: its address is computed before the index, and
+growing `rows` frees what it points into. A compound assignment's destination
+is found before its right operand in the same way, as `xs[0]` in
+`xs[0] += add(inout xs)`, and is reserved by the same rule.
+
+- **The operand is reserved, not found again.** Evaluating every index of a
+  place first and finding the place afterwards would accept the statement. It
+  would also move each step's bounds check after the indices that follow it,
+  where [chained indexing](design.md#multidimensional-arrays) has every step
+  check as it is evaluated, and it would make a place mean a path to walk later where a
+  [multiple assignment](design.md#evaluation-order) and a
+  [reserved argument](design.md#weakening-and-reborrows) both keep the place
+  they computed. So the operand is held as a reserved argument is: readable
+  until the index is evaluated, and not written.
+- **Only owned storage.** A field or a fixed array's element is part of its
+  variable and stays where it is whatever is written, and a pointer or a slice
+  names storage its own borrow keeps alive. Reserving every indexed operand
+  would reject `self.source[self.advance()]`, which nothing can make unsafe.
+- **Any write is rejected.** The index may not write the operand or what owns
+  its storage, even where that write would free nothing, for the reason a
+  reserved loan allows no harmless writes: one rule, a read-only borrow's.
+- **A prepared destination is reserved against code, not against the other
+  writes.** A multiple assignment prepares every destination before the first
+  write, so `xs[0]` in `xs[0], ys[add(inout xs)] = 4, 5;` is found before the
+  index that grows `xs`, and a destination in a global array is found before an
+  earlier write's `drop` hook or `operator([]=)` appends to that array. Both
+  are held as an indexed operand is. The writes themselves are not held
+  against: `xs[i], xs[j] = xs[j], xs[i];` writes two places of one array, which
+  is what the statement is for, and a write that replaces the storage a later
+  destination is in was already an error of its own.
+
 ### A dynamic array's length conflicts with a mutable pointer to its element
 
 `n := d^.len();` beside a live `y := &mut d^[0]` is rejected, though the call reads only the header

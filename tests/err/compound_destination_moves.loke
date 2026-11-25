@@ -1,0 +1,35 @@
+package main;
+
+// design.md "Evaluation order": a compound assignment evaluates its destination
+// place, then its right operand, and then reads and writes the place, so the
+// operand may not read what an index of the destination moved, nor move what
+// the destination is in.
+
+Token :: struct { n: int, parts: [dynamic]int }
+
+take :: proc(t: move Token) -> int { return 0; }
+weigh :: proc(t: move Token) -> int { return t.n; }
+
+moved_by_index :: proc() {
+	xs := [dynamic]int{1};
+	t := Token{3, [dynamic]int{}};
+	xs[take(move(t))] += t.n;
+}
+
+moved_by_operand :: proc() {
+	t := Token{3, [dynamic]int{}};
+	t.n += weigh(move(t));
+}
+
+accepted :: proc() -> int {
+	xs := [dynamic]int{1};
+	t := Token{3, [dynamic]int{}};
+	u := Token{4, [dynamic]int{}};
+	xs[0] += t.n;
+	xs[take(move(t))] += u.n;
+	u.n += u.n + 1;
+	xs[0] += weigh(move(u));
+	return xs[0];
+}
+
+main :: proc() {}

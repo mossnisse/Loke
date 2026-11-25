@@ -733,6 +733,29 @@ Keep these contracts:
   read-only for the hold, and the hold of a captured or loaded carrier is a
   reborrow made once the place is complete (`prov_reserve_carriers`), so that
   the index's own use of the carrier is no conflict with the reservation.
+- **A place found in owned storage is held until it is used.** design.md
+  "Evaluation order" reserves an indexed or sliced operand while its index or
+  bounds are evaluated, and a compound assignment's destination while its right
+  operand is, where the place lies in storage a dynamic array, a map, or a box
+  owns (`in_owned_storage`) and what is evaluated may run a program's code.
+  `prov_hold_place` takes the hold, a read-only loan of a named place or a place
+  loan through the carriers reaching it, and `prov_end_hold` uses it once more
+  after the index, so anything between that writes the place or its owner
+  conflicts. The subscript walks take it for every reading, writing, and
+  borrowing path (`prov_walk_subscripts`, `prov_walk_segment`,
+  `prov_walk_slice_bounds`), and `walk_flow_assign_provenance` for a compound
+  destination, which it walks before the right operand
+  (`Flow_Graph.prepared`). A multiple assignment's destinations are walked and
+  held the same way while those after them are prepared
+  (`prov_assign_destinations`), and again around each earlier write that runs
+  a setter or a `drop` hook (`prov_hold_unwritten`), never across the plain
+  writes, which a swap needs. `Prov_Reservation` words the diagnostic. The
+  lifecycle walk orders a compound assignment the same way, and uses the
+  destination's root again after the right operand
+  (`walk_flow_assign_lifecycle`).
+  The emitter and the evaluator read a dynamic array's storage and length after
+  its index (`emit_dynamic_element_address`, `eval_place`), so an operand that
+  is not in owned storage needs no hold.
 - **A printed view through a mutable call result holds its loan for invalidation
   only.** A slot marked `Prov_Slot.read_only_hold` conflicts with no read of what its
   loans lend, as a read does not move what is viewed, and with any write or further

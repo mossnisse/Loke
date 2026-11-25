@@ -196,9 +196,11 @@ Flow_Graph :: struct {
 	// out discarded temporaries and staged operands while keeping what the
 	// returned value depends on.
 	held_owners:    [dynamic]Expr,
-	// A compound assignment's destination whose subscripts were walked when
-	// it was prepared, before its right operand (`prov_walk_subscripts`).
-	prepared_place: ^Expr_Base,
+	// The destinations of the assignment being walked whose subscripts were
+	// walked when they were prepared (`prov_walk_subscripts`): a compound
+	// assignment's, before its right operand, and each of a multiple
+	// assignment's, before the first write.
+	prepared:       []^Expr_Base,
 	// Lifecycle counts temporary providers until their statement boundary;
 	// provenance keeps their region tokens in `temp_providers` instead.
 	temp_provider_count: int,
@@ -1273,24 +1275,37 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 walk_flow_assign_provenance :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	prov_note_assigned_procs(graph, s)
 	value_loans := make([][]int, len(s.rhs), graph.alloc)
+	// design.md "Operator declarations": a direct compound overload is the
+	// whole statement, a call like any other.
+	if s.operator_direct {
+		bound, _ := compound_operator_operands(s)
+		prov_call(graph, prov_synthetic_call(graph, s.operator, slice.clone(bound[:], graph.alloc), TYPE_VOID, s.op_span))
+		return
+	}
+	// design.md "Evaluation order": a compound assignment prepares its
+	// destination, evaluates the right operand, and writes the place prepared,
+	// which is held meanwhile where the operand could free the storage it is in
+	// (`prov_hold_place`), through the carriers it is reached through. A multiple
+	// assignment's destinations are prepared in `prov_assign`.
+	hold: []int
+	outer := graph.prepared
+	defer graph.prepared = outer
+	destination: [1]^Expr_Base
+	if s.op != .Assign {
+		through, _, _ := prov_read_through_carrier(graph, s.lhs[0], store = true)
+		prov_walk_subscripts(graph, s.lhs[0], through = through)
+		destination[0] = expr_base(s.lhs[0])
+		graph.prepared = destination[:]
+		hold = prov_hold_place(graph, s.lhs[0], s.rhs, through)
+	}
 	if s.operator != INVALID_SYMBOL {
+		// The binary operator reads the destination after the right operand.
 		bound, order := compound_operator_operands(s)
-		operands := slice.clone(bound[:], graph.alloc)
-		// design.md "Operator declarations": a direct compound overload is the
-		// whole statement, a call like any other.
-		if s.operator_direct {
-			prov_call(graph, prov_synthetic_call(graph, s.operator, operands, TYPE_VOID, s.op_span))
-			return
-		}
-		// design.md "Evaluation order": the destination is prepared, the right
-		// operand evaluated, and the binary operator reads the destination, whose
-		// result is written to the place prepared.
-		prov_walk_subscripts(graph, s.lhs[0])
-		outer := graph.prepared_place
-		graph.prepared_place = expr_base(s.lhs[0])
-		defer graph.prepared_place = outer
 		result := symbol_of(graph.k.c, s.operator).result
-		value_loans[0] = prov_call(graph, prov_synthetic_call(graph, s.operator, operands, result, s.op_span, order = order))
+		value_loans[0] = prov_call(
+			graph, prov_synthetic_call(graph, s.operator, slice.clone(bound[:], graph.alloc), result, s.op_span, order = order),
+		)
+		prov_end_hold(graph, hold, s.rhs)
 		prov_assign(graph, s, value_loans)
 		prov_note_overwrites(graph, s)
 		return
@@ -1304,25 +1319,33 @@ walk_flow_assign_provenance :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		prov_hold_owner(graph, value)
 		walk_clone_via(graph, s, index)
 	}
+	prov_end_hold(graph, hold, s.rhs)
 	if s.destructure.active {
 		prov_destructure_copy_effects(graph, &s.destructure, s.rhs[0])
 	}
 	prov_assign(graph, s, value_loans)
 	prov_note_overwrites(graph, s)
-	if !s.destructure.active {
-		for target, index in s.lhs {
-			if is_discard(target) && index < len(s.rhs) {
-				prov_discarded_drop_effects(graph, s.rhs[index])
-			}
-		}
-	}
 }
 
 @(private = "file")
 walk_flow_assign_lifecycle :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
+	// design.md "Evaluation order": a compound assignment evaluates its
+	// destination place, then its right operand, and then reads and writes the
+	// place, so its root is used again after what the operand moved.
+	compound := s.op != .Assign
+	if compound {
+		walk_flow_preparations(graph, s, 0)
+		walk_flow_expr(graph, s.lhs[0])
+	}
 	for value, index in s.rhs {
 		walk_flow_bound_value(graph, value, nil, s, index)
 		walk_clone_via(graph, s, index)
+	}
+	if compound {
+		if root := place_root_ident(s.lhs[0]); root != nil {
+			walk_flow_expr(graph, root)
+		}
+		return
 	}
 	// design.md "Evaluation order": every destination is prepared before any
 	// write. A write through a field or element is a use of its root.
@@ -1358,6 +1381,25 @@ walk_flow_assign_lifecycle :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		})
 		note_required_write(graph, ident.symbol, index < len(s.rhs) && len(s.rhs) == len(s.lhs) ? s.rhs[index] : nil)
 	}
+}
+
+// The variable a place is a part of or reached through, as `xs` for
+// `xs[i].count` and `p` for `p^.next`, or nil where it starts in a value.
+@(private = "file")
+place_root_ident :: proc(place: Expr) -> ^Expr_Ident {
+	#partial switch v in place {
+	case ^Expr_Ident:
+		return v
+	case ^Expr_Selector:
+		return place_root_ident(v.operand)
+	case ^Expr_Index:
+		return place_root_ident(v.operand)
+	case ^Expr_Postfix:
+		if v.op == .Caret {
+			return place_root_ident(v.operand)
+		}
+	}
+	return nil
 }
 
 // What prepares destination `index` of `s`, in its turn (`Stmt_Assign.preparations`).

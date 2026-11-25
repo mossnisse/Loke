@@ -1,0 +1,96 @@
+package main;
+
+// design.md "Evaluation order": every destination of a multiple assignment is
+// prepared before the first write, and one that lies in storage a dynamic
+// array, a map, or a box owns is reserved until it is written: while the
+// destinations after it are prepared, and while an earlier write runs a
+// setter or a `drop` hook.
+
+Row :: struct { n: int, cells: [4]int }
+Table :: struct { rows: [dynamic]Row }
+
+grow :: proc(xs: inout [dynamic]Row) -> int { xs.append(Row{}); return 0; }
+more :: proc(t: ^mut Table) -> int { t^.rows.append(Row{}); return 0; }
+plain :: proc(n: int) -> int { return n; }
+
+log: [dynamic]int;
+count: int;
+
+@(move_only) Noisy :: struct { id: int }
+
+impl Noisy {
+	dropped :: hook(drop) proc(self: inout) { log.append(self.id); }
+}
+
+@(move_only) Quiet :: struct { id: int }
+
+impl Quiet {
+	dropped :: hook(drop) proc(self: inout) { count += self.id; }
+}
+
+Cells :: struct { cells: [3]int, items: [dynamic]int }
+
+impl Cells {
+	set :: operator([]=) proc(self: inout Cells, key: int, value: int) {
+		self.cells[key] = value;
+		self.items.append(value);
+	}
+}
+
+Logged :: struct { cells: [3]int }
+
+impl Logged {
+	set :: operator([]=) proc(self: inout Logged, key: int, value: int) {
+		self.cells[key] = value;
+		log.append(value);
+	}
+}
+
+make_noisy :: proc() -> Noisy { return Noisy{8}; }
+
+// A later destination's index grows what an earlier one is in.
+later_index :: proc(xs: inout [dynamic]Row, ys: inout [dynamic]Row, t: ^mut Table, u: ^mut Table) {
+	xs[0].n, ys[grow(inout xs)].n = 4, 5;
+	xs[0].n, ys[0].n, ys[grow(inout xs)].n = 4, 5, 6;
+	t^.rows[0].n, u^.rows[more(t)].n = 4, 5;
+	t^.rows[0].n, xs[more(t)].n = 4, 5;
+}
+
+// An earlier write runs code that grows what a later destination is in.
+earlier_write :: proc(h: inout Cells, l: inout Logged) {
+	n := Noisy{7};
+	n, log[0] = Noisy{8}, 9;
+	_, log[0] = make_noisy(), 9;
+	l[1], log[0] = 7, 9;
+	h[1], h.items[0] = 7, 9;
+}
+
+// Two places of one array, an index that only reads, an index that grows
+// other storage or the array of its own destination, and a write whose hook or
+// setter reaches no later destination.
+accepted :: proc(
+	xs: inout [dynamic]Row, ys: inout [dynamic]Row, t: ^mut Table, u: ^mut Table, h: inout Cells, zs: inout [dynamic]int,
+	qs: inout [dynamic]Quiet, i, j: int,
+) {
+	xs[i], xs[j] = xs[j], xs[i];
+	xs[i].n, xs[plain(j)].n = 1, 2;
+	xs[i].n, xs[xs.len() - 1].n = 1, 2;
+	ys[grow(inout xs)].n, xs[0].n = 4, 5;
+	xs[0].n, ys[grow(inout ys)].n = 4, 5;
+	t^.rows[0].n, t^.rows[plain(1)].n = 1, 2;
+	t^.rows[i], t^.rows[j] = t^.rows[j], t^.rows[i];
+	t^.rows[0].n, u^.rows[more(u)].n = 4, 5;
+	cells := [4]int{};
+	cells[0], ys[grow(inout xs)].n = 4, 5;
+
+	q := Quiet{1};
+	q, log[0] = Quiet{2}, 9;
+	h[1], zs[0] = 7, 9;
+	h[1], h.cells[0] = 7, 9;
+	n := Noisy{1};
+	n, zs[0] = Noisy{2}, 9;
+	log[i], log[j] = log[j], log[i];
+	qs[i], qs[j] = Quiet{3}, Quiet{4};
+}
+
+main :: proc() {}

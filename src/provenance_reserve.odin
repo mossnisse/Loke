@@ -198,11 +198,12 @@ prov_run_reserved :: proc(graph: ^Flow_Graph, entry: Prov_Reserved, call: Span) 
 @(private)
 prov_reserve_place :: proc(
 	graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step, starts: Access_Kind, span: Span, verb: string, at: Span, what: string,
+	reserved := Prov_Reservation.Call,
 ) -> []int {
 	prov_access(graph, root, path, .Read, span, verb, starts = starts)
 	hold := prov_borrow(graph, root, path, false, at, what)
 	if loan := prov_slot_fresh_loan(graph, hold[0]); loan != NO_LOAN {
-		graph.loans[int(loan)].reserved = true
+		graph.loans[int(loan)].reserved = reserved
 	}
 	return hold
 }

@@ -684,6 +684,12 @@ eval_index :: proc(ev: ^Evaluator, v: ^Expr_Index) -> (out: Eval_Value, success:
 		at := eval_index_value(ev, v.indices[0], len(table.elements)) or_return
 		return eval_folded_element(ev, v.operand, table, at)
 	}
+	// design.md "Evaluation order": a dynamic array is indexed once its index is
+	// evaluated, so it is read where it is, after an index that grows it.
+	if base := expr_base(v.operand); base.addressable && type_is_dynamic_array(ev.k.c, base.type) {
+		element := eval_place(ev, v) or_return
+		return element^, true
+	}
 	operand := eval_aggregate_value(ev, v.operand) or_return
 	// design.md "Maps": a read never inserts.
 	if type_is_map(ev.k.c, operand.type) {
@@ -717,6 +723,12 @@ eval_folded_element :: proc(ev: ^Evaluator, operand: Expr, table: ^Const_Aggrega
 @(private = "file")
 eval_index_value :: proc(ev: ^Evaluator, index: Expr, count: int) -> (out: int, success: bool) {
 	value := eval_expr(ev, index) or_return
+	return eval_index_within(ev, index, value, count)
+}
+
+// The evaluated `index` as an offset within `count` elements.
+@(private = "file")
+eval_index_within :: proc(ev: ^Evaluator, index: Expr, value: Eval_Value, count: int) -> (out: int, success: bool) {
 	at, fits := bi_to_i64(ev.alloc, value.integer)
 	if !fits || at < 0 || int(at) >= count {
 		return 0, eval_fail(ev, expr_span(index), "L0361", "index %s is out of range", bi_text(ev.alloc, value.integer))
@@ -1177,7 +1189,10 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (out: ^Eval_Value, success: bool)
 			key = copy_value(ev, key) or_return
 			return map_entry_place(ev, base, key)
 		}
-		at := eval_index_value(ev, v.indices[0], len(base.elements)) or_return
+		// design.md "Evaluation order": the index comes before the elements are
+		// read, so one that grows a dynamic array indexes it as grown.
+		index := eval_expr(ev, v.indices[0]) or_return
+		at := eval_index_within(ev, v.indices[0], index, len(base.elements)) or_return
 		return &base.elements[at], true
 
 	case ^Expr_Postfix:
@@ -1203,12 +1218,12 @@ eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (out: Eval_Value, success:
 		return eval_operator_call(ev, v.resolution.symbol, v.bound, v.span)
 	}
 	operand: Eval_Value
+	place: ^Eval_Value
 	base := expr_base(v.operand)
 	#partial switch underlying_kind(ev.k.c, base.type) {
 	case .Array, .Dynamic_Array:
 		if base.addressable {
-			place := eval_place(ev, v.operand) or_return
-			operand = place^
+			place = eval_place(ev, v.operand) or_return
 			break
 		}
 		fallthrough
@@ -1218,8 +1233,7 @@ eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (out: Eval_Value, success:
 	case:
 		return {}, eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
 	}
-	length := operand.kind == .String ? len(operand.text) : len(operand.elements)
-	bounds := [2]i64{0, i64(length)}
+	bounds: [2]i64
 	for endpoint, index in ([2]Expr{v.lo, v.hi}) {
 		if endpoint == nil {
 			continue
@@ -1229,6 +1243,15 @@ eval_slice :: proc(ev: ^Evaluator, v: ^Expr_Slice) -> (out: Eval_Value, success:
 		if bounds[index], fits = bi_to_i64(ev.alloc, value.integer); !fits {
 			bounds[index] = -1
 		}
+	}
+	// design.md "Evaluation order": a place is read once its bounds are
+	// evaluated, as a dynamic array one of them grew.
+	if place != nil {
+		operand = place^
+	}
+	length := operand.kind == .String ? len(operand.text) : len(operand.elements)
+	if v.hi == nil {
+		bounds[1] = i64(length)
 	}
 	low, high := bounds[0], bounds[1]
 	if low < 0 || low > high || high > i64(length) {
