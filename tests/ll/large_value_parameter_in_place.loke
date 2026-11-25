@@ -1,0 +1,22 @@
+// design.md "Parameter semantics and ABI lowering": a large immutable value
+// parameter reads the storage its caller passes, rather than copying it into a
+// slot of its own, even where a `defer` takes its address.
+package main;
+
+import "core:fmt";
+
+Big :: struct { bytes: [5000]u8, marker: int }
+
+global := Big{};
+
+report :: proc(value: ^Big) { fmt.println(value.marker); }
+
+@(cold)
+show :: proc(value: Big) {
+	defer report(&value);
+	fmt.println(value.bytes[4999]);
+}
+
+main :: proc() {
+	show(global);
+}

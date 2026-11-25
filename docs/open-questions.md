@@ -225,6 +225,30 @@ remain from them:
   before the call returns. The two rules are what is open; until they are
   settled a program has the fast form with an `inout` parameter.
 
+## Procedure call review follow-ups
+
+- **Bind a large `move` parameter to the incoming slot.** A large immutable
+  `value: T` parameter now reads its caller's storage in place. A large
+  `move` parameter still copies into a slot of its own, which the callee
+  drops. Binding it in place needs the caller's handoff temporary to outlive
+  the callee's drop, and the callee must not need to write it.
+  [Parameter binding](../src/emit_llvm.odin#L492),
+  [parameter semantics](design.md#parameter-semantics-and-abi-lowering)
+- **Reuse the selected candidate's variadic slot assignments.**
+  `build_candidate` has already mapped the runtime arguments, including
+  the receiver and the pack. `bind_chosen_call` rebuilds an `Argument`
+  slice from `Arg_Info` and maps the fixed slots again by position or name.
+  Binding the fixed slots with `cand.slots` saves only that conversion: the
+  pack binder still reads each operand's span, mode, and checked state, and
+  the chosen path would need its own receiver-mode check, default filling,
+  and evaluation order beside `bind_candidate_slots`. Worth doing only as
+  part of a wider merge of the two binders. Preserve the receiver-first
+  order, forwarding of a sole spread, and evaluation of omitted defaults
+  after the pack's written operands.
+  [Candidate placement](../src/overload.odin#L446),
+  [chosen binder](../src/check_calls.odin#L890),
+  [variadic parameters](design.md#variadic-parameters)
+
 ## Union compiler simplifications
 
 - **Switch over a large union in its place.** A type switch over a named
@@ -242,6 +266,52 @@ remain from them:
   noisy to establish a crossover.
   [Variant resolution](../src/union.odin#L48),
   [widening lookup](../src/union.odin#L403)
+
+## Struct compiler review follow-ups
+
+- **Build large returned struct literals in the result slot.** Returning
+  `Big{tag, payload^}` for `Big :: struct { tag: int, payload: [8192]u8 }`
+  leaves an 8,200-byte zero fill and two 8,192-byte copies in the callee
+  after Clang 22.1.8 `-O2`. Lowering builds a temporary and copies it to
+  the result slot. Start with fully supplied literals returned through
+  Loke's indirect result whose operands cannot return early. Reuse the
+  literal emitter with that slot as its destination. Copy a large field
+  directly from its place when the
+  copy needs no hook or conversion and the storage is disjoint. Preserve
+  source-order evaluation, zero filling where needed, and cleanup if
+  evaluation panics before the literal finishes.
+  [Return lowering](../src/emit_llvm_stmt.odin#L939),
+  [literal lowering](../src/emit_llvm_expr.odin#L298),
+  [struct literals](design.md#struct-literals)
+- **Read retained fields directly when destructuring a large place.** For
+  `tag, _ := p^` with `p: ^Big` as above, the emitted LLVM snapshots all
+  8,200 bytes to read the tag. Clang `-O2` reduced this probe to one load.
+  Start with borrowed operands that need no clone or allocator evaluation.
+  Evaluate the source address once, skip discarded fields, and stage each
+  retained value before evaluating or writing destinations so overlapping
+  assignments still work. Use the field's effective alignment.
+  [Destructuring lowering](../src/emit_llvm_stmt.odin#L293),
+  [destructuring rules](design.md#destructuring)
+- **Reuse field lookup for returned literals.** The return-name walk scans
+  from the first field for each named element and rebuilds the positional field
+  list for each positional element. Returning a 1,024-field literal with
+  every field named takes 524,800 field-name comparisons in that walk
+  alone. Before checking, use `field_named` and compute the positional
+  list once per literal. When checked indices are available, reuse them.
+  Preserve the fallback for literals whose type is still unknown, since
+  a bare key may name a local.
+  [Return-name walk](../src/copy_sites.odin#L190),
+  [indexed field lookup](../src/types.odin#L127)
+- **Construct each field symbol with its final metadata.** Struct
+  resolution resolves the same name through duplicate detection, binding
+  creation, and insertion. It then looks up the new symbol again to set
+  the field metadata, including attributes shared by a group of names.
+  Read the attributes once per group, resolve each name once, and
+  initialize the `Symbol` in one call. Keep unnamed padding in the
+  storage list and keep each written name's slot in the syntax, including
+  duplicates that report an error.
+  [Field resolution](../src/check.odin#L852),
+  [record grammar](grammar.md#records)
 
 ## Package and import versioning
 

@@ -191,7 +191,7 @@ emit_spawn_arguments :: proc(
 ) -> (owned: [dynamic]Deferred) {
 	// A procedure value has no declaration: its call supplies every argument.
 	callee := task.through_value ? nil : symbol_of(e.c, call.resolution.symbol)
-	scope := begin_default_scope(e, callee)
+	scope := begin_default_scope(e, callee, call.bound)
 	defer end_default_scope(e, &scope)
 	for step in 0 ..< len(call.bound) {
 		index := call_slot_at(call, step)

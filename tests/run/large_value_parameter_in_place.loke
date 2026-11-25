@@ -1,0 +1,43 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Parameter semantics and ABI lowering": a large immutable value
+// parameter reads the caller's snapshot in place, so writes to the source
+// during the call, or by a later argument, do not reach it.
+Big :: struct { bytes: [5000]u8, marker: int }
+
+global := Big{};
+
+report :: proc(value: ^Big) { fmt.println("deferred", value.marker, value.bytes[4999]); }
+
+@(cold)
+show :: proc(value: Big) {
+	defer report(&value);
+	global.marker = 99;
+	global.bytes[4999] = 0;
+	fmt.println("body", value.marker);
+}
+
+bump :: proc() -> int {
+	global.marker += 1;
+	return global.marker;
+}
+
+pair :: proc(value: Big, later: int) {
+	fmt.println("pair", value.marker, later);
+}
+
+impl Big {
+	twice :: proc(self: Big, other: Big) -> int { return self.marker + other.marker; }
+}
+
+main :: proc() {
+	global.marker = 7;
+	global.bytes[4999] = 3;
+	show(global);
+	fmt.println("after", global.marker);
+	global.marker = 1;
+	pair(global, bump());
+	fmt.println(global.twice(global));
+}

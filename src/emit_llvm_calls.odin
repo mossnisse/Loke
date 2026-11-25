@@ -534,11 +534,10 @@ emit_spread_pack :: proc(
 		cleanup = register_array_cleanup(e, element, buffer, flags, count)
 	}
 
-	cursor := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	// The walk is unrolled, so each operand's position is an SSA value.
+	position := "0"
 	next_element, next_spread := 0, 0
 	for operand in v.variadic_pack {
-		position := load(e, "i64", cursor)
 		advance := "1"
 		if operand.spread {
 			data := operands.spread_data[next_spread]
@@ -567,8 +566,7 @@ emit_spread_pack :: proc(
 			}
 			next_element += 1
 		}
-		advanced := emit_value(e, "add i64 %s, %s", position, advance)
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, cursor)
+		position = emit_value(e, "add i64 %s, %s", position, advance)
 	}
 	return buffer, cleanup
 }
@@ -725,12 +723,13 @@ Bound_Parameter :: struct {
 	by_address: bool,
 }
 
+// Bindings are kept only when one of the `bound` arguments is a default.
 @(private)
-begin_default_scope :: proc(e: ^Emitter, callee: ^Symbol) -> Default_Scope {
+begin_default_scope :: proc(e: ^Emitter, callee: ^Symbol, bound: []Expr) -> Default_Scope {
 	scope := Default_Scope{callee = callee, outer = e.param_values}
-	if callee != nil {
-		for value in callee.param_defaults {
-			scope.has_defaults ||= value != nil
+	if callee != nil && len(callee.param_defaults) > 0 {
+		for argument, index in bound {
+			scope.has_defaults ||= is_default_argument(callee, index, argument)
 		}
 	}
 	return scope
@@ -780,7 +779,7 @@ emit_call_operands :: proc(
 	e: ^Emitter, symbol: ^Symbol, callee_type: ^Type_Info, bound: []Expr, call_node: ^Expr_Call, order: []int,
 	receiver, receiver_place: string, consumed: int, consuming_body: bool,
 ) -> Bound_Operands {
-	scope := begin_default_scope(e, symbol)
+	scope := begin_default_scope(e, symbol, bound)
 	defer end_default_scope(e, &scope)
 
 	out := Bound_Operands{operands = make([]string, len(bound)), }

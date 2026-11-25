@@ -330,6 +330,13 @@ checklist.
 
 ### Changed
 
+- A value parameter over 4096 bytes reads the copy its caller passes, rather than copying it
+  again into storage of its own
+  ([Parameter semantics and ABI lowering](docs/design.md#parameter-semantics-and-abi-lowering)).
+  Passing a 5008-byte record to a procedure whose `defer` takes its address copied it twice,
+  even at `-opt=speed`; it is now copied once. A pack built from spreads keeps its write
+  position in registers, and a call that writes every argument no longer gathers bindings
+  for defaults it does not run.
 - A `[dynamic]T` whose elements copy as bytes grows through its allocator's resize, so it can
   extend its block in place. In a 256-byte `mem.Arena.from_buffer`, an array of 64 `u8` at
   capacity 64 refused `try_append(9)`, since growth asked for a second block while the first

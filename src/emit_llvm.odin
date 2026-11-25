@@ -485,7 +485,9 @@ emit_loke_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
 }
 
 // A value parameter gets its own storage; a pointer-mode one is already an
-// alias (design.md "Receiver forms").
+// alias (design.md "Receiver forms"), and so is a large immutable one, whose
+// caller passes storage nothing else writes during the call (design.md
+// "Parameter semantics and ABI lowering").
 @(private = "file")
 bind_parameters :: proc(e: ^Emitter, symbol: ^Symbol) {
 	for parameter, index in symbol.params {
@@ -493,7 +495,12 @@ bind_parameters :: proc(e: ^Emitter, symbol: ^Symbol) {
 		if binding == INVALID_SYMBOL {
 			continue
 		}
-		if param_mode_is_pointer(symbol_param_mode(e.c, symbol, index)) {
+		mode := symbol_param_mode(e.c, symbol, index)
+		if !e.abi_foreign && mode == .Value && is_large_value(e, parameter) {
+			bind_local(e, binding, fmt.aprintf("%%arg%d", index))
+			continue
+		}
+		if param_mode_is_pointer(mode) {
 			// `self: ^Self` binds the address itself, which needs a slot.
 			if bound := symbol_of(e.c, binding); bound != nil && bound.type != parameter {
 				slot := fmt.aprintf("%%p%d.%d", index, next_id(e))

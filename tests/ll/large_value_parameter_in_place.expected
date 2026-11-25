@@ -1,0 +1,3 @@
+define internal void @loke.p.show(ptr nonnull %arg0)
+store ptr %arg0, ptr %uenv.*
+not call void @llvm.memcpy.p0.p0.i64(ptr %p0.*, ptr %arg0, i64 5008, i1 false)
