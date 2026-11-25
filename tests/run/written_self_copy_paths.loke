@@ -1,0 +1,71 @@
+// design.md "Allocator regions and region provenance": `reserve` writes `self` with
+// a value made from `self.storage`, so the region analysis reads each copy from the
+// parameter one step deeper every round, and `slide` copies one element of it to
+// another. A copy of all at a path covers a copy from below it, so the facts settle
+// at a few sources rather than every path of up to the written-alias depth over both
+// kinds of step: this once kept the compiler from finishing, as `Deque(string)` did.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+Ring :: struct {
+	storage: [dynamic]string,
+	count: int,
+}
+
+impl Ring {
+	slots_of :: proc(self: ^mut Ring) -> []mut string {
+		return unsafe.raw_data(self^.storage)[0:self^.storage.cap()];
+	}
+
+	slots :: proc(self: inout) -> []mut string {
+		reach: proc(self: ^mut Ring) -> []mut string = Ring.slots_of;
+		return reach(&mut self);
+	}
+
+	wrap :: proc(self: ^, position: int) -> int { return position; }
+
+	adopt :: proc(self: inout, @(escape=stored) next: move Ring) {
+		fmt.println("adopt", next.storage.cap());
+	}
+
+	reserve :: proc(self: inout, capacity: int) {
+		self.adopt({storage = make([dynamic]string, 0, capacity, self.storage.allocator())});
+	}
+
+	grow :: proc(self: inout, wanted: int) {
+		self.reserve(wanted * 2);
+	}
+
+	slide :: proc(self: inout, vacant, filled: int) {
+		to := self.wrap(vacant);
+		forward := filled > vacant;
+		steps := filled - vacant if forward else vacant - filled;
+		slots := self.slots();
+		foreach (_ in 0 ..< steps) {
+			from := to + 1 if forward else to - 1;
+			unsafe.write(slots[to], unsafe.take(slots[from]));
+		}
+	}
+
+	insert_moved :: proc(self: inout, index: int, value: move string) {
+		self.grow(self.count + 1);
+		if (index < self.count - index) {
+			fmt.println("front");
+		} else {
+			self.slide(self.count, index);
+		}
+	}
+
+	insert_copied :: proc(self: inout, index: int, value: string) {
+		item := value.clone(self.storage.allocator());
+		self.insert_moved(index, move(item));
+	}
+}
+
+main :: proc() {
+	r: Ring = {};
+	r.insert_copied(0, "a");
+	fmt.println(r.count);
+}

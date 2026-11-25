@@ -486,7 +486,8 @@ collect_written_regions :: proc(c: ^Compiler, graph: ^Flow_Graph, declaration: S
 // Merges a body's path-indexed content into a parameter's summary row. A
 // region reaching a new path is growth even when the row's union is unchanged.
 // Paths stop at the written-alias depth, as a recursive call can lengthen them
-// on every round; a cut entry reaches every path below it.
+// on every round; a cut entry reaches every path below it, and an entry covered
+// by one already there adds only its region (`prov_region_content_covers`).
 @(private = "file")
 merge_written_content :: proc(c: ^Compiler, row: ^[]Prov_Region_Content, from: []Prov_Region_Content) -> bool {
 	changed := false
@@ -502,7 +503,7 @@ merge_written_content :: proc(c: ^Compiler, row: ^[]Prov_Region_Content, from: [
 		}
 		rows := grown != nil ? grown[:] : row^
 		for &existing in rows {
-			if prov_same_region_content(existing, entry) {
+			if prov_region_content_covers(existing, entry) {
 				changed = region_merge(&existing.region, entry.region) || changed
 				continue next
 			}

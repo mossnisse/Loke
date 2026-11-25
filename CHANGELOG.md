@@ -605,6 +605,12 @@ checklist.
 
 ### Fixed
 
+- The compiler no longer hangs on a procedure that writes a parameter with a value made from part
+  of it and also moves the parameter's elements around, as a `Deque(string)`'s `insert` grows
+  with `self.adopt({storage = make(.., self.storage.allocator())})` and then slides elements one
+  slot along. The region analysis read each copy from the parameter one step deeper every round,
+  and kept every such path up to its depth limit, a number exponential in it. A copy of all at a
+  path now covers a copy from below it.
 - A compile-time `foreach` over a string decodes each code point as it steps
   ([String iteration](docs/design.md#string-iteration)), so `break` and `return` stop the
   decoding. It decoded the whole string first: a constant folding a procedure that returns the

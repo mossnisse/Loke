@@ -748,7 +748,11 @@ Keep these contracts:
   handles (`Written_Summary.owners`) and keep each part at the path the body
   wrote (`Written_Summary.content`); a copy within one argument is a copy
   entry the call resolves in its caller, its source's path stopping at
-  `WRITTEN_ALIAS_DEPTH`, as a store may read its own copy. A carrier keeps no region
+  `WRITTEN_ALIAS_DEPTH`, as a store may read its own copy. A copy of all at a source
+  path covers one from below it (`prov_region_content_covers`), or a parameter written
+  with a value made from its own part, as `self.adopt({storage = make(..,
+  self.storage.allocator())})`, would gain every path of up to that depth over the steps
+  it reads, a number exponential in it. A carrier keeps no region
   where it is held, so a row that went through one of the parameter's carriers has a
   path starting at that carrier (`prov_parameter_carrier_path`), whether the record is
   passed by value, behind a pointer, or `inout`, and a call lands the row only where the

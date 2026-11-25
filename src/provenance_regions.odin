@@ -596,8 +596,8 @@ prov_define_region_content :: proc(
 	prov_add_region_content(graph, storage, Prov_Region_Content{path = path, handle = handle, own = own}, region)
 }
 
-// Merges `region` into the entry of `storage` that records the same kind of fact
-// as `entry` at its path, or adds a copy of `entry` holding `region`.
+// Merges `region` into the entry of `storage` that covers `entry`, or adds a copy
+// of `entry` holding `region`.
 @(private)
 prov_add_region_content :: proc(graph: ^Flow_Graph, storage: Storage_Id, entry: Prov_Region_Content, region: Region_Set) {
 	_, content, inserted, _ := map_entry(&graph.region_content, storage)
@@ -605,7 +605,7 @@ prov_add_region_content :: proc(graph: ^Flow_Graph, storage: Storage_Id, entry: 
 		content^ = make([dynamic]Prov_Region_Content, 0, 2, graph.alloc)
 	}
 	for &known in content {
-		if prov_same_region_content(known, entry) {
+		if prov_region_content_covers(known, entry) {
 			region_merge(&known.region, region)
 			return
 		}
@@ -613,13 +613,20 @@ prov_add_region_content :: proc(graph: ^Flow_Graph, storage: Storage_Id, entry: 
 	append(content, prov_clone_region_content(entry, region, graph.alloc))
 }
 
-// Whether two entries record the same kind of fact at the same path, so one
-// merges into the other.
-prov_same_region_content :: proc(a, b: Prov_Region_Content) -> bool {
-	if a.handle != b.handle || a.own != b.own || !prov_same_path(a.path, b.path) { return false }
-	from_a, copied_a := a.from.?
-	from_b, copied_b := b.from.?
-	return copied_a == copied_b && (!copied_a || from_a.query == from_b.query && prov_same_path(from_a.path, from_b.path))
+// Whether `entry` merges into `known` and adds only its region: both record the
+// same kind of fact at the same path, and `known` copies from the argument at
+// least all that `entry` does. A copy of everything at a path reads everything
+// below it (`prov_copied_source`), so it covers a copy from deeper there. Without
+// that, a parameter written with a copy of its own part, as when `self` takes a
+// value made from `self.storage`, reads one step deeper on every round, and with
+// two kinds of step the written-alias depth alone leaves 2^depth sources.
+prov_region_content_covers :: proc(known, entry: Prov_Region_Content) -> bool {
+	if known.handle != entry.handle || known.own != entry.own || !prov_same_path(known.path, entry.path) { return false }
+	from_known, copied_known := known.from.?
+	from, copied := entry.from.?
+	if !copied_known || !copied { return copied_known == copied }
+	if from_known.query == .All { return path_has_exact_prefix(from.path, from_known.path) }
+	return from_known.query == from.query && prov_same_path(from_known.path, from.path)
 }
 
 // `entry` with its paths in `allocator` and `region` in place of its own.
