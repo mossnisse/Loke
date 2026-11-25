@@ -299,8 +299,12 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 	// Start from all-zero bits so an omitted field holds its zero value
 	// (design.md "Struct literals", "Zero values"). The literal's own type may
 	// have no zero, as with a `Box` field: every part without one is supplied.
-	store(e, as_type, "zeroinitializer", address)
+	// A record whose every field is supplied needs none: padding between its
+	// fields holds no value, which a first-class copy does not carry either.
 	info := underlying_info(e.c, as_type)
+	if info == nil || info.kind != .Struct || len(v.elements) < len(info.fields) {
+		store(e, as_type, "zeroinitializer", address)
+	}
 	if info == nil {
 		return
 	}
@@ -335,7 +339,14 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 		// parts after it (`end_operand_temporaries`). A range's later slots still
 		// copy the value, so it keeps its own.
 		operand := begin_operand_temporaries(e)
-		value := emit_copied_expr(e, element.value, element_type, index < len(v.element_clones) && v.element_clones[index])
+		clones := index < len(v.element_clones) && v.element_clones[index]
+		// A large place is copied from where it is, by the `store` below.
+		value: string
+		if place := large_copy_place(e, element.value, element_type, clones); place != nil {
+			value = emit_address(e, place)
+		} else {
+			value = emit_copied_expr(e, element.value, element_type, clones)
+		}
 		// A designated index range stores one evaluation in every slot; each
 		// slot after the first owns a copy.
 		end := slot + 1
@@ -954,18 +965,22 @@ transmuted_place :: proc(operand: Expr) -> bool {
 	return expression_is_borrowed_place(operand) && !expression_converts_storage(operand)
 }
 
-// The place `value` is read from when it is nothing but a read of one, through
-// a `transmute` or not, and nil otherwise. A large destination that nothing
-// else names, and that nothing runs before, copies the bytes from there instead
-// of from a snapshot of them.
+// The place a large value of `type` is copied from as it is, when `value` is
+// nothing but a read of one, through a `transmute` or not; nil otherwise, and
+// for a clone or a conversion, which builds a value of its own. Storage that
+// nothing else names, and that nothing runs before, copies the bytes from there
+// instead of from a snapshot of them.
 @(private)
-large_value_place :: proc(e: ^Emitter, value: Expr) -> Expr {
+large_copy_place :: proc(e: ^Emitter, value: Expr, type: Type_Id, clones: bool) -> Expr {
+	if clones || !is_large_value(e, type) || expression_converts_storage(value) {
+		return nil
+	}
 	if expression_is_borrowed_place(value) {
 		return value
 	}
 	// A folded call keeps no operand.
 	call, called := value.(^Expr_Call)
-	if called && !base_is_const(&call.base) && !expression_converts_storage(value) &&
+	if called && !base_is_const(&call.base) &&
 	   call_builtin_kind(e, call) == .Unsafe_Transmute && transmuted_place(call.bound[0]) {
 		return call.bound[0]
 	}

@@ -399,7 +399,7 @@ cold_attributes :: proc(symbol: ^Symbol) -> string {
 loke_param_list :: proc(e: ^Emitter, symbol: ^Symbol, inout: bool) -> string {
 	params := make([dynamic]string)
 	if returns_sret(e, symbol.result, inout) {
-		append(&params, "ptr %sret")
+		append(&params, SRET_PARAM)
 	}
 	for parameter, index in symbol.params {
 		mode := symbol_param_mode(e.c, symbol, index)

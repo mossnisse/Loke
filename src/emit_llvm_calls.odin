@@ -1078,7 +1078,11 @@ emit_insertion_copy :: proc(e: ^Emitter, argument: Expr, element: Type_Id, conta
 
 // design.md: a procedure returns at most one value. An `inout` result is a
 // place, so it travels as its address. A large result is written through a
-// leading `ptr %sret` into the caller's storage.
+// leading `ptr %sret` into the caller's storage: a temporary each call takes
+// afresh, which no operand names, so the parameter is `noalias` and a store
+// the result overwrites is dead.
+SRET_PARAM :: "ptr noalias %sret"
+
 @(private)
 llvm_result_type :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
 	if result == INVALID_TYPE || !inout && is_large_value(e, result) {
@@ -1100,7 +1104,7 @@ sret_param :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
 		return ""
 	}
 	e.abi_sret = "%sret"
-	return "ptr %sret, "
+	return SRET_PARAM + ", "
 }
 
 @(private)

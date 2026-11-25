@@ -1,0 +1,5 @@
+define internal void @loke.p.make_big(ptr noalias %sret, i64 %arg0, ptr nonnull %arg1)
+getelementptr inbounds %struct.Big.*, ptr %sret, i32 0, i32 1
+not memset.p0.i64(ptr %t*, i8 0, i64 8200
+not memcpy.p0.p0.i64(ptr %sret, ptr %t*, i64 8200
+not memcpy.p0.p0.i64(ptr %t*, ptr %t*, i64 8200

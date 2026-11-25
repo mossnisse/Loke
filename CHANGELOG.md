@@ -330,6 +330,13 @@ checklist.
 
 ### Changed
 
+- A procedure returning a struct over 4096 bytes builds a returned literal in its caller's
+  storage, and a literal copies a large field straight from the place it names. Returning
+  `Big{tag, payload^}` for `Big :: struct { tag: int, payload: [8192]u8 }` zero-filled 8,200
+  bytes and copied the payload twice, even at `-opt=speed`; it now stores the tag and copies
+  the payload once. A literal that supplies every field is no longer zero-filled first.
+  Destructuring a large place reads only the fields it keeps: `tag, _ := p^` copied the whole
+  record to read one field.
 - A value parameter over 4096 bytes reads the copy its caller passes, rather than copying it
   again into storage of its own
   ([Parameter semantics and ABI lowering](docs/design.md#parameter-semantics-and-abi-lowering)).
@@ -618,6 +625,10 @@ checklist.
 
 ### Fixed
 
+- Destructuring a small `@(packed, align=N)` record emitted IR clang rejected, since its
+  fields were taken out as the byte arrays that spell them for LLVM
+  ([Destructuring](docs/design.md#destructuring)). They are now read at their declared types,
+  as equality already did.
 - The compiler no longer hangs on a procedure that writes a parameter with a value made from part
   of it and also moves the parameter's elements around, as a `Deque(string)`'s `insert` grows
   with `self.adopt({storage = make(.., self.storage.allocator())})` and then slides elements one

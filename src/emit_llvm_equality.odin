@@ -105,11 +105,11 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	case .Array:
 		return emit_array_equal(e, under, info, lhs, rhs)
 	case .Struct:
-		// A byte-member record's fields are read in memory, at the alignment
-		// their byte members guarantee.
+		// A byte-member record's fields are read in memory, which takes one copy
+		// of each operand rather than one per field (`record_part`).
 		if record_uses_byte_members(e, under, info) {
 			left, right := value_address(e, under, lhs), value_address(e, under, rhs)
-			return emit_fields_equal(e, under, info, left, right, byte_member_part)
+			return emit_fields_equal(e, under, info, left, right, record_field_at)
 		}
 		return emit_fields_equal(e, under, info, lhs, rhs, record_part)
 	}
@@ -270,14 +270,6 @@ emit_fields_equal :: proc(
 		chain_part(e, &chain, symbol_of(e.c, field).type, read(e, record, lhs, index), read(e, record, rhs, index))
 	}
 	return chain_answer(e, chain)
-}
-
-// A field of a byte-member record in storage, loaded at its own type through the
-// GEP its byte member occupies, at the alignment that member guarantees.
-@(private = "file")
-byte_member_part :: proc(e: ^Emitter, record: Type_Id, slot: string, index: int) -> string {
-	address := element_address(e, record, slot, index)
-	return load_place(e, symbol_of(e.c, underlying_info(e.c, record).fields[index]).type, address)
 }
 
 // ------------------------------------------------------------ key hashing --

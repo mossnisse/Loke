@@ -202,13 +202,14 @@ collect_returned_literal_names :: proc(w: ^Returned_Names, v: ^Expr_Composite, e
 	}
 	info := underlying_info(c, type)
 	kind := info.kind if info != nil else .Invalid
+	positional: []Symbol_Id
 	for element, index in v.elements {
 		names_key := !key_names_field(v, element.key)
 		key_type, value_type := INVALID_TYPE, INVALID_TYPE
 		#partial switch kind {
 		case .Struct:
 			names_key = false
-			value_type = literal_field_type(c, info, element.key, index)
+			value_type = literal_field_type(c, v, type, info, index, &positional)
 		case .Map:
 			names_key = true
 			key_type, value_type = info.key, info.element
@@ -225,24 +226,35 @@ collect_returned_literal_names :: proc(w: ^Returned_Names, v: ^Expr_Composite, e
 	}
 }
 
-// The type of the struct field a literal's element fills: the one its key
-// names, or else the one at its position. INVALID_TYPE when there is none.
+// The type of the struct field of `record` that a literal's element fills: the
+// one checking resolved, the one its key names, or else the one at its
+// position among `positional`, the named fields, listed once per literal.
+// INVALID_TYPE when there is none.
 @(private = "file")
-literal_field_type :: proc(c: ^Compiler, info: ^Type_Info, key: Expr, index: int) -> Type_Id {
-	if key == nil {
-		positional := named_fields(c, info)
-		return index < len(positional) ? symbol_of(c, positional[index]).type : INVALID_TYPE
-	}
-	label, is_label := key.(^Expr_Ident)
-	if !is_label {
-		return INVALID_TYPE
-	}
-	for field in info.fields {
-		if sym := symbol_of(c, field); sym != nil && identifier_text(c, sym.name) == label.name {
-			return sym.type
+literal_field_type :: proc(
+	c: ^Compiler, v: ^Expr_Composite, record: Type_Id, info: ^Type_Info, index: int, positional: ^[]Symbol_Id,
+) -> Type_Id {
+	field := INVALID_SYMBOL
+	key := v.elements[index].key
+	switch {
+	case v.type == record && len(v.field_indices) == len(v.elements):
+		if slot := v.field_indices[index]; slot >= 0 && slot < len(info.fields) {
+			field = info.fields[slot]
+		}
+	case key == nil:
+		if positional^ == nil {
+			positional^ = named_fields(c, info)
+		}
+		if index < len(positional^) {
+			field = positional[index]
+		}
+	case:
+		if label, is_label := key.(^Expr_Ident); is_label {
+			field = field_named(c, record, identifier_of(c, label))
 		}
 	}
-	return INVALID_TYPE
+	symbol := symbol_of(c, field)
+	return symbol.type if symbol != nil else INVALID_TYPE
 }
 
 // design.md "Returned constructions", "Last-use transfer": a local that a

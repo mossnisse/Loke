@@ -863,33 +863,29 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		bindings := make([dynamic]Symbol_Id, 0, len(field.names), k.c.semantic_allocator)
 		// design.md "Compile-time reflection": fields have visibility too.
 		public := field_is_public(k, &field)
+		required := has_attribute(field.attributes, "required")
+		synchronized := has_attribute(field.attributes, "synchronized")
 		for name in field.names {
-			if name.text != "_" && name_identifier(k.c, name) in named {
-				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
-				append(&bindings, INVALID_SYMBOL)
-				continue
-			}
-			binding := new_binding_symbol(k, name, .Field)
 			// grammar.md "Records": `_` is unnamed padding. It keeps its storage
 			// under no name, and nothing outside the record sees it.
 			padding := name.text == "_"
-			if padding {
-				binding = new_symbol(k.c, Symbol{span = name.span, kind = .Field, pkg = k.pkg})
-			}
-			if bound := symbol_of(k.c, binding); bound != nil {
-				bound.type = field_type
-				bound.index = u32(len(members))
-				bound.public = public && !padding
-				bound.required = has_attribute(field.attributes, "required")
-				bound.synchronized = has_attribute(field.attributes, "synchronized")
-			}
-			append(&bindings, binding)
-			if binding != INVALID_SYMBOL {
-				append(&members, binding)
-				if !padding {
-					named[name_identifier(k.c, name)] = {}
+			name_id := INVALID_IDENTIFIER
+			if !padding {
+				name_id = name_identifier(k.c, name)
+				if name_id in named {
+					errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
+					append(&bindings, INVALID_SYMBOL)
+					continue
 				}
+				named[name_id] = {}
 			}
+			binding := new_symbol(k.c, Symbol {
+				name = name_id, span = name.span, kind = .Field, pkg = k.pkg, type = field_type,
+				index = u32(len(members)), public = public && !padding,
+				required = required, synchronized = synchronized,
+			})
+			append(&bindings, binding)
+			append(&members, binding)
 		}
 		field.symbols = bindings[:]
 	}

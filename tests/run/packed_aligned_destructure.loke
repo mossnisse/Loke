@@ -1,0 +1,24 @@
+// design.md "Destructuring" and "Record layout attributes": a combined
+// `@(packed, align=N)` record's fields are taken apart at their declared types,
+// from a value, a place, and an assignment, and compare field by field.
+package main;
+
+import "core:fmt";
+
+@(packed, align=8)
+Pair :: struct { tag: u8, value: i32 }
+
+unpack :: proc(p: Pair) -> i32 {
+	_, value := p;
+	return value;
+}
+
+main :: proc() {
+	fmt.println(unpack(Pair{1, 42}));
+	p := Pair{2, -7};
+	tag, value := p;
+	fmt.println(tag, value);
+	tag, value = Pair{3, 9};
+	fmt.println(tag, value);
+	fmt.println(p == Pair{2, -7}, p == Pair{2, 7});
+}

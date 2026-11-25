@@ -97,29 +97,43 @@ spill :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	return slot
 }
 
-// One field of a record value. A large record is an address, read in place, and
-// a large field stays one.
-@(private)
-record_part :: proc(e: ^Emitter, record: Type_Id, value: string, index: int) -> string {
-	if !is_large_value(e, record) {
-		return extract(e, llvm_type(e, record), value, index)
-	}
-	address := element_address(e, record, value, index)
-	field := symbol_of(e.c, underlying_info(e.c, record).fields[index]).type
-	return is_large_value(e, field) ? address : load_place(e, field, address)
+// Whether a value of `record` is held in storage to read or build its fields:
+// it is large, or its LLVM members are byte arrays rather than its fields'
+// types (`record_uses_byte_members`).
+@(private = "file")
+record_parts_in_memory :: proc(e: ^Emitter, record: Type_Id) -> bool {
+	return is_large_value(e, record) || record_uses_byte_members(e, record, underlying_info(e.c, record))
 }
 
-// A record of `parts`, in field order. A large one is built in storage, and a
-// large part is the address of its value.
+// One field of a record value. A large record is an address, read in place, and
+// a large field stays one; a small byte-member record is read from a copy.
+@(private)
+record_part :: proc(e: ^Emitter, record: Type_Id, value: string, index: int) -> string {
+	if !record_parts_in_memory(e, record) {
+		return extract(e, llvm_type(e, record), value, index)
+	}
+	return record_field_at(e, record, value_address(e, record, value), index)
+}
+
+// One field of the record in storage at `address`, at its own type and the
+// alignment its place guarantees; a large field stays the address.
+@(private)
+record_field_at :: proc(e: ^Emitter, record: Type_Id, address: string, index: int) -> string {
+	field := symbol_of(e.c, underlying_info(e.c, record).fields[index]).type
+	return load_temporary(e, field, element_address(e, record, address, index))
+}
+
+// A record of `parts`, in field order. A large one, or a byte-member one, is
+// built in storage, and a large part is the address of its value.
 @(private)
 build_record :: proc(e: ^Emitter, record: Type_Id, parts: ..string) -> string {
 	fields := underlying_info(e.c, record).fields
-	if is_large_value(e, record) {
+	if record_parts_in_memory(e, record) {
 		slot := temporary_slot(e, record)
 		for part, index in parts {
 			store(e, symbol_of(e.c, fields[index]).type, part, element_address(e, record, slot, index))
 		}
-		return slot
+		return load_temporary(e, record, slot)
 	}
 	llvm := llvm_type(e, record)
 	built := "undef"

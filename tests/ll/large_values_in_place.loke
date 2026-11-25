@@ -1,0 +1,25 @@
+// A large literal returned is built in the caller's result storage, which the
+// callee sees as `noalias`, and a large place destructured is read field by
+// field rather than copied whole.
+package main;
+
+import "core:fmt";
+
+Big :: struct { tag: int, payload: [8192]u8 }
+
+@(cold)
+make_big :: proc(tag: int, payload: ^[8192]u8) -> Big {
+	return Big{tag, payload^};
+}
+
+@(cold)
+tag_of :: proc(p: ^Big) -> int {
+	tag, _ := p^;
+	return tag;
+}
+
+main :: proc() {
+	data: [8192]u8 = {};
+	b := make_big(3, &data);
+	fmt.println(tag_of(&b));
+}

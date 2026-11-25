@@ -1423,7 +1423,9 @@ Preserve these lowering rules:
 - Values above `LARGE_VALUE_BYTES` travel by address and return through `sret`,
   avoiding LLVM first-class aggregates that can crash clang. Route Loke values
   through `load_place`, `store`, `temporary_slot`, `emit_call_result`,
-  `emit_ret`, and `sret_param`; reuse temporary storage between full
+  `emit_ret`, and `sret_param`. Each call passes `sret` a temporary of its
+  own that no operand names, so the parameter is `noalias` and a returned
+  literal is built in it (`literal_built_in_result`). Reuse temporary storage between full
   expressions, and between a literal's parts once the container, array, or
   record holds one that names none of its temporaries (`end_operand_temporaries`): its
   types hold no address, and no call it made was handed one

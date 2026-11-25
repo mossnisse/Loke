@@ -271,7 +271,7 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 			continue
 		}
 		clones := i < len(d.value_clones) && d.value_clones[i]
-		if place := large_value_place(e, d.values[i]); place != nil && !clones && is_large_value(e, sym.type) {
+		if place := large_copy_place(e, d.values[i], sym.type, clones); place != nil {
 			// Nothing runs between reading the place and writing the new local.
 			copy_bytes(e, slot, emit_address(e, place), type_size(e.c, sym.type))
 		} else {
@@ -293,13 +293,25 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 emit_destructure_fields :: proc(
 	e: ^Emitter, plan: ^Destructure, operand: Expr, destinations: []Symbol_Id,
 ) -> (values: []string, guards: []Deferred) {
-	record := emit_expr(e, operand)
+	// A large place is not copied whole: each retained field is copied out of
+	// it, all before any destination is evaluated or written.
+	in_place := plan.from_place && is_large_value(e, plan.record)
+	record := in_place ? emit_address(e, operand) : emit_expr(e, operand)
 	values = make([]string, len(plan.fields))
 	guards = make([]Deferred, len(plan.fields))
 	for field_id, index in plan.fields {
 		field := symbol_of(e.c, field_id)
+		if in_place && !plan.retained[index] {
+			continue
+		}
 		// A padding field fills no binding, so the field's own slot is read.
-		value := record_part(e, plan.record, record, int(field.index))
+		slot := int(field.index)
+		value: string
+		if in_place {
+			value = load_place(e, field.type, element_address(e, plan.record, record, slot))
+		} else {
+			value = record_part(e, plan.record, record, slot)
+		}
 		clones := plan.retained[index] && index < len(plan.clones) && plan.clones[index]
 		if clones {
 			value = emit_clone_value(e, field.type, value, emit_destination_allocator(e, destinations[index]))
@@ -943,6 +955,8 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 			// An `inout` result hands back the place itself, not a copy of it, and
 			// the place stays live.
 			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", emit_address(e, value.expr), e.result_slot)
+		} else if literal := literal_built_in_result(e, value.expr); literal != nil {
+			emit_composite_into(e, literal, e.result_slot, e.result_type)
 		} else {
 			store(e, e.result_type, emit_copied_expr(e, value.expr, e.result_type, value.clone_on_return), e.result_slot)
 			// A returned local transferred out, so cleanup must not drop it. A view
@@ -959,6 +973,39 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 		}
 	}
 	emit_epilogue(e)
+}
+
+// A returned large literal that can be built where the result goes rather than
+// copied there, or nil. The result is the caller's fresh storage, which no
+// operand names; an operand that can leave the procedure would write the result
+// and then drop the literal's parts held there, so none may.
+@(private = "file")
+literal_built_in_result :: proc(e: ^Emitter, expr: Expr) -> ^Expr_Composite {
+	literal, is_literal := expr.(^Expr_Composite)
+	if !is_literal || literal.backing != INVALID_TYPE || !is_large_value(e, e.result_type) ||
+	   expression_converts_storage(expr) || expr_can_exit(expr) {
+		return nil
+	}
+	return literal
+}
+
+// Whether evaluating `expr` can leave it for elsewhere in its procedure, with
+// `or_return` or an `or_else` exit.
+@(private = "file")
+expr_can_exit :: proc(expr: Expr) -> bool {
+	#partial switch v in expr {
+	case ^Expr_Postfix:
+		if v.op == .Or_Return {
+			return true
+		}
+	case ^Expr_Or_Else:
+		if v.exit != nil {
+			return true
+		}
+	}
+	return expr_children(expr, nil, proc(_: rawptr, child: Expr) -> bool {
+		return child != nil && expr_can_exit(child)
+	})
 }
 
 // Whether the result being returned is the failure variant, when an `errdefer`

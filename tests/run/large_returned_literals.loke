@@ -1,0 +1,41 @@
+// design.md "Struct literals" and "Return statements": a large literal is built
+// where the result goes, its fields evaluated in written order. One that reads
+// the parameter it replaces field by field, one with managed fields, one with
+// omitted fields, and one whose element can leave the procedure all return the
+// values written.
+package main;
+
+import "core:fmt";
+
+Big :: struct { a: int, b: int, payload: [8192]u8 }
+Named :: struct { name: string, items: [dynamic]int, payload: [8192]u8 }
+
+swapped :: proc(p: Big) -> Big {
+	return Big{b = p.a, a = p.b, payload = p.payload};
+}
+
+named :: proc(text: string) -> Named {
+	return Named{text, [dynamic]int{1, 2, 3}, {}};
+}
+
+partial :: proc(a: int) -> Big {
+	return Big{a = a};
+}
+
+leaves :: proc(value: Option(int)) -> Big {
+	return Big{a = value or_else return Big{a = -1, b = -1}, b = 5};
+}
+
+main :: proc() {
+	p := Big{a = 1, b = 2};
+	p.payload[8191] = 4;
+	q := swapped(p);
+	fmt.println(q.a, q.b, q.payload[8191]);
+	n := named("x");
+	fmt.println(n.name, n.items.len(), n.items[2]);
+	r := partial(6);
+	fmt.println(r.a, r.b, r.payload[100]);
+	s := leaves(.some(3));
+	t := leaves(.none);
+	fmt.println(s.a, s.b, t.a, t.b);
+}
