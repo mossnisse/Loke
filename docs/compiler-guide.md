@@ -148,7 +148,8 @@ copy that [last-use transfer](design.md#last-use-transfer) makes a move is not
 reported, an operand that a
 [returned construction](design.md#returned-constructions) transfers is not a
 copy, and a written `clone()` is not reported either, since it states that the
-copy is intended.
+copy is intended. So does an [index range](design.md#fixed-arrays) of several
+slots in an array literal, which is written to copy its value into each.
 
 Converting an operand to a destination type is not itself a copy:
 `fmt.print(count)` views an `int` as a borrowing `dyn fmt.Formattable`,

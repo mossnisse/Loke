@@ -1,0 +1,4 @@
+%union.anon_union.digest$3a*
+%struct.anon.digest$3a*
+not %union.anon_union.a00.*
+not %struct.anon.a00.*

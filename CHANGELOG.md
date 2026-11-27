@@ -362,6 +362,20 @@ checklist.
 
 ### Changed
 
+- An index range in an array literal copies its value into every slot
+  ([Fixed arrays](docs/design.md#fixed-arrays)). `[3]Tag{0..<3 = tag}` copied `tag` into the
+  first slot and cloned the others from that copy, which a copy hook that does not return its
+  source's value could tell. A temporary still goes to the first slot as it is. A range of
+  several slots is written to copy, so it no longer gets the copy-cost warning `L0507`
+  ([Copy-cost diagnostics](docs/compiler-guide.md#copy-cost-diagnostics)).
+- [`slice.pop_heap`](docs/standard-library.md#heaps) follows the preferred child to a leaf and
+  climbs back, which is about half the comparisons of stopping on the way down, and
+  `Priority_Queue.pop` and the heap sort `sort_by` falls back to gain with it. Draining a heap
+  of a million `string` keys took 906 ms and takes 674 ms at `-opt=speed`; `int` keys take what
+  they did.
+- The IR names an anonymous record or union with many members by a digest of them, not by
+  every label. Widening one anonymous union of 4,000 alternatives into another wrote 382 MB of
+  IR and took 6.7 s; it now writes 1.2 MB in 0.25 s.
 - A procedure returning a struct over 4096 bytes builds a returned literal in its caller's
   storage, and a literal copies a large field straight from the place it names. Returning
   `Big{tag, payload^}` for `Big :: struct { tag: int, payload: [8192]u8 }` zero-filled 8,200
@@ -657,6 +671,11 @@ checklist.
 
 ### Fixed
 
+- A record over 4096 bytes that has a `hook(copy)` can be copied
+  ([Lifecycle hooks and resource types](docs/design.md#lifecycle-hooks-and-resource-types)).
+  Any copy of one, `other := wide;` or `wide.clone()`, stopped the build with `L0403`: the
+  generated `try_clone` handed the hook the record itself, where a value that large travels as
+  its address.
 - A `spawn` of a call with a `@(cross_thread)` parameter is checked where the parent evaluates
   the argument ([Spawn statements](docs/design.md#spawn-statements)).
   `spawn sender.send(move(item))` was `L0726` whatever backed `item`, naming a `spawn$owned`

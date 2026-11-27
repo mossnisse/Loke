@@ -1642,7 +1642,7 @@ anon_record_type :: proc(c: ^Compiler, fields: []Anon_Member) -> Type_Id {
 		anonymous_record = true,
 		fields           = members,
 		name             = intern_identifier(c, anon_record_display(c, fields)),
-		backend_label    = anon_record_label(c, fields),
+		backend_label    = anon_label(c, "anon", fields),
 		unlabelled       = unlabelled,
 	})
 	bucket_append(c, &c.anon_record_types, hash, id)
@@ -1668,17 +1668,23 @@ anon_record_display :: proc(c: ^Compiler, fields: []Anon_Member) -> string {
 	return strings.to_string(b)
 }
 
-// The backend label. It is built from the structural sort key rather than the
-// display name, so two packages' unrelated `Token` types cannot collide in a
-// generated symbol merely because both print as `Token`.
+// The backend label of an anonymous record, `anon`, or union, `anon_union`. It
+// is built from the structural sort key rather than the display name, so two
+// packages' unrelated `Token` types cannot collide in a generated symbol merely
+// because both print as `Token`. The backend writes the label at each mention
+// of the type, so a long list of members is bounded as a long key is.
 @(private = "file")
-anon_record_label :: proc(c: ^Compiler, fields: []Anon_Member) -> string {
-	b := strings.builder_make(c.semantic_allocator)
-	strings.write_string(&b, "anon")
-	for field in fields {
-		fmt.sbprintf(&b, ".%s.%s", identifier_text(c, field.name), typeid_sort_key(c, field.type))
+anon_label :: proc(c: ^Compiler, prefix: string, members: []Anon_Member) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for member in members {
+		key := member.type == TYPE_VOID ? "void" : typeid_sort_key(c, member.type)
+		fmt.sbprintf(&b, ".%s.%s", identifier_text(c, member.name), key)
 	}
-	return strings.to_string(b)
+	members_key := strings.to_string(b)
+	if len(members_key) > SORT_KEY_LIMIT {
+		members_key = fmt.tprintf(".%s", bounded_sort_key(members_key, context.temp_allocator))
+	}
+	return strings.concatenate({prefix, members_key}, c.semantic_allocator)
 }
 
 // Interns one anonymous union. It carries no attributes, so it has no zero and
@@ -1705,9 +1711,7 @@ anon_union_type :: proc(c: ^Compiler, variants: []Anon_Member) -> Type_Id {
 	names := make([]Identifier_Id, len(variants), c.semantic_allocator)
 	payloads := make([]Type_Id, len(variants), c.semantic_allocator)
 	display := strings.builder_make(context.temp_allocator)
-	label := strings.builder_make(c.semantic_allocator)
 	strings.write_string(&display, "(")
-	strings.write_string(&label, "anon_union")
 	for variant, index in variants {
 		names[index] = variant.name
 		payloads[index] = variant.type
@@ -1718,9 +1722,6 @@ anon_union_type :: proc(c: ^Compiler, variants: []Anon_Member) -> Type_Id {
 		if variant.type != TYPE_VOID {
 			fmt.sbprintf(&display, " %s", type_name(c, variant.type))
 		}
-		// The structural sort key, not the display name, as for records.
-		payload_key := variant.type == TYPE_VOID ? "void" : typeid_sort_key(c, variant.type)
-		fmt.sbprintf(&label, ".%s.%s", identifier_text(c, variant.name), payload_key)
 	}
 	strings.write_string(&display, ")")
 	id := new_type(c, Type_Info {
@@ -1729,7 +1730,7 @@ anon_union_type :: proc(c: ^Compiler, variants: []Anon_Member) -> Type_Id {
 		variants        = payloads,
 		variant_names   = names,
 		name            = intern_identifier(c, strings.to_string(display)),
-		backend_label   = strings.to_string(label),
+		backend_label   = anon_label(c, "anon_union", variants),
 	})
 	bucket_append(c, &c.anon_union_types, hash, id)
 	return id

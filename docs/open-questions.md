@@ -14,7 +14,7 @@ audit](nondeterminism-audit.md). The language design reviews of 2026-10-03 and
 
 ## Provenance architecture
 
-The review of `b8499982` found two follow-ups to the
+The review of `b8499982` left one follow-up to the
 [synchronized variable exemption](design.md#global-write-effects).
 
 - **Preserve the lifetime of interior borrows.** A caller can hold one mutex
@@ -24,11 +24,6 @@ The review of `b8499982` found two follow-ups to the
   its backing storage. The compiler accepts the call today. How should the
   write effect preserve that lifetime check while still allowing multiple
   handles to the fieldless standard logger?
-- **Exercise the synchronized write through a slot.** In the
-  [global effects fixture](../tests/err/global_effects.loke), only `Circle`
-  is converted to `dyn Shape`. Converting `Counter` too would include its
-  write to `vouched` in the targets of `shape.area()`. With the attribute
-  removed, that call should then produce its own borrow conflict.
 
 A review of the root and region provenance checker on 2026-11-01 asked where its
 special cases come from, and which generalizations would remove classes of them
@@ -258,14 +253,6 @@ remain from them:
   as formatting does. A consuming switch needs writable storage for its
   drops, which its produced subject already is.
   [Switch](../src/emit_llvm_stmt.odin#L783)
-- **Bound the cost of resolving generated variant lists.** Duplicate
-  detection scans the preceding names for every variant, and widening
-  scans the destination names for every source alternative. Use a
-  temporary label index for large lists and keep the linear lookup for
-  small unions. Whole-process timings of synthetic declarations were too
-  noisy to establish a crossover.
-  [Variant resolution](../src/union.odin#L48),
-  [widening lookup](../src/union.odin#L403)
 
 ## Package and import versioning
 
@@ -324,53 +311,6 @@ generates it from source, checks it, or runs it. It leaves these open:
   has an `@(intrinsic)` signature written for readers and checked only for its
   name. Checking more needs a signature form that states such typing, or a
   rule for which written forms an operation's typing must accept.
-
-## The `op`/`try_op` pair
-
-Should a container keep both spellings of a fallible operation?
-`append`/`try_append`, `reserve`/`try_reserve`, and the rest double the
-container API over a failure-policy choice. Typed fallibility made the fallible
-variant cheap: a `try_` operation reports failure as a `Result` rather than a
-bare `bool`, over an ordinary library union with `@(failure=...)` and no
-compiler-known error type. That is what makes keeping both spellings need
-re-justifying. Every shipped container keeps its pair today; collapsing them is
-a separate decision with its own migration.
-
-The language pairs a fallible operation with a policy-following one in two
-more places, and both keep the pair: the compiler-generated
-[`clone`/`try_clone`](design.md#lifecycle-hooks-and-resource-types), for
-reasons a container does not share ([`clone` and `try_clone` stay a
-pair](comments.md#clone-and-try_clone-stay-a-pair)), and the allocation
-built-ins `box`/`try_box`, `make`/`try_make`, and `unsafe.new`/`unsafe.try_new`
-([The allocation built-ins follow the `try_`
-convention](comments.md#the-allocation-built-ins-follow-the-try_-convention)).
-The container pair is the live half of the question.
-
-One alternative is a single fallible operation per container, with the policy
-chosen at the call site. In this sketch `append` has today's `try_append`
-contract, and `must` is a proposed library helper:
-
-```text
-values.append(item) or_return;    // propagate
-must(values.append(item));        // panic, reporting the returned error
-_ = values.append(item);          // deliberately accept a failed insertion
-```
-
-The result type stays the same in every context. A bare statement must not
-panic where a value context returns the error, and an enclosing fallible
-procedure must not make it propagate, or refactoring and calls through procedure
-values would change failure policy. A consuming `must` would transfer a
-move-only success, report the error and the caller's location, and follow panic
-cleanup; `or_else panic(...)` cannot include the error, since it drops it first.
-
-Allocator policy is the hard part. `append` follows its allocator's `.Panic`
-or `.Trap` policy, so a generic panic helper would change `.Trap` behavior,
-and `Allocator_Error` records the requested size but not the allocator's
-identity or policy. A failed insertion must still leave the container unchanged
-and an explicitly moved argument consumed. Prototype this on `String_Builder`
-and compare complete callers before touching arrays, maps, or the allocation
-built-ins; keeping the convenience forms is defensible if the caller burden
-outweighs the smaller API.
 
 ## Callable records, procedures, and closures
 
@@ -565,17 +505,6 @@ person does: models are trained on human-written code yet process it
 differently. Encapsulation and abstraction stay important either way, so that
 a model can work on one part of a program without reading the rest.
 
-## Open questions in `core:fmt`
-
-- Printing a float still goes through the C library: the runtime tries
-  `snprintf` precisions until `strtod` reads the value back, both in a "C"
-  numeric locale whose creation can fail. So printing a float can panic,
-  `try_spell_f64` has a `Backend_Error`, and, being foreign code, neither runs
-  in a [constant](design.md#compile-time-procedure-evaluation).
-  [`strconv.parse_f64`](standard-library.md#corestrconv) is Loke code now and
-  could do the reading back; a shortest-spelling algorithm in Loke, such as
-  Ryu or Schubfach, would remove the rest. Is that worth its code and tables?
-
 ## Enum_Array simplifications
 
 - Container formatters write their punctuation with `fmt.format_to`, which
@@ -587,26 +516,6 @@ a model can work on one part of a program without reading the rest.
   64 integers 200,000 times.
   Should `core:fmt` make a single literal argument cheap, so every formatter
   gains without each spelling it differently?
-- `filled` builds its slots in a `Small_Array` rather than with a designated
-  range initializer, `{0..<N = value}`, because [design.md "Fixed
-  arrays"](design.md#fixed-arrays) does not say what each slot of a range is
-  copied from. Today the compiler clones later slots from the first copy: with
-  a copy hook that increments its source ID, filling three slots from ID 100
-  gives `101 102 102`, where cloning the given value each time gives
-  `101 101 101`. Should every slot of a range be a clone of the written value?
-  If so, `filled` could use the initializer once the compiler agrees.
-  [Constructor](../core/container/enum_array.loke#L36)
-
-## Priority queue performance
-
-- Would a two-pass sift in `pop_heap` pay off with expensive comparators?
-  A swap-only prototype follows the preferred child to a leaf and then
-  reuses the push sift to move the replacement element back up. It reduced
-  the comparison count to drain 10,000 random integer keys from 216,515 to
-  120,203, but on one million integer keys at `-opt=speed` the median of five
-  runs rose from 226 ms to 287 ms. A comparator dearer than an integer `<`,
-  such as one over strings, might reverse that.
-  [Pop heap](../core/slice/heap.loke#L62)
 
 ## Constant tables in the front end
 
@@ -903,19 +812,6 @@ What [per-variant switch cases](design.md#per-variant-switch-cases),
 - **More arguments.** The expanded union is a call's only written argument.
   Passing context beside it, as in `handle(context, ..event)`, needs a rule for
   how a label competes with positional arguments for a parameter.
-
-### Unordered type-based sums
-
-`(int | string)`, with alternatives chosen by payload type as
-[Odin's unions](https://odin-lang.org/docs/overview/#unions) are, is deferred
-rather than declined. Labels with widening already compose error sets and keep
-equal payload types apart, which a set of types cannot. A type-based form would
-need its own rules: identity as an unordered set, with nested sums flattened
-and duplicates collapsed; injection by exact type identity, with an explicit
-choice for a literal several alternatives admit, such as `1` for
-`(i32 | i64)`; a type-based case with a branch-local binding that stays
-exhaustive; and constraints for generic inference, which cannot guess a unique
-`$A, $B` decomposition of a set. Revisit if programs need selection by type.
 
 ### Evaluating on representative programs
 

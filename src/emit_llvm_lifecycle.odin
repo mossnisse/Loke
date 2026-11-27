@@ -141,8 +141,9 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	header: strings.Builder
 
 	if hook := operations.custom_try_clone; hook != INVALID_SYMBOL {
-		// A user `hook(copy)` is the primitive; forward the receiver in its own mode.
-		hook_type, hook_receiver := value_type, subject_value
+		// A user `hook(copy)` is the primitive; forward the receiver in its own
+		// mode, a large value as the address it travels as.
+		hook_type, hook_receiver := param_llvm(e, subject, .Value), subject_value
 		if hook_sym := symbol_of(e.c, hook);
 		   hook_sym != nil && param_mode_is_pointer(symbol_param_mode(e.c, hook_sym, 0)) {
 			hook_type, hook_receiver = "ptr", "%arg0"

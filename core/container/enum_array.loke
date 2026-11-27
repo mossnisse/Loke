@@ -14,7 +14,6 @@
 package container;
 
 import "core:fmt";
-import "core:unsafe";
 
 Enum_Array :: struct($E: type, $T: type) {
 	@(private) slots: [E.values().len()]T,
@@ -25,24 +24,16 @@ impl Enum_Array($E, $T) {
 		Every slot set to `value`, which copies it once per member, so a move-only
 		instance has no `filled`.
 	*/
-	// design.md "where clauses".
-	//
-	// Starting from the zero value would demand one `T` has no use for, so the
-	// slots are built in a `Small_Array`, whose storage is capacity rather than
-	// values (design.md "Uninitialized capacity"). A copy that panics partway
-	// leaves it holding what was built, which its drop releases. Once full, its
-	// count goes to zero so that drop releases nothing, and the whole array is
-	// taken out of it.
+	// design.md "where clauses", "Fixed arrays": every slot of a range is a copy of
+	// the value written, and one that panics partway releases the slots already
+	// built. Starting from the zero value would demand one `T` has no use for.
 	filled :: proc(value: T) -> Enum_Array(E, T) where is_copyable(T) {
 		// No members is no slots, whose zero value exists whatever `T` is, and a
-		// `Small_Array` cannot have a capacity of zero.
+		// range cannot be empty.
 		when (E.values().len() == 0) {
 			return {};
 		} else {
-			building: Small_Array(T, E.values().len()) = {};
-			for (!building.is_full()) { building.append(value); }
-			building.count = 0;
-			return {unsafe.take(building.items)};
+			return {{0 ..< E.values().len() = value}};
 		}
 	}
 

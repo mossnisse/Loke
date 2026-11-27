@@ -111,3 +111,10 @@ across_plain_calls :: proc() -> int {
 	first^ += 1;
 	return second^;
 }
+
+// `Counter` fills the slot as `Circle` does, so `shape.area()` above takes in
+// its write of `vouched`, which the attribute keeps from conflicting.
+count_through_a_slot :: proc() -> int {
+	counter := Counter{};
+	return across_vouched_calls((dyn Shape)(&counter));
+}

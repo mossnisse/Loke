@@ -1357,6 +1357,28 @@ region backing the local, since the moved value keeps its allocator where the
 clone took the destination's. Both were already errors for `copy := list;`.
 A borrow the procedure itself stores keeps the copy instead, by the exclusion.
 
+### A range's slots copy what was written
+
+`[3]Tag{0..<3 = tag}` copies `tag` into each slot
+([Fixed arrays](design.md#fixed-arrays)). Until 2026-11-27 the compiler copied
+it into the first and cloned the other slots from that copy, which the
+specification did not decide either way. A copy hook that returns its source's
+value cannot tell the two apart, but one that does not, by counting its
+generations say, gave `1 2 2` where the literal reads as three copies of one
+value. `Enum_Array.filled` built its slots in a `Small_Array` to get `1 1 1`,
+and is now one literal.
+
+A temporary still goes to the first slot as it is. Copying it into every slot
+and then dropping it would be the uniform rule, at the price of a copy and a
+drop that nothing needs, and [how many implicit copies
+run](design.md#lifecycle-hooks-and-resource-types) is already unspecified. A
+written `tag.clone()` is such a temporary.
+
+The [copy-cost warning](compiler-guide.md#copy-cost-diagnostics) is not given
+for a range of several slots. Its advice is to write `clone()` where the copy
+is intended, and a range cannot be written without intending its copies: the
+same literal with `tag.clone()` makes as many.
+
 ### An insertion clones at a last use
 
 `out.append(list);`, `out.append(Pair{list, 1});`, and `node := box(list);`
@@ -1486,6 +1508,18 @@ B)`, would need type-based matching and set normalization, and could not keep
 two alternatives with one payload type apart, which `(read: io.Error |
 log_write: io.Error)` does. The colon is required so that `(a | b)` stays an
 expression.
+
+A type-based form beside the labelled one, `(int | string)` chosen by payload
+type as [Odin's unions](https://odin-lang.org/docs/overview/#unions) are, was
+first deferred and then declined on 2026-11-27. Labels with
+[widening](#widening-by-label) already compose error sets, so the second form
+would add no program, only a second set of rules: identity as an unordered set,
+with nested sums flattened and duplicates collapsed; injection by exact type
+identity, with an explicit choice for a literal several alternatives admit, such
+as `1` for `(i32 | i64)`; a type-based `case` that stays exhaustive; and
+constraints for generic inference, which cannot guess a unique `$A, $B`
+decomposition of a set. A program that selects by type writes the label the
+type would have been, and one that needs the same payload type twice can.
 
 Identity is ordered for the reason a record's is: the order is the one
 reflection reports, and making two orders one type would need a canonical order
@@ -3129,12 +3163,48 @@ policy. Their `try_` counterparts return a failure value. Keeping that conventio
 across built-ins and libraries makes error handling visible in the name without
 forcing every allocation into a separate panic wrapper.
 
+### A container keeps its `op`/`try_op` pair
+
+`append`/`try_append`, `reserve`/`try_reserve`, and the rest double a
+container's API over a choice of failure policy. Typed fallibility made the
+fallible half cheap, a `try_` operation returning a `Result` over an ordinary
+library union, and that raised the question of keeping only it, with the policy
+chosen where the operation is called:
+
+```text
+values.append(item) or_return;    // propagate
+must(values.append(item));        // panic, reporting the returned error
+_ = values.append(item);          // deliberately accept a failed insertion
+```
+
+The pair was kept on 2026-11-27, for three reasons.
+
+- **The allocator's policy is not the caller's to restate.** `append` follows
+  its allocator's [`.Panic` or `.Trap` policy](design.md#allocation-failure). A
+  generic `must` would panic where a `.Trap` allocator traps, and an
+  `Allocator_Error` records the requested size but not the allocator or its
+  policy, so no helper could apply the right one.
+- **The language keeps the pair everywhere else.** The generated
+  [`clone`/`try_clone`](#clone-and-try_clone-stay-a-pair) and the allocation
+  built-ins [`box`/`try_box`, `make`/`try_make`, and
+  `unsafe.new`/`unsafe.try_new`](#the-allocation-built-ins-follow-the-try_-convention)
+  each have both. A container with one spelling would be the one place where
+  the name does not say how a failure is handled.
+- **The ordinary call would carry the ceremony.** Most insertions follow the
+  allocator's policy, and each would be written `must(...)`. The bare statement
+  could not stand for it: a statement that panics where the same call in a value
+  context returns its error would change policy under a refactoring, and under
+  a call through a procedure value.
+
+What it costs is what it always did: two entries for each operation in a
+container's API.
+
 ### `clone` and `try_clone` stay a pair
 
 The compiler-generated
 [`clone`/`try_clone`](design.md#lifecycle-hooks-and-resource-types) has the
-shape of a container's `op`/`try_op` pair, and whether a container keeps both
-spellings is [open](open-questions.md#the-optry_op-pair). Two reasons for
+shape of a container's `op`/`try_op` pair, which is
+[kept as well](#a-container-keeps-its-optry_op-pair). Two further reasons for
 keeping the generated pair do not apply to a container.
 
 The pair costs a type author nothing. Both names are generated from the single
@@ -4698,6 +4768,23 @@ boundaries and API shapes follow a few common choices:
   299 at 64 bytes (1M), 176 and 156 at 256 bytes (300k), and 244 and 176 at 1024
   bytes (100k). An element large enough to gain is better queued by index or
   pointer. `bench/containers.loke` keeps the shape of these costs in view.
+- **A pop sinks to a leaf and climbs back.** `pop_heap` puts the last element
+  first, and an element from the bottom nearly always returns there. Stopping on
+  the way down costs two comparisons a level, one to choose a child and one to
+  test the element against it. Following the preferred child to a leaf costs
+  one, and the climb back, which is `push_heap`'s, usually ends within a level
+  or two. libstdc++, libc++, and Rust's `BinaryHeap` pop the same way. Measured
+  on 2026-11-27 at `-opt=speed`, draining a heap of a million random keys, the
+  median of five drains in each of three runs: 34.9 million comparisons became
+  18.6 million; `string` keys took 906 to 945 ms before and 674 to 701 ms after,
+  and 1053 to 1091 against 835 to 879 where the keys share a 30-byte prefix;
+  `int` keys 104 to 111 ms against 107 to 112; and a 64-byte record with a `u64`
+  key 301 to 333 against 327 to 345. `bench/containers.loke` ran in 683 ms
+  before and 669 ms after. A comparator's cost is the caller's and unbounded,
+  and a swap's is the element's size, so the comparisons are the ones to save.
+  An earlier prototype had measured `int` keys at 226 ms against 287, which did
+  not reproduce. `sift_heap_top` still stops on the way down: a first element
+  that was changed may belong anywhere.
 - **Linked heaps are left out, and duplicates beat decrease-key by default.** Pairing
   and Fibonacci heaps win on paper for decrease-key, and in practice lose to an array
   heap on cache behaviour. Published measurements of Dijkstra's algorithm (Chen et
@@ -5044,6 +5131,28 @@ Measured on 2026-11-22, one such global beside a 64 KiB variant adds about
 falls with the variant's size: 6 characters a byte. The executable holds the
 same bytes either way. That is too little to carry a second spelling of
 union globals, until a program has many of them.
+
+### A long anonymous type is named by a digest
+
+The IR names a type at every mention, and an anonymous record or union is named
+by its members: each label with its type's sort key. A union of 4,000
+alternatives was named in 96 KB, and widening it into another, which is one arm
+for each alternative, wrote that name in every arm. Measured on 2026-11-27 with
+a compiler built at `-o:minimal`, the widening made 382 MB of IR in 6.7 s, where
+the same declarations unused took 0.14 s. A label longer than a sort key may be,
+`SORT_KEY_LIMIT`, is now replaced by the digest a long sort key gets, and the
+same program is 1.2 MB of IR in 0.25 s. The name is only a spelling: the type's
+number follows it, so two types whose digests met would still be two.
+
+The review that asked for a bound had named two scans instead. Duplicate labels
+are found by scanning the labels before each one, and widening scans the
+destination's labels for each of the source's. Both compare interned
+identifiers. An index of a union's labels in sorted order, for unions of sixteen
+alternatives or more, was written and measured against the scans: no difference
+for a program of 1,000 alternatives, 255 ms against 313 at 4,000, and 1.2 s
+against 2.1 at 16,000, where the same declarations as records took 0.4 s. That
+is too little to carry a second lookup and a field on every union type, so the
+scans stay.
 
 ### The evaluator's memory limit counts what it holds
 

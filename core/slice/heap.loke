@@ -63,7 +63,19 @@ pop_heap :: proc(values: []mut $T, less: $C) where Callable(C, proc(left, right:
 	last := values.len() - 1;
 	if (last < 1) { return; }
 	values.swap(0, last);
-	sift_down(values[mut :last], 0, less);
+	// The element now first came from the last place, so it belongs near the
+	// bottom. It follows the preferred child to a leaf, one comparison a level,
+	// and climbs back as a pushed element does: about half the comparisons of
+	// stopping on the way down (comments.md "Standard-library API choices").
+	heap := values[mut :last];
+	at := 0;
+	for (at < last / 2) {
+		child := 2 * at + 1;
+		if (child + 1 < last && less(heap[child + 1], heap[child])) { child += 1; }
+		heap.swap(at, child);
+		at = child;
+	}
+	push_heap(heap[mut :at + 1], less);
 }
 
 /// Restores the order after the first element changed, in O(log n).

@@ -299,7 +299,6 @@ SORT_KEY_LIMIT :: 1024
 
 // Stands for `key` in whatever holds it: the same text gives the same digest in every
 // build, and the digest's two seeds and the length keep two long keys apart.
-@(private = "file")
 bounded_sort_key :: proc(key: string, allocator: mem.Allocator) -> string {
 	if len(key) <= SORT_KEY_LIMIT {
 		return key

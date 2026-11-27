@@ -1114,6 +1114,12 @@ favorite_animals := [?]string{
 };
 ```
 
+An index range evaluates its value once, and each of its slots holds that value,
+so the element type must be copyable. A place operand is copied into every slot.
+A temporary or a `move` operand goes to the range's first slot, and each later
+slot holds a copy of it. The copies are made in index order, before the next
+element is evaluated.
+
 `x.len()` returns the array length.
 
 ```loke

@@ -1,0 +1,30 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// design.md "Lifecycle hooks and resource types", "Parameter semantics and ABI
+// lowering": a record over 4096 bytes travels as an address, to its `hook(copy)`
+// as to any procedure, so the generated `try_clone` hands the hook that address.
+
+Wide :: struct { pad: [5000]u8, copies: int }
+impl Wide {
+	count :: hook(copy) proc(self, allocator: Allocator) -> Result(Wide, Allocator_Error) {
+		return .ok({copies = self.copies + 1});
+	}
+}
+
+Holder :: struct { wide: Wide }
+
+main :: proc() {
+	wide := Wide{};
+	bound := wide;
+	written := wide.clone();
+	held := Holder{wide};
+	nested := held;
+	fmt.println(bound.copies, written.copies, held.wide.copies, nested.wide.copies, wide.copies);
+	switch (wide.try_clone(mem.default_allocator())) {
+	case .ok(copy): fmt.println(copy.copies);
+	case .err(_): fmt.println("refused");
+	}
+}

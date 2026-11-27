@@ -1,0 +1,53 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Fixed arrays": an index range evaluates its value once, and every
+// slot holds a copy of that value, never a copy of another slot. A value the
+// literal owns goes to the first slot as it is. The hook here counts the copies
+// between a slot and what was written, which no program may rely on (design.md
+// "Lifecycle hooks and resource types"), to show what each slot was copied from.
+
+Tag :: struct { depth: int }
+impl Tag {
+	deepen :: hook(copy) proc(self, allocator: Allocator) -> Result(Tag, Allocator_Error) {
+		return .ok({self.depth + 1});
+	}
+}
+
+// Passed by address, so a slot is copied through the place it is read from.
+Wide :: struct { pad: [5000]u8, depth: int }
+impl Wide {
+	deepen :: hook(copy) proc(self, allocator: Allocator) -> Result(Wide, Allocator_Error) {
+		return .ok({depth = self.depth + 1});
+	}
+}
+
+Holder :: struct { tag: Tag }
+
+fresh :: proc() -> Tag { return {0}; }
+
+show :: proc(label: string_view, tags: []Tag) {
+	fmt.print(label);
+	foreach (tag in tags) { fmt.print("", tag.depth); }
+	fmt.println();
+}
+
+main :: proc() {
+	tag := Tag{0};
+	holder := Holder{{0}};
+	spare := Tag{0};
+
+	show("a place:", [3]Tag{0 ..< 3 = tag});
+	show("a field:", [3]Tag{0 ..= 2 = holder.tag});
+	show("a temporary:", [3]Tag{0 ..< 3 = fresh()});
+	show("a written clone:", [3]Tag{0 ..< 3 = tag.clone()});
+	show("a moved place:", [3]Tag{0 ..< 3 = move(spare)});
+	show("after a slot:", [4]Tag{0 = tag.clone(), 1 ..= 3 = tag});
+	show("one slot:", [1]Tag{0 ..= 0 = tag.clone()});
+
+	wide := Wide{};
+	wides := [3]Wide{0 ..< 3 = wide};
+	fmt.println("a large place:", wides[0].depth, wides[1].depth, wides[2].depth, wide.depth);
+	fmt.println(tag.depth);
+}

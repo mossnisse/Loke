@@ -1,0 +1,79 @@
+package main;
+
+import "core:fmt";
+
+// comments.md "A long anonymous type is named by a digest": a long anonymous
+// union or record is named in the IR by a digest of its members, and stays the
+// type it was: two that differ in one payload are distinct, and widening still
+// matches labels.
+
+Narrow :: (
+	a00: int | a01: int | a02: int | a03: int | a04: int | a05: int | a06: int | a07: int |
+	a08: int | a09: int | a10: int | a11: int | a12: int | a13: int | a14: int | a15: int |
+	a16: int | a17: int | a18: int | a19: int | a20: int | a21: int | a22: int | a23: int |
+	a24: int | a25: int | a26: int | a27: int | a28: int | a29: int | a30: int | a31: int |
+	a32: int | a33: int | a34: int | a35: int | a36: int | a37: int | a38: int | a39: int |
+	a40: int | a41: int | a42: int | a43: int | a44: int | a45: int | a46: int | a47: int |
+	a48: int | a49: int | a50: int | a51: int | a52: int | a53: int | a54: int | a55: int |
+	a56: int | a57: int | a58: int | a59: int | a60: int | a61: int | a62: int | a63: int
+);
+
+Wide :: (
+	a63: int | a62: int | a61: int | a60: int | a59: int | a58: int | a57: int | a56: int |
+	a55: int | a54: int | a53: int | a52: int | a51: int | a50: int | a49: int | a48: int |
+	a47: int | a46: int | a45: int | a44: int | a43: int | a42: int | a41: int | a40: int |
+	a39: int | a38: int | a37: int | a36: int | a35: int | a34: int | a33: int | a32: int |
+	a31: int | a30: int | a29: int | a28: int | a27: int | a26: int | a25: int | a24: int |
+	a23: int | a22: int | a21: int | a20: int | a19: int | a18: int | a17: int | a16: int |
+	a15: int | a14: int | a13: int | a12: int | a11: int | a10: int | a09: int | a08: int |
+	a07: int | a06: int | a05: int | a04: int | a03: int | a02: int | a01: int | a00: int |
+	extra: string
+);
+
+// `Narrow` but for the last payload's type.
+Other :: (
+	a00: int | a01: int | a02: int | a03: int | a04: int | a05: int | a06: int | a07: int |
+	a08: int | a09: int | a10: int | a11: int | a12: int | a13: int | a14: int | a15: int |
+	a16: int | a17: int | a18: int | a19: int | a20: int | a21: int | a22: int | a23: int |
+	a24: int | a25: int | a26: int | a27: int | a28: int | a29: int | a30: int | a31: int |
+	a32: int | a33: int | a34: int | a35: int | a36: int | a37: int | a38: int | a39: int |
+	a40: int | a41: int | a42: int | a43: int | a44: int | a45: int | a46: int | a47: int |
+	a48: int | a49: int | a50: int | a51: int | a52: int | a53: int | a54: int | a55: int |
+	a56: int | a57: int | a58: int | a59: int | a60: int | a61: int | a62: int | a63: i64
+);
+
+Row :: (
+	a00: int, a01: int, a02: int, a03: int, a04: int, a05: int, a06: int, a07: int,
+	a08: int, a09: int, a10: int, a11: int, a12: int, a13: int, a14: int, a15: int,
+	a16: int, a17: int, a18: int, a19: int, a20: int, a21: int, a22: int, a23: int,
+	a24: int, a25: int, a26: int, a27: int, a28: int, a29: int, a30: int, a31: int,
+	a32: int, a33: int, a34: int, a35: int, a36: int, a37: int, a38: int, a39: int,
+	a40: int, a41: int, a42: int, a43: int, a44: int, a45: int, a46: int, a47: int,
+	a48: int, a49: int, a50: int, a51: int, a52: int, a53: int, a54: int, a55: int,
+	a56: int, a57: int, a58: int, a59: int, a60: int, a61: int, a62: int, a63: int,
+);
+
+widen :: proc(narrow: Narrow) -> Wide { return narrow; }
+
+describe :: proc(wide: Wide) -> int {
+	switch (wide) {
+	case .a00(value): return value;
+	case .a63(value): return value * 100;
+	case .extra(text): return text.len();
+	case: return -1;
+	}
+}
+
+last :: proc(other: Other) -> i64 {
+	switch (other) {
+	case .a63(value): return value;
+	case: return -1;
+	}
+}
+
+main :: proc() {
+	fmt.println(describe(widen(.a00(7))), describe(widen(.a63(3))), describe(widen(.a01(5))), describe(.extra("four")));
+	fmt.println(last(.a63(9_000_000_000)));
+	row: Row = {a00 = 1, a63 = 2};
+	fmt.println(row.a00 + row.a63 + row.a01);
+}

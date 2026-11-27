@@ -61,3 +61,11 @@ propagated :: proc(r: Result(int, [dynamic]int)) -> Result(int, [dynamic]int) {
 	x := r or_return;
 	return .ok(x);
 }
+
+// An index range of several slots is a written copy of its value into each, so
+// it is not reported; a range of one slot is an ordinary element.
+ranged :: proc(list: [dynamic]int) {
+	several := [2][dynamic]int{0 ..< 2 = list};
+	one := [1][dynamic]int{0 ..= 0 = list};
+	fmt.println(several, one);
+}

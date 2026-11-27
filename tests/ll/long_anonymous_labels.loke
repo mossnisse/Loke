@@ -1,0 +1,41 @@
+package main;
+
+import "core:fmt";
+
+// comments.md "A long anonymous type is named by a digest": the IR names an
+// anonymous union or record at every mention, so one whose members spell more
+// than a sort key may hold is named by a digest of them, not by the members.
+
+Narrow :: (
+	a00: int | a01: int | a02: int | a03: int | a04: int | a05: int | a06: int | a07: int |
+	a08: int | a09: int | a10: int | a11: int | a12: int | a13: int | a14: int | a15: int |
+	a16: int | a17: int | a18: int | a19: int | a20: int | a21: int | a22: int | a23: int |
+	a24: int | a25: int | a26: int | a27: int | a28: int | a29: int | a30: int | a31: int |
+	a32: int | a33: int | a34: int | a35: int | a36: int | a37: int | a38: int | a39: int |
+	a40: int | a41: int | a42: int | a43: int | a44: int | a45: int | a46: int | a47: int |
+	a48: int | a49: int | a50: int | a51: int | a52: int | a53: int | a54: int | a55: int |
+	a56: int | a57: int | a58: int | a59: int | a60: int | a61: int | a62: int | a63: int
+);
+
+Row :: (
+	a00: int, a01: int, a02: int, a03: int, a04: int, a05: int, a06: int, a07: int,
+	a08: int, a09: int, a10: int, a11: int, a12: int, a13: int, a14: int, a15: int,
+	a16: int, a17: int, a18: int, a19: int, a20: int, a21: int, a22: int, a23: int,
+	a24: int, a25: int, a26: int, a27: int, a28: int, a29: int, a30: int, a31: int,
+	a32: int, a33: int, a34: int, a35: int, a36: int, a37: int, a38: int, a39: int,
+	a40: int, a41: int, a42: int, a43: int, a44: int, a45: int, a46: int, a47: int,
+	a48: int, a49: int, a50: int, a51: int, a52: int, a53: int, a54: int, a55: int,
+	a56: int, a57: int, a58: int, a59: int, a60: int, a61: int, a62: int, a63: int,
+);
+
+first :: proc(narrow: Narrow) -> int {
+	switch (narrow) {
+	case .a00(value): return value;
+	case: return 0;
+	}
+}
+
+main :: proc() {
+	row: Row = {a00 = 1};
+	fmt.println(first(.a00(row.a00)));
+}

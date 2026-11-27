@@ -124,6 +124,20 @@ nearly all uses, and an owning doubly-linked list has no good expression under t
 borrow rules. `Slot_Map` with indices gives the same O(1) unlinking with checked
 handles.
 
+Float printing moves into Loke, decided on 2026-11-27. Printing a float still
+goes through the C library: the runtime tries `snprintf` precisions until
+`strtod` reads the value back, both in a "C" numeric locale whose creation can
+fail. So printing a float can panic, `try_spell_f64` has a `Backend_Error`, and,
+being foreign code, neither runs in a
+[constant](design.md#compile-time-procedure-evaluation). A shortest-spelling
+algorithm written in Loke, Ryu or Schubfach, removes all three, and is worth its
+code: [`strconv.parse_f64`](standard-library.md#corestrconv) is Loke code
+already, and whether its table of powers of five can serve the printer is the
+first thing to settle. Done when a float prints in a constant, printing one
+cannot fail, and `Backend_Error` is gone. Mind [Constant tables in the front
+end](open-questions.md#constant-tables-in-the-front-end) if it needs a table of
+its own.
+
 Current optional gaps, to add only when a caller establishes their contract:
 `core:bytes`, `core:unicode`,
 `core:encoding/base64`, and `core:testing`; in

@@ -29,16 +29,30 @@ emit_copied_expr :: proc(
 	if !clones {
 		return emit_expr(e, expr)
 	}
-	from := copied_type(expr, type)
-	value := from == type ? emit_expr(e, expr) : emit_expr_at(e, expr, from)
+	value, from := emit_copy_source(e, expr, type)
 	provider := allocator
 	if destination != INVALID_SYMBOL {
 		provider = emit_destination_allocator(e, destination)
 	}
+	return emit_copy_of(e, value, from, type, provider)
+}
+
+// `expr` as a copy site for a `type` reads it before cloning: at `from`, the
+// type its copy clones at.
+@(private)
+emit_copy_source :: proc(e: ^Emitter, expr: Expr, type: Type_Id) -> (value: string, from: Type_Id) {
+	from = copied_type(expr, type)
+	return from == type ? emit_expr(e, expr) : emit_expr_at(e, expr, from), from
+}
+
+// A copy of `value`, a `from`, as a `type`, cloned through `allocator`.
+@(private)
+emit_copy_of :: proc(e: ^Emitter, value: string, from, type: Type_Id, allocator := "") -> string {
+	copied := value
 	if emit_lifecycle(e, from).managed {
-		value = emit_clone_value(e, from, value, provider)
+		copied = emit_clone_value(e, from, value, allocator)
 	}
-	return from == type ? value : emit_union_widen(e, value, from, type)
+	return from == type ? copied : emit_union_widen(e, copied, from, type)
 }
 
 @(private = "file")
@@ -340,23 +354,29 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 		// copy the value, so it keeps its own.
 		operand := begin_operand_temporaries(e)
 		clones := index < len(v.element_clones) && v.element_clones[index]
-		// A large place is copied from where it is, by the `store` below.
-		value: string
-		if place := large_copy_place(e, element.value, element_type, clones); place != nil {
-			value = emit_address(e, place)
-		} else {
-			value = emit_copied_expr(e, element.value, element_type, clones)
-		}
-		// A designated index range stores one evaluation in every slot; each
-		// slot after the first owns a copy.
 		end := slot + 1
 		if info.kind == .Array {
 			slot, end = composite_element_slots(v, index)
 		}
+		// design.md "Fixed arrays": a designated index range evaluates its value
+		// once, and every slot holds a copy of that value. A value the literal
+		// owns goes to the first slot as it is; a place the range copies owns
+		// none of them, so the first slot's copy is made in the loop too.
+		copies_first := clones && end > slot + 1
+		from := element_type
+		// A large place is copied from where it is, by the `store` below.
+		value: string
+		if place := large_copy_place(e, element.value, element_type, clones); place != nil {
+			value = emit_address(e, place)
+		} else if copies_first {
+			value, from = emit_copy_source(e, element.value, element_type)
+		} else {
+			value = emit_copied_expr(e, element.value, element_type, clones)
+		}
 		for target in slot ..< end {
 			stored := value
-			if target > slot && emit_lifecycle(e, element_type).managed {
-				stored = emit_clone_value(e, element_type, value)
+			if copies_first || target > slot {
+				stored = emit_copy_of(e, value, from, element_type)
 			}
 			field_address := gep_field(e, llvm_type(e, as_type), address, target)
 			record_field_align(e, as_type, address, field_address, element_type)

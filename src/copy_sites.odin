@@ -464,8 +464,13 @@ mark_clone :: proc(k: ^Checker, clones: ^[]bool, count, index: int) {
 	clones[index] = true
 }
 
+// design.md "Fixed arrays": an index range of several slots is a written copy
+// of its value into each, so what that costs is not reported
+// (compiler-guide.md "Copy-cost diagnostics").
 classify_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, type: Type_Id) {
-	if classify_operand_copy(k, v, index, v.elements[index].value, type, .Literal) {
+	value := v.elements[index].value
+	lo, hi := composite_element_slots(v, index)
+	if hi - lo > 1 ? classify_copy(k, value, type, .Literal) : classify_operand_copy(k, v, index, value, type, .Literal) {
 		mark_clone(k, &v.element_clones, len(v.elements), index)
 	}
 }
