@@ -36,11 +36,15 @@ compare_instruction :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id) -> strin
 }
 
 emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
-	// Text is ordered byte-wise; one runtime call answers all six operators.
+	// Text is ordered byte-wise; one runtime call answers the four orderings.
 	if type_is_utf8_text(e.c, type) {
 		storage := llvm_type(e, type_underlying(e.c, type))
 		left_data, left_len := string_parts(e, storage, lhs)
 		right_data, right_len := string_parts(e, storage, rhs)
+		if op == .Eq_Eq || op == .Not_Eq {
+			equal := emit_text_equal(e, left_data, left_len, right_data, right_len)
+			return op == .Eq_Eq ? equal : not_i1(e, equal)
+		}
 		order := emit_value(
 			e, "call i32 @loke_rt_v1_bytes_compare(ptr %s, i64 %s, ptr %s, i64 %s)",
 			left_data, left_len, right_data, right_len,
@@ -55,6 +59,24 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 		return op == .Eq_Eq ? equal : not_i1(e, equal)
 	}
 	return emit_value(e, "%s %s %s, %s", compare_instruction(e, op, type), llvm_type(e, type), lhs, rhs)
+}
+
+// Equal texts have equal lengths, so only those reach `memcmp`, which LLVM
+// knows: against a literal it becomes a few loads.
+@(private = "file")
+emit_text_equal :: proc(e: ^Emitter, left_data, left_len, right_data, right_len: string) -> string {
+	declare_intrinsic(e, "memcmp", "i32", "ptr, ptr, i64")
+	same_len := emit_value(e, "icmp eq i64 %s, %s", left_len, right_len)
+	entry_label := current_block(e, "teq.entry")
+	bytes_label := new_label(e, "teq.bytes")
+	done_label := new_label(e, "teq.done")
+	branch_if(e, same_len, bytes_label, done_label)
+	place_label(e, bytes_label)
+	order := emit_value(e, "call i32 @memcmp(ptr %s, ptr %s, i64 %s)", left_data, right_data, left_len)
+	same_bytes := emit_value(e, "icmp eq i32 %s, 0", order)
+	branch(e, done_label)
+	place_label(e, done_label)
+	return emit_value(e, "phi i1 [ false, %%%s ], [ %s, %%%s ]", entry_label, same_bytes, bytes_label)
 }
 
 // design.md "Comparison operators": an anonymous record orders by its first

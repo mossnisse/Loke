@@ -2445,6 +2445,28 @@ knows the syntax, the editor highlights it, and the signatures are the source's
 own, with no headings or fences repeating the names. The `.loki` extension
 keeps it out of the package, whose files are its `.loke` files.
 
+### No inline assembly
+
+Odin has inline assembly; Loke does not. An instruction the language cannot
+spell is reached two other ways. A routine is written in an assembly file that
+a [foreign import](design.md#foreign-system) names, which a link
+assembles, and is called like any foreign procedure. A single instruction is a
+target intrinsic, a procedure the compiler lowers to the instruction, which the
+optimizer can then schedule, fold, and move as it does `Simd(T, N)` arithmetic;
+none is declared yet, and the first [waits for a
+caller](future-plans.md#target-intrinsics).
+
+Inline assembly sits between the two and costs more than either. Its operands
+are bound by a constraint language that is LLVM's, not Loke's, in one of two
+syntaxes. The optimizer cannot see into it, so it blocks the folding an
+intrinsic allows. The borrow checker cannot see into it either, so every body
+holding one would contain unchecked code whose reads and writes the checker
+must take on trust, where a foreign call keeps that trust at the call. And a
+build's [CPU level](compiler-guide.md#cpu-levels), and each
+[`@(cpu_dispatch)`](design.md#cpu_dispatchstring) copy, would need checking
+against instructions written as text. What it saves is a call around a short
+sequence that no intrinsic covers.
+
 ## Changed features
 
 ### Reading a carrier under a read-only reborrow
@@ -5065,6 +5087,37 @@ declined on 2026-11-21 after reading the code they would change.
   clause, asks what a generic application's parameters take, and tracks which
   field or member it is in. A walker parameterized over all of that would be a
   callback at nearly every case, longer than either walk.
+
+### Compiler review proposals not taken (2026-11-27)
+
+The [compiler review of
+2026-11-27](open-questions.md#compiler-review-of-2026-11-27) proposed these,
+and each was declined on the same day.
+
+- **LLVM text without `fmt`.** Under Odin's instrumentation hooks,
+  `fmt.sbprintf` took 6.5–11.5% of an `-emit-ll` run, and nearly every format
+  the emitter writes holds only `%s`, `%d`, and `%%`. A path that wrote those
+  with `strings.write_string`, taken by every `fmt.sbprintf` into the
+  emitter's builder, wrote the same IR and no faster beyond run-to-run noise:
+  fastest of seven `-emit-ll` runs, twice each, `bench/dense.loke` took 369
+  and 376 ms before and 377 and 376 after, `examples/corpus_runner.loke` 245
+  and 246 against 244 and 251, and `bench/geometry.loke` 297 and 297 against
+  294 and 307. The share was the hooks', which charge their own cost to small
+  procedures called often.
+- **Type facts as bits on `Type_Info`.** About eight memo maps are keyed by
+  `Type_Id`, each behind a wrapper of its own. Bits would need a second set
+  for "decided", the in-progress marking the recursive ones use
+  (`map_shape_is_keyed`), and a rule for which facts survive an incremental
+  checkpoint, so the saving is the lookups rather than the wrappers.
+- **Reusing the chosen candidate's slot assignments.** `build_candidate` has
+  mapped the runtime arguments, receiver and pack included, and
+  `bind_chosen_call` maps the fixed slots again from `Arg_Info`. Binding them
+  with `cand.slots` saves only that conversion: the pack binder still reads
+  each operand's span, mode, and checked state, and the chosen path would need
+  its own receiver-mode check, default filling, and evaluation order beside
+  `bind_candidate_slots`. It belongs to a merge of the two binders, which
+  would keep the receiver first, forward a sole spread, and evaluate omitted
+  defaults after the pack's written operands.
 
 ### `-opt=speed` unswitches loops
 

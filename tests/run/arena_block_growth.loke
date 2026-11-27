@@ -1,0 +1,22 @@
+package main; import "core:fmt"; import "core:mem"; import "core:unsafe";
+
+// An arena over a parent asks it for blocks that double in size, so a growing
+// arena asks ever more rarely. The parent here is a fixed 32 KiB buffer: blocks
+// of 4, 8, and 16 KiB fit in it and the next, of 32 KiB, does not, so the child
+// serves 25 one-KiB allocations. Blocks that stayed at 4 KiB would serve 21.
+Kib :: struct { bytes: [1024]u8 }
+
+main :: proc() {
+	buffer: [32768]u8 = {};
+	parent := mem.Arena.from_buffer(buffer[mut :]);
+	child := mem.Arena.init(parent.allocator());
+	served := 0;
+	done := false;
+	for (!done) {
+		switch (unsafe.try_new(Kib{}, child.allocator())) {
+		case .ok: served += 1;
+		case .err: done = true;
+		}
+	}
+	fmt.println(served);
+}

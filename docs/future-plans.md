@@ -775,6 +775,18 @@ between them, for a caller that needs one.
 would need a portable fallback with the same result. They wait for a caller
 that settles that contract.
 
+### Target intrinsics
+
+An instruction that the operators and [`core:simd`](standard-library.md#coresimd)
+cannot spell, such as a byte shuffle, a carry-less multiply, or CRC-32C, would
+be a procedure in a bundled package for its architecture, declared with
+[`@(intrinsic)`](design.md#intrinsic) and lowered to the instruction. How a
+call is checked against the build's [CPU level](compiler-guide.md#cpu-levels)
+and a [`@(cpu_dispatch)`](design.md#cpu_dispatchstring) procedure's copies is
+part of that design. Each waits for a caller; [`pext` and
+`pdep`](#bit-field-extract-and-deposit) would be among the first. Inline
+assembly is [not planned](comments.md#no-inline-assembly).
+
 ### `x86-64-v4`
 
 [`-cpu`](compiler-guide.md#cpu-levels) offers v2 and v3. v4 adds AVX-512,

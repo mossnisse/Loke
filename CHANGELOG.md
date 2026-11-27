@@ -362,6 +362,15 @@ checklist.
 
 ### Changed
 
+- A provider-backed [`mem.Arena`](docs/standard-library.md#coremem) or `mem.Scratch` asks its
+  parent for blocks that double in size, up to 1 MiB, as the runtime's own comment said it did.
+  Each block after the first stayed at 4 KiB, so an arena that grew to a megabyte asked its
+  parent about 250 times. In a 32 KiB fixed parent, a child arena now serves 25 one-KiB
+  allocations rather than 21.
+- Text `==` and `!=` compare the lengths before the bytes, and the bytes with `memcmp`, which
+  LLVM folds against a literal; a `map[string]V` probe compares its keys the same way. At
+  `-opt=speed`, 200 million comparisons of a word with `"loke"` take 0.3 to 0.7 s, from 1.2 to
+  1.9 s. The orderings `<`, `<=`, `>`, and `>=` are unchanged.
 - The runtime no longer exports `loke_rt_v1_alloc_zeroed`, `loke_rt_v1_dyn_bind`, or
   `loke_rt_v1_map_bind`, which generated code never called and `loke_rt.h` no longer declares
   ([Version policy](docs/releasing.md#version-policy): runtime symbols may change).

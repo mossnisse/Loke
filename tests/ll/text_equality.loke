@@ -1,0 +1,15 @@
+package main;
+
+// Text `==` and `!=` compare the lengths first and only then the bytes, through
+// `memcmp`, which LLVM folds against a literal; the four orderings still take
+// one runtime call. A map keyed by text probes through the same equality.
+
+import "core:fmt";
+import "core:os";
+
+main :: proc() {
+	word := os.args[0];
+	counts: map[string]int = {};
+	counts[word] = 1;
+	fmt.println(word == "loke", word != "lokec", word < "m", counts[word]);
+}

@@ -198,9 +198,10 @@ a failing case. Shares are inclusive time of an `-emit-ll` run of
 `bench/dense.loke`, `bench/geometry.loke`, and `examples/corpus_runner.loke`,
 from a compiler built at `-o:speed` with Odin's instrumentation hooks counting
 calls and cycles per procedure. The hooks inflate small procedures called
-often, so the shares rank the entries rather than predict a saving. An entry
-without a share was read from the code and not measured, and nothing here has
-been tried.
+often, so the shares rank the entries rather than predict a saving: writing
+LLVM text without `fmt`, given 6.5–11.5%, saved nothing measurable
+([comments.md](comments.md#compiler-review-proposals-not-taken-2026-11-27)).
+An entry without a share was read from the code and not measured.
 
 Compile time:
 
@@ -218,11 +219,6 @@ Compile time:
   [Effects](../src/global_effects.odin#L649),
   [thread facts](../src/thread_summaries.odin#L129),
   [replay](../src/provenance_effect.odin#L58)
-- **Write LLVM text without `fmt`** (6.5–11.5% in `fmt.sbprintf`).
-  `emit_value` makes two `fmt` calls for each instruction, and `load`, the
-  `gep` helpers, the branches, and `store` one each, all with `%s` arguments
-  only. `strings.write_string` writes the same bytes.
-  [emit_value](../src/emit_llvm.odin#L729)
 - **Spell a constant into the caller's builder** (about 5% in `const_operand`
   on two of the three programs). `llvm_const` returns a new string for each
   element, builds an aggregate that is all zero before discarding it for
@@ -241,9 +237,6 @@ Compile time:
   near its end, and `valid_utf8` decodes each rune with no path for ASCII.
   [Keywords](../src/lexer.odin#L457), [operators](../src/lexer.odin#L814),
   [valid_utf8](../src/source.odin#L154)
-- **`type_is_carrier` resolves the underlying type four times** (3.7–4.9%,
-  about 400,000 calls); `carrier_is_mutable` does it twice.
-  [type_is_carrier](../src/carrier_shape.odin#L14)
 - **`mark_released` and `end_loans` find the same loans twice** (2–5.7%), and
   a read that invalidates nothing pays a clear and a scan of every loan. The
   report pass likewise scans every live slot and loan for each `Access` and
@@ -277,15 +270,6 @@ Compile time:
 
 Generated code and the runtime, none measured:
 
-- **An arena's blocks do not grow.** `arena_grow` asks for the newest block's
-  size again unless one request is larger, so small allocations take 4 KiB
-  from the parent every 4 KiB; its comment says the request doubles.
-  [arena_grow](../runtime/arena.c#L90)
-- **Compare text for equality by length, then bytes.** `==` and `!=` call the
-  three-way `loke_rt_v1_bytes_compare`, which LLVM cannot fold against a
-  literal and which scans the shared prefix of texts of different lengths; a
-  `map[string]V` probe goes the same way.
-  [emit_compare](../src/emit_llvm_equality.odin#L38)
 - **No function is `nounwind`**, though a panic never unwinds the native
   stack, and the unwind thunks are not `cold`. `uwtable` must accompany
   `nounwind`, or the panic trace loses its unwind tables.
@@ -310,19 +294,6 @@ Generated code and the runtime, none measured:
 - **Try a lower `LARGE_VALUE_BYTES`.** The 4096 comes from what crashes
   Clang; 64 to 128 would send more records by address, through machinery that
   already exists. [emit_llvm_place.odin](../src/emit_llvm_place.odin#L24)
-- **`begin_generated_frame` keeps `Emitter.loaded` across a new builder.**
-  `Loaded_Value.end` is an offset into the builder it replaced. No case
-  miscompiles today, since the first store is written at length zero.
-  [begin_generated_frame](../src/emit_llvm_unwind.odin#L362)
-
-Simplification not taken:
-
-- **Type facts as bits on `Type_Info`.** About eight memo maps are keyed by
-  `Type_Id`, each behind a wrapper of its own. Bits would need a second set
-  for "decided", the in-progress marking the recursive ones use
-  (`map_shape_is_keyed`), and a rule for which facts survive an incremental
-  checkpoint, so the saving is the lookups rather than the wrappers.
-  [compiler.odin](../src/compiler.odin#L200)
 
 ## Map runtime review follow-ups
 
@@ -364,20 +335,6 @@ Simplification not taken:
   the callee's drop, and the callee must not need to write it.
   [Parameter binding](../src/emit_llvm.odin#L492),
   [parameter semantics](design.md#parameter-semantics-and-abi-lowering)
-- **Reuse the selected candidate's variadic slot assignments.**
-  `build_candidate` has already mapped the runtime arguments, including
-  the receiver and the pack. `bind_chosen_call` rebuilds an `Argument`
-  slice from `Arg_Info` and maps the fixed slots again by position or name.
-  Binding the fixed slots with `cand.slots` saves only that conversion: the
-  pack binder still reads each operand's span, mode, and checked state, and
-  the chosen path would need its own receiver-mode check, default filling,
-  and evaluation order beside `bind_candidate_slots`. Worth doing only as
-  part of a wider merge of the two binders. Preserve the receiver-first
-  order, forwarding of a sole spread, and evaluation of omitted defaults
-  after the pack's written operands.
-  [Candidate placement](../src/overload.odin#L446),
-  [chosen binder](../src/check_calls.odin#L890),
-  [variadic parameters](design.md#variadic-parameters)
 
 ## Union compiler simplifications
 
@@ -624,13 +581,6 @@ every `drop` hook and `defer` would have to be correct under, and the temptation
 to use it as ordinary error handling in place of
 [`or_return`](design.md#or_return-operator). Nothing in
 [design.md](design.md) requires it.
-
-## Intrinsics and inline assembly
-
-How should a program reach the instructions the language does not express,
-to use SIMD and other hardware features fully: compiler intrinsics, inline
-assembly, or both? `Simd(T, N)` covers lane-wise arithmetic; what it leaves
-out is the target-specific instruction.
 
 ## LLM optimization
 

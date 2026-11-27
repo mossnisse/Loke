@@ -15,27 +15,22 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
-	if type_is_region_provider(c, type) || type_is_allocator(c, type) {
+	under := type_underlying(c, type)
+	if under == TYPE_ALLOCATOR {
 		return true
 	}
-	if info := underlying_info(c, type); info != nil && info.is_view {
-		return true
-	}
-	#partial switch underlying_kind(c, type) {
-	case .Pointer, .Slice, .String_View, .CString_View, .Dyn:
-		return true
-	}
-	return false
+	info := type_of(c, under)
+	return info != nil && (info.provider || info.is_view || info.kind in Type_Kinds{.Pointer, .Slice, .String_View, .CString_View, .Dyn})
 }
 
 // `^mut T`, `[]mut T`, `dyn mut I` and a mutable view are mutable borrows.
 carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	if type_is_region_provider(c, type) {
-		return true // it writes into the buffer it was given
-	}
 	info := underlying_info(c, type)
 	if info == nil {
 		return false
+	}
+	if info.provider {
+		return true // it writes into the buffer it was given
 	}
 	// A view says so itself: a map's `iter_mut`, or an adapter over a mutable view
 	// (design.md "Iteration adapters").

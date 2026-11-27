@@ -160,15 +160,15 @@ write_demanded :: proc(e: ^Emitter) {
 		for d.next < len(d.queue) {
 			slot := d.queue[d.next]
 			d.next += 1
-			e.b = strings.builder_make()
+			use_builder(e, strings.builder_make())
 			write_slot(e, slot)
 			d.text[slot] = strings.to_string(e.b)
 		}
-		e.b = copies
+		use_builder(e, copies)
 		emit_cpu_copies(e)
 		copies = e.b
 	}
-	e.b = module
+	use_builder(e, module)
 	for text in d.text {
 		strings.write_string(&e.b, text)
 	}

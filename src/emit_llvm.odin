@@ -120,7 +120,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	// What the runtime and the host call names the first bodies, so it is written
 	// before them, and it goes after them in the module.
 	bodies := e.b
-	e.b = strings.builder_make()
+	use_builder(&e, strings.builder_make())
 	// Every module, object builds included: the runtime's `thread_detach` calls it.
 	emit_thread_local_teardown(&e)
 	emit_thread_local_setup(&e)
@@ -140,7 +140,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	emit_type_info_tables(&e)
 	emit_format_thunks(&e)
 	entries := strings.to_string(e.b)
-	e.b = bodies
+	use_builder(&e, bodies)
 	write_demanded(&e)
 	strings.write_string(&e.b, entries)
 	for text in e.pending_thunks {
@@ -300,7 +300,7 @@ open_synth_function :: proc(e: ^Emitter, symbol: ^Symbol, name: string, extra :=
 @(private)
 begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
 	state := Function_Emission{parent = e.b, saved = e.fn}
-	e.b = strings.builder_make()
+	use_builder(e, strings.builder_make())
 	e.fn = {}
 	return state
 }
@@ -309,7 +309,8 @@ begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
 @(private)
 finish_function_emission :: proc(e: ^Emitter, state: Function_Emission) {
 	text, entry, prologue, copied := strings.to_string(e.b), e.entry, e.prologue[:], e.copied[:]
-	e.b, e.fn = state.parent, state.saved
+	use_builder(e, state.parent)
+	e.fn = state.saved
 	write_function(e, &e.b, text, entry, prologue, copied)
 }
 
@@ -318,7 +319,8 @@ finish_function_emission :: proc(e: ^Emitter, state: Function_Emission) {
 finish_pending_thunk :: proc(e: ^Emitter, state: Function_Emission) {
 	out := strings.builder_make()
 	write_function(e, &out, strings.to_string(e.b), e.entry, e.prologue[:], e.copied[:])
-	e.b, e.fn = state.parent, state.saved
+	use_builder(e, state.parent)
+	e.fn = state.saved
 	append(&e.pending_thunks, strings.to_string(out))
 }
 
@@ -632,6 +634,14 @@ extract :: proc(e: ^Emitter, aggregate: string, value: string, index: int) -> st
 @(private)
 insert :: proc(e: ^Emitter, aggregate, into, field_type, value: string, index: int) -> string {
 	return emit_value(e, "insertvalue %s %s, %s %s, %d", aggregate, into, field_type, value, index)
+}
+
+// Makes `b` the builder lines are written to, forgetting the newest `load`:
+// `Loaded_Value.end` is an offset into the builder `b` replaces.
+@(private)
+use_builder :: proc(e: ^Emitter, b: strings.Builder) {
+	e.b = b
+	e.loaded = {end = -1}
 }
 
 // A naturally aligned load; an under-aligned place needs `, align N` as `align`.

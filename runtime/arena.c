@@ -16,6 +16,9 @@
 #include <string.h>
 
 #define ARENA_DEFAULT_BLOCK 4096u
+/* Growth doubles a block's size up to this; a larger request still gets a block
+ * large enough for it. */
+#define ARENA_MAX_GROWN_BLOCK (1u << 20)
 #define ARENA_CONTROL_ALIGN 16u
 
 /* A block's bytes run from just past its header to `limit`; `cursor` is the
@@ -84,12 +87,13 @@ static void arena_rewind(loke_rt_arena_v1 *arena) {
 }
 
 /* One more block from the parent, at least large enough for `size`/`align`. The
- * request starts at the newest block's size and doubles until it is
- * comfortable, so a long-lived arena stops asking; a reset rewinds to `first`
- * and so forgets an earlier large request. */
+ * request is twice the newest block's size, up to `ARENA_MAX_GROWN_BLOCK`, so a
+ * growing arena asks its parent ever more rarely; a larger request doubles until
+ * it fits. A reset rewinds to `first` and so starts small again. */
 static int32_t arena_grow(loke_rt_arena_v1 *arena, uint64_t size, uint64_t align) {
 	arena_block *newest = arena->blocks;
-	uint64_t want = newest == &arena->first ? ARENA_DEFAULT_BLOCK : newest->limit - (uintptr_t)newest;
+	uint64_t newest_size = newest == &arena->first ? ARENA_DEFAULT_BLOCK : newest->limit - (uintptr_t)newest;
+	uint64_t want = newest_size >= ARENA_MAX_GROWN_BLOCK / 2 ? ARENA_MAX_GROWN_BLOCK : newest_size * 2;
 	uint64_t needed = size + align + sizeof(arena_block);
 	arena_block *block;
 

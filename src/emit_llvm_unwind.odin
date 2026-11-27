@@ -362,7 +362,7 @@ emit_unwind_pop :: proc(e: ^Emitter) {
 begin_generated_frame :: proc(e: ^Emitter, name: string) -> strings.Builder {
 	begin_unwind_frame(e, name)
 	header := e.b
-	e.b = strings.builder_make()
+	use_builder(e, strings.builder_make())
 	return header
 }
 
@@ -372,7 +372,7 @@ end_generated_frame :: proc(e: ^Emitter, header: strings.Builder) {
 	// The thunk first: the locals it reads are the ones the body publishes.
 	emit_unwind_thunk(e)
 	body := unwind_finished_body(e)
-	e.b = header
+	use_builder(e, header)
 	emit_unwind_prologue(e)
 	strings.write_string(&e.b, body)
 }
@@ -389,7 +389,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	// CPU copy being written, with its output empty. Runs after the parent's body
 	// and before its prologue.
 	parent, parent_body := e.fn, e.b
-	e.b = strings.builder_make()
+	use_builder(e, strings.builder_make())
 	e.fn = Function_State {
 		unwind   = parent.unwind,
 		copy_cpu = parent.copy_cpu,
@@ -460,7 +460,8 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 			delete_key(&e.names, shadowed.symbol)
 		}
 	}
-	e.fn, e.b = parent, parent_body
+	use_builder(e, parent_body)
+	e.fn = parent
 }
 
 // What the thunk runs for one registered action. `env` is its view of the env.

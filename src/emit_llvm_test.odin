@@ -1530,3 +1530,18 @@ a_copied_load_stays_only_for_another_use :: proc(t: ^testing.T) {
 	write_without_unused_loads(&unchanged, body, nil)
 	testing.expect(t, strings.to_string(unchanged) == body)
 }
+
+// `Loaded_Value.end` is an offset into one builder: after a switch to another,
+// the newest `load` is forgotten even where the new builder reaches that length.
+@(test)
+a_new_builder_forgets_the_newest_load :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
+	defer free_all(context.temp_allocator)
+	e: Emitter
+	load(&e, "i32", "%p")
+	testing.expect(t, loaded_is_newest(&e))
+	held := len(e.b.buf)
+	use_builder(&e, strings.builder_make())
+	for len(e.b.buf) < held { strings.write_byte(&e.b, ' ') }
+	testing.expect(t, !loaded_is_newest(&e))
+}
