@@ -83,7 +83,7 @@ write_interfaces :: proc(c: ^Compiler, root: Package_Id, check: bool, root_only 
 // the editor's documentation command shows (compiler-guide.md "Language
 // server").
 interface_of_source :: proc(c: ^Compiler, path: string) -> (string, bool) {
-	id, found := c.package_by_dir[dir_key(canonical_dir(path_dir(path, context.temp_allocator)))]
+	id, found := c.package_by_dir[path_key(path_dir(path, context.temp_allocator))]
 	return interface_text(c, found ? id : c.root_package)
 }
 

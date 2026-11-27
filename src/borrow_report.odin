@@ -401,7 +401,7 @@ check_place_loans :: proc(state: ^Prov_Solve, event: Prov_Event, live: []Slot_Us
 @(private = "file")
 in_another_part :: proc(state: ^Prov_Solve, loan: Prov_Place_Loan, carrier: int) -> bool {
 	graph := state.graph
-	if len(graph.divisions) == 0 || loan.slot >= len(state.links_into) {
+	if len(graph.divisions) == 0 || loan.slot >= state.slots {
 		return false
 	}
 	lent := reach_row(state, state.reach, loan.slot)
@@ -419,8 +419,9 @@ in_another_part :: proc(state: ^Prov_Solve, loan: Prov_Place_Loan, carrier: int)
 		if !apart {
 			continue
 		}
-		for link in state.links_into[loan.slot] {
-			if made_in, is_part := graph.division_of[graph.reborrows[link].source]; is_part && made_in == index {
+		deriving := prov_reborrows_deriving(graph, loan.slot)
+		for link in prov_next_reborrow(graph, &deriving) {
+			if made_in, is_part := graph.division_of[link.source]; is_part && made_in == index {
 				return true
 			}
 		}
@@ -438,10 +439,10 @@ taken_where_reported :: proc(state: ^Prov_Solve, carrier: int) -> bool {
 	graph := state.graph
 	at := carrier
 	for _ in 0 ..< len(graph.reborrows) + 1 {
-		if at >= len(state.links_into) || len(state.links_into[at]) == 0 {
+		link, found := first_reborrow_into(graph, at)
+		if !found {
 			return false
 		}
-		link := graph.reborrows[state.links_into[at][0]]
 		if division, is_part := graph.division_of[link.derived]; is_part && graph.divisions[division].steps {
 			return state.reported[{link.span.file, link.span.lo}]
 		}
@@ -495,8 +496,9 @@ place_loans_overlap :: proc(a, b: Prov_Place_Loan) -> bool {
 prov_slots_overlap :: proc(state: ^Prov_Solve, source_slot, derived_slot: int) -> bool {
 	source := reach_row(state, state.reach, source_slot)
 	derived := reach_row(state, state.reach, derived_slot)
-	for index in 0 ..< state.loans {
-		if bit_get(source, index) && !state.ended[index] && bit_get(derived, index) {
+	loans := set_bits(source, state.loans)
+	for index in next_set_bit(&loans) {
+		if !state.ended[index] && bit_get(derived, index) {
 			return true
 		}
 	}
@@ -679,13 +681,18 @@ carrier_name :: proc(state: ^Prov_Solve, carrier: int) -> string {
 		if graph.prov_slots[at].name != "" {
 			return graph.prov_slots[at].name
 		}
-		// `links_into` lists reborrows in order, so its first is the first into `at`.
-		if at >= len(state.links_into) || len(state.links_into[at]) == 0 {
-			break
-		}
-		at = graph.reborrows[state.links_into[at][0]].source
+		link := first_reborrow_into(graph, at) or_break
+		at = link.source
 	}
 	return ""
+}
+
+// The first reborrow made into `slot`.
+@(private = "file")
+first_reborrow_into :: proc(graph: ^Flow_Graph, slot: int) -> (link: Prov_Reborrow, found: bool) {
+	deriving := prov_reborrows_deriving(graph, slot)
+	first, _ := prov_next_reborrow(graph, &deriving) or_return
+	return first^, true
 }
 
 @(private = "file")

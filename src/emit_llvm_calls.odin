@@ -169,12 +169,7 @@ emit_enum_from_int :: proc(e: ^Emitter, v: ^Expr_Call, enum_type, as_type: Type_
 		present = combine_or(e, present, matches)
 	}
 	// A matching value fits both widths, so the resize is exact when it counts.
-	if backing_bits := type_bits(e.c, enum_type); backing_bits != bits {
-		resized := temp(e)
-		op := backing_bits < bits ? "trunc" : (signed ? "sext" : "zext")
-		fmt.sbprintfln(&e.b, "  %s = %s i%d %s to i%d", resized, op, bits, value, backing_bits)
-		value = resized
-	}
+	value = resize_int(e, value, bits, type_bits(e.c, enum_type), signed)
 	return emit_option_value(e, as_type, present, value)
 }
 
@@ -277,7 +272,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 	header := alloca(e, CONTAINER_TYPE)
 	store(e, checked.type, "zeroinitializer", header)
 	provider := gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, provider)
+	store_scalar(e, "ptr", allocator, provider)
 
 	// design.md: `cap` defaults to `len`, and a `len > cap` relationship is an
 	// ordinary program fault rather than an allocation failure.
@@ -292,11 +287,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 	panic_if(e, negative, "make.negative", "a container's length cannot be negative")
 
 	helper := is_map ? "loke_rt_v1_map_reserve" : "loke_rt_v1_dyn_reserve"
-	status := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i32 @%s(ptr %s, ptr %s, i64 %s)",
-		status, helper, header, container_ops_global(e, checked.type), capacity,
-	)
+	status := emit_value(e, "call i32 @%s(ptr %s, ptr %s, i64 %s)", helper, header, container_ops_global(e, checked.type), capacity)
 	failed := icmp_zero(e, "i32", status)
 	fill_label, done_label := new_label(e, "make.fill"), new_label(e, "make.done")
 	branch_if(e, failed, done_label, fill_label)
@@ -309,7 +300,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> str
 		bytes := emit_value(e, "mul i64 %s, %d", length, type_size(e.c, element))
 		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", data, bytes)
 		count_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, count_slot)
+		store_scalar(e, "i64", length, count_slot)
 	}
 	place_label(e, done_label)
 
@@ -488,7 +479,7 @@ emit_pack_operands :: proc(
 		if from := copied_type(expr, element); copies && fallible && from != element && emit_lifecycle(e, from).clone_fallible {
 			if out.refused == "" {
 				out.refused, out.error = alloca(e, "i1"), alloca(e, llvm_type(e, TYPE_ALLOCATOR_ERROR))
-				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", out.refused)
+				store_scalar(e, "i1", "false", out.refused)
 			}
 			value, out.owns[next_element] = emit_refusable_pack_copy(e, expr, from, element, provider, out.refused, out.error)
 		} else {
@@ -497,7 +488,7 @@ emit_pack_operands :: proc(
 		position := fmt.aprintf("%d", next_element)
 		store(e, element, value, gep_at(e, element_llvm, out.staging, position))
 		if managed {
-			fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", out.owns[next_element], gep_at(e, "i1", out.cleanup.array_flags, position))
+			store_scalar(e, "i1", out.owns[next_element], gep_at(e, "i1", out.cleanup.array_flags, position))
 		}
 		next_element += 1
 	}
@@ -530,7 +521,7 @@ emit_spread_pack :: proc(
 		alloca_count(e, flags, "i1", operands.total)
 		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", flags, operands.total)
 		count := alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", operands.total, count)
+		store_scalar(e, "i64", operands.total, count)
 		cleanup = register_array_cleanup(e, element, buffer, flags, count)
 	}
 
@@ -561,8 +552,8 @@ emit_spread_pack :: proc(
 			loaded := load_place(e, element, gep_at(e, element_llvm, operands.staging, staged))
 			store(e, element, loaded, gep_at(e, element_llvm, buffer, position))
 			if managed {
-				fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", operands.owns[next_element], gep_at(e, "i1", flags, position))
-				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", gep_at(e, "i1", operands.cleanup.array_flags, staged))
+				store_scalar(e, "i1", operands.owns[next_element], gep_at(e, "i1", flags, position))
+				store_scalar(e, "i1", "false", gep_at(e, "i1", operands.cleanup.array_flags, staged))
 			}
 			next_element += 1
 		}
@@ -589,18 +580,18 @@ emit_lent_pack_storage :: proc(e: ^Emitter, element: Type_Id, total, large: stri
 	allocator := emit_default_allocator(e)
 	block, failed := emit_rt_alloc_sized(e, allocator, bytes, type_align(e.c, element))
 	alloc_failed_if(e, failed, allocator, "vararg.no_pack")
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, gep_field(e, PACK_RELEASE_TYPE, record, 0))
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", bytes, gep_field(e, PACK_RELEASE_TYPE, record, 2))
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", block, gep_field(e, PACK_RELEASE_TYPE, record, 1))
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", block, storage)
+	store_scalar(e, "ptr", allocator, gep_field(e, PACK_RELEASE_TYPE, record, 0))
+	store_scalar(e, "i64", bytes, gep_field(e, PACK_RELEASE_TYPE, record, 2))
+	store_scalar(e, "ptr", block, gep_field(e, PACK_RELEASE_TYPE, record, 1))
+	store_scalar(e, "ptr", block, storage)
 	branch(e, ready)
 
 	place_label(e, stack)
 	save_stack_for_expression(e)
 	on_stack := temp(e)
 	alloca_count(e, on_stack, llvm_type(e, element), total)
-	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", gep_field(e, PACK_RELEASE_TYPE, record, 1))
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", on_stack, storage)
+	store_scalar(e, "ptr", "null", gep_field(e, PACK_RELEASE_TYPE, record, 1))
+	store_scalar(e, "ptr", on_stack, storage)
 	branch(e, ready)
 
 	place_label(e, ready)
@@ -626,7 +617,7 @@ emit_pack_clone_spread :: proc(e: ^Emitter, element: Type_Id, data, length, buff
 	cloned := emit_clone_value(e, element, load_place(e, element, gep_at(e, element_llvm, data, loop.index)))
 	position := emit_value(e, "add i64 %s, %s", start, loop.index)
 	store(e, element, cloned, gep_at(e, element_llvm, buffer, position))
-	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", gep_at(e, "i1", flags, position))
+	store_scalar(e, "i1", "true", gep_at(e, "i1", flags, position))
 	close_counted_loop(e, loop)
 }
 
@@ -645,7 +636,7 @@ emit_refusable_pack_copy :: proc(
 	done := new_label(e, "vararg.done")
 	branch_if(e, failed, refused_label, copied_label)
 	place_label(e, refused_label)
-	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", refused)
+	store_scalar(e, "i1", "true", refused)
 	store(e, TYPE_ALLOCATOR_ERROR, error, error_slot)
 	store(e, element, "zeroinitializer", slot)
 	branch(e, done)

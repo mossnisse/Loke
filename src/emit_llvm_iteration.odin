@@ -79,7 +79,7 @@ Loop_Labels :: struct {
 @(private)
 new_counter :: proc(e: ^Emitter) -> string {
 	slot := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", slot)
+	store_scalar(e, "i64", "0", slot)
 	return slot
 }
 
@@ -312,11 +312,9 @@ emit_range_live :: proc(e: ^Emitter, signed, reverse: bool, type, current, limit
 	if reverse {
 		open_op, closed_op = signed ? "sgt" : "ugt", signed ? "sge" : "uge"
 	}
-	open_test, closed_test, live := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", open_test, open_op, type, current, limit)
-	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", closed_test, closed_op, type, current, limit)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", live, closed, closed_test, open_test)
-	return live
+	open_test := emit_value(e, "icmp %s %s %s, %s", open_op, type, current, limit)
+	closed_test := emit_value(e, "icmp %s %s %s, %s", closed_op, type, current, limit)
+	return emit_value(e, "select i1 %s, i1 %s, i1 %s", closed, closed_test, open_test)
 }
 
 // Decoded code points; indexed() adds the ordinal (design.md "String iteration").
@@ -353,7 +351,7 @@ text_at_end :: proc(e: ^Emitter, offset, length: string) -> string {
 // code point there.
 @(private = "file")
 advance_text :: proc(e: ^Emitter, slot, offset, used: string) {
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", emit_value(e, "add i64 %s, %s", offset, used), slot)
+	store_scalar(e, "i64", emit_value(e, "add i64 %s, %s", offset, used), slot)
 }
 
 // A slot walk over a map in unspecified order (design.md "Maps"), with the
@@ -415,7 +413,7 @@ emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		first, final, step_op = last, low, "sub"
 	}
 	cursor := alloca(e, element)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, first, cursor)
+	store_scalar(e, element, first, cursor)
 
 	loop := open_loop(e, s.indexed)
 	signed := type_signed(e.c, yielded) || type_is_rune(e.c, yielded)
@@ -432,7 +430,7 @@ emit_range_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	branch_if(e, finished, loop.done, step)
 	place_label(e, step)
 	next := emit_value(e, "%s %s %s, 1", step_op, element, current)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, next, cursor)
+	store_scalar(e, element, next, cursor)
 	close_loop(e, loop)
 }
 
@@ -445,7 +443,7 @@ map_scan_step :: proc(e: ^Emitter, table, ops, current, cursor: string) -> (fini
 	next := emit_value(
 		e, "call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)", table, ops, current, key_out, value_out,
 	)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
+	store_scalar(e, "i64", next, cursor)
 	return icmp_zero(e, "i64", next), key_out, value_out
 }
 
@@ -453,7 +451,7 @@ map_scan_step :: proc(e: ^Emitter, table, ops, current, cursor: string) -> (fini
 step_counter :: proc(e: ^Emitter, slot, type: string) {
 	current := load(e, type, slot)
 	next := emit_value(e, "add %s %s, 1", type, current)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", type, next, slot)
+	store_scalar(e, type, next, slot)
 }
 
 // A loop over `0 ..< count` in an `i64` cursor. `index` is the current value;
@@ -481,7 +479,7 @@ open_counted_loop :: proc(e: ^Emitter, cursor, prefix, count: string, compare :=
 @(private)
 close_counted_loop :: proc(e: ^Emitter, loop: Counted_Loop) {
 	next := emit_value(e, "add i64 %s, 1", loop.index)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, loop.cursor)
+	store_scalar(e, "i64", next, loop.cursor)
 	branch(e, loop.head)
 	place_label(e, loop.done)
 }
@@ -522,10 +520,8 @@ emit_sequence_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	// from zero (design.md "Reverse iteration").
 	at := current
 	if s.reversed {
-		last, flipped := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", last, limit)
-		fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", flipped, last, current)
-		at = flipped
+		last := emit_value(e, "sub i64 %s, 1", limit)
+		at = emit_value(e, "sub i64 %s, %s", last, current)
 	}
 	// `&value` and a lending traversal bind the element's address; only a
 	// copying loop owns a clone for the step (design.md "Borrowing iteration").
@@ -740,8 +736,8 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	last := combine_and(e, closed, at_high)
 	next_current := emit_value(e, "select i1 %s, %s %s, %s %s", last, element, current, element, stepped)
 	next_closed := emit_value(e, "select i1 %s, i1 false, i1 %s", last, closed)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, next_current, current_ptr)
-	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", next_closed, closed_ptr)
+	store_scalar(e, element, next_current, current_ptr)
+	store_scalar(e, "i1", next_closed, closed_ptr)
 	emit_ret(e, option, emit_option_some(e, option, current))
 
 	place_label(e, reverse_label)
@@ -750,11 +746,10 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	branch_if(e, reverse_live, reverse_yield, stop_label)
 
 	place_label(e, reverse_yield)
-	previous, yielded := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", previous, element, current)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %s, %s %s", yielded, closed, element, current, element, previous)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, yielded, current_ptr)
-	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", closed_ptr)
+	previous := emit_value(e, "sub %s %s, 1", element, current)
+	yielded := emit_value(e, "select i1 %s, %s %s, %s %s", closed, element, current, element, previous)
+	store_scalar(e, element, yielded, current_ptr)
+	store_scalar(e, "i1", "false", closed_ptr)
 	emit_ret(e, option, emit_option_some(e, option, yielded))
 
 	close_synth_next(e, option, stop_label)
@@ -777,23 +772,20 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	reversed := load(e, "i1", gep_field(e, iterator, "%arg0", ITER_ARRAY_REVERSED))
 	slice := load(e, stored, gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA))
 	bound := extract(e, stored, slice, SLICE_LEN)
-	forward_live, reverse_live, live := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", forward_live, index, bound)
-	fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", reverse_live, index)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", live, reversed, reverse_live, forward_live)
+	forward_live := emit_value(e, "icmp slt i64 %s, %s", index, bound)
+	reverse_live := emit_value(e, "icmp sgt i64 %s, 0", index)
+	live := emit_value(e, "select i1 %s, i1 %s, i1 %s", reversed, reverse_live, forward_live)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
 	branch_if(e, live, yield_label, stop_label)
 
 	place_label(e, yield_label)
 	base := extract(e, stored, slice, SLICE_DATA)
-	previous, at := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", previous, index)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", at, reversed, previous, index)
+	previous := emit_value(e, "sub i64 %s, 1", index)
+	at := emit_value(e, "select i1 %s, i64 %s, i64 %s", reversed, previous, index)
 	slot := gep_at(e, element, base, at)
-	stepped, next_index := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", next_index, reversed, previous, stepped)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_index, index_ptr)
+	stepped := emit_value(e, "add i64 %s, 1", index)
+	next_index := emit_value(e, "select i1 %s, i64 %s, i64 %s", reversed, previous, stepped)
+	store_scalar(e, "i64", next_index, index_ptr)
 	emit_ret(e, option, emit_option_some(e, option, slot))
 
 	close_synth_next(e, option, stop_label)

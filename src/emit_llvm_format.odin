@@ -76,7 +76,7 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 	data := value_address(e, under, value)
 	failed := emit_union_failed(e, under, value)
 	status := alloca(e, "i32")
-	fmt.sbprintfln(&e.b, "  store i32 0, ptr %s", status)
+	store_scalar(e, "i32", "0", status)
 	report, done := new_label(e, "main.failed"), new_label(e, "main.done")
 	branch_if(e, failed, report, done)
 
@@ -93,7 +93,7 @@ emit_entry_failure_report :: proc(e: ^Emitter, entry: string, result, failure: T
 	emit_format_thunk_call(e, failure, data, writer, generated_name(e, PANIC_OPTIONS))
 	emit_format_literal_to(e, writer, "\n")
 	drop_temporary_value(e, held)
-	fmt.sbprintfln(&e.b, "  store i32 1, ptr %s", status)
+	store_scalar(e, "i32", "1", status)
 	branch(e, done)
 
 	place_label(e, done)
@@ -344,10 +344,9 @@ emit_format_integer :: proc(e: ^Emitter, under: Type_Id, value: string) {
 	signed := type_signed(e.c, under)
 	if type_bits(e.c, under) > 64 {
 		llvm := llvm_type(e, under)
-		low, shifted, high := temp(e), temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = trunc %s %s to i64", low, llvm, value)
-		fmt.sbprintfln(&e.b, "  %s = lshr %s %s, 64", shifted, llvm, value)
-		fmt.sbprintfln(&e.b, "  %s = trunc %s %s to i64", high, llvm, shifted)
+		low := emit_value(e, "trunc %s %s to i64", llvm, value)
+		shifted := emit_value(e, "lshr %s %s, 64", llvm, value)
+		high := emit_value(e, "trunc %s %s to i64", llvm, shifted)
 		callee := signed ? "loke_rt_v1_fmt_i128" : "loke_rt_v1_fmt_u128"
 		fmt.sbprintfln(&e.b, "  call void @%s(ptr %%w, i64 %s, i64 %s, ptr %%o)", callee, low, high)
 		return
@@ -468,7 +467,7 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	ops := container_ops_global(e, under)
 	table := load(e, "ptr", address)
 	cursor := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	store_scalar(e, "i64", "0", cursor)
 	emit_format_literal(e, "[")
 
 	head, body, done := new_label(e, "fmt.map.head"), new_label(e, "fmt.map.body"), new_label(e, "fmt.map.done")

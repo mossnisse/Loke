@@ -119,8 +119,6 @@ emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 // the empty entry 0.
 @(private)
 typeid_index :: proc(e: ^Emitter, id: string) -> string {
-	past, safe := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", past, id, len(e.c.typeid_order))
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, past, id)
-	return safe
+	past := emit_value(e, "icmp ugt i64 %s, %d", id, len(e.c.typeid_order))
+	return emit_value(e, "select i1 %s, i64 0, i64 %s", past, id)
 }

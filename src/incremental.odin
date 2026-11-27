@@ -136,7 +136,7 @@ same_discovery :: proc(s: ^Compilation_Session, probe: ^Compiler, input: string,
 	   is_source_directory(c, input) != cache.directory_root { return false }
 	if !register_project(probe, input) || len(probe.collections) != len(c.collections) { return false }
 	for name, path in c.collections {
-		if other, found := probe.collections[name]; !found || dir_key(canonical_dir(path)) != dir_key(canonical_dir(other)) { return false }
+		if other, found := probe.collections[name]; !found || path_key(path) != path_key(other) { return false }
 	}
 	// This also detects newly nearer and previously absent transitive manifests.
 	manifest_count := 0
@@ -144,7 +144,7 @@ same_discovery :: proc(s: ^Compilation_Session, probe: ^Compiler, input: string,
 		if filepath.base(source.path) != PROJECT_FILE { continue }
 		if manifest_count >= len(probe.sources) { return false }
 		other := probe.sources[manifest_count]
-		if dir_key(canonical_dir(source.path)) != dir_key(canonical_dir(other.path)) || source.text != other.text { return false }
+		if path_key(source.path) != path_key(other.path) || source.text != other.text { return false }
 		manifest_count += 1
 	}
 	if manifest_count != len(probe.sources) { return false }

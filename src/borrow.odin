@@ -557,9 +557,8 @@ Prov_Solve :: struct {
 	link_row_value: []u8,
 	link_row_edit:  []u8,
 	slot_links:     [dynamic]int,
-	// The reborrows into each slot, and those each `store_id` makes.
-	links_into:     [][dynamic]int,
-	// A bit per reborrow that is `names_element`.
+	// A bit per reborrow that is `names_element`, and the reborrows each
+	// `store_id` makes.
 	links_naming_element: []u8,
 	links_of_store: [][dynamic]int,
 	// Whether an interned link row holds a reborrow of a slot with many
@@ -659,46 +658,36 @@ Live_Loans :: struct {
 	every: bool, // every slot in `state`, rather than `slots`
 	live:  []Slot_Use,
 	at:    int,
-	index: int,
 	slot:  int,
-	row:   []u8,
+	loans: Set_Bits, // those of `slot` not visited yet
 }
 
 @(private)
 live_loans :: proc(state: ^Prov_Solve, live: []Slot_Use) -> Live_Loans {
-	return Live_Loans{state = state, live = live, every = true, at = -1, index = -1}
+	return Live_Loans{state = state, live = live, every = true, at = -1}
 }
 
 @(private)
 slots_loans :: proc(state: ^Prov_Solve, slots: []int) -> Live_Loans {
-	return Live_Loans{state = state, slots = slots, at = -1, index = -1}
+	return Live_Loans{state = state, slots = slots, at = -1}
 }
 
-// `it.index < 0` means the next slot's row still has to be fetched.
 @(private)
 next_live_loan :: proc(it: ^Live_Loans) -> (slot: int, index: int, ok: bool) {
 	count := it.every ? it.state.slots : len(it.slots)
 	for {
-		if it.index < 0 {
-			it.at += 1
-			if it.at >= count {
-				return 0, 0, false
+		for loan in next_set_bit(&it.loans) {
+			if !it.state.ended[loan] {
+				return it.slot, loan, true
 			}
-			it.slot = it.every ? it.at : it.slots[it.at]
-			if it.live != nil && it.live[it.slot] == .None {
-				continue
-			}
-			it.row = reach_row(it.state, it.state.reach, it.slot)
-			it.index = 0
 		}
-		if it.index >= it.state.loans {
-			it.index = -1
-			continue
+		it.at += 1
+		if it.at >= count {
+			return 0, 0, false
 		}
-		index = it.index
-		it.index += 1
-		if bit_get(it.row, index) && !it.state.ended[index] {
-			return it.slot, index, true
+		it.slot = it.every ? it.at : it.slots[it.at]
+		if it.live == nil || it.live[it.slot] != .None {
+			it.loans = set_bits(reach_row(it.state, it.state.reach, it.slot), it.state.loans)
 		}
 	}
 }
@@ -956,13 +945,12 @@ solve_links_held :: proc(state: ^Prov_Solve) {
 	}
 }
 
-// The reborrows into, through and made by each slot or store, and which of them a
-// definition of the derived slot names.
+// The reborrows made by each store, and which reborrows a definition of the
+// derived slot names.
 @(private = "file")
 index_links :: proc(state: ^Prov_Solve) {
 	graph := state.graph
 	context.allocator = graph.alloc
-	state.links_into = make([][dynamic]int, state.slots)
 	state.link_is_named = make([]bool, len(graph.reborrows))
 	state.links_naming_element = make([]u8, state.link_row_bytes, graph.alloc)
 	stores := 0
@@ -970,7 +958,6 @@ index_links :: proc(state: ^Prov_Solve) {
 		if link.names_element {
 			bit_mark(state.links_naming_element, index)
 		}
-		append(&state.links_into[link.derived], index)
 		stores = max(stores, link.from_store)
 	}
 	state.links_of_store = make([][dynamic]int, stores + 1)
@@ -984,8 +971,9 @@ index_links :: proc(state: ^Prov_Solve) {
 			if event.kind != .Def && event.kind != .Load {
 				continue
 			}
-			for index in state.links_into[event.slot] {
-				if slice.contains(event.sources, graph.reborrows[index].source) {
+			deriving := prov_reborrows_deriving(graph, event.slot)
+			for link, index in prov_next_reborrow(graph, &deriving) {
+				if slice.contains(event.sources, link.source) {
 					state.link_is_named[index] = true
 				}
 			}
@@ -1083,8 +1071,8 @@ run_links_held_event :: proc(state: ^Prov_Solve, event: Prov_Event, held: []u32)
 		}
 		// What was read below an old value that is no copy is reached no more.
 		keeps_nothing := event.replaces_read && !holds_a_copy(state, held[slot])
-		for index in state.links_into[slot] {
-			link := graph.reborrows[index]
+		deriving := prov_reborrows_deriving(graph, slot)
+		for link, index in prov_next_reborrow(graph, &deriving) {
 			if keeps_nothing || link.from_store > 0 || state.link_is_named[index] && !slice.contains(event.sources, link.source) {
 				continue
 			}
@@ -1247,12 +1235,11 @@ run_prov_event :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended
 		}
 		one := publish_one_loan(state, settled, reach, ended)
 		for slot in event.into {
-			row := reach_row(state, reach, slot)
-			for index in 0 ..< state.loans {
-				if !bit_get(row, index) || ended[index] {
-					continue
+			loans := set_bits(reach_row(state, reach, slot), state.loans)
+			for index in next_set_bit(&loans) {
+				if !ended[index] {
+					publish_into_loan(state, reach, index, settled, index == one, state.precision[slot])
 				}
-				publish_into_loan(state, reach, index, settled, index == one, state.precision[slot])
 			}
 		}
 	}
@@ -1337,9 +1324,9 @@ publish_one_loan :: proc(state: ^Prov_Solve, settled: Prov_Event, reach: []u8, e
 	}
 	one := -1
 	for slot in settled.into {
-		row := reach_row(state, reach, slot)
-		for index in 0 ..< state.loans {
-			if !bit_get(row, index) || ended[index] || index == one {
+		loans := set_bits(reach_row(state, reach, slot), state.loans)
+		for index in next_set_bit(&loans) {
+			if ended[index] || index == one {
 				continue
 			}
 			if one >= 0 {
@@ -1416,11 +1403,9 @@ end_loans :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended: []b
 			break
 		}
 		for source in event.sources {
-			row := reach_row(state, reach, source)
-			for index in 0 ..< state.loans {
-				if bit_get(row, index) {
-					ended[index] = false
-				}
+			loans := set_bits(reach_row(state, reach, source), state.loans)
+			for index in next_set_bit(&loans) {
+				ended[index] = false
 			}
 		}
 	case .Access:
@@ -1481,11 +1466,8 @@ read_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8,
 	whole := [1][]Proj_Step{event.path}
 	places := event.load_places if event.load_places != nil else whole[:]
 	for carrier in event.into {
-		row := reach_row(state, reach, carrier)
-		for index in 0 ..< state.loans {
-			if !bit_get(row, index) {
-				continue
-			}
+		loans := set_bits(reach_row(state, reach, carrier), state.loans)
+		for index in next_set_bit(&loans) {
 			elements := named.slots if Loan_Id(index) == named.loan else nil
 			// Out of a local view, the one element the load names, where it is
 			// known among those the loan lends (`view_element_loan`).
@@ -1505,8 +1487,9 @@ read_pointee_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8,
 		mem.zero_slice(expanded)
 		for grew := true; grew; {
 			grew = false
-			for index in 0 ..< state.loans {
-				if !expanded[index] && bit_get(state.merged, index) {
+			loans := set_bits(state.merged, state.loans)
+			for index in next_set_bit(&loans) {
+				if !expanded[index] {
 					expanded[index] = true
 					grew = true
 					load_through_loan(state, index, nil, reach, &loss, reads)
@@ -1560,8 +1543,9 @@ read_writable_content :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8
 	mem.zero_slice(expanded)
 	for grew := true; grew; {
 		grew = false
-		for index in 0 ..< state.loans {
-			if bit_get(pending, index) && !expanded[index] {
+		loans := set_bits(pending, state.loans)
+		for index in next_set_bit(&loans) {
+			if !expanded[index] {
 				expanded[index] = true
 				grew = true
 				load_writable_through(state, index, reach, &loss, reads, pending)
@@ -1699,9 +1683,9 @@ load_writable_through :: proc(
 	// A carrier stored there from elsewhere is followed as one in a local's
 	// storage is; what the parameter reached already stands for every depth.
 	for slot in state.graph.caller_slots[Loan_Id(loan_index)] {
-		row := reach_row(state, reach, slot)
-		for held in 0 ..< state.loans {
-			if bit_get(row, held) && graph.loans[held].root != loan.root {
+		loans := set_bits(reach_row(state, reach, slot), state.loans)
+		for held in next_set_bit(&loans) {
+			if graph.loans[held].root != loan.root {
 				bit_mark(pending, held)
 			}
 		}
@@ -1923,8 +1907,9 @@ view_elements_apart :: proc(state: ^Prov_Solve, a: Prov_View_At, a_slot: int, b:
 	first := reach_row(state, state.reach, a_slot)
 	second := reach_row(state, state.reach, b_slot)
 	shared := false
-	for index in 0 ..< state.loans {
-		if !bit_get(first, index) || state.ended[index] || !bit_get(second, index) {
+	loans := set_bits(first, state.loans)
+	for index in next_set_bit(&loans) {
+		if state.ended[index] || !bit_get(second, index) {
 			continue
 		}
 		left, left_known := view_element_in(state.graph, a, index)

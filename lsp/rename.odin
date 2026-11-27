@@ -54,7 +54,7 @@ same_binding :: proc(session: ^lokec.Compilation_Session, handle: lokec.Symbol_H
 	definition, defined := lokec.query_definition(session, handle)
 	if !defined { return false }
 	source, found := lokec.query_source(session, lokec.Compilation_Snapshot{definition.snapshot}, definition.span.file)
-	return found && definition.span.lo == target.lo && definition.span.hi == target.hi && path_key(source.path, context.temp_allocator) == path_key(target.path, context.temp_allocator)
+	return found && definition.span.lo == target.lo && definition.span.hi == target.hi && lokec.path_key(source.path, context.temp_allocator) == lokec.path_key(target.path, context.temp_allocator)
 }
 
 @(private = "file")
@@ -311,7 +311,7 @@ parsed_source :: proc(r: ^Renaming, key, text: string) -> []lokec.Token {
 @(private = "file")
 rename_in_source :: proc(r: ^Renaming, rs: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, source_file: u32, source: lokec.Query_Source, handle: lokec.Symbol_Handle, same: bool) -> string {
 	target, old, new_name, member := r.target, r.old, r.new_name, r.member
-	key := path_key(source.path, context.temp_allocator)
+	key := lokec.path_key(source.path, context.temp_allocator)
 	tokens := parsed_source(r, key, source.text)
 	open := make([dynamic]lokec.Token_Kind, context.temp_allocator)
 	edited := make([dynamic]u32, context.temp_allocator)

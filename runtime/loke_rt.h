@@ -146,7 +146,6 @@ const char *loke_rt_arena_name(const loke_rt_allocator_v1 *a);
 /* Dispatch helpers. The generated module calls these rather than loading the
  * ops table itself, so the record layout has exactly one reader. */
 void *loke_rt_v1_alloc(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t align);
-void *loke_rt_v1_alloc_zeroed(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t align);
 void *loke_rt_v1_resize(
 	const loke_rt_allocator_v1 *a, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align);
 void loke_rt_v1_free(const loke_rt_allocator_v1 *a, void *ptr, uint64_t size, uint64_t align);
@@ -374,9 +373,6 @@ int32_t loke_rt_v1_dyn_resize(
 /* Releases capacity down to `max(len, min_capacity)`. */
 int32_t loke_rt_v1_dyn_shrink(
 	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
-/* The provider a container will allocate through, binding the default on first
- * need. A `via` declaration has already written its own. */
-void loke_rt_v1_dyn_bind(loke_rt_dynamic_v1 *self);
 
 /* design.md "string type conversions": `st.to_runes()` copies. `out` must be
  * the all-zero empty container; on failure it is left exactly that way with the
@@ -420,7 +416,6 @@ int32_t loke_rt_v1_map_remove(
 void loke_rt_v1_map_clear(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops);
 int32_t loke_rt_v1_map_shrink(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
-void loke_rt_v1_map_bind(loke_rt_map_v1 *self);
 /* One step of a map walk. Answers 0 when finished, otherwise the cursor to
  * resume from, so an iterator keeps one integer and no table knowledge. */
 int64_t loke_rt_v1_map_scan(

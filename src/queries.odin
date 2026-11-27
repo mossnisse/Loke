@@ -108,7 +108,7 @@ query_source :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, fi
 
 query_file :: proc(s: ^Compilation_Session, snapshot: Compilation_Snapshot, path: string) -> (u32, bool) {
 	if !valid_snapshot(s, snapshot.id) { return 0, false }
-	file, found := s.queries.files[dir_key(canonical_dir(path))]
+	file, found := s.queries.files[path_key(path)]
 	return file, found
 }
 
@@ -473,7 +473,7 @@ build_query_files :: proc(s: ^Compilation_Session) {
 	}
 	q.files = make(map[string]u32, len(c.sources))
 	for source, index in c.sources {
-		key := dir_key(canonical_dir(source.path), context.allocator)
+		key := path_key(source.path, context.allocator)
 		if key not_in q.files { q.files[key] = u32(index) }
 	}
 	q.documents = make([][dynamic]Symbol_Handle, len(c.sources))

@@ -542,16 +542,15 @@ merge_escape_event :: proc(state: ^Prov_Solve, event: Prov_Event, declaration: S
 				continue
 			}
 			changed = merge_precision(&content.dependencies.precision, state.precision[source]) || changed
-			for index in 0 ..< state.loans {
-				if bit_get(row, index) && !graph.roots[int(graph.loans[index].root)].forwarded {
+			loans := set_bits(row, state.loans)
+			for index in next_set_bit(&loans) {
+				if !graph.roots[int(graph.loans[index].root)].forwarded {
 					changed = merge_loan_provenance(state, &content.dependencies, index) || changed
 				}
 			}
 		}
-		for index in 0 ..< state.loans {
-			if !bit_get(row, index) {
-				continue
-			}
+		loans := set_bits(row, state.loans)
+		for index in next_set_bit(&loans) {
 			// What a callback leaves is the caller's to name.
 			if stand_in := graph.roots[int(graph.loans[index].root)]; stand_in.forwarded {
 				read := Callback_Read{callback = stand_in.param_index, argument = stand_in.argument}

@@ -8,6 +8,7 @@
 // here too.
 package lokec
 
+import "base:intrinsics"
 import "base:runtime"
 import "core:mem"
 import "core:slice"
@@ -259,11 +260,82 @@ bit_clear :: proc(row: []u8, index: int) {
 	row[index >> 3] &~= 1 << u8(index & 7)
 }
 
+// The set bits of a row below `count`, lowest first, passing a zero byte whole:
+// `for index in next_set_bit(&bits)` walks them. A bit set or cleared ahead of
+// the walk is seen.
+@(private)
+Set_Bits :: struct {
+	row:   []u8,
+	count: int,
+	at:    int,
+}
+
+@(private)
+set_bits :: proc(row: []u8, count: int) -> Set_Bits {
+	return {row = row, count = count}
+}
+
+@(private)
+next_set_bit :: proc(bits: ^Set_Bits) -> (index: int, ok: bool) {
+	for bits.at < bits.count {
+		rest := bits.row[bits.at >> 3] >> u8(bits.at & 7)
+		if rest == 0 {
+			bits.at = (bits.at | 7) + 1
+			continue
+		}
+		index = bits.at + int(intrinsics.count_trailing_zeros(rest))
+		if index >= bits.count {
+			break
+		}
+		bits.at = index + 1
+		return index, true
+	}
+	bits.at = bits.count
+	return 0, false
+}
+
 @(private)
 bytes_or :: proc(into: []u8, from: []u8) {
 	for value, index in from {
 		into[index] |= value
 	}
+}
+
+// The rows on entry to each block of a forward bit-vector analysis whose join
+// is union, `width` bytes a block: `step` carries a row through each event, and
+// `seed`, when given, joins the entry block's. A block the entry does not reach
+// keeps an empty row and is not `visited`.
+@(private)
+solve_forward_union :: proc(
+	graph: ^Flow_Graph, width: int, data: $T, step: proc(data: T, row: []u8, event: Prov_Event), seed: []u8 = nil,
+) -> (entry: [][]u8, visited: []bool) {
+	entry = block_rows(graph, width)
+	exit := block_rows(graph, width)
+	visited = make([]bool, len(graph.blocks), graph.alloc)
+	row := make([]u8, width, graph.alloc)
+	queue := block_queue_from_entry(graph)
+	for id in worklist_pop(&queue) {
+		block := graph.blocks[id]
+		mem.zero_slice(row)
+		// A block not visited yet has an empty exit, so adds nothing.
+		for predecessor in block.preds {
+			bytes_or(row, exit[int(predecessor)])
+		}
+		if id == 0 && seed != nil {
+			bytes_or(row, seed)
+		}
+		copy(entry[id], row)
+		for event in block.prov {
+			step(data, row, event)
+		}
+		if visited[id] && slice.equal(row, exit[id]) {
+			continue
+		}
+		visited[id] = true
+		copy(exit[id], row)
+		worklist_wake_all(&queue, block.succs[:])
+	}
+	return
 }
 
 // A zeroed row of `width` bytes per block, as a bit-vector analysis's entry or exit.

@@ -67,7 +67,7 @@ Diagnostic :: struct {
 // Loads a file and registers it, reporting the failure itself.
 load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 	if overlays := compiler_overlays(c); len(overlays) > 0 {
-		if overlay, found := overlays[dir_key(canonical_dir(path))]; found {
+		if overlay, found := overlays[path_key(path)]; found {
 			return add_loaded_source(c, path, transmute([]u8)strings.clone(overlay.text))
 		}
 	}

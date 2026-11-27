@@ -538,7 +538,7 @@ open_result_slot :: proc(e: ^Emitter, symbol: ^Symbol) {
 		alloca_named(e, e.result_slot, type)
 	}
 	if e.result_inout {
-		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", e.result_slot)
+		store_scalar(e, "ptr", "null", e.result_slot)
 	} else if zero, ok := llvm_zero(e, result); ok {
 		store(e, result, zero, e.result_slot)
 	}

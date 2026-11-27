@@ -60,6 +60,15 @@ static uint64_t sane_container_align(uint64_t align) {
 	return align == 0 ? 1 : align;
 }
 
+/* design.md's lazy default binding: an unbound container binds a provider the
+ * first time it needs one. A `via` declaration wrote its own at the declaration
+ * point, so this never overrides a written policy. */
+static void bind_allocator(const loke_rt_allocator_v1 **allocator) {
+	if (*allocator == 0) {
+		*allocator = loke_rt_v1_selected_allocator();
+	}
+}
+
 static int32_t checked_round_up(uint64_t value, uint64_t align, uint64_t *out) {
 	uint64_t a = sane_container_align(align);
 	if (value > UINT64_MAX - (a - 1)) {
@@ -144,7 +153,7 @@ int32_t loke_rt_v1_dyn_reserve(
 	if (min_capacity < 0) {
 		loke_rt_v1_container_fault("a container capacity cannot be negative");
 	}
-	loke_rt_v1_dyn_bind(self);
+	bind_allocator(&self->allocator);
 	if (min_capacity <= self->cap) {
 		return 1;
 	}
@@ -216,14 +225,6 @@ int32_t loke_rt_v1_dyn_clone(
 
 /* --------------------------------------------------- dynamic operations -- */
 
-/* design.md's lazy default binding: an unbound container binds a provider the
- * first time it needs one. A `via` declaration wrote its own at the declaration
- * point, so this never overrides a written policy. */
-void loke_rt_v1_dyn_bind(loke_rt_dynamic_v1 *self) {
-	if (self->allocator == 0) {
-		self->allocator = loke_rt_v1_selected_allocator();
-	}
-}
 
 /* Growth for elements that clone through a hook, which keeps the old block
  * alive. A source slice pointing into that block has to stay readable until the
@@ -360,7 +361,7 @@ static int32_t dyn_grow_fill(
 	if (count == 0) {
 		return 1;
 	}
-	loke_rt_v1_dyn_bind(self);
+	bind_allocator(&self->allocator);
 	if (!loke_rt_v1_checked_add(self->len, count, &need)) {
 		return 0;
 	}
@@ -464,7 +465,7 @@ int32_t loke_rt_v1_dyn_resize(
 	if (new_len == self->len) {
 		return 1;
 	}
-	loke_rt_v1_dyn_bind(self);
+	bind_allocator(&self->allocator);
 	/* A resize adds elements, so it grows as `append` does: lengthening an array
 	 * one element at a time stays linear. */
 	if (new_len > self->cap && !dyn_set_capacity(self, ops, dyn_growth_target(self->cap, new_len))) {
@@ -679,7 +680,7 @@ int32_t loke_rt_v1_map_reserve(
 	if (min_capacity < 0) {
 		loke_rt_v1_container_fault("a container capacity cannot be negative");
 	}
-	loke_rt_v1_map_bind(self);
+	bind_allocator(&self->allocator);
 	if (min_capacity <= self->cap && (self->table != 0 || min_capacity == 0)) {
 		return 1;
 	}
@@ -809,12 +810,6 @@ int32_t loke_rt_v1_map_clone(
 }
 
 /* -------------------------------------------------------- map operations -- */
-
-void loke_rt_v1_map_bind(loke_rt_map_v1 *self) {
-	if (self->allocator == 0) {
-		self->allocator = loke_rt_v1_selected_allocator();
-	}
-}
 
 /* The slot holding `key`, or -1. A probe stops at the first empty control byte:
  * a tombstone is skipped, because an entry inserted after a removal may lie

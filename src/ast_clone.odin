@@ -227,19 +227,10 @@ clone_enum_fields :: proc(c: ^Cloner, list: []Enum_Field) -> []Enum_Field {
 	return out
 }
 
+// A list of named, typed groups, `Generic_Param` or `Binding_Group`, whose
+// symbols the clone declares again.
 @(private = "file")
-clone_generic_params :: proc(c: ^Cloner, list: []Generic_Param) -> []Generic_Param {
-	out := clone_slice(c, list)
-	for entry, index in list {
-		out[index] = entry
-		out[index].type = clone_expr_with(c, entry.type)
-		out[index].symbols = nil
-	}
-	return out
-}
-
-@(private = "file")
-clone_bindings :: proc(c: ^Cloner, list: []Binding_Group) -> []Binding_Group {
+clone_typed_groups :: proc(c: ^Cloner, list: []$T) -> []T {
 	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = entry
@@ -252,7 +243,7 @@ clone_bindings :: proc(c: ^Cloner, list: []Binding_Group) -> []Binding_Group {
 @(private = "file")
 clone_requirement_with :: proc(c: ^Cloner, requirement: Requirement) -> Requirement {
 	out := requirement
-	out.bindings = clone_bindings(c, requirement.bindings)
+	out.bindings = clone_typed_groups(c, requirement.bindings)
 	out.expr = clone_expr_with(c, requirement.expr)
 	out.result = clone_expr_with(c, requirement.result)
 	out.slot_type = clone_expr_with(c, requirement.slot_type)
@@ -470,7 +461,7 @@ clone_expr_with :: proc(c: ^Cloner, e: Expr) -> Expr {
 		n := new_clone(c, v)
 		n.kind = v.kind
 		n.move_only = v.move_only
-		n.generic_params = clone_generic_params(c, v.generic_params)
+		n.generic_params = clone_typed_groups(c, v.generic_params)
 		n.attributes = clone_attributes(c, v.attributes)
 		n.where_clauses = clone_each(c, v.where_clauses, clone_expr_with)
 		n.body_lo = v.body_lo
@@ -496,7 +487,7 @@ clone_expr_with :: proc(c: ^Cloner, e: Expr) -> Expr {
 
 	case ^Type_Interface:
 		n := new_clone(c, v)
-		n.generic_params = clone_generic_params(c, v.generic_params)
+		n.generic_params = clone_typed_groups(c, v.generic_params)
 		n.where_clauses = clone_each(c, v.where_clauses, clone_expr_with)
 		n.requirements = clone_each(c, v.requirements, clone_requirement_with)
 		return n

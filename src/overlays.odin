@@ -30,7 +30,7 @@ set_session_overlay :: proc(s: ^Compilation_Session, path, text: string) -> bool
 	overlay := Source_Overlay {
 		path = strings.clone(canonical),
 		text = strings.clone(text),
-		dir  = dir_key(canonical_dir(path_dir(canonical, context.temp_allocator)), context.allocator),
+		dir  = path_key(path_dir(canonical, context.temp_allocator), context.allocator),
 	}
 	if stored, found := &s.overlays[key]; found {
 		delete(stored.path)
@@ -48,7 +48,7 @@ set_session_overlay :: proc(s: ^Compilation_Session, path, text: string) -> bool
 remove_session_overlay :: proc(s: ^Compilation_Session, path: string) -> bool {
 	if !s.initialized { return false }
 	context.allocator = s.allocator
-	key, overlay := delete_key(&s.overlays, dir_key(canonical_dir(path)))
+	key, overlay := delete_key(&s.overlays, path_key(path))
 	if key == "" { return false }
 	delete_overlay(key, overlay)
 	invalidate_session_snapshot(s)
@@ -67,7 +67,7 @@ is_source_directory :: proc(c: ^Compiler, path: string) -> bool {
 	if os.is_dir(path) { return true }
 	overlays := compiler_overlays(c)
 	if len(overlays) == 0 { return false }
-	prefix := strings.concatenate({strings.trim_right(dir_key(canonical_dir(path)), "/"), "/"}, context.temp_allocator)
+	prefix := strings.concatenate({strings.trim_right(path_key(path), "/"), "/"}, context.temp_allocator)
 	for key in overlays {
 		if strings.has_prefix(key, prefix) { return true }
 	}

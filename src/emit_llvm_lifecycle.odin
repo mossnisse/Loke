@@ -252,7 +252,7 @@ drop_built_parts :: proc(e: ^Emitter, record: Type_Id, out: string, guards: []De
 @(private)
 emit_drop_elements_reversed :: proc(e: ^Emitter, element: Type_Id, items, count: string, flags := "") {
 	cursor := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, cursor)
+	store_scalar(e, "i64", count, cursor)
 	guard := Deferred{}
 	if flags == "" && emit_lifecycle(e, element).drop_may_panic {
 		guard = register_array_cleanup(e, element, items, "", cursor)
@@ -274,15 +274,14 @@ emit_drop_counted_elements :: proc(e: ^Emitter, element: Type_Id, items, cursor:
 	branch_if(e, more, body, done)
 	place_label(e, body)
 	index := emit_value(e, "sub i64 %s, 1", remaining)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", index, cursor)
+	store_scalar(e, "i64", index, cursor)
 	if flags != "" {
-		flag_address, live := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", flag_address, flags, index)
-		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", live, flag_address)
+		flag_address := emit_value(e, "getelementptr i1, ptr %s, i64 %s", flags, index)
+		live := emit_value(e, "load i1, ptr %s", flag_address)
 		run := new_label(e, "elements.drop.run")
 		branch_if(e, live, run, head)
 		place_label(e, run)
-		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag_address)
+		store_scalar(e, "i1", "false", flag_address)
 	}
 	emit_drop_place(e, element, gep_at(e, llvm_type(e, element), items, index))
 	branch(e, head)
@@ -482,7 +481,7 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	if operations.provider {
 		control := load(e, "ptr", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_arena_drop(ptr %s)", control)
-		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", address)
+		store_scalar(e, "ptr", "null", address)
 		return
 	}
 	if operations.intrinsic {

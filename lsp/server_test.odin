@@ -526,7 +526,7 @@ opened_imports_keep_their_application :: proc(t: ^testing.T) {
 		published = publications(take(&h))
 		testing.expect(t, len(published) == 1 && published[0].version == 3 && len(published[0].diagnostics) > 0)
 		if root := only_root(&h); root != nil {
-			testing.expect_value(t, root.key, lokec.dir_key(lokec.canonical_dir(lokec.join_path({h.root, "lib"}, context.temp_allocator))))
+			testing.expect_value(t, root.key, lokec.path_key(lokec.join_path({h.root, "lib"}, context.temp_allocator)))
 		}
 		close(&h, "lib/lib.loke")
 		settle(&h)
@@ -1596,7 +1596,7 @@ rapid_edits_match_a_fresh_check :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(shown), 0)
 	root := only_root(&h)
 	if root == nil { return }
-	shapes := root.session.compiler.package_by_dir[lokec.dir_key(lokec.canonical_dir(lokec.join_path({h.root, "app", "shapes"}, context.temp_allocator)))]
+	shapes := root.session.compiler.package_by_dir[lokec.path_key(lokec.join_path({h.root, "app", "shapes"}, context.temp_allocator))]
 	testing.expect(t, slice.contains(lokec.session_check_stats(&root.session).rechecked_packages, shapes))
 	change(&h, "app/main.loke", replace(main_text, "shapes.area(shapes.Square{side = 2})", "shapes.surface(shapes.Square{side = 3})"), versions[0] + 1)
 	settle(&h)
@@ -1651,7 +1651,7 @@ requests_follow_incremental_checks :: proc(t: ^testing.T) {
 	testing.expect_value(t, completion_labels(reply), "Square surface")
 	root := only_root(&h)
 	if root == nil { return }
-	shapes := root.session.compiler.package_by_dir[lokec.dir_key(lokec.canonical_dir(lokec.join_path({h.root, "app", "shapes"}, context.temp_allocator)))]
+	shapes := root.session.compiler.package_by_dir[lokec.path_key(lokec.join_path({h.root, "app", "shapes"}, context.temp_allocator))]
 	testing.expect(t, slice.contains(lokec.session_check_stats(&root.session).reused_packages, shapes), "a syntax error in `main` rechecked the library")
 }
 

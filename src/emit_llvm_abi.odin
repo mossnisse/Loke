@@ -60,19 +60,8 @@ emit_foreign_declare :: proc(e: ^Emitter, sym: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "%s = external global %s", name, llvm_type(e, sym.type))
 		return
 	}
-	proc_info := type_of(e.c, sym.proc_type)
-	ret, indirect := foreign_result_llvm(e, sym.result, proc_info)
-	params := make([dynamic]string, 0, len(sym.params) + 2)
-	if indirect {
-		append(&params, sret_parameter(e, sym.result))
-	}
-	for parameter, index in sym.params {
-		append(&params, foreign_param_llvm(e, proc_info, parameter, index, attributes = true))
-	}
-	if proc_info.c_vararg {
-		append(&params, "...")
-	}
-	fmt.sbprintfln(&e.b, "declare %s %s(%s)", ret, name, strings.join(params[:], ", "))
+	ret, params, _ := foreign_parameters(e, type_of(e.c, sym.proc_type), sym.result, sym.params, named = false)
+	fmt.sbprintfln(&e.b, "declare %s %s(%s)", ret, name, strings.join(params, ", "))
 }
 
 // ------------------------------------------------------------ LLVM types --
@@ -305,16 +294,35 @@ sret_parameter :: proc(e: ^Emitter, result: Type_Id) -> string {
 // the name of the hidden `sret` pointer among them, or "".
 @(private = "file")
 foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol) -> (ret: string, params: []string, sret: string) {
-	out := make([dynamic]string, 0, len(symbol.params) + 1)
-	proc_info := type_of(e.c, symbol.proc_type)
+	return foreign_parameters(e, type_of(e.c, symbol.proc_type), symbol.result, symbol.params, named = true)
+}
+
+// The return type and the parameters of a foreign signature, the hidden `sret`
+// pointer first when the result takes one, and a C variadic's `...` last. A
+// `declare` spells the parameters with their attributes; `named` adds the names
+// a `define` gives them, and the `sret` pointer's is returned. Without
+// `attributes`, they are the bare types a variadic call's function type names.
+@(private = "file")
+foreign_parameters :: proc(
+	e: ^Emitter, info: ^Type_Info, result: Type_Id, parameters: []Type_Id, named: bool, attributes := true,
+) -> (ret: string, params: []string, sret: string) {
+	out := make([dynamic]string, 0, len(parameters) + 2)
 	indirect: bool
-	ret, indirect = foreign_result_llvm(e, symbol.result, proc_info)
+	ret, indirect = foreign_result_llvm(e, result, info)
 	if indirect {
-		sret = "%arg.sret"
-		append(&out, fmt.aprintf("%s %s", sret_parameter(e, symbol.result), sret))
+		pointer := attributes ? sret_parameter(e, result) : "ptr"
+		if named {
+			sret = "%arg.sret"
+			pointer = fmt.aprintf("%s %s", pointer, sret)
+		}
+		append(&out, pointer)
 	}
-	for parameter, index in symbol.params {
-		append(&out, fmt.aprintf("%s %%arg%d", foreign_param_llvm(e, proc_info, parameter, index, attributes = true), index))
+	for parameter, index in parameters {
+		spelled := foreign_param_llvm(e, info, parameter, index, attributes)
+		append(&out, named ? fmt.aprintf("%s %%arg%d", spelled, index) : spelled)
+	}
+	if info.c_vararg {
+		append(&out, "...")
 	}
 	return ret, out[:], sret
 }
@@ -402,16 +410,14 @@ emit_foreign_environment_check :: proc(e: ^Emitter, symbol: ^Symbol) {
 	}
 	slot := alloca(e, "i32")
 	fmt.sbprintfln(&e.b, "  call void @llvm.x86.sse.stmxcsr(ptr %s)", slot)
-	value, control, kept := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i32, ptr %s, align 4", value, slot)
-	fmt.sbprintfln(&e.b, "  %s = and i32 %s, %d", control, value, MXCSR_CONTROL)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, %d", kept, control, MXCSR_LOKE)
+	value := emit_value(e, "load i32, ptr %s, align 4", slot)
+	control := emit_value(e, "and i32 %s, %d", value, MXCSR_CONTROL)
+	kept := emit_value(e, "icmp eq i32 %s, %d", control, MXCSR_LOKE)
 	changed, after := new_label(e, "fenv.changed"), new_label(e, "fenv.kept")
 	branch_if(e, kept, after, changed)
 	place_label(e, changed)
-	flags, restored := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = and i32 %s, %d", flags, value, MXCSR_FLAGS)
-	fmt.sbprintfln(&e.b, "  %s = or i32 %s, %d", restored, flags, MXCSR_LOKE)
+	flags := emit_value(e, "and i32 %s, %d", value, MXCSR_FLAGS)
+	restored := emit_value(e, "or i32 %s, %d", flags, MXCSR_LOKE)
 	fmt.sbprintfln(&e.b, "  store i32 %s, ptr %s, align 4", restored, slot)
 	fmt.sbprintfln(&e.b, "  call void @llvm.x86.sse.ldmxcsr(ptr %s)", slot)
 	call := "a foreign call through a procedure value"
@@ -522,13 +528,12 @@ emit_foreign_return :: proc(e: ^Emitter) {
 // it, or that integer read back as the aggregate, through a slot of its own.
 @(private = "file")
 reg_int_reinterpret :: proc(e: ^Emitter, type: Type_Id, value: string, to_int: bool) -> string {
-	slot, out := temp(e), temp(e)
+	slot := temp(e)
 	align := type_align(e.c, type)
 	whole, word := llvm_type(e, type), fmt.aprintf("i%d", abi_reg_bits(e.c, type))
 	alloca_named(e, slot, whole)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", to_int ? whole : word, value, slot, align)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align %d", out, to_int ? word : whole, slot, align)
-	return out
+	return emit_value(e, "load %s, ptr %s, align %d", to_int ? word : whole, slot, align)
 }
 
 // A value copied to storage for the call, as the `ptr <slot>` operand that
@@ -582,10 +587,7 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 		return fmt.aprintf("i32 %s", out)
 	case .Int, .Enum:
 		if bits := type_bits(e.c, under); bits < 32 {
-			out := temp(e)
-			op := type_signed(e.c, under) ? "sext" : "zext"
-			fmt.sbprintfln(&e.b, "  %s = %s i%d %s to i32", out, op, bits, operand)
-			return fmt.aprintf("i32 %s", out)
+			return fmt.aprintf("i32 %s", resize_int(e, operand, bits, 32, type_signed(e.c, under)))
 		}
 	case .Struct, .Union:
 		// The checker rejects a fixed array here, as at any C boundary.
@@ -599,18 +601,8 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 // which a variadic call names explicitly.
 @(private = "file")
 foreign_function_type :: proc(e: ^Emitter, callee_type: ^Type_Info) -> string {
-	ret, indirect := foreign_result_llvm(e, callee_type.result, callee_type)
-	parts := make([dynamic]string, 0, len(callee_type.parameters) + 2)
-	if indirect {
-		append(&parts, "ptr")
-	}
-	for parameter, index in callee_type.parameters {
-		append(&parts, foreign_param_llvm(e, callee_type, parameter, index, attributes = false))
-	}
-	if callee_type.c_vararg {
-		append(&parts, "...")
-	}
-	return function_type(ret, strings.join(parts[:], ", "))
+	ret, params, _ := foreign_parameters(e, callee_type, callee_type.result, callee_type.parameters, named = false, attributes = false)
+	return function_type(ret, strings.join(params, ", "))
 }
 
 // The operands of a foreign call, ahead of them the `sret` pointer it writes its

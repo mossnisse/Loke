@@ -81,7 +81,7 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 		entry := Deferred{kind = .Written, flag = e.defer_flags[s.slot], stmt = s.stmt, on_failure = s.on_failure}
 		unwind_reserve(e, &entry)
 		e.unwind.slot_by_defer[s.slot] = entry.slot
-		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", e.defer_flags[s.slot])
+		store_scalar(e, "i1", "true", e.defer_flags[s.slot])
 		unwind_register(e, entry)
 		append(&e.cleanups[len(e.cleanups) - 1], entry)
 
@@ -150,7 +150,7 @@ emit_spawn :: proc(e: ^Emitter, s: ^Stmt_Spawn) {
 	owned := emit_spawn_arguments(e, task, call, callee_type, frame)
 	if task.result != INVALID_SYMBOL {
 		field := spawn_field_address(e, task.frame, frame, spawn_result_field(task))
-		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", symbol_place(e, task.result), field)
+		store_scalar(e, "ptr", symbol_place(e, task.result), field)
 	}
 	fmt.sbprintfln(
 		&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)",
@@ -208,7 +208,7 @@ emit_spawn_arguments :: proc(
 		switch task.kinds[index] {
 		case .Address:
 			address := emit_address(e, argument)
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, field)
+			store_scalar(e, "ptr", address, field)
 			mode := param_mode_at(callee_type, index)
 			bound = param_mode_is_pointer(mode) ? address : load_place(e, type, address)
 		case .Copy:
@@ -954,7 +954,7 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 		if e.result_inout {
 			// An `inout` result hands back the place itself, not a copy of it, and
 			// the place stays live.
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", emit_address(e, value.expr), e.result_slot)
+			store_scalar(e, "ptr", emit_address(e, value.expr), e.result_slot)
 		} else if literal := literal_built_in_result(e, value.expr); literal != nil {
 			emit_composite_into(e, literal, e.result_slot, e.result_type)
 		} else {

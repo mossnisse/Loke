@@ -197,6 +197,12 @@ store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 	}
 }
 
+// A `store` of `value`, of the first-class LLVM type `llvm`, to `address`.
+@(private)
+store_scalar :: proc(e: ^Emitter, llvm, value, address: string) {
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, value, address)
+}
+
 // `body`, a function's text from its entry block on, without the `load` of
 // each value among `copied` that nothing uses: `store` copied the place such a
 // value was read from, which leaves the load without a use unless the value
@@ -681,9 +687,9 @@ emit_code_point_bound_check :: proc(e: ^Emitter, data, bound, length: string) {
 	lead_label, checked_label := new_label(e, "slice.lead"), new_label(e, "slice.checked")
 	branch_if(e, inside, lead_label, checked_label)
 	place_label(e, lead_label)
-	lead, masked, continuation := load(e, "i8", gep_at(e, "i8", data, bound)), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = and i8 %s, -64", masked, lead)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i8 %s, -128", continuation, masked)
+	lead := load(e, "i8", gep_at(e, "i8", data, bound))
+	masked := emit_value(e, "and i8 %s, -64", lead)
+	continuation := emit_value(e, "icmp eq i8 %s, -128", masked)
 	panic_if(e, continuation, "slice.utf8", "string slice bounds split a code point")
 	place_label(e, checked_label)
 }
@@ -715,11 +721,9 @@ checked_index_to_i64 :: proc(e: ^Emitter, value: string, type: Type_Id) -> strin
 	if bits <= 64 {
 		return widen_to_i64(e, value, type)
 	}
-	oversized, truncated, out := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i%d %s, 18446744073709551615", oversized, bits, value)
-	fmt.sbprintfln(&e.b, "  %s = trunc i%d %s to i64", truncated, bits, value)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 -1, i64 %s", out, oversized, truncated)
-	return out
+	oversized := emit_value(e, "icmp ugt i%d %s, 18446744073709551615", bits, value)
+	truncated := emit_value(e, "trunc i%d %s to i64", bits, value)
+	return emit_value(e, "select i1 %s, i64 -1, i64 %s", oversized, truncated)
 }
 
 @(private)

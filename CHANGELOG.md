@@ -362,6 +362,9 @@ checklist.
 
 ### Changed
 
+- The runtime no longer exports `loke_rt_v1_alloc_zeroed`, `loke_rt_v1_dyn_bind`, or
+  `loke_rt_v1_map_bind`, which generated code never called and `loke_rt.h` no longer declares
+  ([Version policy](docs/releasing.md#version-policy): runtime symbols may change).
 - An index range in an array literal copies its value into every slot
   ([Fixed arrays](docs/design.md#fixed-arrays)). `[3]Tag{0..<3 = tag}` copied `tag` into the
   first slot and cloned the others from that copy, which a copy hook that does not return its

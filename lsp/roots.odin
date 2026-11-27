@@ -80,7 +80,7 @@ refresh_roots :: proc(s: ^Server) {
 	open_entries := make(map[string]int, context.temp_allocator)
 	for _, doc in s.documents {
 		if doc.entry_revision != doc.revision { doc.declares, doc.entry_revision = declares_entry(doc.text), doc.revision }
-		if doc.declares { open_entries[path_key(lokec.path_dir(doc.path, context.temp_allocator), context.temp_allocator)] += 1 }
+		if doc.declares { open_entries[lokec.path_key(lokec.path_dir(doc.path, context.temp_allocator), context.temp_allocator)] += 1 }
 	}
 	for _, doc in s.documents {
 		path, key := root_of(s, doc, open_entries)
@@ -164,7 +164,7 @@ directory_entries :: proc(s: ^Server, dir: string) -> map[string]bool {
 		if !lokec.is_source_file(info) { continue }
 		path := lokec.join_path({dir, info.name}, context.temp_allocator)
 		data, err := os.read_entire_file(path, context.temp_allocator)
-		entries[path_key(path, allocator)] = err == nil && declares_entry(string(data))
+		entries[lokec.path_key(path, allocator)] = err == nil && declares_entry(string(data))
 	}
 	s.scans[strings.clone(dir_key, allocator)] = entries
 	return entries
@@ -274,8 +274,8 @@ collect_results :: proc(s: ^Server, root: ^Root) {
 	if !ok { return }
 	for file := u32(0); ; file += 1 {
 		source := lokec.query_source(&root.session, snapshot, file) or_break
-		root.loaded[path_key(source.path, allocator)] = true
-		root.packages[path_key(lokec.path_dir(source.path, context.temp_allocator), allocator)] = true
+		root.loaded[lokec.path_key(source.path, allocator)] = true
+		root.packages[lokec.path_key(lokec.path_dir(source.path, context.temp_allocator), allocator)] = true
 	}
 	diagnostics, _ := lokec.query_diagnostics(&root.session, snapshot)
 	seen := make(map[string]bool, context.temp_allocator)

@@ -4,7 +4,6 @@
 package lokec
 
 import "core:fmt"
-import "core:mem"
 import "core:slice"
 
 // --------------------------------------------------------- task window --
@@ -32,29 +31,7 @@ solve_window :: proc(state: ^Prov_Solve) -> [][]u8 {
 	if !graph.has_window_event {
 		return make([][]u8, max(len(graph.blocks), 1), graph.alloc)
 	}
-	width := (len(graph.task_sites) + 7) / 8
-	entry, exit := block_rows(graph, width), block_rows(graph, width)
-	// A block not visited yet adds nothing to its successors' entry.
-	visited := make([]bool, len(graph.blocks), graph.alloc)
-	mask := make([]u8, width, graph.alloc)
-	queue := block_queue_from_entry(graph)
-	for id in worklist_pop(&queue) {
-		block := graph.blocks[id]
-		mem.zero_slice(mask)
-		for predecessor in block.preds {
-			bytes_or(mask, exit[int(predecessor)])
-		}
-		copy(entry[id], mask)
-		for event in block.prov {
-			window_step(graph, mask, event)
-		}
-		if visited[id] && slice.equal(mask, exit[id]) {
-			continue
-		}
-		visited[id] = true
-		copy(exit[id], mask)
-		worklist_wake_all(&queue, block.succs[:])
-	}
+	entry, _ := solve_forward_union(graph, (len(graph.task_sites) + 7) / 8, graph, window_step)
 	return entry
 }
 

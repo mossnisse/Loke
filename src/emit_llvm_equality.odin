@@ -150,7 +150,7 @@ chain_part :: proc(e: ^Emitter, chain: ^Part_Chain, type: Type_Id, left, right: 
 		if chain.answer == "" {
 			chain.answer, chain.done = alloca(e, "i1"), new_label(e, "equal.done")
 		}
-		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", chain.result, chain.answer)
+		store_scalar(e, "i1", chain.result, chain.answer)
 		next := new_label(e, "equal.next")
 		branch_if(e, chain.result, next, chain.done)
 		place_label(e, next)
@@ -164,7 +164,7 @@ chain_answer :: proc(e: ^Emitter, chain: Part_Chain) -> string {
 	if chain.answer == "" {
 		return chain.result
 	}
-	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", chain.result, chain.answer)
+	store_scalar(e, "i1", chain.result, chain.answer)
 	place_label(e, chain.done)
 	return load(e, "i1", chain.answer)
 }
@@ -202,18 +202,18 @@ emit_array_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs:
 emit_elements_equal :: proc(e: ^Emitter, element: Type_Id, left, right, count: string) -> string {
 	element_llvm := llvm_type(e, element)
 	same := alloca(e, "i1")
-	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", same)
+	store_scalar(e, "i1", "true", same)
 	loop := open_counted_loop(e, new_counter(e), "equal", count)
 	one := load_temporary(e, element, gep_at(e, element_llvm, left, loop.index))
 	other := load_temporary(e, element, gep_at(e, element_llvm, right, loop.index))
 	leaf := emit_equal(e, element, one, other)
 	if comparison_runs_own_equality(e.c, element) {
-		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", leaf, same)
+		store_scalar(e, "i1", leaf, same)
 		next := new_label(e, "equal.next")
 		branch_if(e, leaf, next, loop.done)
 		place_label(e, next)
 	} else {
-		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", combine_and(e, load(e, "i1", same), leaf), same)
+		store_scalar(e, "i1", combine_and(e, load(e, "i1", same), leaf), same)
 	}
 	close_counted_loop(e, loop)
 	return load(e, "i1", same)
@@ -235,7 +235,7 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 
 	// The tag comparison is the answer unless an active payload overrides it.
 	answer := alloca(e, "i1")
-	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", same_tag, answer)
+	store_scalar(e, "i1", same_tag, answer)
 
 	done, payloads := new_label(e, "unioneq.done"), new_label(e, "unioneq.payloads")
 	branch_if(e, same_tag, payloads, done)
@@ -252,7 +252,7 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 		right := load_temporary(e, variant, right_slot)
 		// The comparison may open blocks, so the store goes wherever it ends.
 		equal := emit_equal(e, variant, left, right)
-		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", equal, answer)
+		store_scalar(e, "i1", equal, answer)
 		branch(e, done)
 	}
 	place_label(e, done)
@@ -300,7 +300,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 		tagged := emit_hash_mix(e, seed, widened)
 		slot := value_address(e, under, value)
 		state := alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", tagged, state)
+		store_scalar(e, "i64", tagged, state)
 		done := new_label(e, "unionhash.done")
 		hits := variant_labels(e, info, "unionhash.hit", .Payload)
 		emit_union_switch(e, under, tag, hits, done)
@@ -311,7 +311,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 			place_label(e, hits[index])
 			payload := load_temporary(e, variant, slot)
 			payload_hash := emit_hash_value(e, variant, payload, tagged)
-			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", payload_hash, state)
+			store_scalar(e, "i64", payload_hash, state)
 			branch(e, done)
 		}
 		place_label(e, done)
@@ -324,11 +324,11 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 			address := value_address(e, under, value)
 			element_llvm := llvm_type(e, info.element)
 			state := alloca(e, "i64")
-			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", seed, state)
+			store_scalar(e, "i64", seed, state)
 			loop := open_counted_loop(e, new_counter(e), "hash.array", fmt.aprintf("%d", info.count))
 			element := load_temporary(e, info.element, gep_at(e, element_llvm, address, loop.index))
 			next := emit_hash_value(e, info.element, element, load(e, "i64", state))
-			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, state)
+			store_scalar(e, "i64", next, state)
 			close_counted_loop(e, loop)
 			return load(e, "i64", state)
 		}

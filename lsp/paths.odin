@@ -60,14 +60,8 @@ path_to_uri :: proc(path: string, allocator := context.allocator) -> string {
 	return strings.to_string(b)
 }
 
-// The identity the compiler gives a path: absolute, cleaned, `/`-separated,
-// compared case-insensitively.
-path_key :: proc(path: string, allocator := context.allocator) -> string {
-	return lokec.dir_key(lokec.canonical_dir(path), allocator)
-}
-
 // A snapshot location as a canonical path and a client range. Its key is
-// `lokec.dir_key(path)`; `path_key` would canonicalize it again.
+// `lokec.dir_key(path)`; `lokec.path_key` would canonicalize it again.
 place :: proc(s: ^Server, session: ^lokec.Compilation_Session, snapshot: lokec.Compilation_Snapshot, location: lokec.Query_Location, allocator := context.allocator) -> (path: string, range: Range, ok: bool) {
 	if location.span.file == lokec.NO_FILE { return }
 	source := lokec.query_source(session, snapshot, location.span.file) or_return
@@ -85,7 +79,7 @@ uri_for :: proc(s: ^Server, key, path: string) -> string {
 
 write_location :: proc(s: ^Server, b: ^strings.Builder, path: string, range: Range) {
 	strings.write_string(b, `{"uri":`)
-	write_json_string(b, uri_for(s, path_key(path, context.temp_allocator), path))
+	write_json_string(b, uri_for(s, lokec.path_key(path, context.temp_allocator), path))
 	strings.write_string(b, `,"range":`)
 	write_range(b, range)
 	strings.write_byte(b, '}')

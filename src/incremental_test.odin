@@ -38,9 +38,9 @@ main :: proc() {
 	stats := session_check_stats(&s)
 	testing.expect(t, len(stats.reused_packages) == 0 && len(stats.rechecked_packages) == len(s.compiler.packages) - 1)
 	testing.expect(t, stats.cache_bytes > 0 && stats.cache_bytes <= MAX_PACKAGE_CACHE_BYTES)
-	steady := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "steady"}, context.temp_allocator)))]
-	values_id := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "values"}, context.temp_allocator)))]
-	bridge_id := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "bridge"}, context.temp_allocator)))]
+	steady := s.compiler.package_by_dir[path_key(join_path({root, "steady"}, context.temp_allocator))]
+	values_id := s.compiler.package_by_dir[path_key(join_path({root, "values"}, context.temp_allocator))]
+	bridge_id := s.compiler.package_by_dir[path_key(join_path({root, "bridge"}, context.temp_allocator))]
 	for edit in 0 ..< 8 {
 		switch edit {
 		case 0: if !write_session_source(t, path, strings.concatenate({main_text, "\nextra :: proc() -> int { return 123; }"}, context.temp_allocator)) { return }
@@ -121,7 +121,7 @@ session_incremental_reuses_prefix_before_an_error :: proc(t: ^testing.T) {
 	edited, _ := strings.replace_all(main_text, "== 1", "== 2", context.temp_allocator)
 	if !write_session_source(t, path, edited) { return }
 	expect_session_matches_fresh(t, &s, path, config, false)
-	dep := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "dep"}, context.temp_allocator)))]
+	dep := s.compiler.package_by_dir[path_key(join_path({root, "dep"}, context.temp_allocator))]
 	stats := session_check_stats(&s)
 	testing.expect(t, len(stats.reused_packages) > 0, "an edit after a failing dependency rechecked everything")
 	testing.expect(t, slice.contains(stats.rechecked_packages, dep) && slice.contains(stats.rechecked_packages, s.compiler.root_package))
@@ -255,8 +255,8 @@ else { size :: proc() -> int { return 0; } }`
 	if !testing.expect(t, init_session(&s, config)) { return }
 	expect_session_matches_fresh(t, &s, path, config, true)
 	testing.expect(t, session_check_stats(&s).cache_bytes > 0, "selection without imports took the full path")
-	platform_id := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "platform"}, context.temp_allocator)))]
-	lib_id := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "lib"}, context.temp_allocator)))]
+	platform_id := s.compiler.package_by_dir[path_key(join_path({root, "platform"}, context.temp_allocator))]
+	lib_id := s.compiler.package_by_dir[path_key(join_path({root, "lib"}, context.temp_allocator))]
 	replace :: proc(text, old, new: string) -> string {
 		out, _ := strings.replace_all(text, old, new, context.temp_allocator)
 		return out
@@ -353,7 +353,7 @@ two :: proc() -> int { parallel { } return d.WIDTH; }`
 	defer destroy_session(&s)
 	if !testing.expect(t, init_session(&s, config)) { return }
 	expect_session_matches_fresh(t, &s, path, config, true)
-	dep := s.compiler.package_by_dir[dir_key(canonical_dir(join_path({root, "dep"}, context.temp_allocator)))]
+	dep := s.compiler.package_by_dir[path_key(join_path({root, "dep"}, context.temp_allocator))]
 	for edit in 0 ..< 3 {
 		if edit != 1 && !write_session_source(t, first, strings.concatenate({first_text, "\nextra :: 1;"}, context.temp_allocator) if edit == 0 else first_text) { return }
 		if edit != 0 && !write_session_source(t, second, strings.concatenate({second_text, "\nother :: 2;"}, context.temp_allocator)) { return }

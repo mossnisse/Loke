@@ -59,7 +59,7 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	}
 
 	block_slot := alloca(e, "ptr")
-	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", block_slot)
+	store_scalar(e, "ptr", "null", block_slot)
 	done_label := new_label(e, "box.done")
 	if copies {
 		// The copy allocates from the box's own allocator, as a copy into any
@@ -97,13 +97,13 @@ emit_box_new :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 
 	place_label(e, publish_label)
 	if header {
-		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, block)
+		store_scalar(e, "ptr", allocator, block)
 		store(e, payload, value, box_payload_at(e, payload, block))
 	} else {
 		store(e, payload, value, block)
 	}
 	finish_temporary_drop(e, guard)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", block, block_slot)
+	store_scalar(e, "ptr", block, block_slot)
 	branch(e, done_label)
 
 	place_label(e, done_label)
@@ -132,12 +132,7 @@ emit_box_drop :: proc(e: ^Emitter, box_type: Type_Id, address: string) {
 // The boxed case of `emit_try_clone_into`.
 @(private)
 emit_box_try_clone_into :: proc(e: ^Emitter, box_type: Type_Id, out, src, allocator: string) -> string {
-	ok := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call i1 %s(ptr %s, ptr %s, ptr %s)",
-		ok, box_clone_thunk(e, box_type), out, src, allocator,
-	)
-	return ok
+	return emit_value(e, "call i1 %s(ptr %s, ptr %s, ptr %s)", box_clone_thunk(e, box_type), out, src, allocator)
 }
 
 @(private = "file")
@@ -221,7 +216,7 @@ box_clone_thunk :: proc(e: ^Emitter, box_type: Type_Id) -> string {
 			fmt.sbprintln(&e.b, "  ret i1 false")
 			e.terminated = true
 			place_label(e, publish_label)
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, block)
+			store_scalar(e, "ptr", allocator, block)
 			store(e, payload, value, box_payload_at(e, payload, block))
 			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %%out, align %d", block, HANDLE_SLOT_ALIGN)
 			emit_unwind_pop(e)

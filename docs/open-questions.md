@@ -248,7 +248,7 @@ Compile time:
   a read that invalidates nothing pays a clear and a scan of every loan. The
   report pass likewise scans every live slot and loan for each `Access` and
   `Root_End`, where `root_loans` already names the candidates.
-  [mark_released](../src/borrow.odin#L1357),
+  [mark_released](../src/borrow.odin#L1344),
   [report](../src/borrow_report.odin#L126)
 - **Smaller, each under about 1%.** The compile-time-only walk of a result's
   type after every call, with no memo as `known_supported` has
@@ -289,22 +289,22 @@ Generated code and the runtime, none measured:
 - **No function is `nounwind`**, though a panic never unwinds the native
   stack, and the unwind thunks are not `cold`. `uwtable` must accompany
   `nounwind`, or the panic trace loses its unwind tables.
-  [Thunk](../src/emit_llvm_unwind.odin#L401)
+  [Thunk](../src/emit_llvm_unwind.odin#L399)
 - **Drop glue is written out at each drop**, and a procedure's cleanups at
   each `return` and `or_return`, while containers already share a thunk per
   type with the same body.
-  [emit_drop_place](../src/emit_llvm_lifecycle.odin#L458),
+  [emit_drop_place](../src/emit_llvm_lifecycle.odin#L457),
   [container_drop_thunk](../src/emit_llvm_containers.odin#L98),
   [emit_epilogue](../src/emit_llvm_stmt.odin#L1032)
 - **Text.** `for r in text` calls the validating `loke_rt_v1_rune_at` for
   each rune, with no inline answer for ASCII; `rune_count` lacks the
   eight-bytes-at-a-time path `utf8_prefix` has; `hash_bytes` folds one byte a
   step; `a + b + c` allocates for each `+`.
-  [text.c](../runtime/text.c#L66), [hash_bytes](../runtime/container.c#L1066)
+  [text.c](../runtime/text.c#L66), [hash_bytes](../runtime/container.c#L1061)
 - **Smaller.** Every heap allocation goes through `_aligned_malloc`, whatever
-  its alignment ([alloc.c](../runtime/alloc.c#L21)); formatting a record
+  its alignment ([alloc.c](../runtime/alloc.c#L20)); formatting a record
   writes each label and separator to the sink on its own
-  ([emit_llvm_format.odin](../src/emit_llvm_format.odin#L493)); a temporary of
+  ([emit_llvm_format.odin](../src/emit_llvm_format.odin#L492)); a temporary of
   4096 bytes or less takes a stack slot of its own, never reused
   ([emit_llvm_place.odin](../src/emit_llvm_place.odin#L43)).
 - **Try a lower `LARGE_VALUE_BYTES`.** The 4096 comes from what crashes
@@ -313,35 +313,16 @@ Generated code and the runtime, none measured:
 - **`begin_generated_frame` keeps `Emitter.loaded` across a new builder.**
   `Loaded_Value.end` is an offset into the builder it replaced. No case
   miscompiles today, since the first store is written at length zero.
-  [begin_generated_frame](../src/emit_llvm_unwind.odin#L364)
+  [begin_generated_frame](../src/emit_llvm_unwind.odin#L362)
 
-Simplifications:
+Simplification not taken:
 
-- **One driver for the parser's delimited lists.** Eleven loops share a
-  shape, four of them an identical recovery block, and `parse_where_clause`
-  repeats the body of `parse_expression_list`.
-  [parser.odin](../src/parser.odin#L3709)
 - **Type facts as bits on `Type_Info`.** About eight memo maps are keyed by
-  `Type_Id`, each behind a wrapper of its own.
+  `Type_Id`, each behind a wrapper of its own. Bits would need a second set
+  for "decided", the in-progress marking the recursive ones use
+  (`map_shape_is_keyed`), and a rule for which facts survive an incremental
+  checkpoint, so the saving is the lookups rather than the wrappers.
   [compiler.odin](../src/compiler.odin#L200)
-- **Emitter helpers.** `resize_int` is written out three times,
-  `llvm_name_char` is `unquoted_name_byte`, three procedures build a foreign
-  parameter list, about ninety lines spell a scalar `store` by hand, and
-  about forty spell what `emit_value` writes.
-- **Borrow solver.** `links_into` repeats the derived reborrow chain,
-  `solve_window` and `solve_view_defs` are one forward solve with two step
-  procedures, and a dozen loops test every loan's bit where a set-bit
-  iterator would do. [links_into](../src/borrow.odin#L965)
-- **Duplicates.** Two `append_unique`
-  ([operators.odin](../src/operators.odin#L382),
-  [semantic.odin](../src/semantic.odin#L1304)); `clone_generic_params` and
-  `clone_bindings`; `dir_key(canonical_dir(path))` eleven times beside the
-  language server's `path_key`; aggregate comparison in `eval.odin` and
-  `const_ops.odin`; `sane_align`, `sane_container_align`, and `arena_align`
-  in the runtime.
-- **Unreferenced runtime entries.** `loke_rt_v1_alloc_zeroed`, and
-  `loke_rt_v1_dyn_bind` and `loke_rt_v1_map_bind`, whose bodies are one.
-  Removing them is open only if the `v1` names are not promised to C hosts.
 
 ## Map runtime review follow-ups
 
@@ -354,7 +335,7 @@ Simplifications:
   update the debugger's occupied-slot test if it pays off. A miss under linear
   probing visits about ½(1 + 1/(1−α)²) slots at load α, about 32 at the 7/8
   limit and about 8 at 3/4, so a lower limit is the one-line alternative.
-  [Probe](../runtime/container.c#L861), [debugger](../src/emit_llvm_debug.odin#L629)
+  [Probe](../runtime/container.c#L856), [debugger](../src/emit_llvm_debug.odin#L629)
 
 ## LLVM source review follow-ups
 

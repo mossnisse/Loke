@@ -139,10 +139,9 @@ emit_synth_chunks_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	branch_if(e, empty, stop_label, yield_label)
 
 	place_label(e, yield_label)
-	short, taken, left := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", short, count, size)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", taken, short, count, size)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", left, count, taken)
+	short := emit_value(e, "icmp slt i64 %s, %s", count, size)
+	taken := emit_value(e, "select i1 %s, i64 %s, i64 %s", short, count, size)
+	left := emit_value(e, "sub i64 %s, %s", count, taken)
 	chunk := emit_ptr_len(e, header, data, taken)
 	store(e, slice, emit_ptr_len(e, header, gep_at(e, element, data, taken), left), rest_ptr)
 	emit_ret(e, option, emit_option_some(e, option, chunk))

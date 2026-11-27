@@ -9,7 +9,6 @@
 
 #include <malloc.h>
 #include <stdio.h>
-#include <string.h>
 
 /* Alignment is honoured exactly, so a caller asking for 32 gets 32 rather than
  * whatever the CRT's default happens to be. `_aligned_malloc` requires a
@@ -168,14 +167,6 @@ void *loke_rt_v1_alloc(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t al
 		return (void *)(uintptr_t)sane_align(align);
 	}
 	return note_request(a, size, a->ops->alloc(a->state, size, align));
-}
-
-void *loke_rt_v1_alloc_zeroed(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t align) {
-	void *p = loke_rt_v1_alloc(a, size, align);
-	if (p != 0) {
-		memset(p, 0, (size_t)size);
-	}
-	return p;
 }
 
 void *loke_rt_v1_resize(

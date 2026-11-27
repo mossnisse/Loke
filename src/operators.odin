@@ -379,13 +379,6 @@ overload_is_exactly :: proc(sym: ^Symbol, operands: []Type_Id) -> bool {
 	return !sym.bound_excluded && !sym.delegated && slice.equal(sym.params, operands)
 }
 
-@(private = "file")
-append_unique :: proc(out: ^[dynamic]Symbol_Id, id: Symbol_Id) {
-	if !slice.contains(out[:], id) {
-		append(out, id)
-	}
-}
-
 // The procedure a type's own `symbol_text` operator runs over two of its
 // values, and the declaration naming it: that procedure, or the group it is a
 // member of (design.md "Explicit procedure overloading"), which is what

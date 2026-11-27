@@ -3705,15 +3705,7 @@ parse_where_clause :: proc(p: ^Parser) -> []Expr {
 	outer := p.no_composite
 	p.no_composite = true
 	defer p.no_composite = outer
-
-	clauses := make([dynamic]Expr, 0, 0, p.allocator)
-	for {
-		append(&clauses, parse_expr(p))
-		if !allow(p, .Comma) {
-			break
-		}
-	}
-	return clauses[:]
+	return parse_expression_list(p)
 }
 
 @(private = "file")

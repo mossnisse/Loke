@@ -12,13 +12,8 @@ emit_simd_splat :: proc(e: ^Emitter, value: string, vector: Type_Id) -> string {
 	if simd_is_mask(e, info) {
 		scalar = emit_value(e, "zext i1 %s to i8", value)
 	}
-	one, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertelement %s poison, %s %s, i32 0", one, llvm, simd_lane_llvm_type(e, info), scalar)
-	fmt.sbprintfln(
-		&e.b, "  %s = shufflevector %s %s, %s poison, <%d x i32> zeroinitializer",
-		out, llvm, one, llvm, info.count,
-	)
-	return out
+	one := emit_value(e, "insertelement %s poison, %s %s, i32 0", llvm, simd_lane_llvm_type(e, info), scalar)
+	return emit_value(e, "shufflevector %s %s, %s poison, <%d x i32> zeroinitializer", llvm, one, llvm, info.count)
 }
 
 simd_is_mask :: proc(e: ^Emitter, info: ^Type_Info) -> bool {

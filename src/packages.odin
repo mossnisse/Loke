@@ -264,9 +264,9 @@ package_sources :: proc(c: ^Compiler, dir: string) -> []string {
 		// An overlay of a listed file replaces its text; it adds no second path.
 		seen := make(map[string]bool, context.temp_allocator)
 		for path in paths {
-			seen[dir_key(canonical_dir(path))] = true
+			seen[path_key(path)] = true
 		}
-		key := dir_key(canonical_dir(dir))
+		key := path_key(dir)
 		for path, overlay in overlays {
 			if !seen[path] && overlay.dir == key {
 				append(&paths, strings.clone(overlay.path, c.semantic_allocator))

@@ -181,7 +181,7 @@ settled_key_policy :: proc(e: ^Emitter, key: Type_Id) -> Key_Policy {
 emit_store_via :: proc(e: ^Emitter, address: string, via: Expr) {
 	provider := emit_expr(e, via)
 	slot := gep_field(e, CONTAINER_TYPE, address, CONTAINER_ALLOC)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", provider, slot)
+	store_scalar(e, "ptr", provider, slot)
 }
 
 // A container declaration's written `via` binds at the declaration point. One
@@ -318,7 +318,7 @@ make_map_entry_slots :: proc(e: ^Emitter, element: Type_Id, value := "") -> Map_
 // guard holds is not always the value, as a destructured union widens after it.
 @(private = "file")
 park_map_entry :: proc(e: ^Emitter, element: Type_Id, slots: Map_Entry_Slots, place, value: string) -> string {
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", place, slots.place)
+	store_scalar(e, "ptr", place, slots.place)
 	store(e, element, value, slots.value)
 	return slots.value
 }
@@ -583,7 +583,7 @@ emit_synth_append :: proc(e: ^Emitter, body: Container_Body) -> string {
 	owned, guard := "", Deferred{}
 	if owns {
 		owned = alloca(e, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", owned_count, owned)
+		store_scalar(e, "i64", owned_count, owned)
 		guard = register_array_cleanup(e, body.element, data, flags, owned)
 	}
 	status := emit_value(
@@ -703,7 +703,7 @@ emit_synth_map_try_insert :: proc(e: ^Emitter, body: Container_Body) {
 	key_slot := spill(e, container_key(e.c, body.container), "%arg1")
 	slots := make_map_entry_slots(e, element, staged)
 	place := emit_map_entry(e, body.ops, "%arg0", key_slot, slots.inserted)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", place, slots.place)
+	store_scalar(e, "ptr", place, slots.place)
 	missing, ok_label, failed_label := is_null(e, place), new_label(e, "mins.ok"), new_label(e, "mins.failed")
 	branch_if(e, missing, failed_label, ok_label)
 	place_label(e, failed_label)
@@ -771,11 +771,8 @@ emit_synth_allocator :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 @(private = "file")
 emit_container_allocator :: proc(e: ^Emitter, header: string) -> string {
 	bound := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC))
-	unbound, allocator := is_null(e, bound), temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = select i1 %s, ptr %s, ptr %s", allocator, unbound, emit_default_allocator(e), bound,
-	)
-	return allocator
+	unbound := is_null(e, bound)
+	return emit_value(e, "select i1 %s, ptr %s, ptr %s", unbound, emit_default_allocator(e), bound)
 }
 
 // `find_or_insert` answers the slot; `try_find_or_insert` answers it as `.ok`.
@@ -898,8 +895,8 @@ emit_map_key_slot :: proc(e: ^Emitter, index: Expr, container: Type_Id, storage 
 emit_borrowed_key_slot :: proc(e: ^Emitter, view: string) -> string {
 	data, length := ptr_len_parts(e, STRING_VIEW_TYPE, view)
 	slot := alloca(e, STRING_TYPE)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", data, gep_field(e, STRING_TYPE, slot, STRING_DATA))
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, gep_field(e, STRING_TYPE, slot, STRING_LEN))
+	store_scalar(e, "ptr", data, gep_field(e, STRING_TYPE, slot, STRING_DATA))
+	store_scalar(e, "i64", length, gep_field(e, STRING_TYPE, slot, STRING_LEN))
 	fmt.sbprintfln(
 		&e.b, "  store i64 %d, ptr %s", STRING_STATIC, gep_field(e, STRING_TYPE, slot, STRING_OWNER),
 	)

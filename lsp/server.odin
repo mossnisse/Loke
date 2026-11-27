@@ -328,7 +328,7 @@ did_open :: proc(s: ^Server, params: json.Value) {
 	path, is_file := uri_to_path(uri, context.temp_allocator)
 	// Only `.loke` sources can be overlays; a manifest is read from disk.
 	if !has_uri || !has_text || !is_file || !strings.equal_fold(filepath.ext(path), ".loke") { return }
-	key := path_key(path, context.temp_allocator)
+	key := lokec.path_key(path, context.temp_allocator)
 	if previous := s.documents[key]; previous != nil {
 		delete_key(&s.documents, key)
 		destroy_document(previous)
@@ -419,7 +419,7 @@ find_document :: proc(s: ^Server, item: json.Value) -> ^Document {
 document_at :: proc(s: ^Server, uri: string) -> ^Document {
 	path, is_file := uri_to_path(uri, context.temp_allocator)
 	if !is_file { return nil }
-	return s.documents[path_key(path, context.temp_allocator)]
+	return s.documents[lokec.path_key(path, context.temp_allocator)]
 }
 
 @(private = "file")

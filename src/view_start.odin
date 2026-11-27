@@ -3,7 +3,6 @@
 // `Flow_Graph`.
 package lokec
 
-import "core:mem"
 import "core:slice"
 
 // Where the element `at` names is among those `loan` lends, counted from the
@@ -359,36 +358,14 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 		graph.view_borrowed[graph.roots[int(loan.root)].symbol] = true
 	}
 	width := (bits + 7) / 8
-	entry, exit := block_rows(graph, width), block_rows(graph, width)
-	visited := make([]bool, len(graph.blocks), graph.alloc)
-	queue := block_queue_from_entry(graph)
 	row := make([]u8, width, graph.alloc)
-	for id in worklist_pop(&queue) {
-		block := graph.blocks[id]
-		mem.zero_slice(row)
-		for predecessor in block.preds {
-			if visited[int(predecessor)] {
-				bytes_or(row, exit[int(predecessor)])
-			}
+	for def in graph.entry_defs {
+		if base, found := first[def.slot]; found {
+			bit_mark(row, base + len(graph.view_defs[def.slot]))
 		}
-		if id == 0 {
-			for def in graph.entry_defs {
-				if base, found := first[def.slot]; found {
-					bit_mark(row, base + len(graph.view_defs[def.slot]))
-				}
-			}
-		}
-		copy(entry[id], row)
-		for event in block.prov {
-			view_def_step(graph, first, event, row)
-		}
-		if visited[id] && slice.equal(exit[id], row) {
-			continue
-		}
-		copy(exit[id], row)
-		visited[id] = true
-		worklist_wake_all(&queue, block.succs[:])
 	}
+	solve := View_Def_Solve{graph, first}
+	entry, visited := solve_forward_union(graph, width, solve, view_def_step, seed = row)
 	for block, id in graph.blocks {
 		if !visited[id] {
 			continue
@@ -407,20 +384,28 @@ solve_view_defs :: proc(graph: ^Flow_Graph) {
 					def.reaching = view_defs_reaching(graph, first, def.from - 1, row, def.reaching)
 				}
 			}
-			view_def_step(graph, first, event, row)
+			view_def_step(solve, row, event)
 		}
 	}
+}
+
+// A graph and the first bit of each followed slot (`solve_view_defs`).
+@(private = "file")
+View_Def_Solve :: struct {
+	graph: ^Flow_Graph,
+	first: map[int]int,
 }
 
 // What `event` leaves of the definitions reaching (`solve_view_defs`): a
 // definition of a followed slot replaces its others, and so does anything
 // else that writes it, standing for a definition not recorded.
 @(private = "file")
-view_def_step :: proc(graph: ^Flow_Graph, first: map[int]int, event: Prov_Event, row: []u8) {
+view_def_step :: proc(solve: View_Def_Solve, row: []u8, event: Prov_Event) {
 	if event.kind != .Def && event.kind != .Load {
 		return
 	}
-	base, followed := first[event.slot]
+	graph := solve.graph
+	base, followed := solve.first[event.slot]
 	if !followed {
 		return
 	}

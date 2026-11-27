@@ -418,24 +418,20 @@ emit_unary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, operand: strin
 	llvm := llvm_type(e, type)
 	info := underlying_info(e.c, type)
 	vector := info.kind == .Simd
-	out := temp(e)
 	#partial switch op {
-	case .Plus:
-		return operand
 	case .Minus:
 		if type_is_float(e.c, vector ? info.element : type) {
-			fmt.sbprintfln(&e.b, "  %s = fneg %s %s", out, llvm, operand)
+			return emit_value(e, "fneg %s %s", llvm, operand)
 		} else if vector {
 			return emit_simd_checked(e, .Minus, info, llvm, "zeroinitializer", operand)
-		} else {
-			return emit_checked_integer(e, .Minus, type_signed(e.c, type), llvm, "0", operand)
 		}
+		return emit_checked_integer(e, .Minus, type_signed(e.c, type), llvm, "0", operand)
 	case .Tilde:
-		fmt.sbprintfln(&e.b, "  %s = xor %s %s, %s", out, llvm, operand, vector ? simd_all_ones(e, info) : "-1")
+		return emit_value(e, "xor %s %s, %s", llvm, operand, vector ? simd_all_ones(e, info) : "-1")
 	case .Not:
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, operand)
+		return not_i1(e, operand)
 	}
-	return out
+	return operand
 }
 
 @(private = "file")
@@ -638,12 +634,9 @@ emit_divrem :: proc(e: ^Emitter, op: Token_Kind, form: Int_Form, lhs, rhs: strin
 	}
 
 	minimum := form_const(e, form, bi_text(e.c, bi_neg(e.c, bi_pow2(e.c, form.bits - 1))))
-	is_min := temp(e)
-	is_neg_one := temp(e)
-	is_overflow := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_min, llvm, lhs, minimum)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", is_neg_one, llvm, rhs, form_const(e, form, "-1"))
-	fmt.sbprintfln(&e.b, "  %s = and %s %s, %s", is_overflow, form.mask, is_min, is_neg_one)
+	is_min := emit_value(e, "icmp eq %s %s, %s", llvm, lhs, minimum)
+	is_neg_one := emit_value(e, "icmp eq %s %s, %s", llvm, rhs, form_const(e, form, "-1"))
+	is_overflow := emit_value(e, "and %s %s, %s", form.mask, is_min, is_neg_one)
 	if op == .Slash {
 		panic_if(e, form_any(e, form, is_overflow), "int.overflow", "signed integer overflow")
 		return emit_value(e, "sdiv %s %s, %s", llvm, lhs, rhs)
@@ -674,10 +667,8 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, form, count_form: Int_Form, lhs,
 
 	count := rhs
 	if count_form.bits != form.bits {
-		converted := temp(e)
 		operation := count_form.bits > form.bits ? "trunc" : "zext"
-		fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", converted, operation, count_llvm, rhs, llvm)
-		count = converted
+		count = emit_value(e, "%s %s %s to %s", operation, count_llvm, rhs, llvm)
 	}
 
 	if op == .Shr && form.signed {
@@ -966,7 +957,7 @@ emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case:
 			// Through equally sized storage aligned for the stricter side.
 			slot := alloca(e, type_align(e.c, as_type) > type_align(e.c, source) ? to : from)
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", from, value, slot)
+			store_scalar(e, from, value, slot)
 			result = load(e, to, slot)
 		}
 	}

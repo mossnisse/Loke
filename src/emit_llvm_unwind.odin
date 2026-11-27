@@ -185,7 +185,7 @@ unwind_reserve_env :: proc(e: ^Emitter) -> int {
 
 @(private)
 unwind_publish_env :: proc(e: ^Emitter, index: int, address: string) {
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, unwind_env_address(e, index))
+	store_scalar(e, "ptr", address, unwind_env_address(e, index))
 }
 
 // Records the line written to the body since `start` as one the thunk may turn
@@ -253,10 +253,8 @@ unwind_env_address :: proc(e: ^Emitter, index: int) -> string {
 
 @(private = "file")
 unwind_env_load :: proc(e: ^Emitter, env: string, index: int) -> string {
-	address, value := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", address, env, index)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
-	return value
+	address := emit_value(e, "getelementptr ptr, ptr %s, i64 %d", env, index)
+	return emit_value(e, "load ptr, ptr %s", address)
 }
 
 // Marks an action registered, only once it is *fully* registered
@@ -267,7 +265,7 @@ unwind_register :: proc(e: ^Emitter, entry: Deferred) {
 		return
 	}
 	e.unwind.open[entry.slot - 1] = true
-	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", unwind_live_address(e, entry.slot - 1))
+	store_scalar(e, "i1", "true", unwind_live_address(e, entry.slot - 1))
 }
 
 // A local holds a value again, so its implicit drop is registered once more. A
@@ -279,7 +277,7 @@ unwind_revive :: proc(e: ^Emitter, symbol: Symbol_Id) {
 	if !e.unwind.replaying {
 		unwind_register(e, Deferred{slot = slot})
 	} else if slot != 0 {
-		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", unwind_live_address(e, slot - 1))
+		store_scalar(e, "i1", "true", unwind_live_address(e, slot - 1))
 	}
 }
 
@@ -305,7 +303,7 @@ unwind_clear :: proc(e: ^Emitter, slot: int) {
 	if !e.unwind.replaying && slot <= len(e.unwind.open) {
 		e.unwind.open[slot - 1] = false
 	}
-	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", unwind_live_address(e, slot - 1))
+	store_scalar(e, "i1", "false", unwind_live_address(e, slot - 1))
 }
 
 // The frame prologue, written once the body and the thunk are emitted and the
@@ -333,9 +331,9 @@ emit_unwind_prologue :: proc(e: ^Emitter) {
 		}
 	}
 	alloca_named(e, u.ctx, "[2 x ptr]")
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", u.live, u.ctx)
+	store_scalar(e, "ptr", u.live, u.ctx)
 	slot := emit_value(e, "getelementptr ptr, ptr %s, i64 1", u.ctx)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", u.env, slot)
+	store_scalar(e, "ptr", u.env, slot)
 	fmt.sbprintfln(
 		&e.b, "  call void @loke_rt_v1_frame_push(ptr %s, ptr %s, ptr %s)",
 		u.frame, u.thunk, u.ctx,
@@ -420,7 +418,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	for index in 0 ..< len(parent.defer_flags) {
 		flag := fmt.aprintf("%%udefer%d.%d", index, next_id(e))
 		alloca_named(e, flag, "i1")
-		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+		store_scalar(e, "i1", "true", flag)
 		e.defer_flags[index] = flag
 	}
 
@@ -430,7 +428,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 		run, skip := new_label(e, "unwind.run"), new_label(e, "unwind.skip")
 		branch_if(e, flag, run, skip)
 		place_label(e, run)
-		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", address)
+		store_scalar(e, "i1", "false", address)
 		emit_replay_action(e, u.actions[index], env)
 		place_label(e, skip)
 	}
@@ -507,7 +505,7 @@ mark_replay_reads :: proc(u: ^Unwind_State, replay: string, values: []string) {
 		}
 		start := at + found
 		end := start + 1
-		for end < len(replay) && llvm_name_char(replay[end]) {
+		for end < len(replay) && unquoted_name_byte(replay[end]) {
 			end += 1
 		}
 		if index, bound := reads[replay[start:end]]; bound {
@@ -515,14 +513,4 @@ mark_replay_reads :: proc(u: ^Unwind_State, replay: string, values: []string) {
 		}
 		at = end
 	}
-}
-
-// A character that continues an LLVM local name after its `%`.
-@(private = "file")
-llvm_name_char :: proc(c: u8) -> bool {
-	switch c {
-	case 'a' ..= 'z', 'A' ..= 'Z', '0' ..= '9', '.', '_', '-', '$':
-		return true
-	}
-	return false
 }

@@ -67,6 +67,12 @@ dir_key :: proc(dir: string, allocator := context.temp_allocator) -> string {
 	return strings.to_lower(dir, allocator)
 }
 
+// The identity the compiler gives a path: absolute, cleaned, `/`-separated,
+// compared case-insensitively.
+path_key :: proc(path: string, allocator := context.temp_allocator) -> string {
+	return dir_key(canonical_dir(path), allocator)
+}
+
 // FNV-1a distinguishes otherwise identical visible path names.
 path_digest :: proc(path: string) -> u64 {
 	return hash.fnv64a(transmute([]byte)strings.to_lower(path, context.temp_allocator))

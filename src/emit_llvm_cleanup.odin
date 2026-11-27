@@ -124,7 +124,7 @@ emit_pack_release :: proc(e: ^Emitter, element: Type_Id, record: string) {
 	allocator := load(e, "ptr", gep_field(e, PACK_RELEASE_TYPE, record, 0))
 	bytes := load(e, "i64", gep_field(e, PACK_RELEASE_TYPE, record, 2))
 	emit_rt_free_sized(e, allocator, block, bytes, type_align(e.c, element))
-	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", gep_field(e, PACK_RELEASE_TYPE, record, 1))
+	store_scalar(e, "ptr", "null", gep_field(e, PACK_RELEASE_TYPE, record, 1))
 	place_label(e, done)
 }
 
@@ -250,7 +250,7 @@ drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
 		skip = new_label(e, "temp.done")
 		branch_if(e, load(e, "i1", entry.flag), run, skip)
 		place_label(e, run)
-		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", entry.flag)
+		store_scalar(e, "i1", "false", entry.flag)
 	}
 	// Clear before invoking a user drop hook, which can itself panic.
 	finish_temporary_drop(e, entry)
@@ -292,7 +292,7 @@ pop_temporaries :: proc(e: ^Emitter) {
 		branch_if(e, taken, restore, done)
 		place_label(e, restore)
 		fmt.sbprintfln(&e.b, "  call void @llvm.stackrestore.p0(ptr %s)", pointer)
-		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", saved)
+		store_scalar(e, "ptr", "null", saved)
 		place_label(e, done)
 	}
 }
@@ -389,7 +389,7 @@ save_stack_for_expression :: proc(e: ^Emitter) {
 	now := emit_value(e, "call ptr @llvm.stacksave.p0()")
 	held := load(e, "ptr", slot^)
 	kept := emit_value(e, "select i1 %s, ptr %s, ptr %s", is_null(e, held), now, held)
-	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", kept, slot^)
+	store_scalar(e, "ptr", kept, slot^)
 }
 
 // Drops the frames from `frame` up, innermost first, without closing them: an
@@ -465,7 +465,7 @@ conditional_flag :: proc(e: ^Emitter) -> string {
 	flag := fmt.aprintf("%%made%d", next_id(e))
 	alloca_named(e, flag, "i1")
 	append(&e.prologue, fmt.aprintf("  store i1 false, ptr %s", flag))
-	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+	store_scalar(e, "i1", "true", flag)
 	return flag
 }
 
@@ -497,13 +497,13 @@ reset_defer_flags :: proc(e: ^Emitter, stmts: []Stmt) {
 		#partial switch s in stmt {
 		case ^Stmt_Defer:
 			if s.slot < len(e.defer_flags) {
-				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", e.defer_flags[s.slot])
+				store_scalar(e, "i1", "false", e.defer_flags[s.slot])
 			}
 			unwind_clear(e, e.unwind.slot_by_defer[s.slot])
 		case ^Decl:
 			for symbol_id in s.symbols {
 				if flag := drop_flag_of(e, symbol_id); flag != "" {
-					fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
+					store_scalar(e, "i1", "false", flag)
 				}
 				unwind_clear(e, e.unwind.slot_by_symbol[symbol_id])
 			}
@@ -560,7 +560,7 @@ run_cleanups :: proc(e: ^Emitter, down_to: int, failed := "") {
 			branch_if(e, flag, run, skip)
 			place_label(e, run)
 			// A conditional temporary's flag is set again only if it is made again.
-			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", entry.flag)
+			store_scalar(e, "i1", "false", entry.flag)
 			run_one_cleanup(e, entry)
 			place_label(e, skip)
 		}
@@ -623,7 +623,7 @@ revive_place :: proc(e: ^Emitter, target: Expr) {
 		return
 	}
 	if flag := drop_flag_of(e, ident.symbol); flag != "" {
-		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+		store_scalar(e, "i1", "true", flag)
 	}
 	unwind_revive(e, ident.symbol)
 }
@@ -651,7 +651,7 @@ kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 		store(e, sym.type, zero, symbol_name(e, symbol_id))
 	}
 	if flag := drop_flag_of(e, symbol_id); flag != "" {
-		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
+		store_scalar(e, "i1", "false", flag)
 	}
 	unwind_clear(e, e.unwind.slot_by_symbol[symbol_id])
 }

@@ -212,18 +212,17 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> st
 		// zero last byte keeps every read inside the slice.
 		data, length := emit_slice_parts(e, v.bound[0])
 		terminated := alloca(e, "i1")
-		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", terminated)
+		store_scalar(e, "i1", "false", terminated)
 		nonempty := emit_value(e, "icmp sgt i64 %s, 0", length)
 		check, done := new_label(e, "cview.check"), new_label(e, "cview.done")
 		branch_if(e, nonempty, check, done)
 		place_label(e, check)
 		last := emit_value(e, "sub i64 %s, 1", length)
 		zero := icmp_zero(e, "i8", load(e, "i8", gep_at(e, "i8", data, last)))
-		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", zero, terminated)
+		store_scalar(e, "i1", zero, terminated)
 		place_label(e, done)
-		ok, kept := load(e, "i1", terminated), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept, ok, data)
-		return emit_option_value(e, as_type, ok, kept)
+		ok := load(e, "i1", terminated)
+		return emit_option_value(e, as_type, ok, emit_value(e, "select i1 %s, ptr %s, ptr null", ok, data))
 
 	case .String_From_C_View:
 		data, length := emit_text_parts(e, v.bound[0])
