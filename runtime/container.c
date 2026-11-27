@@ -555,10 +555,12 @@ static uint64_t map_first_free(
 	return index;
 }
 
-/* Maximum load: seven eighths. Pinned by the runtime tests, not by the
- * language. */
+/* Maximum load: three quarters. Pinned by the runtime tests, not by the
+ * language. Under linear probing a miss visits about 8 slots at that load and
+ * about 32 at seven eighths, which took a miss two to three times as long
+ * (comments.md "Maps stop at three quarters full"). */
 static int64_t map_capacity_of(int64_t slot_count) {
-	return slot_count - slot_count / 8;
+	return slot_count - slot_count / 4;
 }
 
 static int32_t map_slots_for(int64_t min_capacity, int64_t *out) {

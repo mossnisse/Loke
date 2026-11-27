@@ -498,7 +498,7 @@ shrink_floor :: proc() {
 // leaves the nonempty slots as they were, so the table does not grow.
 reused_tombstone :: proc() {
 	full: map[int]int = {};
-	for (i := 0; i < 7; i += 1) { full[i] = i; }
+	for (i := 0; i < 6; i += 1) { full[i] = i; }
 	before := full.cap();
 	for (round := 0; round < 3; round += 1) {
 		full.remove(3);

@@ -3779,7 +3779,11 @@ with it, so a call to it is as unlikely through the dispatch as without one.
 - **Extra spaces inside a line are kept.** `core/` aligns field types and
   trailing comments with them. Only the leading indentation is recomputed. The
   gap after an inline comment is left as written, and a comment gets a space
-  before it unless it follows `(`, `[`, or a tight operator.
+  before it unless it follows `(`, `[`, or a tight operator. Aligning those
+  columns itself, as `gofmt` does, was rejected on 2026-11-27 for the reason
+  wrapping was: renaming one field to a longer name would move every line of
+  its block in a diff, and a review would have to find the one real change
+  among them. A misaligned neighbour is visible and fixed by hand once.
 
 It works on the real lexer's tokens rather than printing the syntax tree:
 keeping the author's breaks leaves nothing for a tree printer to decide, and a
@@ -5066,6 +5070,34 @@ Emitted IR would also reach the builds bitcode does not: `-opt=none`, which
 inlines nothing anyway, and an optimized build with `-runtime=<dir>` or without
 `lld-link`, which keeps the calls it had.
 
+### Maps stop at three quarters full
+
+A map probes linearly, and a lookup that misses visits about
+½(1 + 1/(1−α)²) slots at load α: about 32 at seven eighths, the limit until
+2026-11-27, and about 8 at three quarters. A table's load runs from half its
+limit just after a growth up to the limit, so a program meets the worst case
+whenever its map is nearly due to grow. Measured at `-opt=speed`, the fastest
+of 20 rounds, a miss in a `map[int]int` of 57,000 entries in 65,536 slots took
+29 ns and one of 917,000 in 2^20 slots 64 ns; at three quarters the same maps
+have twice the slots and miss in 12 and 18 ns, and a hit takes 8 and 18 ns
+rather than 14 and 25. A `map[string]int` of 57,000 keys missed in 77 ns and
+hit in 65; it now misses in 37 and hits in 42. `bench/collections.loke` ran 4%
+faster. The price is at the sizes that now grow once more: a map whose length
+falls between three quarters and seven eighths of a power of two takes twice
+the slots, so over sizes spread evenly on a log scale about one map in five is
+twice as large, and building one key at a time pays the extra growth: 57,000
+integers into a fresh map took 68 ns a key, from 48, and 917,000 took 92, from
+76. At other sizes building was no slower.
+
+The other remedy proposed was a fingerprint: a few bits of the hash in each
+occupied control byte, so a probe skips the key load and `==` of a slot whose
+bits differ. It leaves the probe as long, so it helps where `==` is dear, as
+for strings, and not where the walk is the cost, as for integers, and it takes
+the control byte's spare bits, which the debugger's occupied-slot test would
+have to learn. With the lower limit, a missing string key costs less than a
+present one, so the fingerprint was not tried. A program whose profile shows
+key equality in long probes would be its case.
+
 ### Two compiler cleanups that were not made
 
 A cleanup of 2026-11-08 left two proposals for a decision, and both were
@@ -5125,6 +5157,30 @@ and each was declined on the same day.
   ran no faster, the fastest of five runs each, and three came out 512 to
   1536 bytes larger: no call in generated code is an `invoke`, so LLVM had
   nothing to remove.
+- **A query index built only when a request needs it.** The language server
+  builds the whole query snapshot after each check, though publishing
+  diagnostics reads only sources and diagnostics. The index, extents and
+  parents and scopes for every symbol, took 9 ms after a 66 ms incremental
+  check of `bench/workspace`, 10 ms after 146 ms of
+  `examples/corpus_runner.loke`, and 21 ms after 227 ms of `bench/dense.loke`
+  (fastest of seven, unit-test build at `-o:speed`). But `documentSymbol`,
+  which an editor asks for after every edit to draw its outline and
+  breadcrumbs, reads those extents and parents, so a lazy index would be
+  built on the same edit. Building it on demand would also give a snapshot a
+  second state that a query could change, where now every query only reads
+  and several threads may share it
+  ([Snapshots and queries](compiler-architecture.md#snapshots-and-queries)).
+- **The proposals under about 1% each**: a memo for the compile-time-only walk
+  of a call's result type, a negative cache in `generic_template_for`, instance
+  and witness keys built without `fmt`, no scope and symbol per `$` name when
+  a generic instance is cached, an indexed store and `op=` that clone their
+  operands only once a view is known to be involved, a method call that
+  resolves its member list once, and overload descriptions formatted only for
+  an error. `fmt` itself, at 6.5–11.5% under the same hooks, saved nothing
+  measurable, so a share under 1% is below what a run shows, and the shares
+  read from the code are no firmer. Some cost about what their cache would:
+  `generic_template_for`'s miss is one symbol lookup and a switch on the
+  declaration's kind. Any of them can come back with a profile that shows it.
 
 ### `-opt=speed` unswitches loops
 

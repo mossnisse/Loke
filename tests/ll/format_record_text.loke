@@ -1,0 +1,14 @@
+package main;
+
+// Formatting a record writes the text before each field as one run, and a
+// union variant its name and opening parenthesis as one: `Point{x = `, then
+// `, y = `, then `}`.
+
+import "core:fmt";
+
+Point :: struct { x: int, y: int }
+Shape :: union { none, box: Point }
+
+main :: proc() {
+	fmt.println(Shape.box(Point{1, 2}));
+}

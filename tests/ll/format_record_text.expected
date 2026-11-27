@@ -1,0 +1,5 @@
+c"Point{x = \00"
+c", y = \00"
+c".box(\00"
+not c"Point\00"
+not c" = \00"

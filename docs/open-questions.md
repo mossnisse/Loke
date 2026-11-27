@@ -238,18 +238,6 @@ Compile time:
   `Root_End`, where `root_loans` already names the candidates.
   [mark_released](../src/borrow.odin#L1344),
   [report](../src/borrow_report.odin#L126)
-- **Smaller, each under about 1%.** The compile-time-only walk of a result's
-  type after every call, with no memo as `known_supported` has
-  ([check_expr.odin](../src/check_expr.odin#L142)); no negative cache in
-  `generic_template_for` ([generic.odin](../src/generic.odin#L156)); instance
-  and witness keys built with `fmt` ([generic.odin](../src/generic.odin#L1027));
-  a scope and a symbol per `$` name for each generic call whose instance is
-  already cached ([generic.odin](../src/generic.odin#L1713)); an indexed store
-  checking a clone of its receiver twice to look for `[]=`, and each `op=`
-  cloning its right side before knowing a view is involved
-  ([check_stmt.odin](../src/check_stmt.odin#L1065)); a method call resolving
-  its member list three times ([check_calls.odin](../src/check_calls.odin#L397));
-  overload descriptions formatted before any error needs them.
 - **Memory, not measured.** A parsed list grows from eight slots inside the
   syntax arena and leaves each outgrown buffer behind, which an incremental
   checkpoint then copies ([parser.odin](../src/parser.odin#L1357)). Each
@@ -258,10 +246,6 @@ Compile time:
   ([bigint.odin](../src/bigint.odin#L66)). `Prov_Event` is one record of about
   550 bytes for every kind, copied by each `for event in block.prov`
   ([provenance_state.odin](../src/provenance_state.odin#L358)).
-- **The language server builds the whole query index after each check**, and
-  publishing diagnostics reads only sources and diagnostics.
-  [collect_results](../lsp/roots.odin#L266),
-  [session_snapshot](../src/queries.odin#L85)
 
 Generated code and the runtime, none measured:
 
@@ -271,10 +255,8 @@ Generated code and the runtime, none measured:
   [emit_drop_place](../src/emit_llvm_lifecycle.odin#L457),
   [container_drop_thunk](../src/emit_llvm_containers.odin#L98),
   [emit_epilogue](../src/emit_llvm_stmt.odin#L1032)
-- **Smaller.** Formatting a record writes each label and separator to the
-  sink on its own
-  ([emit_llvm_format.odin](../src/emit_llvm_format.odin#L492)); a temporary of
-  128 bytes or less takes a stack slot of its own, never reused
+- **Small temporaries.** A temporary of 128 bytes or less takes a stack slot
+  of its own, never reused
   ([emit_llvm_place.odin](../src/emit_llvm_place.odin#L48)).
 
 ## Formatting through a known writer
@@ -286,20 +268,7 @@ Generated code and the runtime, none measured:
   `Sink` call inside it only later, after the last inliner run over that
   procedure; `-max-devirt-iterations`, `-O3`, and `alwaysinline` on the thunk
   leave the call. The call would have to be direct before optimization.
-  [emit_sink_write_bytes](../src/emit_llvm_format.odin#L581)
-
-## Map runtime review follow-ups
-
-- **Filter equality checks with a hash fingerprint.** A probe calls key
-  equality for every occupied slot it visits. Try storing a few bits of the
-  mixed hash in each occupied control byte, using bits outside the slot mask
-  and reserving the existing markers for empty, tombstone, and owed value.
-  This can skip key loads and equality on mismatches with no extra bytes per
-  slot. Measure integer, string, and structural keys before adopting it, and
-  update the debugger's occupied-slot test if it pays off. A miss under linear
-  probing visits about ½(1 + 1/(1−α)²) slots at load α, about 32 at the 7/8
-  limit and about 8 at 3/4, so a lower limit is the one-line alternative.
-  [Probe](../runtime/container.c#L856), [debugger](../src/emit_llvm_debug.odin#L629)
+  [emit_sink_write_bytes](../src/emit_llvm_format.odin#L586)
 
 ## LLVM source review follow-ups
 
@@ -766,11 +735,10 @@ with `-%` either, so its checks are not what holds it.
 The current formatter rules and rationale are in [comments.md
 "Formatting"](comments.md#formatting).
 
-Open: aligning columns automatically, as `gofmt` does, so a renamed field
-does not leave its neighbors misaligned; indenting a continued line inside
-brackets, which `core/` leaves at the bracket's level; and indenting the later
-values of a wrapped multi-value statement (`x, y :=` above `1,` and `2;`), whose
-commas read as a list's, since the tokens do not tell a block's `{` from a list's.
+Open: indenting a continued line inside brackets, which `core/` leaves at the
+bracket's level; and indenting the later values of a wrapped multi-value
+statement (`x, y :=` above `1,` and `2;`), whose commas read as a list's, since
+the tokens do not tell a block's `{` from a list's.
 
 ## Anonymous unions and their follow-ups (2026-10-18)
 

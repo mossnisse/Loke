@@ -399,6 +399,15 @@ checklist.
   no other benchmark changed.
 - An integer literal that fits 64 bits is read without the big-integer library, so a table of
   10,000 hexadecimal `u64` literals checks in 9 ms rather than 12.5.
+- Formatting a record writes the text before each field to the sink in one call, `Point{x = `
+  and then `, y = `, and a union variant its name and `(` in one: 2 million records and unions
+  formatted to a sink of the program's own take 0.38 s at `-opt=speed`, from 0.45 s.
+- A map grows once it is three quarters full rather than seven eighths, so a lookup of a missing
+  key visits about 8 slots rather than about 32: at `-opt=speed`, a miss in a nearly full map of
+  917,000 integers takes 18 ns, from 64 ns, and one in a map of 57,000 strings 37 ns, from 77 ns.
+  A map whose length falls between three quarters and seven eighths of a power of two takes
+  twice the slots it did, and building it pays one more growth; its `cap()` is three quarters
+  of its slots.
 - The runtime no longer exports `loke_rt_v1_alloc_zeroed`, `loke_rt_v1_dyn_bind`, or
   `loke_rt_v1_map_bind`, which generated code never called and `loke_rt.h` no longer declares
   ([Version policy](docs/releasing.md#version-policy): runtime symbols may change).

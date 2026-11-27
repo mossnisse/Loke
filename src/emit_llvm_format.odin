@@ -373,9 +373,9 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 		place_label(e, hits[index])
 		printed := variant != TYPE_VOID && variant != e.c.unit_type
 		payload := printed ? value_address(e, variant, emit_union_payload(e, variant, address)) : ""
-		emit_format_literal(e, fmt.aprintf(".%s", identifier_text(e.c, info.variant_names[index])))
+		name := identifier_text(e.c, info.variant_names[index])
+		emit_format_literal(e, printed ? fmt.aprintf(".%s(", name) : fmt.aprintf(".%s", name))
 		if printed {
-			emit_format_literal(e, "(")
 			emit_format_nested(e, variant, payload)
 			emit_format_literal(e, ")")
 		}
@@ -488,6 +488,8 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	emit_format_literal(e, "]")
 }
 
+// The text before each field goes to the sink as one write: `Point{x = `,
+// then `, y = `, then `}`.
 @(private = "file")
 emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -495,11 +497,10 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 	// rather than spelling that list out again as a name, and an unlabelled one
 	// as `(1, true)`.
 	anonymous := type_of(e.c, type).anonymous_record
-	if anonymous {
-		emit_format_literal(e, "(")
-	} else {
-		emit_format_literal(e, type_name(e.c, type))
-		emit_format_literal(e, "{")
+	text := strings.builder_make()
+	strings.write_string(&text, anonymous ? "(" : type_name(e.c, type))
+	if !anonymous {
+		strings.write_byte(&text, '{')
 	}
 	written := 0
 	for field, index in info.fields {
@@ -508,20 +509,24 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 			continue // the same public rule the metadata table follows
 		}
 		if written > 0 {
-			emit_format_literal(e, ", ")
+			strings.write_string(&text, ", ")
 		}
 		written += 1
 		if label := field_label(e.c, field); label != "" {
-			emit_format_literal(e, label)
-			emit_format_literal(e, " = ")
+			strings.write_string(&text, label)
+			strings.write_string(&text, " = ")
 		}
+		// The literal table keeps the text, so each run starts a new builder.
+		emit_format_literal(e, strings.to_string(text))
+		text = strings.builder_make()
 		slot := gep_field(e, llvm_type(e, under), address, index)
 		// A formatter reads its value at the type's alignment.
 		record_field_align(e, under, address, slot, sym.type)
 		slot = aligned_copy_if_needed(e, sym.type, slot)
 		emit_format_nested(e, sym.type, slot)
 	}
-	emit_format_literal(e, anonymous ? ")" : "}")
+	strings.write_byte(&text, anonymous ? ')' : '}')
+	emit_format_literal(e, strings.to_string(text))
 }
 
 // `fmt.Writer` is `dyn mut fmt.Sink`, whose one slot takes `[]u8`. The runtime's
