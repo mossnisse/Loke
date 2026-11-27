@@ -21,27 +21,26 @@ llvm_external_name :: proc(name: string) -> string {
 // is not declared again, and must agree with the binding (`register_declaration`).
 @(private)
 emit_foreign_declarations :: proc(e: ^Emitter) {
-	defined := make(map[string]bool, context.temp_allocator)
 	for symbol_id, name in e.names {
 		if sym := symbol_of(e.c, symbol_id);
 		   sym != nil && !sym.is_foreign && (sym.kind == .Proc || sym.kind == .Var) {
-			defined[name] = true
+			e.defined[name] = true
 		}
 	}
 	// What the compiler defines after this point.
-	defined["@loke_rt_v1_program_tls_cleanup"] = true
-	defined["@loke_rt_v1_program_tls_init"] = true
-	defined["@loke_rt_v1_sink_write"] = true
+	e.defined["@loke_rt_v1_program_tls_cleanup"] = true
+	e.defined["@loke_rt_v1_program_tls_init"] = true
+	e.defined["@loke_rt_v1_sink_write"] = true
 	if any_provider_selected(e.c) {
-		defined["@loke_rt_v1_program_init"] = true
+		e.defined["@loke_rt_v1_program_init"] = true
 	}
 	if e.c.build_mode != .Obj {
-		defined["@wmain"] = true
+		e.defined["@wmain"] = true
 	}
 	for id in e.foreign_symbols {
 		sym := symbol_of(e.c, id)
 		name := e.names[id]
-		if defined[name] {
+		if e.defined[name] {
 			continue
 		}
 		// A return attribute is the declaration's, not the type's.

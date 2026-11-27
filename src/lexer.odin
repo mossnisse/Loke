@@ -384,10 +384,15 @@ next_token :: proc(l: ^Lexer) -> Token {
 	return operator(l)
 }
 
+// The reserved keywords run from `.Break` to this one, and `keyword_table` lists
+// them first, in the same order.
+@(private = "file")
+LAST_RESERVED_KEYWORD :: Token_Kind.When
+
 // A word reserved in every position (grammar.md "Keywords"), which is still a
 // member name.
 reserved_keyword :: proc(kind: Token_Kind) -> bool {
-	return kind >= .Break && kind <= .When
+	return kind >= .Break && kind <= LAST_RESERVED_KEYWORD
 }
 
 // A reserved or a contextual keyword.
@@ -499,7 +504,7 @@ index_first_bytes :: proc "contextless" (table: []$Row, index: ^First_Byte_Index
 }
 
 @(private = "file")
-RESERVED_KEYWORDS :: int(Token_Kind.When) - int(Token_Kind.Break) + 1
+RESERVED_KEYWORDS :: int(LAST_RESERVED_KEYWORD) - int(Token_Kind.Break) + 1
 
 @(private = "file")
 reserved_keyword_index: First_Byte_Index(RESERVED_KEYWORDS)

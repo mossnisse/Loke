@@ -4,8 +4,9 @@ import "core:unsafe";
 
 // The default provider takes `malloc` for an alignment up to 16 and
 // `_aligned_malloc` above it, and must free and resize each block with the
-// function that allocated it. Dynamic arrays of each kind grow through several
-// resizes, and every block keeps its element's alignment.
+// function that allocated it. Dynamic arrays on each side of the cutoff, and one
+// at it, grow through several resizes; every block keeps its element's
+// alignment, and every element written before a resize survives it.
 
 Pair :: struct { a, b: int }
 
@@ -18,16 +19,26 @@ misaligned :: proc(data: [^]$E) -> int {
 main :: proc() {
 	bad := 0;
 	pairs: [dynamic]Pair = {};
+	cutoff: [dynamic]Simd(f32, 4) = {};
 	wide: [dynamic]Simd(f32, 8) = {};
 	widest: [dynamic]Simd(u8, 64) = {};
 	foreach (i in 0 ..< 1000) {
 		pairs.append(Pair{a = i, b = -i});
+		cutoff.append(Simd(f32, 4)(f32(i)));
 		wide.append(Simd(f32, 8)(f32(i)));
 		widest.append(Simd(u8, 64)(u8(i % 256)));
 		bad += misaligned(unsafe.raw_data(pairs));
+		bad += misaligned(unsafe.raw_data(cutoff));
 		bad += misaligned(unsafe.raw_data(wide));
 		bad += misaligned(unsafe.raw_data(widest));
 	}
-	fmt.println(align_of(Pair), align_of(Simd(f32, 8)), align_of(Simd(u8, 64)));
-	fmt.println(pairs[999].b, wide[999][7], widest[999][63], bad);
+	lost := 0;
+	foreach (i in 0 ..< 1000) {
+		if (pairs[i].a != i || pairs[i].b != -i) { lost += 1; }
+		if (cutoff[i][0] != f32(i) || cutoff[i][3] != f32(i)) { lost += 1; }
+		if (wide[i][0] != f32(i) || wide[i][7] != f32(i)) { lost += 1; }
+		if (widest[i][0] != u8(i % 256) || widest[i][63] != u8(i % 256)) { lost += 1; }
+	}
+	fmt.println(align_of(Pair), align_of(Simd(f32, 4)), align_of(Simd(f32, 8)), align_of(Simd(u8, 64)));
+	fmt.println(bad, lost);
 }

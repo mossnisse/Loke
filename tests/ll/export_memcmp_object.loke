@@ -1,0 +1,14 @@
+// design.md "@(export)": `memcmp` is not a name the runtime reserves, so an
+// object may export it. Text equality then calls that definition, as C would,
+// rather than declaring the name a second time.
+package lib;
+
+@(export)
+memcmp :: proc "c" (a: rawptr, b: rawptr, n: uintptr) -> i32 {
+	return 0;
+}
+
+@(export)
+same_text :: proc "c" (a: ^string_view, b: ^string_view) -> bool {
+	return a^ == b^;
+}

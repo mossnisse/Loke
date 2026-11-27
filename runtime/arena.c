@@ -89,7 +89,8 @@ static void arena_rewind(loke_rt_arena_v1 *arena) {
 /* One more block from the parent, at least large enough for `size`/`align`. The
  * request is twice the newest block's size, up to `ARENA_MAX_GROWN_BLOCK`, so a
  * growing arena asks its parent ever more rarely; a larger request doubles until
- * it fits. A reset rewinds to `first` and so starts small again. */
+ * it fits. A refused request halves while it still fits. A reset rewinds to
+ * `first` and so starts small again. */
 static int32_t arena_grow(loke_rt_arena_v1 *arena, uint64_t size, uint64_t align) {
 	arena_block *newest = arena->blocks;
 	uint64_t newest_size = newest == &arena->first ? ARENA_DEFAULT_BLOCK : newest->limit - (uintptr_t)newest;
@@ -110,9 +111,11 @@ static int32_t arena_grow(loke_rt_arena_v1 *arena, uint64_t size, uint64_t align
 		}
 		want = doubled;
 	}
-	block = (arena_block *)loke_rt_v1_alloc(arena->parent, want, ARENA_CONTROL_ALIGN);
-	if (block == 0) {
-		return 0;
+	while ((block = (arena_block *)loke_rt_v1_alloc(arena->parent, want, ARENA_CONTROL_ALIGN)) == 0) {
+		if (want / 2 < needed) {
+			return 0;
+		}
+		want /= 2;
 	}
 	block->next = newest;
 	block->cursor = (uintptr_t)(block + 1);

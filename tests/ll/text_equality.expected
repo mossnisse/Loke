@@ -1,4 +1,4 @@
 declare i32 @memcmp(ptr, ptr, i64)
 call i32 @memcmp(ptr *, ptr *, i64 *)
-phi i1 [ false, *
+phi i1 [ false, *], [ true, %teq.empty.*
 call i32 @loke_rt_v1_bytes_compare(

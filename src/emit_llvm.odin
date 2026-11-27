@@ -67,6 +67,10 @@ Emitter :: struct {
 	// (`emit_foreign_declarations`), and intrinsics on first use
 	// (`declare_intrinsic`). Each is declared once (`register_declaration`).
 	declared: map[string]Declaration,
+	// Every function or global the program or the compiler defines in this
+	// module, by LLVM name with its `@`, which a declaration must not repeat
+	// (`emit_foreign_declarations`).
+	defined:  map[string]bool,
 	globals:  [dynamic]string,
 	// compiler-architecture.md "CPU dispatch": every procedure body by symbol, the
 	// copies for a higher level by name, those still to write, and each level's
@@ -559,10 +563,15 @@ temp :: proc(e: ^Emitter) -> string {
 }
 
 // The LLVM intrinsic `key`, declared on its first use unless the module already
-// declares the name, as a foreign binding to it does.
+// declares the name, as a foreign binding to it does, or defines it. An export
+// of a C name the compiler calls, such as `memcmp`, is then what the call
+// reaches, as it would be from C.
 @(private)
 declare_intrinsic :: proc(e: ^Emitter, key, result, parameters: string) {
 	name := strings.concatenate({"@", key})
+	if e.defined[name] {
+		return
+	}
 	if register_declaration(e, name, function_type(result, parameters)) {
 		append(&e.globals, fmt.aprintf("declare %s %s(%s)\n", result, name, parameters))
 	}

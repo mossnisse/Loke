@@ -289,6 +289,17 @@ Generated code and the runtime, none measured:
   Clang; 64 to 128 would send more records by address, through machinery that
   already exists. [emit_llvm_place.odin](../src/emit_llvm_place.odin#L24)
 
+## Formatting through a known writer
+
+- **A sink's `write` stays a call under `fmt.format_to`.** At `-opt=speed`,
+  `fmt.format_to(w, ", ")` with a known sink ends in a direct call to the
+  sink's witness thunk, which LLVM does not inline, though it inlines
+  `w.write(", ".bytes())`. The `Formattable` call becomes direct first and the
+  `Sink` call inside it only later, after the last inliner run over that
+  procedure; `-max-devirt-iterations`, `-O3`, and `alwaysinline` on the thunk
+  leave the call. The call would have to be direct before optimization.
+  [emit_sink_write_bytes](../src/emit_llvm_format.odin#L581)
+
 ## Map runtime review follow-ups
 
 - **Filter equality checks with a hash fingerprint.** A probe calls key
@@ -327,7 +338,7 @@ Generated code and the runtime, none measured:
   `move` parameter still copies into a slot of its own, which the callee
   drops. Binding it in place needs the caller's handoff temporary to outlive
   the callee's drop, and the callee must not need to write it.
-  [Parameter binding](../src/emit_llvm.odin#L492),
+  [Parameter binding](../src/emit_llvm.odin#L496),
   [parameter semantics](design.md#parameter-semantics-and-abi-lowering)
 
 ## Union compiler simplifications

@@ -2,9 +2,8 @@ package main;
 
 // Generated formatting writes text through `@loke.fmt.write_bytes`, which is
 // written in LLVM so that it inlines: a formatter inlined where its writer is
-// known then calls the sink's `write` directly, and `fmt.format_to(w, ", ")`
-// costs what `w.write(", ".bytes())` does. The C runtime's `fmt_bytes` is left
-// to report a nil writer.
+// known then calls the sink's `write` directly. The C runtime's `fmt_bytes` is
+// left to report a nil writer.
 
 import "core:fmt";
 

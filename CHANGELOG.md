@@ -368,9 +368,9 @@ checklist.
   `-opt=speed`, from 213 ms, and 4 million live boxes 344 ms, from 407 ms.
 - Generated formatting writes text through a procedure in the program's own module rather than
   the runtime's, so LLVM inlines it and a formatter whose writer is known calls the sink's
-  `write` directly. `fmt.format_to(writer, ", ")` now costs what `writer.write(", ".bytes())`
-  does, so a `format` method needs no special spelling for its punctuation: formatting a
-  256-member `container.Enum_Array` is about 12% faster.
+  `write` directly: formatting a 256-member `container.Enum_Array` is about 12% faster. LLVM
+  does not inline that call as it inlines `writer.write(", ".bytes())`, so with a sink whose
+  `write` is a few instructions, `fmt.format_to(writer, ", ")` still costs one call more.
 - The lexer compares a word only with the keywords that share its first letter, and an
   operator only with those that share its first byte, and checks source text for UTF-8 with no
   decoding for ASCII. Parsing a 3 MB file takes 98 ms, from 111 ms, and checking
@@ -378,8 +378,8 @@ checklist.
 - A provider-backed [`mem.Arena`](docs/standard-library.md#coremem) or `mem.Scratch` asks its
   parent for blocks that double in size, up to 1 MiB, as the runtime's own comment said it did.
   Each block after the first stayed at 4 KiB, so an arena that grew to a megabyte asked its
-  parent about 250 times. In a 32 KiB fixed parent, a child arena now serves 25 one-KiB
-  allocations rather than 21.
+  parent about 250 times. A request the parent refuses halves while it still fits. In a 32 KiB
+  fixed parent, a child arena now serves 26 one-KiB allocations rather than 21.
 - Text `==` and `!=` compare the lengths before the bytes, and the bytes with `memcmp`, which
   LLVM folds against a literal; a `map[string]V` probe compares its keys the same way. At
   `-opt=speed`, 200 million comparisons of a word with `"loke"` take 0.3 to 0.7 s, from 1.2 to
