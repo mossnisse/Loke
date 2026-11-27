@@ -191,6 +191,158 @@ remain from them:
 - **Unifying the LLVM naming and emission walks** around one procedure
   eligibility decision.
 
+## Compiler review of 2026-11-27
+
+A review of `a07b8f4d` for simplifications and optimizations found no bug with
+a failing case. Shares are inclusive time of an `-emit-ll` run of
+`bench/dense.loke`, `bench/geometry.loke`, and `examples/corpus_runner.loke`,
+from a compiler built at `-o:speed` with Odin's instrumentation hooks counting
+calls and cycles per procedure. The hooks inflate small procedures called
+often, so the shares rank the entries rather than predict a saving. An entry
+without a share was read from the code and not measured, and nothing here has
+been tried.
+
+Compile time:
+
+- **A body's flow graph is built four or five times** (32–41% in
+  `build_flow_pass`; 5388 builds for the 1074 bodies of `dense.loke`): for
+  lifecycle, global effects, result summaries, thread summaries, and diagnosis.
+  The global-effects pass (11–15%) builds a replayed graph and reads only lists
+  the construction walk fills, so it could stop after the walk; replay and
+  materialization are about 7% over all builds, so that alone saves little.
+  The thread-fact pass (14–16% once a program has a `parallel` statement)
+  builds and solves every body, and only those a `parallel` block reaches are
+  read, apart from `lent_globals`, which every body's solve fills. What is open
+  is whether the effects pass can take a lighter walk, or a body's construction
+  can be kept across the passes.
+  [Effects](../src/global_effects.odin#L649),
+  [thread facts](../src/thread_summaries.odin#L129),
+  [replay](../src/provenance_effect.odin#L58)
+- **Write LLVM text without `fmt`** (6.5–11.5% in `fmt.sbprintf`).
+  `emit_value` makes two `fmt` calls for each instruction, and `load`, the
+  `gep` helpers, the branches, and `store` one each, all with `%s` arguments
+  only. `strings.write_string` writes the same bytes.
+  [emit_value](../src/emit_llvm.odin#L729)
+- **Spell a constant into the caller's builder** (about 5% in `const_operand`
+  on two of the three programs). `llvm_const` returns a new string for each
+  element, builds an aggregate that is all zero before discarding it for
+  `zeroinitializer`, and spells a table again at each use before the text is
+  hashed to share its global.
+  [llvm_const](../src/emit_llvm_const.odin#L138)
+- **Remember interface satisfaction** (3–4.7% on two of the three programs).
+  `interface_check` clones every requirement and makes its scopes again for an
+  interface and arguments it has already judged. A table keyed by the
+  interface, its arguments, and the lookup package would answer the repeats; an
+  entry made inside a probe cannot stand for a committed check, which also
+  registers witnesses.
+  [interface_check](../src/interface.odin#L563)
+- **Lexing** (5–7%). `reserved_word_kind` compares each identifier with all 34
+  keywords, `operator` scans a 57-entry table that holds `=`, `:`, and `.`
+  near its end, and `valid_utf8` decodes each rune with no path for ASCII.
+  [Keywords](../src/lexer.odin#L457), [operators](../src/lexer.odin#L814),
+  [valid_utf8](../src/source.odin#L154)
+- **`type_is_carrier` resolves the underlying type four times** (3.7–4.9%,
+  about 400,000 calls); `carrier_is_mutable` does it twice.
+  [type_is_carrier](../src/carrier_shape.odin#L14)
+- **`mark_released` and `end_loans` find the same loans twice** (2–5.7%), and
+  a read that invalidates nothing pays a clear and a scan of every loan. The
+  report pass likewise scans every live slot and loan for each `Access` and
+  `Root_End`, where `root_loans` already names the candidates.
+  [mark_released](../src/borrow.odin#L1357),
+  [report](../src/borrow_report.odin#L126)
+- **Smaller, each under about 1%.** The compile-time-only walk of a result's
+  type after every call, with no memo as `known_supported` has
+  ([check_expr.odin](../src/check_expr.odin#L142)); no negative cache in
+  `generic_template_for` ([generic.odin](../src/generic.odin#L156)); instance
+  and witness keys built with `fmt` ([generic.odin](../src/generic.odin#L1027));
+  a scope and a symbol per `$` name for each generic call whose instance is
+  already cached ([generic.odin](../src/generic.odin#L1713)); an indexed store
+  checking a clone of its receiver twice to look for `[]=`, and each `op=`
+  cloning its right side before knowing a view is involved
+  ([check_stmt.odin](../src/check_stmt.odin#L1065)); a method call resolving
+  its member list three times ([check_calls.odin](../src/check_calls.odin#L397));
+  overload descriptions formatted before any error needs them.
+- **Memory, not measured.** A parsed list grows from eight slots inside the
+  syntax arena and leaves each outgrown buffer behind, which an incremental
+  checkpoint then copies ([parser.odin](../src/parser.odin#L1357)). Each
+  `Expr_Base` embeds a whole `Const_Value` ([ast.odin](../src/ast.odin#L10)),
+  and an integer constant in the semantic arena takes 32 digits
+  ([bigint.odin](../src/bigint.odin#L66)). `Prov_Event` is one record of about
+  550 bytes for every kind, copied by each `for event in block.prov`
+  ([provenance_state.odin](../src/provenance_state.odin#L358)).
+- **The language server builds the whole query index after each check**, and
+  publishing diagnostics reads only sources and diagnostics.
+  [collect_results](../lsp/roots.odin#L266),
+  [session_snapshot](../src/queries.odin#L85)
+
+Generated code and the runtime, none measured:
+
+- **An arena's blocks do not grow.** `arena_grow` asks for the newest block's
+  size again unless one request is larger, so small allocations take 4 KiB
+  from the parent every 4 KiB; its comment says the request doubles.
+  [arena_grow](../runtime/arena.c#L90)
+- **Compare text for equality by length, then bytes.** `==` and `!=` call the
+  three-way `loke_rt_v1_bytes_compare`, which LLVM cannot fold against a
+  literal and which scans the shared prefix of texts of different lengths; a
+  `map[string]V` probe goes the same way.
+  [emit_compare](../src/emit_llvm_equality.odin#L38)
+- **No function is `nounwind`**, though a panic never unwinds the native
+  stack, and the unwind thunks are not `cold`. `uwtable` must accompany
+  `nounwind`, or the panic trace loses its unwind tables.
+  [Thunk](../src/emit_llvm_unwind.odin#L401)
+- **Drop glue is written out at each drop**, and a procedure's cleanups at
+  each `return` and `or_return`, while containers already share a thunk per
+  type with the same body.
+  [emit_drop_place](../src/emit_llvm_lifecycle.odin#L458),
+  [container_drop_thunk](../src/emit_llvm_containers.odin#L98),
+  [emit_epilogue](../src/emit_llvm_stmt.odin#L1032)
+- **Text.** `for r in text` calls the validating `loke_rt_v1_rune_at` for
+  each rune, with no inline answer for ASCII; `rune_count` lacks the
+  eight-bytes-at-a-time path `utf8_prefix` has; `hash_bytes` folds one byte a
+  step; `a + b + c` allocates for each `+`.
+  [text.c](../runtime/text.c#L66), [hash_bytes](../runtime/container.c#L1066)
+- **Smaller.** Every heap allocation goes through `_aligned_malloc`, whatever
+  its alignment ([alloc.c](../runtime/alloc.c#L21)); formatting a record
+  writes each label and separator to the sink on its own
+  ([emit_llvm_format.odin](../src/emit_llvm_format.odin#L493)); a temporary of
+  4096 bytes or less takes a stack slot of its own, never reused
+  ([emit_llvm_place.odin](../src/emit_llvm_place.odin#L43)).
+- **Try a lower `LARGE_VALUE_BYTES`.** The 4096 comes from what crashes
+  Clang; 64 to 128 would send more records by address, through machinery that
+  already exists. [emit_llvm_place.odin](../src/emit_llvm_place.odin#L24)
+- **`begin_generated_frame` keeps `Emitter.loaded` across a new builder.**
+  `Loaded_Value.end` is an offset into the builder it replaced. No case
+  miscompiles today, since the first store is written at length zero.
+  [begin_generated_frame](../src/emit_llvm_unwind.odin#L364)
+
+Simplifications:
+
+- **One driver for the parser's delimited lists.** Eleven loops share a
+  shape, four of them an identical recovery block, and `parse_where_clause`
+  repeats the body of `parse_expression_list`.
+  [parser.odin](../src/parser.odin#L3709)
+- **Type facts as bits on `Type_Info`.** About eight memo maps are keyed by
+  `Type_Id`, each behind a wrapper of its own.
+  [compiler.odin](../src/compiler.odin#L200)
+- **Emitter helpers.** `resize_int` is written out three times,
+  `llvm_name_char` is `unquoted_name_byte`, three procedures build a foreign
+  parameter list, about ninety lines spell a scalar `store` by hand, and
+  about forty spell what `emit_value` writes.
+- **Borrow solver.** `links_into` repeats the derived reborrow chain,
+  `solve_window` and `solve_view_defs` are one forward solve with two step
+  procedures, and a dozen loops test every loan's bit where a set-bit
+  iterator would do. [links_into](../src/borrow.odin#L965)
+- **Duplicates.** Two `append_unique`
+  ([operators.odin](../src/operators.odin#L382),
+  [semantic.odin](../src/semantic.odin#L1304)); `clone_generic_params` and
+  `clone_bindings`; `dir_key(canonical_dir(path))` eleven times beside the
+  language server's `path_key`; aggregate comparison in `eval.odin` and
+  `const_ops.odin`; `sane_align`, `sane_container_align`, and `arena_align`
+  in the runtime.
+- **Unreferenced runtime entries.** `loke_rt_v1_alloc_zeroed`, and
+  `loke_rt_v1_dyn_bind` and `loke_rt_v1_map_bind`, whose bodies are one.
+  Removing them is open only if the `v1` names are not promised to C hosts.
+
 ## Map runtime review follow-ups
 
 - **Filter equality checks with a hash fingerprint.** A probe calls key
@@ -199,7 +351,9 @@ remain from them:
   and reserving the existing markers for empty, tombstone, and owed value.
   This can skip key loads and equality on mismatches with no extra bytes per
   slot. Measure integer, string, and structural keys before adopting it, and
-  update the debugger's occupied-slot test if it pays off.
+  update the debugger's occupied-slot test if it pays off. A miss under linear
+  probing visits about ½(1 + 1/(1−α)²) slots at load α, about 32 at the 7/8
+  limit and about 8 at 3/4, so a lower limit is the one-line alternative.
   [Probe](../runtime/container.c#L861), [debugger](../src/emit_llvm_debug.odin#L629)
 
 ## LLVM source review follow-ups
