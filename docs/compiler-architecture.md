@@ -1443,8 +1443,9 @@ Preserve these lowering rules:
 
 - Implicit conversions pass an effective type through `emit_expr_at` and typed
   helpers without changing checked AST annotations.
-- Values above `LARGE_VALUE_BYTES` travel by address and return through `sret`,
-  avoiding LLVM first-class aggregates that can crash clang. Route Loke values
+- Values above `LARGE_VALUE_BYTES` (128) travel by address and return through
+  `sret`, avoiding LLVM first-class aggregates, which LLVM copies through
+  registers and which crash clang when very large. Route Loke values
   through `load_place`, `store`, `temporary_slot`, `emit_call_result`,
   `emit_ret`, and `sret_param`. Each call passes `sret` a temporary of its
   own that no operand names, so the parameter is `noalias` and a returned

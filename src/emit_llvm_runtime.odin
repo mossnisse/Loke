@@ -222,7 +222,7 @@ emit_text_declarations :: proc(e: ^Emitter) {
 @(private = "file", rodata)
 TEXT_DECLARATIONS := [?]Runtime_Declaration {
 	{"i32", "loke_rt_v1_string_from_bytes", "ptr, ptr, i64, ptr", ""},
-	{"i32", "loke_rt_v1_string_concat", "ptr, ptr, i64, ptr, i64, ptr", ""},
+	{"i32", "loke_rt_v1_string_concat", "ptr, ptr, i64, ptr", ""},
 	{"i32", "loke_rt_v1_string_clone", "ptr, ptr, i64, ptr", ""},
 	{"i32", "loke_rt_v1_string_from_runes", "ptr, ptr, i64, ptr", ""},
 	{"i32", "loke_rt_v1_string_to_runes", "ptr, ptr, ptr, i64, ptr", ""},

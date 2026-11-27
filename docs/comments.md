@@ -4324,10 +4324,10 @@ boundaries and API shapes follow a few common choices:
   1302 words, 10 KB in a program that parses a float. A million numbers of a
   few digits parse in 36 ms where `strtod` took 152, and a million of 17
   digits in 62 ms where it took 264 (`-opt=speed`; 220 and 350 ms against 309
-  and 520 without optimization). The table's literals add about 11 ms to the
-  front end of a program importing the package, which
-  [open-questions.md](open-questions.md#constant-tables-in-the-front-end)
-  takes up. A constant that only decodes the table from a string, less work
+  and 520 without optimization). The table's literals added about 11 ms to the
+  front end of a program importing the package; on 2026-11-27, after faster
+  lexing and integer literals read without big integers below 65 bits, they
+  add about 2.5 ms of the 11 ms the import costs. A constant that only decodes the table from a string, less work
   than computing it, took over 200 ms to evaluate. Clinger's exact path for
   short mantissas, one floating-point multiplication or division, was 23%
   faster on numbers of a few digits and was left out: a third path to keep
@@ -5118,6 +5118,13 @@ and each was declined on the same day.
   `bind_candidate_slots`. It belongs to a merge of the two binders, which
   would keep the receiver first, forward a sole spread, and evaluate omitted
   defaults after the pack's written operands.
+- **`nounwind` functions and `cold` unwind thunks.** A panic never unwinds the
+  native stack, so every Loke function could be `nounwind`, with `uwtable` to
+  keep the tables the panic trace walks, and the unwind thunks, which only a
+  panic calls, `cold`. Built so, the eight `bench/` programs at `-opt=speed`
+  ran no faster, the fastest of five runs each, and three came out 512 to
+  1536 bytes larger: no call in generated code is an `invoke`, so LLVM had
+  nothing to remove.
 
 ### `-opt=speed` unswitches loops
 
@@ -5169,7 +5176,7 @@ not be the one that reads it: one may store it as an integer in a global, and
 another, handed nothing, may read through it. A summary that misses a route
 reuses a slot the program can still read, which is a miscompilation no checked
 program shows. What it would save is frame size, in a literal of many calls
-that each lend a temporary over 4096 bytes. Revisit it if a program exhausts
+that each lend a temporary over `LARGE_VALUE_BYTES` (128 bytes). Revisit it if a program exhausts
 its stack that way.
 
 ### A partly zero union constant is spelled in full

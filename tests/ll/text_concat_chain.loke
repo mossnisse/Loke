@@ -1,0 +1,12 @@
+package main;
+
+// `a + b + c + d` passes its four operands to one runtime call, so the chain
+// allocates once.
+
+import "core:fmt";
+import "core:os";
+
+main :: proc() {
+	word := os.args[0];
+	fmt.println(word + "-" + word + "!");
+}

@@ -1,6 +1,7 @@
 // The compiler-contributed `hash` for standard-library.md's `Hashable` catalogue,
 // and map key policies. The mix is 64-bit FNV-1a's step per scalar, folded over
-// arrays; the compile-time and runtime paths must agree exactly.
+// arrays, and text takes eight bytes a step (`hash_text_const`); the
+// compile-time and runtime paths must agree exactly.
 //
 // ponytail: one non-seeded mixing constant. The per-table seed threaded through
 // `hash` varies the result between tables; a per-*process* seed, which a
@@ -347,13 +348,7 @@ inherent_hash_member :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64) -> u64 {
 	#partial switch underlying_kind(c, type) {
 	case .String, .String_View:
-		// As `loke_rt_v1_hash_bytes`: the bytes, then the length, so the elements
-		// of `{"ab", ""}` and `{"a", "b"}` do not hash alike.
-		result := seed
-		for index in 0 ..< len(value.text) {
-			result = hash_mix(result, u64(value.text[index]))
-		}
-		return hash_mix(result, u64(len(value.text)))
+		return hash_text_const(value.text, seed)
 	case .Bool:
 		return hash_mix(seed, value.boolean ? 1 : 0)
 	case .Raw_Pointer, .Pointer, .C_Pointer:
@@ -365,4 +360,25 @@ hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64) -
 		result = hash_mix(result, u64(pattern >> 64))
 	}
 	return result
+}
+
+// As `loke_rt_v1_hash_bytes`: eight bytes a step, little-endian, the last word
+// padded with zeros, then the length, so the elements of `{"ab", ""}` and
+// `{"a", "b"}` do not hash alike. A step folds the high half down, so that a
+// difference in a word's top byte reaches the bits the next multiply spreads.
+@(private = "file")
+hash_text_const :: proc(text: string, seed: u64) -> u64 {
+	step :: proc(current, word: u64) -> u64 {
+		mixed := hash_mix(current, word)
+		return mixed ~ (mixed >> 32)
+	}
+	result := seed
+	for start := 0; start < len(text); start += 8 {
+		word: u64
+		for index in start ..< min(start + 8, len(text)) {
+			word |= u64(text[index]) << (8 * uint(index - start))
+		}
+		result = step(result, word)
+	}
+	return step(result, u64(len(text)))
 }

@@ -1,0 +1,43 @@
+package main;
+
+// `a + b + c` evaluates its operands left to right and allocates once; a
+// parenthesized right side, empty operands, views, and a folded constant part
+// read the same as two-operand concatenation.
+
+import "core:fmt";
+
+Label :: distinct string;
+
+impl Label {
+	join :: operator(+) proc(left, right: Label) -> Label { return Label(string(left) + "/" + string(right)); }
+}
+
+trace: [dynamic]rune = {};
+
+part :: proc(name: string) -> string {
+	foreach (r in name) { trace.append(r); }
+	return name;
+}
+
+main :: proc() {
+	chain := part("a") + part("b") + part("c") + part("d");
+	fmt.println(chain, trace);
+
+	right := part("x") + (part("y") + part("z"));
+	fmt.println(right);
+
+	empty := "";
+	fmt.println("[" + empty + empty + "]", (empty + empty + empty).len());
+
+	word := "loke";
+	view: string_view = word[1:3];
+	fmt.println(word + view + "!" + view);
+
+	folded := "con" + "st" + word;
+	fmt.println(folded);
+
+	fmt.println(string(Label("p") + Label("q") + Label("r")));
+
+	runes := "größe" + " " + "日本";
+	fmt.println(runes, runes.rune_count());
+}

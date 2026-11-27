@@ -1056,15 +1056,30 @@ int64_t loke_rt_v1_map_scan(
 
 /* ---------------------------------------------------------------- hash -- */
 
-/* The compiler's FNV-1a step per byte, then over the length, matching
- * `hash_const` so compile-time and runtime hashes agree. */
+/* One step of `hash_bytes`: FNV-1a's step, then the high half folded down, so
+ * that a difference in a word's top byte reaches the low bits the next multiply
+ * spreads from. Each step is a bijection of `h`. */
+static uint64_t hash_word(uint64_t h, uint64_t word) {
+	h = (h ^ word) * 1099511628211u;
+	return h ^ (h >> 32);
+}
+
+/* Eight bytes a step, little-endian, the last word padded with zeros, then the
+ * length, matching `hash_text_const` so compile-time and runtime hashes agree. */
 uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed) {
 	uint64_t h = seed;
-	int64_t i;
-	for (i = 0; i < len; i += 1) {
-		h = (h ^ (uint64_t)data[i]) * 1099511628211u;
+	int64_t i = 0;
+	for (; i + 8 <= len; i += 8) {
+		uint64_t word;
+		memcpy(&word, data + i, 8);
+		h = hash_word(h, word);
 	}
-	return (h ^ (uint64_t)len) * 1099511628211u;
+	if (i < len) {
+		uint64_t word = 0;
+		memcpy(&word, data + i, (size_t)(len - i));
+		h = hash_word(h, word);
+	}
+	return hash_word(h, (uint64_t)len);
 }
 
 /* --------------------------------------------------------------- faults -- */

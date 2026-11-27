@@ -134,9 +134,8 @@ algorithm written in Loke, Ryu or Schubfach, removes all three, and is worth its
 code: [`strconv.parse_f64`](standard-library.md#corestrconv) is Loke code
 already, and whether its table of powers of five can serve the printer is the
 first thing to settle. Done when a float prints in a constant, printing one
-cannot fail, and `Backend_Error` is gone. Mind [Constant tables in the front
-end](open-questions.md#constant-tables-in-the-front-end) if it needs a table of
-its own.
+cannot fail, and `Backend_Error` is gone. A table of its own costs about 2 µs a
+literal in every build that imports it, as `parse_f64`'s 1302 cost about 2.5 ms.
 
 Current optional gaps, to add only when a caller establishes their contract:
 `core:bytes`, `core:unicode`,

@@ -341,6 +341,21 @@ bigint_literal_spellings :: proc(t: ^testing.T) {
 		testing.expectf(t, bi_eq_i64(&c, value, s.value), "%s folded to %s", s.text, bi_text(&c, value))
 	}
 
+	// A literal that fits 64 bits is read without core:math/big; one past that
+	// takes the big-integer path.
+	wide := []struct{text, decimal: string}{
+		{"18446744073709551615", "18446744073709551615"},
+		{"0xFFFF_FFFF_FFFF_FFFF", "18446744073709551615"},
+		{"18446744073709551616", "18446744073709551616"},
+		{"0x1_0000_0000_0000_0000", "18446744073709551616"},
+		{"-18446744073709551615", "-18446744073709551615"},
+		{"184467440737095516150", "184467440737095516150"},
+	}
+	for s in wide {
+		value, ok := bi_parse_int_literal(&c, s.text)
+		testing.expectf(t, ok && bi_text(&c, value) == s.decimal, "%s folded to %s", s.text, bi_text(&c, value))
+	}
+
 	// `-define:NAME=VALUE` passes arbitrary text and reads a rejection as a string.
 	rejected := []string{"0X10", "0B10", "0O10", "12abc", "", "0x", "0x-5", "_7", "-", "--5", "0b102", "0x_", "+5"}
 	for bad in rejected {

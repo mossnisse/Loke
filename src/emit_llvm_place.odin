@@ -18,10 +18,13 @@ load_place :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
 	return load(e, llvm_type(e, type), address, align_suffix(e, address, type))
 }
 
-// clang crashes in instruction selection on a first-class value with 65536 or
-// more scalars in it, so a value larger than this never becomes one. It is the
-// address of storage nothing else writes, and crosses calls by pointer.
-LARGE_VALUE_BYTES :: 4096
+// A value larger than this never becomes a first-class LLVM value. It is the
+// address of storage nothing else writes, and crosses calls by pointer. Clang
+// crashes in instruction selection on a first-class value with 65536 or more
+// scalars in it, which a limit of 4096 bytes avoided; 128 also keeps LLVM from
+// copying a mid-sized record through registers, which made bench/geometry.loke
+// 6% faster and 5% smaller than 4096 did, and changed no other benchmark.
+LARGE_VALUE_BYTES :: 128
 
 @(private)
 is_large_value :: proc(e: ^Emitter, type: Type_Id) -> bool {

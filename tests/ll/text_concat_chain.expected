@@ -1,0 +1,3 @@
+alloca [4 x { ptr, i64 }]
+call i32 @loke_rt_v1_string_concat(ptr *, ptr *, i64 4, ptr *)
+not @loke_rt_v1_string_concat(ptr *, ptr *, i64 2

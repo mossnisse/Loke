@@ -201,10 +201,14 @@ typedef struct loke_rt_string_header_v1 {
  * so an allocation failure applies the allocator's policy and does not return. */
 int32_t loke_rt_v1_string_from_bytes(
 	loke_rt_string_v1 *out, const uint8_t *data, int64_t len, const loke_rt_allocator_v1 *a);
+/* One operand of a concatenation. `a + b + c` passes its three operands at
+ * once, so the chain allocates once. */
+typedef struct loke_rt_text_part_v1 {
+	const uint8_t *data;
+	int64_t len;
+} loke_rt_text_part_v1;
 int32_t loke_rt_v1_string_concat(
-	loke_rt_string_v1 *out,
-	const uint8_t *a_data, int64_t a_len,
-	const uint8_t *b_data, int64_t b_len,
+	loke_rt_string_v1 *out, const loke_rt_text_part_v1 *parts, int64_t count,
 	const loke_rt_allocator_v1 *allocator);
 /* Unlike assignment, this always allocates an independent buffer. */
 int32_t loke_rt_v1_string_clone(

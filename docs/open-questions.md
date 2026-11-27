@@ -265,29 +265,17 @@ Compile time:
 
 Generated code and the runtime, none measured:
 
-- **No function is `nounwind`**, though a panic never unwinds the native
-  stack, and the unwind thunks are not `cold`. `uwtable` must accompany
-  `nounwind`, or the panic trace loses its unwind tables.
-  [Thunk](../src/emit_llvm_unwind.odin#L399)
 - **Drop glue is written out at each drop**, and a procedure's cleanups at
   each `return` and `or_return`, while containers already share a thunk per
   type with the same body.
   [emit_drop_place](../src/emit_llvm_lifecycle.odin#L457),
   [container_drop_thunk](../src/emit_llvm_containers.odin#L98),
   [emit_epilogue](../src/emit_llvm_stmt.odin#L1032)
-- **Text.** `for r in text` calls the validating `loke_rt_v1_rune_at` for
-  each rune, with no inline answer for ASCII; `rune_count` lacks the
-  eight-bytes-at-a-time path `utf8_prefix` has; `hash_bytes` folds one byte a
-  step; `a + b + c` allocates for each `+`.
-  [text.c](../runtime/text.c#L66), [hash_bytes](../runtime/container.c#L1061)
 - **Smaller.** Formatting a record writes each label and separator to the
   sink on its own
   ([emit_llvm_format.odin](../src/emit_llvm_format.odin#L492)); a temporary of
-  4096 bytes or less takes a stack slot of its own, never reused
-  ([emit_llvm_place.odin](../src/emit_llvm_place.odin#L43)).
-- **Try a lower `LARGE_VALUE_BYTES`.** The 4096 comes from what crashes
-  Clang; 64 to 128 would send more records by address, through machinery that
-  already exists. [emit_llvm_place.odin](../src/emit_llvm_place.odin#L24)
+  128 bytes or less takes a stack slot of its own, never reused
+  ([emit_llvm_place.odin](../src/emit_llvm_place.odin#L48)).
 
 ## Formatting through a known writer
 
@@ -315,7 +303,7 @@ Generated code and the runtime, none measured:
 
 ## LLVM source review follow-ups
 
-- **Returning a large value.** A result over 4096 bytes is written through a
+- **Returning a large value.** A result over 128 bytes is written through a
   hidden pointer, and three passes over it remain at `-opt=speed` (read in the
   IR on 2026-11-22, Clang 22): the result slot is zeroed on entry, `return out;`
   copies the local into it, and the caller's `x := f();` copies the call's
@@ -595,21 +583,6 @@ person does: models are trained on human-written code yet process it
 differently. Encapsulation and abstraction stay important either way, so that
 a model can work on one part of a program without reading the rest.
 
-## Constant tables in the front end
-
-- A large array constant is slow to check. `core:strconv`'s table of powers
-  of five, 1302 `u64` literals of 16 hexadecimal digits, adds about 11 ms to
-  the front end of every program that imports the package: a program that
-  prints one parsed float went from 43 to 54 ms (`-emit-ll`, fastest of 15,
-  2026-11-22), and 51 ms of that remains when nothing reads the table. Alone
-  in a program, the same table costs 9 ms, 1302 one-digit literals 4 ms, and
-  the same digits in one raw string 1 ms: about 3 µs an element and 0.2 µs a
-  digit. Where the time goes is not profiled; `bi_parse_int_literal` reads
-  every literal into a big integer. Until this is cheaper, a package pays for
-  its tables in each build, and a constant that computes one is no way out:
-  only decoding this table from that raw string by compile-time evaluation
-  took over 200 ms.
-
 ## Open questions in `core:math`
 
 ### Deterministic math functions
@@ -654,7 +627,7 @@ borrow excludes every other access. So for the duration of a call:
 - a `^T` parameter's pointee is written by no one, unless its type reaches a
   [`@(synchronized)`](design.md#synchronized) field, as `Atomic(T)`, `Mutex(T)`,
   and `Monitor(T)` do;
-- a `value: T` parameter passed by pointer, which is one over 4096 bytes, is
+- a `value: T` parameter passed by pointer, which is one over 128 bytes, is
   under the same exclusion unchanged.
 
 The language design review of 2026-10-31 proposed giving the optimizer these
@@ -692,7 +665,7 @@ timed, and the `bench/` kernels were not touched:
 | Loop | As emitted | With metadata between parameters |
 | --- | --- | --- |
 | Two slices, `dst[i] = dst[i] +% src[i]` | Vectorized behind the overlap check LLVM inserts | Not run: at most that one check per entry to the loop |
-| A record parameter read in the loop | Vectorized: a value up to 4096 bytes is passed by value | Nothing to gain |
+| A record parameter read in the loop | Vectorized: a value up to 4096 bytes was then passed by value | Nothing to gain |
 | An `inout` scalar updated beside a slice store | 4 loads and 2 stores per iteration | 2 loads and 2 stores |
 | A store through `self.data` beside `self`'s own fields | 5 loads and 2 stores per iteration, not vectorized | No change |
 

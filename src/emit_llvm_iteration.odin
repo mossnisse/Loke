@@ -296,13 +296,24 @@ field_value :: proc(e: ^Emitter, field: Foreach_Field) -> string {
 	return load_place(e, field.type, field.address)
 }
 
-// Decodes the code point at `offset` into `decoded`, answering the bytes it
-// spans. Text is valid UTF-8 by construction, so a zero means that broke.
+// Decodes the code point at `offset`, which is before `length`, into `decoded`,
+// answering the bytes it spans. An ASCII byte is its own code point; anything
+// else goes to the runtime. Text is valid UTF-8 by construction, so a zero
+// from the runtime means that broke.
 @(private = "file")
 emit_decode_rune :: proc(e: ^Emitter, data, length, offset, decoded: string) -> string {
+	lead := load(e, "i8", gep_at(e, "i8", data, offset))
+	ascii, wide, decoded_label := new_label(e, "rune.ascii"), new_label(e, "rune.wide"), new_label(e, "rune.decoded")
+	branch_if(e, emit_value(e, "icmp sge i8 %s, 0", lead), ascii, wide)
+	place_label(e, ascii)
+	store_scalar(e, "i32", emit_value(e, "zext i8 %s to i32", lead), decoded)
+	branch(e, decoded_label)
+	place_label(e, wide)
 	used := emit_value(e, "call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)", data, length, offset, decoded)
 	panic_if(e, icmp_zero(e, "i64", used), "text.invalid", "invalid UTF-8 in a string")
-	return used
+	wide_end := current_block(e, "rune.wide")
+	place_label(e, decoded_label)
+	return emit_value(e, "phi i64 [ 1, %%%s ], [ %s, %%%s ]", ascii, used, wide_end)
 }
 
 // Whether the cursor is live, by the run-time closed flag.

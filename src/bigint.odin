@@ -145,15 +145,26 @@ bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int,
 	if digits == "" {
 		return bi_zero(c), false
 	}
+	// Most literals fit 64 bits, and are read here without core:math/big.
+	word: u64
+	fits := true
 	for i in 0 ..< len(digits) {
-		if digit_value(digits[i]) >= radix {
+		digit := u64(digit_value(digits[i]))
+		if digit >= u64(radix) {
 			return bi_zero(c), false
 		}
+		fits = fits && word <= (max(u64) - digit) / u64(radix)
+		word = word * u64(radix) + digit
 	}
-	r, parsed := bi_atoi(c, digits, radix)
-	if !parsed {
-		bi_release(r)
-		return bi_zero(c), false
+	r: Big_Int
+	if fits {
+		r = bi_from_u64(c, word)
+	} else {
+		parsed: bool
+		if r, parsed = bi_atoi(c, digits, radix); !parsed {
+			bi_release(r)
+			return bi_zero(c), false
+		}
 	}
 	if negative {
 		context.allocator = storage_allocator(c)

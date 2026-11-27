@@ -1,0 +1,38 @@
+package main; import "core:fmt"; import "core:strings";
+
+// Text hashes eight bytes a step. The folded and runtime hashes agree on each
+// side of a word boundary and with bytes that are not ASCII, and keys that
+// differ only in the top byte of their words still hash apart.
+
+A :: "";
+B :: "abcdefg";
+C :: "abcdefgh";
+D :: "abcdefghi";
+E :: "abcdefghijklmnopq";
+F :: "größe × 日本語";
+
+FOLDED :: [6]uint{A.hash(7), B.hash(7), C.hash(7), D.hash(7), E.hash(7), F.hash(7)};
+
+main :: proc() {
+	texts := [6]string{A, B, C, D, E, F};
+	agree := true;
+	foreach (i in 0 ..< 6) {
+		agree = agree && texts[i].hash(7) == FOLDED[i];
+	}
+	fmt.println("folded and runtime agree:", agree);
+
+	// Sixteen bytes, varying only bytes 7 and 15.
+	seen: map[uint]bool = {};
+	foreach (x in 0 ..< 16) {
+		foreach (y in 0 ..< 16) {
+			builder := strings.init();
+			builder.append("aaaaaaa");
+			builder.append_byte_ascii(u8('a' + x));
+			builder.append("bbbbbbb");
+			builder.append_byte_ascii(u8('a' + y));
+			key := builder.finish();
+			seen[key.hash(0)] = true;
+		}
+	}
+	fmt.println("distinct of 256:", seen.len());
+}

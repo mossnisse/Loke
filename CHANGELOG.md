@@ -384,6 +384,21 @@ checklist.
   LLVM folds against a literal; a `map[string]V` probe compares its keys the same way. At
   `-opt=speed`, 200 million comparisons of a word with `"loke"` take 0.3 to 0.7 s, from 1.2 to
   1.9 s. The orderings `<`, `<=`, `>`, and `>=` are unchanged.
+- Text runs faster at `-opt=speed`. `for r in text` decodes an ASCII byte in place and calls the
+  runtime only for a longer code point: 100 passes over a mostly ASCII megabyte take 85 ms, from
+  223 ms. `rune_count()` counts eight bytes at a time, 4 times faster. A string's `hash` takes
+  eight bytes a step, so a `map[string]V` lookup with 24-byte keys is 30% faster and with
+  64-byte keys about twice as fast; hash values of text differ from earlier builds, as nothing
+  promised them. A chain such as `a + b + c + d` allocates once, with no string for each `+`:
+  2 million such joins take 123 ms, from 360 ms. The runtime's `loke_rt_v1_string_concat` takes
+  an array of operands
+  ([Version policy](docs/releasing.md#version-policy): runtime symbols may change).
+- A value over 128 bytes, rather than over 4096, is passed and returned by address and kept in
+  storage shared between full expressions, as larger ones were. LLVM no longer copies a
+  mid-sized record through registers: `bench/geometry.loke` runs 6% faster and is 5% smaller;
+  no other benchmark changed.
+- An integer literal that fits 64 bits is read without the big-integer library, so a table of
+  10,000 hexadecimal `u64` literals checks in 9 ms rather than 12.5.
 - The runtime no longer exports `loke_rt_v1_alloc_zeroed`, `loke_rt_v1_dyn_bind`, or
   `loke_rt_v1_map_bind`, which generated code never called and `loke_rt.h` no longer declares
   ([Version policy](docs/releasing.md#version-policy): runtime symbols may change).

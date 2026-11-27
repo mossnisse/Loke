@@ -137,17 +137,19 @@ int64_t loke_rt_v1_utf8_prefix(const uint8_t *data, int64_t len) {
 	return offset;
 }
 
+/* `data` is valid UTF-8, as text is by construction, so each byte that is not a
+ * continuation byte (10xxxxxx) starts one code point. They are counted eight
+ * bytes at a time: a byte's bit 7 set with its bit 6 clear. */
 int64_t loke_rt_v1_rune_count(const uint8_t *data, int64_t len) {
+	int64_t count = len;
 	int64_t offset = 0;
-	int64_t count = 0;
-	while (offset < len) {
-		int32_t decoded;
-		int64_t used = loke_rt_v1_rune_at(data, len, offset, &decoded);
-		if (used == 0) {
-			break; /* a validated string cannot get here */
-		}
-		offset += used;
-		count += 1;
+	for (; offset + 8 <= len; offset += 8) {
+		uint64_t word;
+		memcpy(&word, data + offset, 8);
+		count -= __builtin_popcountll(word & ~(word << 1) & 0x8080808080808080u);
+	}
+	for (; offset < len; offset += 1) {
+		count -= (data[offset] & 0xC0) == 0x80;
 	}
 	return count;
 }
@@ -214,14 +216,14 @@ int32_t loke_rt_v1_string_clone(
 }
 
 int32_t loke_rt_v1_string_concat(
-	loke_rt_string_v1 *out,
-	const uint8_t *a_data, int64_t a_len,
-	const uint8_t *b_data, int64_t b_len,
+	loke_rt_string_v1 *out, const loke_rt_text_part_v1 *parts, int64_t count,
 	const loke_rt_allocator_v1 *allocator) {
 	publish_empty(out);
-	int64_t total;
-	if (!loke_rt_v1_checked_add(a_len, b_len, &total)) {
-		return 0;
+	int64_t total = 0;
+	for (int64_t i = 0; i < count; i++) {
+		if (!loke_rt_v1_checked_add(total, parts[i].len, &total)) {
+			return 0;
+		}
 	}
 	if (total == 0) {
 		return 1;
@@ -230,11 +232,11 @@ int32_t loke_rt_v1_string_concat(
 	if (bytes == 0) {
 		return 0;
 	}
-	if (a_len > 0) {
-		memcpy(bytes, a_data, (size_t)a_len);
-	}
-	if (b_len > 0) {
-		memcpy(bytes + a_len, b_data, (size_t)b_len);
+	for (int64_t i = 0; i < count; i++) {
+		if (parts[i].len > 0) {
+			memcpy(bytes, parts[i].data, (size_t)parts[i].len);
+			bytes += parts[i].len;
+		}
 	}
 	return 1;
 }

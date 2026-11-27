@@ -463,7 +463,7 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 		rhs := emit_borrowed_operand(e, v.rhs)
 		return emit_compare(e, v.op, operand_type, lhs, rhs)
 	}
-	if v.op == .Plus && type_is_utf8_text(e.c, expr_base(v.lhs).type) {
+	if is_builtin_text_concat(e, v) {
 		return emit_text_concat(e, v)
 	}
 	lhs := emit_expr(e, v.lhs)
@@ -472,32 +472,70 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 }
 
 // Concatenation allocates from the default allocator and follows its failure
-// policy. Both operands are valid UTF-8, so the result is too.
+// policy. Every operand is valid UTF-8, so the result is too. A chain such as
+// `a + b + c` evaluates its operands in order and allocates once, with no
+// string for `a + b`.
 @(private = "file")
 emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
-	left_data, left_len := emit_text_parts(e, v.lhs)
-	right_data, right_len := emit_text_parts(e, v.rhs)
-	return emit_text_concat_parts(e, left_data, left_len, right_data, right_len)
+	operands := make([dynamic]Expr, context.temp_allocator)
+	collect_concat_operands(e, v, &operands)
+	parts := make([]Text_Part, len(operands), context.temp_allocator)
+	for operand, i in operands {
+		parts[i].data, parts[i].length = emit_text_parts(e, operand)
+	}
+	return emit_text_concat_parts(e, parts)
+}
+
+// The operands of the built-in text `+` that `v` is, read through the operands
+// that are themselves one and not folded to a constant.
+@(private = "file")
+collect_concat_operands :: proc(e: ^Emitter, v: ^Expr_Binary, operands: ^[dynamic]Expr) {
+	for operand in ([2]Expr{v.lhs, v.rhs}) {
+		inner, is_binary := operand.(^Expr_Binary)
+		if is_binary && is_builtin_text_concat(e, inner) && !base_is_const(expr_base(operand)) {
+			collect_concat_operands(e, inner, operands)
+		} else {
+			append(operands, operand)
+		}
+	}
+}
+
+@(private = "file")
+is_builtin_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> bool {
+	return v.op == .Plus && v.resolution.kind != .User_Operator && type_is_utf8_text(e.c, expr_base(v.lhs).type)
 }
 
 // Two evaluated operands of one text `type`, as a delegated `+` has them.
 @(private)
 emit_text_concat_values :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 	storage := llvm_type(e, type)
-	left_data, left_len := string_parts(e, storage, lhs)
-	right_data, right_len := string_parts(e, storage, rhs)
-	return emit_text_concat_parts(e, left_data, left_len, right_data, right_len)
+	parts: [2]Text_Part
+	parts[0].data, parts[0].length = string_parts(e, storage, lhs)
+	parts[1].data, parts[1].length = string_parts(e, storage, rhs)
+	return emit_text_concat_parts(e, parts[:])
 }
 
 @(private = "file")
-emit_text_concat_parts :: proc(e: ^Emitter, left_data, left_len, right_data, right_len: string) -> string {
+Text_Part :: struct {
+	data, length: string,
+}
+
+// `loke_rt_v1_string_concat` over `parts`, written into an array of
+// `loke_rt_text_part_v1`.
+@(private = "file")
+emit_text_concat_parts :: proc(e: ^Emitter, parts: []Text_Part) -> string {
+	array := fmt.aprintf("[%d x {{ ptr, i64 }}]", len(parts))
+	parts_slot := alloca(e, array)
+	for part, i in parts {
+		data := emit_gep(e, "getelementptr inbounds %s, ptr %s, i64 0, i64 %d, i32 0", array, parts_slot, i)
+		length := emit_gep(e, "getelementptr inbounds %s, ptr %s, i64 0, i64 %d, i32 1", array, parts_slot, i)
+		store_scalar(e, "ptr", part.data, data)
+		store_scalar(e, "i64", part.length, length)
+	}
 	provider := emit_default_allocator(e)
 	return emit_text_allocating_call(
 		e, "loke_rt_v1_string_concat",
-		fmt.aprintf(
-			"ptr %s, i64 %s, ptr %s, i64 %s, ptr %s",
-			left_data, left_len, right_data, right_len, provider,
-		),
+		fmt.aprintf("ptr %s, i64 %d, ptr %s", parts_slot, len(parts), provider),
 		provider,
 	)
 }
