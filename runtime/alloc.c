@@ -11,10 +11,15 @@
 #include <stdio.h>
 
 /* Alignment is honoured exactly, so a caller asking for 32 gets 32 rather than
- * whatever the CRT's default happens to be. `_aligned_malloc` requires a
- * non-zero power of two. */
-static uint64_t sane_align(uint64_t align) {
-	return align == 0 ? 1 : align;
+ * whatever the CRT's default happens to be. `malloc` already answers 16 on
+ * x64 Windows, so only a larger alignment takes `_aligned_malloc`, whose
+ * header costs bytes and time on every block. A block is freed and resized
+ * with the alignment it was allocated with (`unsafe.free` in design.md "The
+ * `unsafe` package"), so the same test picks the matching release. */
+enum { MALLOC_ALIGN = 16 };
+
+static int over_aligned(uint64_t align) {
+	return align > MALLOC_ALIGN;
 }
 
 static void *sys_alloc(void *state, uint64_t size, uint64_t align) {
@@ -22,11 +27,11 @@ static void *sys_alloc(void *state, uint64_t size, uint64_t align) {
 	if (size == 0) {
 		return 0;
 	}
-	return _aligned_malloc((size_t)size, (size_t)sane_align(align));
+	return over_aligned(align) ? _aligned_malloc((size_t)size, (size_t)align) : malloc((size_t)size);
 }
 
 /* On failure the old block is untouched and still owned by the caller, which is
- * what `_aligned_realloc` already guarantees. */
+ * what `realloc` and `_aligned_realloc` already guarantee. */
 static void *sys_resize(void *state, void *ptr, uint64_t old_size, uint64_t new_size, uint64_t align) {
 	(void)state;
 	(void)old_size;
@@ -34,16 +39,20 @@ static void *sys_resize(void *state, void *ptr, uint64_t old_size, uint64_t new_
 		return 0;
 	}
 	if (ptr == 0) {
-		return _aligned_malloc((size_t)new_size, (size_t)sane_align(align));
+		return sys_alloc(state, new_size, align);
 	}
-	return _aligned_realloc(ptr, (size_t)new_size, (size_t)sane_align(align));
+	return over_aligned(align) ? _aligned_realloc(ptr, (size_t)new_size, (size_t)align)
+	                           : realloc(ptr, (size_t)new_size);
 }
 
 static void sys_free(void *state, void *ptr, uint64_t size, uint64_t align) {
 	(void)state;
 	(void)size;
-	(void)align;
-	_aligned_free(ptr);
+	if (over_aligned(align)) {
+		_aligned_free(ptr);
+	} else {
+		free(ptr);
+	}
 }
 
 /* The system heap has no region: individual allocations are freed one at a
@@ -164,7 +173,7 @@ static void *note_request(const loke_rt_allocator_v1 *a, uint64_t size, void *re
 void *loke_rt_v1_alloc(const loke_rt_allocator_v1 *a, uint64_t size, uint64_t align) {
 	a = resolve(a);
 	if (size == 0) {
-		return (void *)(uintptr_t)sane_align(align);
+		return (void *)(uintptr_t)(align == 0 ? 1 : align);
 	}
 	return note_request(a, size, a->ops->alloc(a->state, size, align));
 }

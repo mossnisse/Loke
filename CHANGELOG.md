@@ -362,6 +362,19 @@ checklist.
 
 ### Changed
 
+- The default allocator takes `malloc`, `realloc`, and `free` for an alignment up to 16, which
+  `malloc` already gives on x64 Windows, and `_aligned_malloc` only above it, as a
+  `Simd(f32, 8)` needs. A dynamic array grown to 100 elements 200,000 times takes 107 ms at
+  `-opt=speed`, from 213 ms, and 4 million live boxes 344 ms, from 407 ms.
+- Generated formatting writes text through a procedure in the program's own module rather than
+  the runtime's, so LLVM inlines it and a formatter whose writer is known calls the sink's
+  `write` directly. `fmt.format_to(writer, ", ")` now costs what `writer.write(", ".bytes())`
+  does, so a `format` method needs no special spelling for its punctuation: formatting a
+  256-member `container.Enum_Array` is about 12% faster.
+- The lexer compares a word only with the keywords that share its first letter, and an
+  operator only with those that share its first byte, and checks source text for UTF-8 with no
+  decoding for ASCII. Parsing a 3 MB file takes 98 ms, from 111 ms, and checking
+  `examples/corpus_runner.loke` 2–5% less.
 - A provider-backed [`mem.Arena`](docs/standard-library.md#coremem) or `mem.Scratch` asks its
   parent for blocks that double in size, up to 1 MiB, as the runtime's own comment said it did.
   Each block after the first stayed at 4 KiB, so an arena that grew to a megabyte asked its

@@ -232,11 +232,6 @@ Compile time:
   entry made inside a probe cannot stand for a committed check, which also
   registers witnesses.
   [interface_check](../src/interface.odin#L563)
-- **Lexing** (5–7%). `reserved_word_kind` compares each identifier with all 34
-  keywords, `operator` scans a 57-entry table that holds `=`, `:`, and `.`
-  near its end, and `valid_utf8` decodes each rune with no path for ASCII.
-  [Keywords](../src/lexer.odin#L457), [operators](../src/lexer.odin#L814),
-  [valid_utf8](../src/source.odin#L154)
 - **`mark_released` and `end_loans` find the same loans twice** (2–5.7%), and
   a read that invalidates nothing pays a clear and a scan of every loan. The
   report pass likewise scans every live slot and loan for each `Access` and
@@ -285,9 +280,8 @@ Generated code and the runtime, none measured:
   eight-bytes-at-a-time path `utf8_prefix` has; `hash_bytes` folds one byte a
   step; `a + b + c` allocates for each `+`.
   [text.c](../runtime/text.c#L66), [hash_bytes](../runtime/container.c#L1061)
-- **Smaller.** Every heap allocation goes through `_aligned_malloc`, whatever
-  its alignment ([alloc.c](../runtime/alloc.c#L20)); formatting a record
-  writes each label and separator to the sink on its own
+- **Smaller.** Formatting a record writes each label and separator to the
+  sink on its own
   ([emit_llvm_format.odin](../src/emit_llvm_format.odin#L492)); a temporary of
   4096 bytes or less takes a stack slot of its own, never reused
   ([emit_llvm_place.odin](../src/emit_llvm_place.odin#L43)).
@@ -589,18 +583,6 @@ it worse for people? How a model reads and writes code differs from how a
 person does: models are trained on human-written code yet process it
 differently. Encapsulation and abstraction stay important either way, so that
 a model can work on one part of a program without reading the rest.
-
-## Enum_Array simplifications
-
-- Container formatters write their punctuation with `fmt.format_to`, which
-  goes through variadic `dyn Formattable` formatting. Writing it with
-  `writer.write(literal.bytes())` made formatting a 256-member `Enum_Array`
-  about 10% faster (fastest of five runs, 70.5 ms to 63.0 ms at `-opt=speed`).
-  A review of `Small_Array` measured the same spelling, together with taking
-  the live view once, at a median of 331 ms to 262 ms over six runs formatting
-  64 integers 200,000 times.
-  Should `core:fmt` make a single literal argument cheap, so every formatter
-  gains without each spelling it differently?
 
 ## Constant tables in the front end
 

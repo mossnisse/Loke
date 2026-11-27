@@ -453,15 +453,64 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 }
 
 // The keyword reserved in every position that `word` spells, or `.Ident` for
-// any other word, a contextual keyword included.
+// any other word, a contextual keyword included. Only the rows that start with
+// the word's first letter are compared.
 reserved_word_kind :: proc(word: string) -> Token_Kind {
-	for keyword in keyword_table {
-		if !reserved_keyword(keyword.kind) { break }
-		if keyword.text == word {
-			return keyword.kind
+	if len(word) == 0 || word[0] >= 0x80 {
+		return .Ident
+	}
+	for row in rows_starting_with(&reserved_keyword_index, word[0]) {
+		if keyword_table[row].text == word {
+			return keyword_table[row].kind
 		}
 	}
 	return .Ident
+}
+
+// The rows of a table grouped by the first byte of their spelling, each group in
+// table order: `rows[start[b]:start[b + 1]]` start with byte `b`.
+@(private = "file")
+First_Byte_Index :: struct($N: int) {
+	start: [129]u8,
+	rows:  [N]u8,
+}
+
+@(private = "file")
+rows_starting_with :: #force_inline proc(index: ^First_Byte_Index($N), first: u8) -> []u8 {
+	return index.rows[index.start[first]:index.start[first + 1]]
+}
+
+// A counting sort by first byte, stable, so the operators' longest-first order
+// holds within a group. Every spelling is ASCII.
+@(private = "file")
+index_first_bytes :: proc "contextless" (table: []$Row, index: ^First_Byte_Index($N)) {
+	count: [128]u8
+	for row in table {
+		count[row.text[0]] += 1
+	}
+	for b in 0 ..< 128 {
+		index.start[b + 1] = index.start[b] + count[b]
+	}
+	next := index.start
+	for row, i in table {
+		index.rows[next[row.text[0]]] = u8(i)
+		next[row.text[0]] += 1
+	}
+}
+
+@(private = "file")
+RESERVED_KEYWORDS :: int(Token_Kind.When) - int(Token_Kind.Break) + 1
+
+@(private = "file")
+reserved_keyword_index: First_Byte_Index(RESERVED_KEYWORDS)
+
+@(private = "file")
+operator_index: First_Byte_Index(len(operator_table))
+
+@(init, private = "file")
+index_lexer_tables :: proc "contextless" () {
+	index_first_bytes(keyword_table[:RESERVED_KEYWORDS], &reserved_keyword_index)
+	index_first_bytes(operator_table[:], &operator_index)
 }
 
 @(private = "file")
@@ -700,9 +749,9 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 	return Token{kind = valid ? .Rune : .Error, lo = lo, hi = l.pos}
 }
 
-// First match wins, so longer operators must precede their prefixes. The most
-// common come first, none of them a prefix. `:` stays separate because `::` and
-// `:=` are token pairs. Read-only data rather than a constant, so a scan does not
+// First match among the rows that share a first byte wins, so longer operators
+// must precede their prefixes. `:` stays separate because `::` and `:=` are
+// token pairs. Read-only data rather than a constant, so a scan does not
 // materialize the table first.
 @(private, rodata)
 operator_table := [?]struct {
@@ -814,12 +863,13 @@ compound_operator :: proc(op: Token_Kind) -> Token_Kind {
 operator :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
 	first := peek(l)
-	for op in operator_table {
-		// Nearly every entry differs in its first byte, which is cheaper to
-		// compare than the whole spelling.
-		if op.text[0] == first && matches(l, op.text) {
-			l.pos += u32(len(op.text))
-			return Token{kind = op.kind, lo = lo, hi = l.pos}
+	if first < 0x80 {
+		for row in rows_starting_with(&operator_index, first) {
+			op := operator_table[row]
+			if matches(l, op.text) {
+				l.pos += u32(len(op.text))
+				return Token{kind = op.kind, lo = lo, hi = l.pos}
+			}
 		}
 	}
 	l.pos += 1

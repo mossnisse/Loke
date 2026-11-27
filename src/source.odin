@@ -153,6 +153,11 @@ line_starts_of :: proc(text: string, allocator := context.allocator) -> []u32 {
 
 valid_utf8 :: proc(text: string) -> (valid: bool, bad_offset: u32) {
 	for i := 0; i < len(text); {
+		// Source is nearly all ASCII, which needs no decoding.
+		if text[i] < utf8.RUNE_SELF {
+			i += 1
+			continue
+		}
 		r, width := utf8.decode_rune_in_string(text[i:])
 		if r == utf8.RUNE_ERROR && width == 1 {
 			return false, u32(i)

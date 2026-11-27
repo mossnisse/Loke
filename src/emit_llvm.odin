@@ -125,6 +125,7 @@ emit_llvm_module :: proc(c: ^Compiler) -> (module: string, ok: bool) {
 	emit_thread_local_teardown(&e)
 	emit_thread_local_setup(&e)
 	emit_sink_bridge(&e)
+	emit_sink_write_bytes(&e)
 	// design.md "Build-selected providers": no initializer unless one is selected.
 	if any_provider_selected(c) {
 		emit_program_init(&e)

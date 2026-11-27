@@ -1,0 +1,8 @@
+define private void @loke.fmt.write_bytes(ptr %w, ptr %bytes, i64 %count) {
+call void @loke_rt_v1_fmt_bytes(ptr %w, ptr %bytes, i64 %count)
+call void @loke_rt_v1_sink_write(ptr %w, ptr %bytes, i64 %count)
+call void @loke.fmt.write_bytes(ptr %w, ptr @.str.*, i64 *)
+call void @loke.fmt.write_bytes(ptr %w, ptr %t*, i64 %t*)
+call void @loke.fmt.write_bytes(ptr %t*, ptr %t*, i64 %t*)
+not call void @loke_rt_v1_fmt_bytes(ptr %t
+not call void @loke_rt_v1_fmt_bytes(ptr %w, ptr @

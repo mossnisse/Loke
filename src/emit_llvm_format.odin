@@ -164,7 +164,7 @@ emit_format_literal :: proc(e: ^Emitter, text: string) {
 @(private = "file")
 emit_format_literal_to :: proc(e: ^Emitter, writer, text: string) {
 	global := text_literal_global(e, text)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 %d)", writer, global, len(text))
+	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %s, i64 %d)", generated_name(e, SINK_WRITE_BYTES), writer, global, len(text))
 }
 
 @(private = "file")
@@ -196,7 +196,7 @@ emit_format_nested :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	}
 	#partial switch info.kind {
 	case .String, .String_View, .CString_View:
-		emit_format_text(e, under, address, "loke_rt_v1_fmt_quoted")
+		emit_format_text(e, under, address, "@loke_rt_v1_fmt_quoted")
 	case .Rune:
 		value := load(e, "i32", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_quoted_rune(ptr %%w, i32 %s)", value)
@@ -217,7 +217,7 @@ emit_format_nested :: proc(e: ^Emitter, type: Type_Id, address: string) {
 }
 
 // The text of a `string`, `string_view`, or `cstring_view` at `address`, through
-// a runtime entry taking its data and length.
+// `callee`, which takes the writer, the data, and the length.
 @(private = "file")
 emit_format_text :: proc(e: ^Emitter, under: Type_Id, address, callee: string) {
 	data, length: string
@@ -227,7 +227,7 @@ emit_format_text :: proc(e: ^Emitter, under: Type_Id, address, callee: string) {
 	} else {
 		data, length = load_pair(e, llvm_type(e, under), address, STRING_DATA, STRING_LEN)
 	}
-	fmt.sbprintfln(&e.b, "  call void @%s(ptr %%w, ptr %s, i64 %s)", callee, data, length)
+	fmt.sbprintfln(&e.b, "  call void %s(ptr %%w, ptr %s, i64 %s)", callee, data, length)
 }
 
 // Whether following boxes and checked pointers from `type` comes back to a
@@ -303,7 +303,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_ptr(ptr %%w, ptr %s)", value)
 
 	case .String, .String_View, .CString_View:
-		emit_format_text(e, under, address, "loke_rt_v1_fmt_bytes")
+		emit_format_text(e, under, address, generated_name(e, SINK_WRITE_BYTES))
 
 	case .Enum:
 		emit_format_enum(e, under, address)
@@ -394,7 +394,7 @@ emit_format_type_name :: proc(e: ^Emitter, id: string) {
 	branch_if(e, missing, numeric, named)
 
 	place_label(e, named)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %s)", data, length)
+	write_bytes_call(e, "%w", data, length)
 	branch(e, done)
 
 	place_label(e, numeric)
@@ -570,13 +570,48 @@ entry:
 	fmt.sbprintln(&e.b, "")
 }
 
+// What generated formatting writes text through: the runtime's `fmt_bytes`,
+// written in LLVM so that it inlines. A formatter inlined where its writer's
+// witness is known then calls the sink's `write` directly, as `w.write(bytes)`
+// does; through the C runtime it took an indirect call that LLVM could not see
+// through. A nil view goes to the runtime, which reports it.
+SINK_WRITE_BYTES :: "@loke.fmt.write_bytes"
+
+@(private)
+emit_sink_write_bytes :: proc(e: ^Emitter) {
+	fmt.sbprintfln(&e.b, "define private void %s(ptr %%w, ptr %%bytes, i64 %%count) {{", generated_name(e, SINK_WRITE_BYTES))
+	fmt.sbprintln(&e.b, `entry:
+  %witness.at = getelementptr inbounds { ptr, ptr }, ptr %w, i32 0, i32 1
+  %witness = load ptr, ptr %witness.at
+  %nil = icmp eq ptr %witness, null
+  br i1 %nil, label %report, label %live
+report:
+  call void @loke_rt_v1_fmt_bytes(ptr %w, ptr %bytes, i64 %count)
+  ret void
+live:
+  %some = icmp sgt i64 %count, 0
+  br i1 %some, label %write, label %done
+write:
+  call void @loke_rt_v1_sink_write(ptr %w, ptr %bytes, i64 %count)
+  br label %done
+done:
+  ret void
+}
+`)
+}
+
+@(private = "file")
+write_bytes_call :: proc(e: ^Emitter, writer, data, length: string) {
+	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %s, i64 %s)", generated_name(e, SINK_WRITE_BYTES), writer, data, length)
+}
+
 // The compiler-owned `core:fmt` entry points.
 @(private)
 emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
 	if kind == .Fmt_Write_Bytes {
 		writer := spill(e, e.c.runtime_types["Writer"], emit_expr(e, v.bound[0]))
 		data, length := emit_text_parts(e, v.bound[1])
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 %s)", writer, data, length)
+		write_bytes_call(e, writer, data, length)
 		return "0"
 	}
 	stream := fmt.aprintf("inttoptr (i64 %d to ptr)", kind == .Fmt_Stdout_Writer ? SINK_STDOUT : SINK_STDERR)

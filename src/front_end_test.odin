@@ -975,8 +975,8 @@ self slot using delegate manual
 	}
 }
 
-// `reserved_keyword` and `any_keyword` read the enum's ranges, and the lexer stops
-// at the table's first contextual row.
+// `reserved_keyword` and `any_keyword` read the enum's ranges, and the lexer
+// looks words up in the table's rows up to the last reserved one.
 @(test)
 keyword_table_lists_every_keyword_in_enum_order :: proc(t: ^testing.T) {
 	kind := Token_Kind.Break
