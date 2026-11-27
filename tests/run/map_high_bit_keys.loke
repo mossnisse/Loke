@@ -33,9 +33,10 @@ main :: proc() {
 		if (Bits{math.to_bits(f64(i))} in floats) { found += 1; }
 	}
 	// A clustered table compares about N*N/2 times. A spread one averages about
-	// 7*N here, since linear probing inserts at loads up to seven eighths, and
-	// the count varies with the per-table seed: some runs pass 9*N. The bound
-	// leaves that tail room and still sits far below the quadratic count.
+	// 3.7*N here, since linear probing inserts at loads up to three quarters, and
+	// the count varies with the per-table seed: in 100 runs it reached 4.1*N, and
+	// at the earlier limit of seven eighths some passed 9*N. The bound leaves
+	// that tail room and still sits far below the quadratic count.
 	BOUND :: 64*N;
 	fmt.println(found, compares < BOUND);
 

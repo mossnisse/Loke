@@ -5089,6 +5089,17 @@ twice as large, and building one key at a time pays the extra growth: 57,000
 integers into a fresh map took 68 ns a key, from 48, and 917,000 took 92, from
 76. At other sizes building was no slower.
 
+These figures are for maps grown by insertion. A removal leaves a tombstone,
+which counts toward the limit until a rebuild clears it, and a rebuild doubles
+the slots whenever the live entries fill half of them. So a map that holds a
+steady size while keys come and go can settle at twice the slots of one built
+to that size, at a load between a quarter and three eighths: with six entries
+in eight slots, removing two and inserting one rebuilds into sixteen slots,
+where at seven eighths the tombstones still fit under the limit. The doubling
+bounds how often such a map rebuilds, since a rebuild at the same size leaves
+at least a quarter of the slots to fill before the next. Neither limit was
+measured under that churn.
+
 The other remedy proposed was a fingerprint: a few bits of the hash in each
 occupied control byte, so a probe skips the key load and `==` of a slot whose
 bits differ. It leaves the probe as long, so it helps where `==` is dear, as
@@ -5163,10 +5174,12 @@ and each was declined on the same day.
   parents and scopes for every symbol, took 9 ms after a 66 ms incremental
   check of `bench/workspace`, 10 ms after 146 ms of
   `examples/corpus_runner.loke`, and 21 ms after 227 ms of `bench/dense.loke`
-  (fastest of seven, unit-test build at `-o:speed`). But `documentSymbol`,
-  which an editor asks for after every edit to draw its outline and
-  breadcrumbs, reads those extents and parents, so a lazy index would be
-  built on the same edit. Building it on demand would also give a snapshot a
+  (fastest of seven, unit-test build at `-o:speed`). But `documentSymbol`
+  reads those extents and parents, and VS Code asks for it after each edit
+  while its breadcrumbs, on by default, or its outline is shown, so there a
+  lazy index would be built for the same edit. A client that asks for symbols
+  only on a hover or a jump would see diagnostics 6 to 12% sooner. That alone
+  does not pay for the cost: building on demand would give a snapshot a
   second state that a query could change, where now every query only reads
   and several threads may share it
   ([Snapshots and queries](compiler-architecture.md#snapshots-and-queries)).
