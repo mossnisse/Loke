@@ -1,0 +1,4 @@
+@loke.g.slots = global [16 x %struct.Slot
+i8 0, i64 46272, i1 false)
+not @.image.
+not { i64 0, i8 0 }

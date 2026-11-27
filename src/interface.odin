@@ -559,8 +559,49 @@ step_into_interface :: proc(k: ^Checker) -> bool {
 	return true
 }
 
+// An application of an interface to at most four types, and the package whose
+// members its requirements may select.
+Satisfaction_Key :: struct {
+	info:  ^Interface_Info,
+	pkg:   Package_Id,
+	count: int,
+	types: [4]Type_Id,
+}
+
 @(private = "file")
-interface_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> (Requirement_Failure, bool) {
+satisfaction_key :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> (key: Satisfaction_Key, keyed: bool) {
+	if len(args) > len(key.types) {
+		return
+	}
+	key = Satisfaction_Key{info = info, pkg = lookup_package(k), count = len(args)}
+	for arg, index in args {
+		if !arg.is_type {
+			return
+		}
+		key.types[index] = arg.type
+	}
+	return key, true
+}
+
+// One interface is applied to the same types many times, and checking its
+// requirements clones and checks each again. An application a committed check
+// found satisfied is answered from `satisfied_interfaces`, since that check kept
+// the witnesses and typeids it registered, which a probe's check rolls back. A
+// failure is checked again, to report its reason where it fails.
+@(private = "file")
+interface_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> (failure: Requirement_Failure, ok: bool) {
+	key, keyed := satisfaction_key(k, info, args)
+	if keyed && key in k.c.satisfied_interfaces {
+		return {}, true
+	}
+	defer if ok && keyed && committing(k.c) {
+		k.c.satisfied_interfaces[key] = {}
+	}
+	return interface_check_requirements(k, info, args)
+}
+
+@(private = "file")
+interface_check_requirements :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> (Requirement_Failure, bool) {
 	if failure, ok := interface_predicates_check(k, info, args); !ok {
 		return failure, false
 	}

@@ -1,0 +1,28 @@
+package main;
+
+// A constant that is all zero bits is `zeroinitializer` however it is built: an
+// array of records holding a union and a record of byte members, and the zero
+// value of a large record, which is not spelled element by element first.
+
+@(zero=none) Held :: union { none, some: u64 }
+
+@(packed, align=4) Packed :: struct { tag: u8, count: u32 }
+
+Slot :: struct {
+	held: Held,
+	packed: Packed,
+	name: string,
+}
+
+Storage :: struct {
+	total: [5760]f64,
+	slots: [4]Slot,
+}
+
+slots: [16]Slot;
+
+main :: proc() {
+	storage: Storage = {};
+	storage.total[3] = 1.0;
+	slots[1].held = .some(u64(storage.slots[2].packed.count) + 7);
+}

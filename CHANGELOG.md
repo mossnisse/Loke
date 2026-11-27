@@ -402,6 +402,13 @@ checklist.
 - Formatting a record writes the text before each field to the sink in one call, `Point{x = `
   and then `, y = `, and a union variant its name and `(` in one: 2 million records and unions
   formatted to a sink of the program's own take 0.38 s at `-opt=speed`, from 0.45 s.
+- A constant that is all zero bits is written as one LLVM `zeroinitializer`, also when it holds
+  a `@(packed, align=N)` record or a union at a payloadless variant such as `.none`, and the zero
+  value of a large record or array is no longer spelled element by element first. At
+  `-opt=none`, `s: Storage = {}` of a 46 KB record holding a packed one is set with memset rather
+  than copied from a 46 KB constant in the executable. An interface applied to the same types
+  again is answered from the first check that held. Together the front end takes 9% less time
+  on `bench/geometry.loke`, 7% on `bench/dense.loke`, and 4% on `examples/corpus_runner.loke`.
 - A map grows once it is three quarters full rather than seven eighths, so a lookup of a missing
   key visits about 8 slots rather than about 32: at `-opt=speed`, a miss in a nearly full map of
   917,000 integers takes 18 ns, from 64 ns, and one in a map of 57,000 strings 37 ns, from 77 ns.

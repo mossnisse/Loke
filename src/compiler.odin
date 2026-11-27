@@ -149,6 +149,8 @@ Compiler :: struct {
 
 	// Interface declarations (`src/interface.odin`), keyed by their symbol.
 	interfaces:            map[Symbol_Id]^Interface_Info,
+	// Applications a committed check found satisfied (`interface_check`).
+	satisfied_interfaces:  map[Satisfaction_Key]struct{},
 	// Checked map key operations, keyed by the underlying key type. Consumers
 	// must use these IDs rather than selecting members again.
 	map_key_policies:      map[Type_Id]Key_Policy,

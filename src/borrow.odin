@@ -568,7 +568,8 @@ Prov_Solve :: struct {
 	// Whether a definition of a reborrow's derived slot names its source. One that none
 	// does, as a capture's copy of what its source derives from, is made by each of them.
 	link_is_named:  []bool,
-	// Scratch: the loans one event ends, and their indices.
+	// Scratch: the loans one event ends or re-establishes (`event_loans`), and
+	// one flag per loan, all false between events, to name each once.
 	released: []bool,
 	released_indices: [dynamic]int,
 	// Scratch: the slots `live_place_bits` gathered, and the live slots holding a
@@ -1155,8 +1156,19 @@ holds_a_copy :: proc(state: ^Prov_Solve, row: u32) -> bool {
 @(private)
 run_prov_event :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended: []bool) {
 	graph := state.graph
-	mark_released(state, event, reach)
-	end_loans(state, event, reach, ended)
+	// `ended` holds the loans ended on every path. A loop head re-establishes
+	// its loans, so an end inside the body does not reach its entry through the
+	// back edge, and a creation site that runs again starts a new, valid
+	// instance.
+	changed := event_loans(state, event, reach)
+	revived := event.kind == .Live
+	mark_released(state, changed, revived, reach)
+	for index in changed {
+		ended[index] = !revived
+	}
+	if event.kind == .Def && event.loan != NO_LOAN {
+		ended[int(event.loan)] = false
+	}
 	#partial switch event.kind {
 	case .Def:
 		mem.zero_slice(state.merged)
@@ -1338,75 +1350,30 @@ publish_one_loan :: proc(state: ^Prov_Solve, settled: Prov_Event, reach: []u8, e
 	return one
 }
 
-// Marks the loans an event ends as released in every slot that may hold them,
-// and clears the mark where a loop head re-establishes them.
+// The loans an event ends, or those a loop head re-establishes, in
+// `state.released_indices`. Most events name none: a read invalidates nothing.
 @(private = "file")
-mark_released :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) {
-	revived := event.kind == .Live && event.revives
-	#partial switch event.kind {
-	case .Live:
-		if !revived {
-			return
-		}
-		mem.zero_slice(state.released)
-		for source in event.sources {
-			row := reach_row(state, reach, source)
-			for index in 0 ..< state.loans {
-				state.released[index] ||= bit_get(row, index)
-			}
-		}
-	case .Access, .Root_End, .Reset:
-		mem.zero_slice(state.released)
-		end_loans(state, event, reach, state.released)
-	case:
-		return
-	}
-	// Rows change only at released loans, and most events release none; this beat
-	// looping loans outside slots on bench/dense.loke.
-	clear(&state.released_indices)
-	for released, index in state.released {
-		if released {
-			append(&state.released_indices, index)
-		}
-	}
-	if len(state.released_indices) == 0 {
-		return
-	}
-	for slot in 0 ..< state.slots {
-		row := reach_row(state, reach, slot)
-		for index in state.released_indices {
-			stale := state.loans + index
-			if revived {
-				if bit_get(row, stale) { bit_clear(reach_row_written(state, reach, slot), stale) }
-			} else if bit_get(row, index) && !bit_get(row, stale) {
-				bit_mark(reach_row_written(state, reach, slot), stale)
-			}
-		}
-	}
-}
-
-// Which loans an event ends or starts afresh, over the loans ended on every
-// path, and once per event over the loans it releases.
-@(private = "file")
-end_loans :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended: []bool) {
+event_loans :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8) -> []int {
 	graph := state.graph
+	clear(&state.released_indices)
 	#partial switch event.kind {
-	case .Def:
-		// A creation site that runs again starts a new, valid instance.
-		if event.loan != NO_LOAN {
-			ended[int(event.loan)] = false
-		}
 	case .Live:
-		// A loop head re-establishes the loans, so an end inside the body does not
-		// reach its entry through the back edge.
 		if !event.revives {
 			break
 		}
+		// Several sources may hold one loan; `state.released` is all false between
+		// events.
 		for source in event.sources {
 			loans := set_bits(reach_row(state, reach, source), state.loans)
 			for index in next_set_bit(&loans) {
-				ended[index] = false
+				if !state.released[index] {
+					state.released[index] = true
+					append(&state.released_indices, index)
+				}
 			}
+		}
+		for index in state.released_indices {
+			state.released[index] = false
 		}
 	case .Access:
 		if event.access != .Invalidate {
@@ -1414,18 +1381,38 @@ end_loans :: proc(state: ^Prov_Solve, event: Prov_Event, reach: []u8, ended: []b
 		}
 		for index in root_loans(state, event.root) {
 			if paths_overlap(graph.loans[index].path, event.path) {
-				ended[index] = true
+				append(&state.released_indices, index)
 			}
 		}
 	case .Root_End:
-		for index in root_loans(state, event.root) {
-			ended[index] = true
-		}
+		append(&state.released_indices, ..root_loans(state, event.root))
 	case .Reset:
+		// A loan has one root, so no loan is named twice.
 		for root, at in graph.roots {
-			if !reset_ends_root(root, event) { continue }
-			for index in root_loans(state, Root_Id(at)) {
-				ended[index] = true
+			if reset_ends_root(root, event) {
+				append(&state.released_indices, ..root_loans(state, Root_Id(at)))
+			}
+		}
+	}
+	return state.released_indices[:]
+}
+
+// Marks the loans an event ends as released in every slot that may hold them,
+// and clears the mark where a loop head re-establishes them. Rows change only
+// at those loans; this beat looping loans outside slots on bench/dense.loke.
+@(private = "file")
+mark_released :: proc(state: ^Prov_Solve, loans: []int, revived: bool, reach: []u8) {
+	if len(loans) == 0 {
+		return
+	}
+	for slot in 0 ..< state.slots {
+		row := reach_row(state, reach, slot)
+		for index in loans {
+			stale := state.loans + index
+			if revived {
+				if bit_get(row, stale) { bit_clear(reach_row_written(state, reach, slot), stale) }
+			} else if bit_get(row, index) && !bit_get(row, stale) {
+				bit_mark(reach_row_written(state, reach, slot), stale)
 			}
 		}
 	}

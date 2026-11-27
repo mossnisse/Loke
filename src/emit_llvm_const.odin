@@ -105,10 +105,60 @@ llvm_zero :: proc(e: ^Emitter, type: Type_Id) -> (string, bool) {
 	return llvm_const(e, zero, type), true
 }
 
+// Whether `value` of `type` is all zero bits, so an aggregate holding it can be
+// `zeroinitializer` without spelling an element. A type's zero value is such a
+// constant (design.md "Zero values"), and `{}` of a large record is one of
+// thousands of elements. Answers false where unsure, which only costs the
+// spelling.
 @(private = "file")
-is_zero_constant :: proc(value: string) -> bool {
-	switch value {
-	case "0", "false", "null", "zeroinitializer", "0xH0000", "0x0000000000000000":
+const_is_zero :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> bool {
+	if value.kind == .Invalid {
+		return true
+	}
+	under := type_underlying(e.c, default_type(e.c, type))
+	info := type_of(e.c, under)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Bool:
+		return !value.boolean
+	case .Typeid:
+		number, known := typeid_const_number(e.c, value)
+		return known && number == 0
+	case .Int, .Enum, .Rune, .Allocator_Error:
+		return value.kind == .Nil || ((value.kind == .Integer || value.kind == .Rune) && bi_is_zero(value.integer))
+	case .Float:
+		return const_float_pattern(value, info.bits) == 0
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .Dyn, .Dynamic_Array, .Map:
+		return true
+	case .CString_View, .String, .String_View, .Slice:
+		return value.kind == .Nil || (value.kind == .String && value.text == "")
+	case .Union:
+		if value.kind != .Aggregate || value.aggregate == nil {
+			return true
+		}
+		return value.aggregate.variant == 0 &&
+			(len(value.aggregate.elements) == 0 || const_is_zero(e, value.aggregate.elements[0], info.variants[0]))
+	case .Array, .Simd:
+		if value.aggregate == nil {
+			return true
+		}
+		for element in value.aggregate.elements {
+			if !const_is_zero(e, element, info.element) {
+				return false
+			}
+		}
+		return true
+	case .Struct:
+		if value.aggregate == nil {
+			return true
+		}
+		for field, index in info.fields {
+			if !const_is_zero(e, const_element(value, index), symbol_of(e.c, field).type) {
+				return false
+			}
+		}
 		return true
 	}
 	return false
@@ -174,7 +224,8 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	case .Union:
 		return union_constant(e, value, under)
 	case .Array, .Simd:
-		if value.aggregate == nil || len(value.aggregate.elements) == 0 {
+		// A zero value stays short, and `store` writes a large one with memset.
+		if const_is_zero(e, value, under) {
 			return "zeroinitializer"
 		}
 		// A vector constant is `<...>`; a `Simd(bool, N)` lane is `i8` in memory.
@@ -192,7 +243,6 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		}
 		b := strings.builder_make()
 		strings.write_string(&b, vector ? "<" : "[")
-		zero := true
 		for index in 0 ..< int(info.count) {
 			if index > 0 {
 				strings.write_string(&b, ",")
@@ -202,25 +252,19 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 				value = value == "true" ? "1" : "0"
 			}
 			fmt.sbprintf(&b, " %s %s", lane, value)
-			zero &&= is_zero_constant(value)
-		}
-		// A zero value stays short, and `store` writes a large one with memset.
-		if zero {
-			return "zeroinitializer"
 		}
 		strings.write_string(&b, vector ? " >" : " ]")
 		return strings.to_string(b)
 	case .Dyn, .Dynamic_Array, .Map:
 		return "zeroinitializer"
 	case .Struct:
-		if value.aggregate == nil || len(value.aggregate.elements) == 0 {
+		if const_is_zero(e, value, under) {
 			return "zeroinitializer"
 		}
 		byte_array := record_uses_byte_members(e, under, info)
 		angled := info.packed && !byte_array
 		b := strings.builder_make()
 		strings.write_string(&b, angled ? "<{" : "{")
-		zero := !byte_array
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
 			if index > 0 {
@@ -233,11 +277,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			} else {
 				field_value := llvm_const(e, element, symbol.type)
 				fmt.sbprintf(&b, " %s %s", llvm_type(e, symbol.type), field_value)
-				zero &&= is_zero_constant(field_value)
 			}
-		}
-		if zero {
-			return "zeroinitializer"
 		}
 		if info.align > info.natural_align {
 			fmt.sbprintf(&b, ", [0 x i%d] zeroinitializer", info.align * 8)

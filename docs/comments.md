@@ -5194,6 +5194,20 @@ and each was declined on the same day.
   read from the code are no firmer. Some cost about what their cache would:
   `generic_template_for`'s miss is one symbol lookup and a switch on the
   declaration's kind. Any of them can come back with a profile that shows it.
+- **Constants spelled into the caller's builder.** Timed with a clock rather
+  than the hooks, `const_operand` took 11 ms of an `-emit-ll` run of
+  `bench/dense.loke` and 8.5 ms of `bench/geometry.loke`, nearly all of it in
+  a few zero values of large arrays and records (`Insphere_Storage{}` is 14,000
+  `f64`) spelled one element at a time and then discarded for
+  `zeroinitializer`. A test for zero before spelling took that to 0.9 and
+  1.2 ms. What is left, a string per element and a table spelled again at
+  each use before its text is looked up, is 900 to 1,600 calls a program
+  and about 0.3% of the run, so the constant spelling keeps returning strings.
+- **The borrow report finding a root's loans through `root_loans`.** For each
+  `Access` and `Root_End` it scans every live slot's loans, and all of those
+  checks took 0.6–0.8 ms of a run of the same three programs, about 0.2%. The
+  scan also fixes which conflict is reported first, by slot, which a walk of
+  the root's loans would have to keep.
 
 ### `-opt=speed` unswitches loops
 

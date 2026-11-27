@@ -219,25 +219,6 @@ Compile time:
   [Effects](../src/global_effects.odin#L649),
   [thread facts](../src/thread_summaries.odin#L129),
   [replay](../src/provenance_effect.odin#L58)
-- **Spell a constant into the caller's builder** (about 5% in `const_operand`
-  on two of the three programs). `llvm_const` returns a new string for each
-  element, builds an aggregate that is all zero before discarding it for
-  `zeroinitializer`, and spells a table again at each use before the text is
-  hashed to share its global.
-  [llvm_const](../src/emit_llvm_const.odin#L138)
-- **Remember interface satisfaction** (3–4.7% on two of the three programs).
-  `interface_check` clones every requirement and makes its scopes again for an
-  interface and arguments it has already judged. A table keyed by the
-  interface, its arguments, and the lookup package would answer the repeats; an
-  entry made inside a probe cannot stand for a committed check, which also
-  registers witnesses.
-  [interface_check](../src/interface.odin#L563)
-- **`mark_released` and `end_loans` find the same loans twice** (2–5.7%), and
-  a read that invalidates nothing pays a clear and a scan of every loan. The
-  report pass likewise scans every live slot and loan for each `Access` and
-  `Root_End`, where `root_loans` already names the candidates.
-  [mark_released](../src/borrow.odin#L1344),
-  [report](../src/borrow_report.odin#L126)
 - **Memory, not measured.** A parsed list grows from eight slots inside the
   syntax arena and leaves each outgrown buffer behind, which an incremental
   checkpoint then copies ([parser.odin](../src/parser.odin#L1357)). Each

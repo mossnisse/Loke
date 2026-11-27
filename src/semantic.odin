@@ -884,6 +884,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.generic_impl_types = make(map[Span]bool, c.semantic_allocator)
 	c.written_defaults = make(map[^Expr_Base]Expr, c.semantic_allocator)
 	c.interfaces = make(map[Symbol_Id]^Interface_Info, c.semantic_allocator)
+	c.satisfied_interfaces = make(map[Satisfaction_Key]struct{}, c.semantic_allocator)
 	c.map_key_policies = make(map[Type_Id]Key_Policy, c.semantic_allocator)
 	c.sortable_elements = make(map[Type_Id]bool, c.semantic_allocator)
 	c.typeid_requested = make(map[Type_Id]bool, c.semantic_allocator)
