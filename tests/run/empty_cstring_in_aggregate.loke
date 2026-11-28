@@ -1,0 +1,18 @@
+package main;
+import "core:fmt";
+import "core:unsafe";
+
+// An empty `cstring_view` literal is the address of its terminator, so a
+// constant holding one is not all zero bits, alone or beside zero fields.
+
+Named :: struct { id: int, name: cstring_view }
+
+items: [1]cstring_view = {""};
+named: Named = {0, ""};
+
+main :: proc() {
+	local: [2]Named = {{0, ""}, {0, ""}};
+	fmt.println(unsafe.raw_data(items[0]) != nil);
+	fmt.println(unsafe.raw_data(named.name) != nil);
+	fmt.println(unsafe.raw_data(local[0].name) != nil, unsafe.raw_data(local[1].name) != nil);
+}

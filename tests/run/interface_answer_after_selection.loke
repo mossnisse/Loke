@@ -1,0 +1,22 @@
+package main;
+import "core:fmt";
+
+// A file-scope `when` condition applies an interface before the package's
+// operators resolve. What it found then is not the answer afterwards.
+
+Value :: struct { n: int }
+Can_Add :: interface($T: type) {
+	(a, b: T) a + b -> T;
+}
+Cannot_Add :: interface($T: type) {
+	!Can_Add(T);
+}
+when (Cannot_Add(Value)) {}
+
+add :: operator(+) proc(a, b: Value) -> Value { return {a.n + b.n}; }
+static_assert(Can_Add(Value));
+static_assert(!Cannot_Add(Value));
+
+main :: proc() {
+	fmt.println((Value{1} + Value{2}).n);
+}

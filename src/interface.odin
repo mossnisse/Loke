@@ -587,14 +587,16 @@ satisfaction_key :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg
 // requirements clones and checks each again. An application a committed check
 // found satisfied is answered from `satisfied_interfaces`, since that check kept
 // the witnesses and typeids it registered, which a probe's check rolls back. A
-// failure is checked again, to report its reason where it fails.
+// failure is checked again, to report its reason where it fails. Nothing is
+// kept while file-scope selection runs (`impls_declaring`): an operator or an
+// `impl` block not declared yet can still make a `!` requirement false.
 @(private = "file")
 interface_check :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg) -> (failure: Requirement_Failure, ok: bool) {
 	key, keyed := satisfaction_key(k, info, args)
 	if keyed && key in k.c.satisfied_interfaces {
 		return {}, true
 	}
-	defer if ok && keyed && committing(k.c) {
+	defer if ok && keyed && committing(k.c) && k.c.impls_declaring == 0 {
 		k.c.satisfied_interfaces[key] = {}
 	}
 	return interface_check_requirements(k, info, args)

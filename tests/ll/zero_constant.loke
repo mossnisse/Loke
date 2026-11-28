@@ -2,7 +2,8 @@ package main;
 
 // A constant that is all zero bits is `zeroinitializer` however it is built: an
 // array of records holding a union and a record of byte members, and the zero
-// value of a large record, which is not spelled element by element first.
+// value of a large record, which is not spelled element by element first. An
+// explicit empty slice is zero too; an empty `cstring_view` literal is not.
 
 @(zero=none) Held :: union { none, some: u64 }
 
@@ -20,6 +21,8 @@ Storage :: struct {
 }
 
 slots: [16]Slot;
+empties: [64][]int = {[]int{}};
+terminators: [2]cstring_view = {"", ""};
 
 main :: proc() {
 	storage: Storage = {};

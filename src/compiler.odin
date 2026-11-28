@@ -253,7 +253,8 @@ Compiler :: struct {
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
 	// Above zero while `prepare_package` or `activate_when_items` runs: a file-scope
-	// `impl` block may not be declared yet, so `lifecycle_of` keeps no answer.
+	// `impl` block may not be declared yet, so `lifecycle_of` and `interface_check`
+	// keep no answer.
 	impls_declaring: int,
 	// Attribute lists already validated, by the first attribute's position. A
 	// body checked once per generic instance or static `foreach` element is a

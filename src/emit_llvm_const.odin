@@ -133,7 +133,7 @@ const_is_zero :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> bool {
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .Dyn, .Dynamic_Array, .Map:
 		return true
 	case .CString_View, .String, .String_View, .Slice:
-		return value.kind == .Nil || (value.kind == .String && value.text == "")
+		return carrier_is_zero(value, info)
 	case .Union:
 		if value.kind != .Aggregate || value.aggregate == nil {
 			return true
@@ -620,21 +620,27 @@ f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
 	return transmute(u64)f64(transmute(f32)pattern)
 }
 
+// Whether a text or slice constant is all zero: one with no storage to point
+// at. An empty `cstring_view` literal is not, since it is the address of a lone
+// terminator (design.md "C string views").
+@(private = "file")
+carrier_is_zero :: proc(value: Const_Value, info: ^Type_Info) -> bool {
+	if info.kind == .Slice {
+		return value.aggregate == nil || len(value.aggregate.elements) == 0
+	}
+	return value.kind != .String || (value.text == "" && info.kind != .CString_View)
+}
+
 // A text or slice literal's pointer, length, and owner flags. `target` is ""
-// for one that is all zero, which an empty `cstring_view` is not: it is the
-// address of a lone terminator. Not `ok` for a text value that is no literal.
+// for one that is all zero (`carrier_is_zero`). Not `ok` for a text value that
+// is no literal.
 @(private = "file")
 carrier_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> (target: string, count, flags: int, ok: bool) {
 	switch {
+	case carrier_is_zero(value, info):
+		return "", 0, 0, info.kind == .Slice || value.kind == .String
 	case info.kind == .Slice:
-		if value.aggregate == nil || len(value.aggregate.elements) == 0 {
-			return "", 0, 0, true
-		}
 		return slice_literal_storage(e, value, info), len(value.aggregate.elements), 0, true
-	case value.kind != .String:
-		return "", 0, 0, false
-	case value.text == "" && info.kind != .CString_View:
-		return "", 0, 0, true
 	}
 	// A string literal's bytes have static lifetime, so a `string` owns nothing.
 	return text_literal_global(e, value.text), len(value.text), info.kind == .String ? STRING_STATIC : 0, true
