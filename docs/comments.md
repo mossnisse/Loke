@@ -5135,7 +5135,7 @@ declined on 2026-11-21 after reading the code they would change.
 
 The [compiler review of
 2026-11-27](open-questions.md#compiler-review-of-2026-11-27) proposed these,
-and each was declined on the same day.
+and each was declined that day or the next.
 
 - **LLVM text without `fmt`.** Under Odin's instrumentation hooks,
   `fmt.sbprintf` took 6.5–11.5% of an `-emit-ll` run, and nearly every format
@@ -5208,6 +5208,46 @@ and each was declined on the same day.
   checks took 0.6–0.8 ms of a run of the same three programs, about 0.2%. The
   scan also fixes which conflict is reported first, by slot, which a walk of
   the root's loans would have to keep.
+- **Reusing small temporaries' stack slots.** A temporary of 128 bytes or less
+  takes a slot of its own, where a large one is shared between full
+  expressions. At `-O2`, LLVM promotes most of them to registers: of 2,433
+  slots `bench/geometry.loke` writes, 326 remain, and of 1,790 in
+  `examples/corpus_runner.loke`, 586. What remains still sizes the frame,
+  since the emitter marks no lifetimes: 69 32-byte container slots in
+  geometry's `run`, most of them temporaries, are much of its 3,288-byte
+  frame, the largest of the program. But no frame of `geometry`, `dense`, or
+  `corpus_runner` exceeds 3.9 KB, each program's frames total under 20 KB,
+  and a slot costs no time. Sharing them would need lifetime markers or the
+  large slots' bookkeeping for every slot. That is worth it for a recursive
+  procedure whose depth its frame limits, which no program here is.
+- **Iterating a block's events by reference.** A `Prov_Event` is one record of
+  about 550 bytes for every kind, and ten loops of the borrow solver read
+  them with `for event in block.prov`. Reading them with `for &event` changed
+  the solver's time on `bench/dense.loke` and `examples/corpus_runner.loke`
+  by less than its run-to-run spread, about 1 ms of 9 to 12.
+
+### Borrow solver changes not made (2026-11-28)
+
+The compiler source audit of 2026-11-18 listed changes to the root and region
+solver that it could not justify without a workload. The solve was then
+timed with a clock in a build at `-o:speed`, three runs of `-emit-ll` each: it
+takes 17 ms of a 430 ms run of `bench/dense.loke`, 17 of 340 for
+`examples/corpus_runner.loke`, 9 of 370 for `bench/geometry.loke`, and 8 of 220
+for `bench/workspace`: 2 to 5%. Its forward pass, `solve_reaching`, is 9 to 11
+ms of that on `dense` and `corpus_runner`, and 3 on the others; preparing the
+state, the links, loan liveness, and the report are each 0.4 to 2.8 ms.
+
+The one hypothesis aimed at the forward pass, marking a reaching row as
+written only when a join adds a bit to it, so the row is not hashed again,
+changed nothing beyond the spread. Collecting an event's released loans once
+for `mark_released` and `ended` was made with the 2026-11-27 review
+(`event_loans`). The rest each touch a fraction of a phase that is at most
+2.8 ms: skipping the loaded-below rows of a body with no cursor anchor,
+caching `at_once_reaches` per source, a visited row in `with_held_content`,
+one backing allocation per block table, enumerating set bits in
+`merge_escape_event`, and per-body scratch in `stored_thread_facts`. None is
+made. A profile of a program whose solve is a larger share can bring one
+back.
 
 ### `-opt=speed` unswitches loops
 

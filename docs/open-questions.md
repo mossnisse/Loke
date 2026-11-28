@@ -162,21 +162,6 @@ reproduction before a change.
   rule would remove the differences, but each is a precision choice that needs
   a probe program before it changes.
 
-## Compiler source audit follow-ups (2026-11-18)
-
-- **Measure the borrow solver's allocation and rescanning hypotheses.** The
-  audit lists changes it could not justify without a workload: skipping the
-  loaded-below rows of a body with no cursor anchor, caching `at_once_reaches`
-  per source, a visited row in `with_held_content`, marking a reaching row
-  dirty only when a join adds a bit, one backing allocation per block table,
-  enumerating set bits in `merge_escape_event`, per-body scratch in
-  `stored_thread_facts`, and collecting an event's released loans once for
-  `mark_released` and `end_loans`. Run `perf.ps1` on borrow-heavy bodies before
-  and after each.
-
-The divergences the audit led to that remain are in
-[Known gaps](known-gaps.md#gaps).
-
 ## Compiler source audit continuation
 
 The per-file source reviews were removed from the repository; these points
@@ -224,21 +209,19 @@ Compile time:
   checkpoint then copies ([parser.odin](../src/parser.odin#L1357)). Each
   `Expr_Base` embeds a whole `Const_Value` ([ast.odin](../src/ast.odin#L10)),
   and an integer constant in the semantic arena takes 32 digits
-  ([bigint.odin](../src/bigint.odin#L66)). `Prov_Event` is one record of about
-  550 bytes for every kind, copied by each `for event in block.prov`
-  ([provenance_state.odin](../src/provenance_state.odin#L358)).
+  ([bigint.odin](../src/bigint.odin#L66)). Peak memory of an `-emit-ll` run
+  was 38 MB for `bench/workspace`, 58 MB for `examples/corpus_runner.loke`,
+  and 94 and 101 MB for `bench/dense.loke` and `bench/geometry.loke`
+  (2026-11-28); how much of it these account for is not known.
 
-Generated code and the runtime, none measured:
+Generated code, not measured:
 
 - **Drop glue is written out at each drop**, and a procedure's cleanups at
   each `return` and `or_return`, while containers already share a thunk per
   type with the same body.
   [emit_drop_place](../src/emit_llvm_lifecycle.odin#L457),
   [container_drop_thunk](../src/emit_llvm_containers.odin#L98),
-  [emit_epilogue](../src/emit_llvm_stmt.odin#L1032)
-- **Small temporaries.** A temporary of 128 bytes or less takes a stack slot
-  of its own, never reused
-  ([emit_llvm_place.odin](../src/emit_llvm_place.odin#L48)).
+  [emit_epilogue](../src/emit_llvm_stmt.odin#L1043)
 
 ## Formatting through a known writer
 
@@ -278,16 +261,6 @@ Generated code and the runtime, none measured:
   the callee's drop, and the callee must not need to write it.
   [Parameter binding](../src/emit_llvm.odin#L496),
   [parameter semantics](design.md#parameter-semantics-and-abi-lowering)
-
-## Union compiler simplifications
-
-- **Switch over a large union in its place.** A type switch over a named
-  place still snapshots the whole subject before reading its tag: 8,200
-  bytes for a `union { data: [8192]u8, code: int }`. A borrowed switch can
-  read from the subject's place where alignment and binding rules allow,
-  as formatting does. A consuming switch needs writable storage for its
-  drops, which its produced subject already is.
-  [Switch](../src/emit_llvm_stmt.odin#L783)
 
 ## Package and import versioning
 

@@ -1,8 +1,9 @@
 package main;
 
 // A large union is printed where it is stored: its tag is read in place, and
-// only the active payload is copied, once the tag has picked it. The whole
-// union is never copied.
+// only the active payload is copied, once the tag has picked it. A switch over
+// one in a place reads it there too, with or without a binding. The whole union
+// is never copied.
 
 import "core:fmt";
 
@@ -10,6 +11,18 @@ Big :: union { data: [8192]u8, code: int }
 
 big: Big = .code(42);
 
+classify :: proc(b: ^Big) -> int {
+	switch (b^) {
+	case .data: return 1;
+	case .code(c): return c;
+	}
+}
+
 main :: proc() {
 	fmt.println(big);
+	fmt.println(classify(&big));
+	switch (big) {
+	case .data(d): fmt.println(d[0]);
+	case .code: fmt.println("code");
+	}
 }

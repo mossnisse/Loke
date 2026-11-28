@@ -786,17 +786,28 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 	push_init_scope(e, s.init)
 	debug_mark_location(e, expr_span(s.subject))
 	union_type := expr_base(s.subject).type
-	// Over an addressable place a case binds the payload, or its fields, in the
-	// subject's own storage (design.md "Switch ownership").
-	place := ""
-	if switch_binds_place(s) || binds_subject_storage(e, s) {
-		place = emit_address(e, s.subject)
-	}
-	value := place != "" ? load_place(e, union_type, place) : emit_expr(e, s.subject)
-	slot := value_address(e, union_type, value)
-	tag := emit_union_tag(e, union_type, value)
 	// A produced subject is the switch's to drop; a named place is borrowed.
 	consumes := !expression_is_borrowed_place(s.subject)
+	// Over an addressable place a case binds the payload, or its fields, in the
+	// subject's own storage (design.md "Switch ownership"). So a large one is
+	// read there too rather than copied first, unless the place is under-aligned,
+	// where a packed field's binding reads the copy.
+	in_place :=!consumes && expr_base(s.subject).addressable && is_large_value(e, union_type)
+	place := ""
+	if in_place || switch_binds_place(s) || binds_subject_storage(e, s) {
+		place = emit_address(e, s.subject)
+	}
+	value: string
+	switch {
+	case place == "":
+		value = emit_expr(e, s.subject)
+	case in_place && align_suffix(e, place, union_type) == "":
+		value = place
+	case:
+		value = load_place(e, union_type, place)
+	}
+	slot := value_address(e, union_type, value)
+	tag := emit_union_tag(e, union_type, value)
 	joined := result != TYPE_VOID && result != INVALID_TYPE ? temporary_slot(e, result) : ""
 	done := new_label(e, "typeswitch.done")
 	// The checker names each variant in at most one case, and a default case

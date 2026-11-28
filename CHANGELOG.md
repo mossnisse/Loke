@@ -409,6 +409,10 @@ checklist.
   than copied from a 46 KB constant in the executable. An interface applied to the same types
   again is answered from the first check that held. Together the front end takes 9% less time
   on `bench/geometry.loke`, 7% on `bench/dense.loke`, and 4% on `examples/corpus_runner.loke`.
+- A switch over a union of more than 128 bytes in a place reads its tag where the place stores
+  it, rather than copying the whole union first. At `-opt=none`, 2 million switches over a
+  `union { data: [8192]u8, code: int }` take 24 ms, from 322 ms; `-opt=speed` already removed
+  the copy.
 - A map grows once it is three quarters full rather than seven eighths, so a lookup of a missing
   key visits about 8 slots rather than about 32: at `-opt=speed`, a miss in a nearly full map of
   917,000 integers takes 18 ns, from 64 ns, and one in a map of 57,000 strings 37 ns, from 77 ns.

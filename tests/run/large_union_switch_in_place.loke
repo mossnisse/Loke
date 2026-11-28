@@ -1,0 +1,49 @@
+// A switch over a large union in a place reads its tag and binds its payload
+// where the place stores it, without a copy of the whole subject first
+// (tests/ll/large_union_switch.loke). Through a packed record, where the place is
+// under-aligned, a field binding still reads a copy (design.md "@(packed)").
+package main;
+
+import "core:fmt";
+
+@(packed) Pk :: struct { tag: u8, n: i32 }
+Big :: union { data: [200]u8, pk: Pk, num: i32 }
+@(packed) Wire :: struct { pad: u8, big: Big }
+
+describe :: proc(b: ^Big) -> int {
+	switch (b^) {
+	case .data(d): return int(d[1]);
+	case .pk(_, n): return int(n);
+	case .num: return -1;
+	}
+}
+
+show :: proc(w: ^Wire) {
+	switch (w.big) {
+	case .num(n): fmt.println("num", n);
+	case .pk(tag, m): fmt.println("pk", tag, m);
+	case .data: fmt.println("data");
+	}
+}
+
+main :: proc() {
+	data: [200]u8 = {};
+	data[1] = 42;
+	b: Big = .data(data);
+	fmt.println(describe(&b));
+	b = .pk(Pk{5, 70000});
+	fmt.println(describe(&b));
+	// A case that writes its subject reads what it wrote afterwards.
+	switch (b) {
+	case .pk:
+		b = .num(3);
+		fmt.println(describe(&b));
+	case .data, .num:
+	}
+	w := Wire{7, .num(41)};
+	show(&w);
+	w.big = .pk(Pk{9, 123456});
+	show(&w);
+	w.big = .data(data);
+	show(&w);
+}
