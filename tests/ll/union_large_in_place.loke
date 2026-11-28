@@ -2,14 +2,24 @@ package main;
 
 // A large union is printed where it is stored: its tag is read in place, and
 // only the active payload is copied, once the tag has picked it. A switch over
-// one in a place reads it there too, with or without a binding. The whole union
-// is never copied.
+// one in a place reads it there too, with or without a binding, and through a
+// packed record, where the place is under-aligned. The whole union is never
+// copied.
 
 import "core:fmt";
 
 Big :: union { data: [8192]u8, code: int }
 
 big: Big = .code(42);
+
+@(packed) Wire :: struct { pad: u8, big: Big }
+
+wire_kind :: proc(w: ^Wire) -> int {
+	switch (w.big) {
+	case .data: return 1;
+	case .code: return 2;
+	}
+}
 
 classify :: proc(b: ^Big) -> int {
 	switch (b^) {
@@ -21,6 +31,8 @@ classify :: proc(b: ^Big) -> int {
 main :: proc() {
 	fmt.println(big);
 	fmt.println(classify(&big));
+	w := Wire{1, .code(7)};
+	fmt.println(wire_kind(&w));
 	switch (big) {
 	case .data(d): fmt.println(d[0]);
 	case .code: fmt.println("code");

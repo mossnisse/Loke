@@ -1,10 +1,12 @@
 // A switch over a large union in a place reads its tag and binds its payload
 // where the place stores it, without a copy of the whole subject first
-// (tests/ll/large_union_switch.loke). Through a packed record, where the place is
-// under-aligned, a field binding still reads a copy (design.md "@(packed)").
+// (tests/ll/union_large_in_place.loke). A binding that would name a packed field
+// holds a copy taken as its case starts (design.md "@(packed)"), whether the
+// place is under-aligned through a packed record or the payload is packed.
 package main;
 
 import "core:fmt";
+import "core:thread";
 
 @(packed) Pk :: struct { tag: u8, n: i32 }
 Big :: union { data: [200]u8, pk: Pk, num: i32 }
@@ -23,6 +25,23 @@ show :: proc(w: ^Wire) {
 	case .num(n): fmt.println("num", n);
 	case .pk(tag, m): fmt.println("pk", tag, m);
 	case .data: fmt.println("data");
+	}
+}
+
+mutex: thread.Mutex(Unit);
+@(synchronized) shared: Big = .pk(Pk{5, 70000});
+
+// The caller holds the mutex.
+replace :: proc() { shared = .pk(Pk{9, 123456}); }
+
+keeps_snapshot :: proc() {
+	guard := mutex.lock();
+	defer drop(guard);
+	switch (shared) {
+	case .pk(_, n):
+		replace();
+		fmt.println(n);
+	case .data, .num:
 	}
 }
 
@@ -46,4 +65,5 @@ main :: proc() {
 	show(&w);
 	w.big = .data(data);
 	show(&w);
+	keeps_snapshot();
 }

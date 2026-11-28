@@ -790,21 +790,21 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch, result := TYPE_VOID) -> s
 	consumes := !expression_is_borrowed_place(s.subject)
 	// Over an addressable place a case binds the payload, or its fields, in the
 	// subject's own storage (design.md "Switch ownership"). So a large one is
-	// read there too rather than copied first, unless the place is under-aligned,
-	// where a packed field's binding reads the copy.
-	in_place :=!consumes && expr_base(s.subject).addressable && is_large_value(e, union_type)
+	// read there too rather than copied first, even under-aligned: a binding
+	// that would name a packed field copies it as its case starts.
+	in_place := !consumes && expr_base(s.subject).addressable && is_large_value(e, union_type)
 	place := ""
 	if in_place || switch_binds_place(s) || binds_subject_storage(e, s) {
 		place = emit_address(e, s.subject)
 	}
 	value: string
 	switch {
-	case place == "":
-		value = emit_expr(e, s.subject)
-	case in_place && align_suffix(e, place, union_type) == "":
+	case in_place:
 		value = place
-	case:
+	case place != "":
 		value = load_place(e, union_type, place)
+	case:
+		value = emit_expr(e, s.subject)
 	}
 	slot := value_address(e, union_type, value)
 	tag := emit_union_tag(e, union_type, value)
@@ -927,9 +927,18 @@ emit_case_fields :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, p
 			if field.symbol == INVALID_SYMBOL {
 				continue
 			}
-			// A packed field, or a subject with no address, is read from the copy.
-			from := place != "" && names_storage(e, field.symbol) ? place : slot
-			bind_local(e, field.symbol, element_address(e, entry.binding_type, gep_field(e, storage, from, 0), field.slot))
+			// A packed field's binding holds a copy (design.md "@(packed)"): it
+			// names the field in the subject's copy, or copies it from a subject
+			// read in place.
+			stored := names_storage(e, field.symbol)
+			from := stored ? place : slot
+			address := element_address(e, entry.binding_type, gep_field(e, storage, from, 0), field.slot)
+			if stored || slot != place {
+				bind_local(e, field.symbol, address)
+			} else {
+				binding := declare_case_binding(e, field.symbol, field.type)
+				store(e, field.type, load_place(e, field.type, address), binding)
+			}
 			continue
 		}
 		address := element_address(e, entry.binding_type, gep_field(e, storage, slot, 0), field.slot)
